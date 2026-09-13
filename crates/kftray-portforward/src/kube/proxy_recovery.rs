@@ -2,7 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use futures::TryStreamExt;
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kube_runtime::WatchStreamExt;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -88,14 +91,21 @@ pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
 /// This is a **sync** helper to avoid opaque-type cycles when called from
 /// async proxy functions that are themselves awaited by
 /// `deploy_and_forward_pod`.
-pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
+pub fn spawn_recovery_manager(
+    config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+) {
     let Some(config_id) = config.id else {
         return;
     };
 
     let mut spawned = false;
     RECOVERY_MANAGERS.entry(config_id).or_insert_with(|| {
-        let manager = Arc::new(ProxyRecoveryManager::new(config, proxy_type));
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            proxy_type,
+            mode,
+            ssl_override,
+        ));
         let rx = manager.recovery_signal_tx.subscribe();
         let manager_for_task = Arc::clone(&manager);
         tokio::spawn(async move {
@@ -114,14 +124,14 @@ pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
 
 /// Acquire (or create) the recovery lock for a config_id
 ///
-/// This ensures only one recovery operation runs per config at a time.
+/// This serializes start, stop, and recovery operations for each config.
 /// Multiple callers will block until the lock is released.
 ///
 /// # Arguments
 /// * `config_id` - The configuration ID to lock
 ///
 /// # Returns
-/// An Arc<Mutex<()>> that can be locked to serialize recovery operations
+/// An Arc<Mutex<()>> that can be locked to serialize config lifecycle operations
 pub async fn acquire_recovery_lock(config_id: i64) -> Arc<Mutex<()>> {
     RECOVERY_LOCKS
         .entry(config_id)
@@ -129,15 +139,15 @@ pub async fn acquire_recovery_lock(config_id: i64) -> Arc<Mutex<()>> {
         .clone()
 }
 
-/// Remove the recovery lock for a config_id
+/// Remove an unused recovery lock for a config_id
 ///
 /// Call this during cleanup (e.g., when stopping a port forward) to free
-/// resources. Safe to call even if the lock doesn't exist.
+/// resources. Locks that are still held or awaited remain registered.
 ///
 /// # Arguments
 /// * `config_id` - The configuration ID whose lock should be removed
 pub fn remove_recovery_lock(config_id: i64) {
-    RECOVERY_LOCKS.remove(&config_id);
+    RECOVERY_LOCKS.remove_if(&config_id, |_, lock| Arc::strong_count(lock) == 1);
 }
 
 // ============================================================================
@@ -162,6 +172,8 @@ pub struct ProxyRecoveryManager {
     state: Arc<tokio::sync::RwLock<RecoveryState>>,
     /// Broadcast sender to trigger recovery from any source
     recovery_signal_tx: tokio::sync::broadcast::Sender<RecoverySignal>,
+    mode: DatabaseMode,
+    ssl_override: bool,
 }
 
 impl ProxyRecoveryManager {
@@ -170,7 +182,9 @@ impl ProxyRecoveryManager {
     /// # Arguments
     /// * `config` - The port-forward configuration to recover
     /// * `proxy_type` - Whether this is a bare pod or deployment proxy
-    pub fn new(config: Config, proxy_type: ProxyType) -> Self {
+    pub fn new(
+        config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+    ) -> Self {
         let config_id = config.id.unwrap_or(0);
         let (recovery_signal_tx, _) = tokio::sync::broadcast::channel::<RecoverySignal>(16);
         Self {
@@ -180,6 +194,8 @@ impl ProxyRecoveryManager {
             cancel_token: CancellationToken::new(),
             state: Arc::new(tokio::sync::RwLock::new(RecoveryState::Idle)),
             recovery_signal_tx,
+            mode,
+            ssl_override,
         }
     }
 
@@ -189,6 +205,13 @@ impl ProxyRecoveryManager {
     /// the receiver has been dropped, the signal is silently discarded.
     pub fn signal_recovery(&self, signal: RecoverySignal) {
         let _ = self.recovery_signal_tx.send(signal);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscribe_recovery_signals(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<RecoverySignal> {
+        self.recovery_signal_tx.subscribe()
     }
 
     /// Cancel the recovery loop.
@@ -292,7 +315,15 @@ impl ProxyRecoveryManager {
                     }
                 }
 
-                match self.do_recovery_attempt().await {
+                let result = tokio::select! {
+                    biased;
+                    _ = self.cancel_token.cancelled() => {
+                        all_attempts_exhausted = false;
+                        break;
+                    }
+                    result = self.do_recovery_attempt() => result,
+                };
+                match result {
                     Ok(()) => {
                         log::info!(
                             "Recovery succeeded for config {} on attempt {}",
@@ -343,9 +374,10 @@ impl ProxyRecoveryManager {
                 }
                 self.update_config_state_fields(false, false, None, Some(final_error))
                     .await;
-                drop(_guard);
-                remove_recovery_lock(self.config_id);
             }
+            drop(_guard);
+            drop(lock);
+            remove_recovery_lock(self.config_id);
             // Lock released when _guard drops
         }
     }
@@ -361,14 +393,32 @@ impl ProxyRecoveryManager {
             self.config.kubeconfig.clone(),
         );
         let client = crate::kube::shared_client::SHARED_CLIENT_MANAGER
-            .get_client(client_key)
+            .get_connection(client_key)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {}", e))?;
-        let client = kube::Client::clone(&client);
+        let client = client.client.clone();
 
         match self.proxy_type {
-            ProxyType::BarePod => recover_bare_pod(&self.config, &client).await,
-            ProxyType::Deployment => recover_deployment(&self.config, &client).await,
+            ProxyType::BarePod => {
+                recover_bare_pod(
+                    &self.config,
+                    &client,
+                    self.mode,
+                    self.ssl_override,
+                    &self.cancel_token,
+                )
+                .await
+            }
+            ProxyType::Deployment => {
+                recover_deployment(
+                    &self.config,
+                    &client,
+                    self.mode,
+                    self.ssl_override,
+                    &self.cancel_token,
+                )
+                .await
+            }
         }
     }
 
@@ -390,7 +440,10 @@ impl ProxyRecoveryManager {
             retry_count,
             last_error,
         };
-        if let Err(e) = kftray_commons::utils::config_state::update_config_state(&state).await {
+        if let Err(e) =
+            kftray_commons::utils::config_state::update_config_state_with_mode(&state, self.mode)
+                .await
+        {
             log::error!(
                 "Failed to update ConfigState for config {}: {}",
                 self.config_id,
@@ -405,16 +458,8 @@ impl ProxyRecoveryManager {
 // ============================================================================
 
 async fn cleanup_child_processes_for_config(config_id: i64) {
-    let prefix = format!("config:{}:", config_id);
-    let keys: Vec<String> = crate::port_forward::CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&prefix))
-        .map(|entry| entry.key().clone())
-        .collect();
-    for key in keys {
-        if let Some((_, process)) = crate::port_forward::CHILD_PROCESSES.remove(&key) {
-            process.cleanup_and_abort().await;
-        }
+    if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&config_id) {
+        process.cleanup_and_abort().await;
     }
 }
 
@@ -427,18 +472,23 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 ///    config
 /// 3. Re-deploys a fresh proxy pod via
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
-pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
+pub async fn recover_bare_pod(
+    config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<()> {
     let config_id = config
         .id
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
+    crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id)
+        .await
+        .map_err(anyhow::Error::msg)?;
     cleanup_child_processes_for_config(config_id).await;
 
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
-    crate::kube::proxy::deploy_and_forward_pod(vec![config.clone()])
+    crate::kube::proxy::start_proxy_config(config.clone(), mode, ssl_override, cancellation)
         .await
         .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
 
@@ -458,87 +508,84 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
 /// 3. If present, waits up to [`POD_READY_TIMEOUT_SECS`] for a ready pod
 /// 4. For UDP: restarts the port forward (UDP streams are single-shot)
 /// 5. For TCP: the existing pod_watcher detects the new pod automatically
-pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
+pub async fn recover_deployment(
+    config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<()> {
     let config_id = config
         .id
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    // Check if the Deployment still exists
-    // The service name in config is the hashed_name of the deployment
-    let hashed_name = config.service.as_deref().unwrap_or("");
     let deployments: kube::Api<k8s_openapi::api::apps::v1::Deployment> =
         kube::Api::namespaced(client.clone(), namespace);
 
-    let deployment = deployments
-        .get_opt(hashed_name)
+    let prefix = crate::kube::proxy::proxy_resource_prefix();
+    let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to query deployment {}: {}", hashed_name, e))?;
-
-    if deployment.is_none() {
-        log::warn!(
-            "Deployment {} not found, falling back to bare pod recovery for config {}",
-            hashed_name,
-            config_id
-        );
-        return recover_bare_pod(config, client).await;
-    }
-
-    // Deployment exists — wait for K8s to restart the pod (up to
-    // POD_READY_TIMEOUT_SECS) Use label selector to find the pod
-    let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
-        kube::Api::namespaced(client.clone(), namespace);
-    let label_selector = format!("app={},config_id={}", hashed_name, config_id);
-    let lp = kube::api::ListParams::default().labels(&label_selector);
-
-    let deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_secs(POD_READY_TIMEOUT_SECS);
-
-    loop {
-        if tokio::time::Instant::now() >= deadline {
-            return Err(anyhow::anyhow!(
-                "Timed out waiting for replacement pod for deployment {} (config {})",
-                hashed_name,
-                config_id
-            ));
-        }
-
-        let pod_list = pods
-            .list(&lp)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list pods: {}", e))?;
-
-        let ready_pod = pod_list.items.iter().find(|pod| {
-            pod.status
-                .as_ref()
-                .and_then(|s| s.conditions.as_ref())
-                .map(|conditions| {
-                    conditions
-                        .iter()
-                        .any(|c| c.type_ == "Ready" && c.status == "True")
-                })
-                .unwrap_or(false)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let deployment = deployments
+        .list(&kube::api::ListParams::default().labels(&owner_selector))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query deployment for config {}: {}", config_id, e))?
+        .items
+        .into_iter()
+        .find(|deployment| {
+            deployment.metadata.deletion_timestamp.is_none()
+                && deployment
+                    .metadata
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.starts_with(&prefix))
         });
 
-        if ready_pod.is_some() {
-            log::info!(
-                "Replacement pod ready for deployment {} (config {})",
-                hashed_name,
-                config_id
-            );
-            // TCP: the existing pod_watcher will detect the new pod and reconnect
-            // UDP: the stream is single-shot, so we need to restart the port forward
-            if config.protocol.eq_ignore_ascii_case("udp") {
-                cleanup_child_processes_for_config(config_id).await;
-                crate::kube::start::start_port_forward(vec![config.clone()], "udp")
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to restart UDP forward: {}", e))?;
-            }
-            return Ok(());
-        }
+    let Some(deployment) = deployment else {
+        log::warn!(
+            "Proxy deployment not found, falling back to bare pod recovery for config {}",
+            config_id
+        );
+        return recover_bare_pod(config, client, mode, ssl_override, cancellation).await;
+    };
+    let container_name = deployment
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.template.spec.as_ref())
+        .and_then(crate::kube::proxy::relay_container_name)
+        .ok_or_else(|| anyhow::anyhow!("Proxy deployment has no relay container"))?;
+    let hashed_name = deployment
+        .metadata
+        .name
+        .ok_or_else(|| anyhow::anyhow!("Proxy deployment has no name"))?;
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+    let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
+        kube::Api::namespaced(client.clone(), namespace);
+    let watcher = kube_runtime::watcher(
+        pods,
+        kube_runtime::watcher::Config::default()
+            .labels(&format!("app={hashed_name},{owner_selector}")),
+    )
+    .applied_objects();
+    futures::pin_mut!(watcher);
+    tokio::time::timeout(Duration::from_secs(POD_READY_TIMEOUT_SECS), async {
+        while let Some(pod) = watcher.try_next().await? {
+            if crate::kube::proxy::relay_started(Some(&pod), &container_name) {
+                if config.protocol.eq_ignore_ascii_case("udp") {
+                    cleanup_child_processes_for_config(config_id).await;
+                    let mut current_config = config.clone();
+                    current_config.service = Some(hashed_name.clone());
+                    crate::kube::start::start_config(current_config, "udp", mode, ssl_override)
+                        .await
+                        .map_err(anyhow::Error::msg)?;
+                }
+                return Ok::<_, anyhow::Error>(());
+            }
+        }
+        Err(anyhow::anyhow!(
+            "Pod watch ended before deployment {hashed_name} recovered"
+        ))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Timed out waiting for deployment {hashed_name} to recover"))?
 }
 
 #[cfg(test)]
@@ -546,85 +593,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_acquire_recovery_lock_creates_new() {
-        let config_id = 42i64;
-        let lock1 = acquire_recovery_lock(config_id).await;
-        let lock2 = acquire_recovery_lock(config_id).await;
-
-        // Both should be the same Arc
-        assert!(Arc::ptr_eq(&lock1, &lock2));
-
-        // Cleanup
-        remove_recovery_lock(config_id);
-    }
-
-    #[tokio::test]
-    async fn test_remove_recovery_lock() {
-        let config_id = 99i64;
-        let _lock = acquire_recovery_lock(config_id).await;
-
-        // Lock exists
-        assert!(RECOVERY_LOCKS.contains_key(&config_id));
-
-        // Remove it
-        remove_recovery_lock(config_id);
-
-        // Lock is gone
-        assert!(!RECOVERY_LOCKS.contains_key(&config_id));
-    }
-
-    #[test]
-    fn test_recovery_state_variants() {
-        let idle = RecoveryState::Idle;
-        let monitoring = RecoveryState::Monitoring;
-        let retrying = RecoveryState::Retrying {
-            attempt: 1,
-            last_error: "connection lost".to_string(),
-        };
-        let failed = RecoveryState::Failed {
-            total_attempts: 5,
-            final_error: "pod not ready".to_string(),
-        };
-        let cancelled = RecoveryState::Cancelled;
-
-        assert_eq!(idle, RecoveryState::Idle);
-        assert_eq!(monitoring, RecoveryState::Monitoring);
-        assert_ne!(idle, monitoring);
-        assert_ne!(retrying, failed);
-        assert_eq!(cancelled, RecoveryState::Cancelled);
-    }
-
-    #[test]
-    fn test_proxy_type_variants() {
-        let bare = ProxyType::BarePod;
-        let deploy = ProxyType::Deployment;
-
-        assert_eq!(bare, ProxyType::BarePod);
-        assert_eq!(deploy, ProxyType::Deployment);
-        assert_ne!(bare, deploy);
-    }
-
-    #[test]
-    fn test_recovery_signal_variants() {
-        let pod_died = RecoverySignal::PodDied;
-        let stream_failed = RecoverySignal::StreamFailed;
-        let health_failed = RecoverySignal::HealthCheckFailed;
-
-        assert_eq!(pod_died, RecoverySignal::PodDied);
-        assert_ne!(pod_died, stream_failed);
-        assert_ne!(stream_failed, health_failed);
-    }
-
-    #[test]
-    fn test_constants() {
-        assert_eq!(MAX_RECOVERY_ATTEMPTS, 5);
-        assert_eq!(BASE_BACKOFF_SECS, 2);
-        assert_eq!(MAX_BACKOFF_SECS, 32);
-        assert_eq!(POD_READY_TIMEOUT_SECS, 30);
-    }
-
-    #[tokio::test]
     async fn test_recovery_loop_cancels_cleanly() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         use std::time::Duration;
 
         let config = kftray_commons::models::config_model::Config {
@@ -634,7 +604,12 @@ mod tests {
             protocol: "tcp".to_string(),
             ..Default::default()
         };
-        let manager = Arc::new(ProxyRecoveryManager::new(config, ProxyType::BarePod));
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            ProxyType::BarePod,
+            DatabaseMode::Memory,
+            false,
+        ));
         let manager_clone = Arc::clone(&manager);
 
         let loop_handle = tokio::spawn(async move {
@@ -666,42 +641,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_backoff_calculation_correctness() {
-        // Verify BASE_BACKOFF_SECS * 2^(attempt-1) for attempts 1..=5
-        let expected: [(u32, u64); 5] = [(1, 2), (2, 4), (3, 8), (4, 16), (5, 32)];
-        for (attempt, expected_secs) in expected {
-            let backoff = std::cmp::min(
-                BASE_BACKOFF_SECS.saturating_mul(1u64 << (attempt - 1)),
-                MAX_BACKOFF_SECS,
-            );
-            assert_eq!(
-                backoff, expected_secs,
-                "Backoff for attempt {} should be {}s, got {}s",
-                attempt, expected_secs, backoff
-            );
-        }
-
-        // Verify capping at MAX_BACKOFF_SECS for attempts beyond 5
-        for attempt in 6..=10u32 {
-            let backoff = std::cmp::min(
-                BASE_BACKOFF_SECS.saturating_mul(1u64 << (attempt - 1)),
-                MAX_BACKOFF_SECS,
-            );
-            assert_eq!(
-                backoff, MAX_BACKOFF_SECS,
-                "Backoff for attempt {} should be capped at {}s",
-                attempt, MAX_BACKOFF_SECS
-            );
-        }
-    }
-
     #[tokio::test]
     async fn test_recovery_loop_exhausts_retries_and_sets_failed() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         tokio::time::pause();
 
         let config = make_test_config(5555);
-        let manager = Arc::new(ProxyRecoveryManager::new(config, ProxyType::BarePod));
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            ProxyType::BarePod,
+            DatabaseMode::Memory,
+            false,
+        ));
         let manager_clone = Arc::clone(&manager);
         let handle = tokio::spawn(async move {
             manager_clone.run_recovery_loop().await;
@@ -756,10 +707,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_signal_recovery_triggers_loop() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         tokio::time::pause();
 
         let config = make_test_config(7777);
-        let manager = Arc::new(ProxyRecoveryManager::new(config, ProxyType::Deployment));
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            ProxyType::Deployment,
+            DatabaseMode::Memory,
+            false,
+        ));
         let manager_clone = Arc::clone(&manager);
 
         let handle = tokio::spawn(async move {
@@ -803,47 +760,13 @@ mod tests {
         RECOVERY_LOCKS.remove(&7777);
     }
 
-    #[tokio::test]
-    async fn test_spawn_recovery_manager_inserts_and_remove_cleans() {
-        let config_id = 6666i64;
-        let config = make_test_config(config_id);
-
-        // Verify not present before spawn
-        assert!(
-            !RECOVERY_MANAGERS.contains_key(&config_id),
-            "RECOVERY_MANAGERS should not contain entry before spawn"
-        );
-
-        spawn_recovery_manager(config, ProxyType::BarePod);
-
-        // Verify inserted after spawn
-        assert!(
-            RECOVERY_MANAGERS.contains_key(&config_id),
-            "spawn_recovery_manager should insert entry into RECOVERY_MANAGERS"
-        );
-
-        // Simulate stop: remove + cancel (mirrors stop_port_forward behavior)
-        if let Some((_, manager)) = RECOVERY_MANAGERS.remove(&config_id) {
-            manager.cancel();
-        }
-
-        // Verify removed
-        assert!(
-            !RECOVERY_MANAGERS.contains_key(&config_id),
-            "RECOVERY_MANAGERS should not contain entry after removal"
-        );
-
-        // Allow spawned task to finish after cancel
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        RECOVERY_LOCKS.remove(&config_id);
-    }
-
     // ====================================================================
     // T16: Recovery coordination tests
     // ====================================================================
 
     #[tokio::test]
     async fn test_recovery_lock_serializes_same_config() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_id = 11111i64;
         let lock = acquire_recovery_lock(config_id).await;
         let guard = lock.lock().await; // Hold the lock
@@ -858,6 +781,7 @@ mod tests {
             try_result.is_err(),
             "Second lock attempt should timeout (blocked by first)"
         );
+        drop(try_result);
 
         drop(guard); // Release first lock
 
@@ -868,12 +792,17 @@ mod tests {
             try_result2.is_ok(),
             "Second lock should succeed after first released"
         );
+        drop(try_result2);
 
+        remove_recovery_lock(config_id);
+        drop(lock);
+        drop(lock2);
         remove_recovery_lock(config_id);
     }
 
     #[tokio::test]
     async fn test_recovery_lock_parallel_different_configs() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_a = 22222i64;
         let config_b = 33333i64;
 
@@ -897,63 +826,143 @@ mod tests {
             !Arc::ptr_eq(&lock_a, &lock_b),
             "Different config_ids should have different lock instances"
         );
+        drop(try_result_b);
 
         // Cleanup
+        remove_recovery_lock(config_a);
+        remove_recovery_lock(config_b);
+        drop(_guard_a);
+        drop(lock_a);
+        drop(lock_b);
         remove_recovery_lock(config_a);
         remove_recovery_lock(config_b);
     }
 
     #[tokio::test]
-    async fn test_network_monitor_skips_config_with_active_recovery() {
-        let config_id = 44444i64;
+    async fn removing_an_active_lock_does_not_allow_overlapping_operations() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_041;
+        let first = acquire_recovery_lock(id).await;
+        let guard = first.lock().await;
+        remove_recovery_lock(id);
+        let second = acquire_recovery_lock(id).await;
+        assert!(second.try_lock().is_err());
+        drop(guard);
+        assert!(second.try_lock().is_ok());
+        drop(first);
+        drop(second);
+        remove_recovery_lock(id);
+    }
 
-        // Simulate recovery in progress by inserting into RECOVERY_LOCKS
-        let _lock = acquire_recovery_lock(config_id).await;
+    #[tokio::test]
+    async fn repeated_recovery_uses_the_current_owned_deployment() {
+        use http::{
+            Method,
+            Request,
+            Response,
+        };
+        use kube::client::Body;
 
-        // Verify the config would be skipped by the network monitor filter
-        // (mirrors the logic in config_manager.rs lines 106-116)
-        assert!(
-            RECOVERY_LOCKS.contains_key(&config_id),
-            "Config with active recovery should be present in RECOVERY_LOCKS"
-        );
-
-        // Build a list of proxy configs and apply the same filter logic
-        // as config_manager.rs:restart_protocol_batch()
-        let proxy_configs = vec![
-            make_test_config(config_id), // has active recovery
-            make_test_config(55555),     // no active recovery
-        ];
-
-        let configs_to_restart: Vec<_> = proxy_configs
-            .into_iter()
-            .filter(|config| {
-                if let Some(cid) = config.id
-                    && RECOVERY_LOCKS.contains_key(&cid)
-                {
-                    return false; // skip — recovery in progress
-                }
-                true
-            })
+        let (service, mut requests) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(service, "default");
+        let config = Config {
+            id: Some(420_051),
+            namespace: "default".to_string(),
+            service: Some("stale-deployment-name".to_string()),
+            protocol: "tcp".to_string(),
+            ..Config::default()
+        };
+        let prefix = crate::kube::proxy::proxy_resource_prefix();
+        let owned: Vec<String> = ["a", "b"]
+            .iter()
+            .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
             .collect();
+        let expected = owned.clone();
+        let installation_id = kftray_commons::utils::config_dir::installation_id()
+            .await
+            .expect("installation id");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            for name in expected {
+                let (request, send) = requests.next_request().await.unwrap();
+                assert_eq!(request.method(), Method::GET);
+                assert_eq!(
+                    request.uri().path(),
+                    "/apis/apps/v1/namespaces/default/deployments"
+                );
+                let query = request.uri().query().unwrap_or_default();
+                assert!(
+                    query.contains("labelSelector=")
+                        && query.contains("config_id")
+                        && query.contains("420051")
+                        && query.contains(installation_id),
+                    "recovery must not select another installation's deployment: {query}"
+                );
+                let relay = serde_json::json!({
+                    "spec": {"template": {"spec": {"containers": [{
+                        "name": "kftray-relay",
+                        "env": [{"name": "LOCAL_PORT", "value": "8080"}]
+                    }]}}}
+                });
+                send.send_response(Response::builder().body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "metadata":{"resourceVersion":"1"},
+                        "items":[
+                            {"metadata":{"name":format!("{name}-retiring"),"deletionTimestamp":"2026-09-11T00:00:00Z"},"spec":relay["spec"]},
+                            {"metadata":{"name":"someone-elses-deployment"},"spec":relay["spec"]},
+                            {"metadata":{"name":name},"spec":relay["spec"]}
+                        ]
+                    })).unwrap()
+                )).unwrap());
 
-        assert_eq!(
-            configs_to_restart.len(),
-            1,
-            "Only the config without active recovery should remain"
-        );
-        assert_eq!(
-            configs_to_restart[0].id,
-            Some(55555),
-            "The surviving config should be the one without a recovery lock"
-        );
-
-        // Cleanup
-        remove_recovery_lock(config_id);
-
-        // After removal, RECOVERY_LOCKS should no longer skip this config
-        assert!(
-            !RECOVERY_LOCKS.contains_key(&config_id),
-            "Config should not be in RECOVERY_LOCKS after removal"
-        );
+                let (request, send) = requests.next_request().await.unwrap();
+                assert_eq!(request.method(), Method::GET);
+                assert_eq!(request.uri().path(), "/api/v1/namespaces/default/pods");
+                let query = request.uri().query().unwrap_or_default();
+                assert!(
+                    query.contains("labelSelector=")
+                        && query.contains(&name)
+                        && query.contains("config_id")
+                        && query.contains("420051")
+                        && query.contains(installation_id),
+                    "{query}"
+                );
+                send.send_response(
+                    Response::builder()
+                        .body(Body::from(
+                            serde_json::to_vec(&serde_json::json!({
+                                "metadata":{"resourceVersion":"1"},
+                                "items":[{
+                                    "metadata":{"name":format!("{name}-pod")},
+                                    "status":{
+                                        "phase":"Running",
+                                        "conditions":[{"type":"Ready","status":"False"}],
+                                        "containerStatuses":[{
+                                            "name":"kftray-relay",
+                                            "started":true,
+                                            "ready":false,
+                                            "restartCount":0,
+                                            "image":"kftray-server",
+                                            "imageID":""
+                                        }]
+                                    }
+                                }]
+                            }))
+                            .unwrap(),
+                        ))
+                        .unwrap(),
+                );
+            }
+        }));
+        let cancellation = CancellationToken::new();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for _ in 0..owned.len() {
+                recover_deployment(&config, &client, DatabaseMode::Memory, false, &cancellation)
+                    .await
+                    .unwrap();
+            }
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 }

@@ -38,6 +38,338 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
     Ok(config_path)
 }
 
+/// Identifier for this kftray installation, persisted next to the database.
+///
+/// Config ids come from a local database, so two installations can hold the
+/// same id and their cluster resources are otherwise indistinguishable. This
+/// value labels the resources one installation owns.
+///
+/// It fails rather than falling back to a shared placeholder: an identifier two
+/// installations could both produce would let one delete the other's proxies.
+/// Only a success is cached: a transient filesystem error or lock timeout would
+/// otherwise disable proxy ownership for the rest of the process even after the
+/// cause cleared.
+pub fn get_installation_id() -> Result<&'static str, String> {
+    if let Some(id) = INSTALLATION_ID.get() {
+        return Ok(id);
+    }
+    let id = load_or_create_installation_id()?;
+
+    Ok(INSTALLATION_ID.get_or_init(|| id))
+}
+
+/// Async form of [`get_installation_id`].
+///
+/// Creation touches the filesystem and can wait on the lock, so it runs on a
+/// blocking thread rather than stalling a runtime worker and delaying unrelated
+/// forwards. A cached identifier is returned without leaving the runtime.
+pub async fn installation_id() -> Result<&'static str, String> {
+    if let Some(id) = INSTALLATION_ID.get() {
+        return Ok(id);
+    }
+    let id = tokio::task::spawn_blocking(load_or_create_installation_id)
+        .await
+        .map_err(|error| format!("Installation identifier task failed: {error}"))??;
+
+    Ok(INSTALLATION_ID.get_or_init(|| id))
+}
+
+static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn load_or_create_installation_id() -> Result<String, String> {
+    let config_dir = get_config_dir()?;
+    let path = config_dir.join("installation_id");
+
+    fs::create_dir_all(&config_dir).map_err(|error| {
+        format!(
+            "Failed to create the configuration directory {}: {error}",
+            config_dir.display()
+        )
+    })?;
+
+    // Reading happens under the same lock as creation: a publisher can be
+    // between its rename and its directory sync, and adopting an identifier
+    // that is not yet durable would make the next launch generate a different
+    // one and stop matching the resources this one labelled.
+    with_identity_lock(&config_dir, || {
+        let stored = match fs::read_to_string(&path) {
+            Ok(stored) => stored.trim().to_owned(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(format!(
+                    "Failed to read the installation identifier at {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if is_valid_installation_id(&stored) {
+            sync_directory(&config_dir).map_err(|error| {
+                format!(
+                    "Failed to synchronize {} before using its installation identifier: {error}",
+                    config_dir.display()
+                )
+            })?;
+
+            return Ok(stored);
+        }
+        let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+        publish_installation_id(&config_dir, &path, &generated)?;
+        Ok(generated)
+    })
+}
+
+/// Runs `write` while holding an exclusive advisory lock on a file next to the
+/// identifier.
+///
+/// The lock is held by the process through an open descriptor, so it is
+/// released by the kernel when that process exits. A holder that is merely slow
+/// keeps its lock, which an age heuristic could not distinguish from a crash.
+fn with_identity_lock<T>(
+    config_dir: &std::path::Path, write: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    with_file_lock(&config_dir.join("installation_id.lock"), write)
+}
+
+/// Runs `work` while holding an exclusive advisory lock on `lock_path`.
+///
+/// The lock is held through an open descriptor, so the kernel releases it when
+/// the process exits. Every process that takes the same path serializes against
+/// the others, which is what makes a read-modify-write of a shared file safe.
+pub fn with_file_lock<T>(
+    lock_path: &std::path::Path, work: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create the lock directory at {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let lock = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .map_err(|error| {
+            format!(
+                "Failed to open the lock at {}: {error}",
+                lock_path.display()
+            )
+        })?;
+
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match try_lock_exclusive(&lock) {
+            Ok(true) => break,
+            // Only contention is worth waiting out. A filesystem without
+            // advisory locking refuses every attempt, and waiting the full
+            // budget would report a timeout instead of the reason.
+            Ok(false) => {}
+            Err(error) => {
+                return Err(format!(
+                    "Failed to take the lock at {}: {error}",
+                    lock_path.display()
+                ));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Timed out waiting for the lock at {}",
+                lock_path.display()
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+
+    let result = work();
+    unlock(&lock);
+    result
+}
+
+/// Takes the lock, reporting contention as `Ok(false)` and anything else as an
+/// error: a filesystem that cannot lock at all must not look like a busy peer.
+#[cfg(unix)]
+fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: the descriptor is owned by `file` and outlives this call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EWOULDBLOCK) => Ok(false),
+        // Retried rather than reported: a signal interrupted the call, which
+        // says nothing about the lock.
+        Some(libc::EINTR) => Ok(false),
+        _ => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn unlock(file: &fs::File) {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: the descriptor is owned by `file` and outlives this call.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK,
+        LOCKFILE_FAIL_IMMEDIATELY,
+        LockFileEx,
+    };
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped = OVERLAPPED::default();
+
+    // SAFETY: the handle is owned by `file` and outlives this call.
+    let locked = unsafe {
+        LockFileEx(
+            HANDLE(file.as_raw_handle()),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            None,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        )
+    };
+    match locked {
+        Ok(()) => Ok(true),
+        // Compared as an HRESULT: `Error::code` wraps the Win32 status, so the
+        // raw ERROR_LOCK_VIOLATION value never matches and contention would be
+        // reported as a hard failure instead of reaching the retry loop.
+        Err(error)
+            if error.code()
+                == windows::core::HRESULT::from_win32(
+                    windows::Win32::Foundation::ERROR_LOCK_VIOLATION.0,
+                ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(std::io::Error::other(error)),
+    }
+}
+
+#[cfg(windows)]
+fn unlock(file: &fs::File) {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped = OVERLAPPED::default();
+
+    // SAFETY: the handle is owned by `file` and outlives this call.
+    unsafe {
+        let _ = UnlockFileEx(
+            HANDLE(file.as_raw_handle()),
+            None,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        );
+    }
+}
+
+/// Writes the identifier in full to a temporary file and moves it into place,
+/// so the published path is never visible empty.
+fn publish_installation_id(
+    config_dir: &std::path::Path, path: &std::path::Path, id: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let temporary = config_dir.join(format!("installation_id.{}.tmp", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        durable_rename(&temporary, path)?;
+        // The rename itself has to reach disk before the identifier is used to
+        // label cluster resources: losing the directory entry would make the
+        // next launch generate a different one and stop matching them.
+        sync_directory(config_dir)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written.map_err(|error| {
+        format!(
+            "Failed to persist the installation identifier at {}: {error}",
+            path.display()
+        )
+    })
+}
+
+/// Moves `from` onto `to` so the rename itself is durable.
+#[cfg(unix)]
+fn durable_rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    fs::rename(from, to)
+}
+
+/// Windows has no directory to sync, so durability is requested from the move
+/// itself: a plain rename can be acknowledged before it reaches the disk.
+#[cfg(windows)]
+fn durable_rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH,
+        MoveFileExW,
+    };
+    use windows::core::PCWSTR;
+
+    let wide = |path: &std::path::Path| -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    };
+    let from = wide(from);
+    let to = wide(to);
+
+    // SAFETY: both strings are NUL-terminated and live across the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(std::io::Error::other)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    // Windows has no directory handle to sync; the rename is durable once the
+    // file's own data has been flushed.
+    let _ = path;
+    Ok(())
+}
+
+fn is_valid_installation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 63
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+}
+
 pub fn get_db_file_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("configs.db");
@@ -128,6 +460,70 @@ mod tests {
 
     lazy_static! {
         static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    #[test]
+    fn overlapping_initializers_adopt_the_same_identifier() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let ids: Vec<String> = (0..4)
+            .map(|_| {
+                let barrier = std::sync::Arc::clone(&barrier);
+
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    load_or_create_installation_id().expect("identifier")
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        assert!(is_valid_installation_id(&ids[0]), "{}", ids[0]);
+        assert!(
+            ids.iter().all(|id| *id == ids[0]),
+            "concurrent initializers must converge on one identifier: {ids:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installation_id")).unwrap(),
+            ids[0]
+        );
+    }
+
+    #[test]
+    fn an_interrupted_write_is_repaired_on_the_next_launch() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        // What a crash between create and write leaves behind.
+        fs::write(dir.path().join("installation_id"), "").unwrap();
+
+        let id = load_or_create_installation_id().expect("an empty file must be replaced");
+
+        assert!(is_valid_installation_id(&id), "{id}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installation_id")).unwrap(),
+            id
+        );
+    }
+
+    #[test]
+    fn a_lock_file_left_by_a_dead_process_does_not_block_initialization() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        // The file a crashed process left behind. Its advisory lock died with
+        // it, so the file alone must not block anyone.
+        let lock_path = dir.path().join("installation_id.lock");
+        fs::write(&lock_path, "").unwrap();
+
+        let id = load_or_create_installation_id().expect("a released lock must not block");
+
+        assert!(is_valid_installation_id(&id), "{id}");
     }
 
     struct EnvVarGuard {

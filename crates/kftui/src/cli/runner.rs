@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use futures::stream::{
-    FuturesUnordered,
+    self,
     StreamExt,
 };
 use kftray_commons::models::config_model::Config;
@@ -84,24 +84,22 @@ impl PortForwardRunner {
             println!("Starting {} port forward(s)", config_ids.len());
         }
 
-        let mut tasks = FuturesUnordered::new();
+        let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
+        let ssl_override = cli.ssl && !ssl_settings_enabled;
         let mut errors = Vec::new();
-
-        for config_id in config_ids {
-            let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
-            let ssl_override = cli.ssl && !ssl_settings_enabled;
-            tasks.push(async move {
+        let mut tasks = stream::iter(config_ids)
+            .map(|config_id| async move {
                 match core::port_forward::start_port_forward(config_id, mode, ssl_override).await {
                     Ok(()) => Ok(config_id),
-                    Err(e) => {
+                    Err(error) => {
                         eprintln!(
-                            "Error: Failed to start port forward for config {config_id}: {e}"
+                            "Error: Failed to start port forward for config {config_id}: {error}"
                         );
-                        Err((config_id, e))
+                        Err((config_id, error))
                     }
                 }
-            });
-        }
+            })
+            .buffer_unordered(16);
 
         let mut successful_config_ids = Vec::new();
         while let Some(result) = tasks.next().await {
@@ -203,19 +201,17 @@ impl PortForwardRunner {
     }
 
     async fn stop_all_port_forwards(configs: &[Config], mode: DatabaseMode) {
-        let mut tasks = FuturesUnordered::new();
-
-        for config in configs {
-            if let Some(config_id) = config.id {
-                let config_clone = config.clone();
-                tasks.push(async move {
-                    match Self::stop_single_port_forward(&config_clone, config_id, mode).await {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(format!("Config {config_id}: {e}")),
-                    }
-                });
-            }
-        }
+        let mut tasks = stream::iter(
+            configs
+                .iter()
+                .filter_map(|config| config.id.map(|id| (config, id))),
+        )
+        .map(|(config, config_id)| async move {
+            Self::stop_single_port_forward(config, config_id, mode)
+                .await
+                .map_err(|error| format!("Config {config_id}: {error}"))
+        })
+        .buffer_unordered(16);
 
         let mut stop_errors = Vec::new();
         let mut stopped_count = 0;

@@ -44,21 +44,68 @@ impl HostfileManager {
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
+        self.remove_host_entries(std::slice::from_ref(&id))
+    }
+
+    /// Removes several ids, reconciling them with one write where possible.
+    ///
+    /// The direct manager rewrites its own lines in one pass, so a single
+    /// successful write covers every id it owns. The helper removes one at a
+    /// time, so its failures stay per-id.
+    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+        let mut helper_error = None;
+        // Ids the direct manager has to account for. Anything the helper
+        // removed is already gone, and requiring coverage for it would turn a
+        // successful cleanup into a reported failure.
+        let mut unresolved: Vec<&str> = ids.to_vec();
         if let Some(helper) = &self.helper_client
             && helper.is_available()
         {
-            match helper.remove_host_entry(id) {
-                Ok(_) => {
-                    debug!("Successfully removed host entry via helper for ID: {id}");
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Helper hostfile remove failed: {e}, falling back to direct");
+            let mut errors = Vec::new();
+            let mut removed: Vec<&str> = Vec::new();
+            for id in ids {
+                match helper.remove_host_entry(id) {
+                    Ok(_) => removed.push(id),
+                    Err(e) => errors.push(format!("{id}: {e}")),
                 }
             }
+            // The helper only writes its own section, so an alias that fell
+            // back to the direct manager earlier is still in the direct one.
+            // Removed synchronously here, with its failure reported: a queued
+            // write would be lost on the next restart, whose empty map has
+            // nothing left to reconcile.
+            if !removed.is_empty() {
+                self.direct_manager.remove_host_entries(&removed)?;
+            }
+            if errors.is_empty() {
+                return Ok(());
+            }
+            let joined = errors.join("; ");
+            warn!("Helper hostfile remove failed ({joined}), falling back to direct");
+            helper_error = Some(joined);
+            unresolved.retain(|id| !removed.contains(id));
         }
 
-        self.direct_manager.remove_host_entry(id)
+        let covered = self.direct_manager.remove_host_entries(&unresolved)?;
+        if covered {
+            return Ok(());
+        }
+        // Nothing of ours matched. That is normal for a configuration with no
+        // alias, so it only matters when an alias could be there under someone
+        // else's name: the helper failed, or it wrote entries earlier and is
+        // not available to remove them now.
+        if let Some(error) = helper_error {
+            return Err(std::io::Error::other(error));
+        }
+        if self.helper_client.is_some() && DirectHostfileManager::has_unowned_entries()? {
+            return Err(std::io::Error::other(format!(
+                "Host entries for {} may still be on disk: they carry no owner and the helper is \
+                 unavailable",
+                unresolved.join(", ")
+            )));
+        }
+
+        Ok(())
     }
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
@@ -115,11 +162,14 @@ pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std
 }
 
 pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
-    let _ = remove_host_entry(&format!("{}-https", config_id));
+    // Removed together so one reconciliation covers both: removing them one at
+    // a time would report the first failure even when the second write, which
+    // rewrites the whole file, already took both aliases out. Reported rather
+    // than swallowed, so a caller can keep the configuration tracked for retry.
+    let https = format!("{config_id}-https");
+    let local = format!("{config_id}-https-local");
 
-    let _ = remove_host_entry(&format!("{}-https-local", config_id));
-
-    Ok(())
+    HOSTFILE_MANAGER.remove_host_entries(&[https.as_str(), local.as_str()])
 }
 
 pub fn update_hosts_with_ssl_from_config(
@@ -159,10 +209,6 @@ pub fn remove_ssl_host_entry_from_config(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{
-        IpAddr,
-        Ipv4Addr,
-    };
     use std::sync::Once;
 
     use super::*;
@@ -175,27 +221,11 @@ mod tests {
         });
     }
 
-    fn get_test_entry() -> HostEntry {
-        HostEntry {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-            hostname: "test.local".to_string(),
-        }
-    }
-
-    #[test]
-    fn test_add_and_remove_host_entry() {
-        init();
-        let _ = remove_all_host_entries();
-
-        let id = "test-id-1".to_string();
-        let entry = get_test_entry();
-
-        let result = add_host_entry(id.clone(), entry.clone());
-        assert!(result.is_ok());
-
-        let result = remove_host_entry(&id);
-        assert!(result.is_ok());
-    }
+    // `test_add_and_remove_host_entry` used to live here. It asserted that two
+    // calls returned Ok, which only held where the process could write the
+    // system hosts file, and it rewrote that file as a side effect. The
+    // decisions it was meant to cover are asserted without touching it in
+    // `hostfile_direct::tests`.
 
     #[test]
     fn test_manager_creation() {

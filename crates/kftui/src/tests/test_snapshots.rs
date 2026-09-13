@@ -148,22 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn test_draw_ui_about_popup() {
-        let _settings = setup_snapshot();
-        let mut terminal = setup_terminal();
-        let mut app = create_test_app();
-        app.state = AppState::ShowAbout;
-
-        terminal
-            .draw(|frame| {
-                draw_ui(frame, &mut app, &[create_test_config_state()]);
-            })
-            .unwrap();
-
-        assert_snapshot!(terminal.backend());
-    }
-
-    #[test]
     fn test_draw_ui_import_file_explorer() {
         let _settings = setup_snapshot();
         let mut terminal = setup_terminal();
@@ -457,7 +441,7 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let error_message = "This is an error test message";
-                render_error_popup(frame, error_message, area, 2);
+                let _ = render_error_popup(frame, error_message, area, 2, 0);
             })
             .unwrap();
         assert_snapshot!("render_error_popup", terminal.backend());

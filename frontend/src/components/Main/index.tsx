@@ -17,7 +17,7 @@ import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
-import type { Config } from '@/types'
+import type { Config, PortForwardAction, PortForwardResponse } from '@/types'
 
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
@@ -31,6 +31,32 @@ const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
 const initialRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
+
+const CONCURRENCY_LIMIT = 8
+const BATCH_DEADLINE_MS = 180_000
+
+async function runWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let nextIndex = 0
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await worker(items[currentIndex])
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, runWorker),
+  )
+
+  return results
+}
 
 const KFTray = () => {
   const [pollingInterval, setPollingInterval] = useState(0)
@@ -70,16 +96,40 @@ const KFTray = () => {
   const [isServerResourcesModalOpen, setIsServerResourcesModalOpen] =
     useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+
+  const pendingConfigActionsRef = useRef<Map<number, PortForwardAction>>(
+    new Map(),
+  )
+  const [pendingConfigActions, setPendingConfigActions] = useState<
+    Map<number, PortForwardAction>
+  >(new Map())
+  const configRefreshVersion = useRef(0)
+
+  const markPending = (id: number, action: PortForwardAction) => {
+    pendingConfigActionsRef.current.set(id, action)
+    setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+  }
+
+  const clearPending = (id: number) => {
+    pendingConfigActionsRef.current.delete(id)
+    setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+  }
+
   const fetchConfigsWithState = useCallback(async () => {
     try {
-      const configsResponse = await invoke<Config[]>('get_configs_cmd')
-      const configStates = await invoke<Config[]>('get_config_states')
+      const [configsResponse, configStates] = await Promise.all([
+        invoke<Config[]>('get_configs_cmd'),
+        invoke<Array<{ config_id: number; is_running: boolean }>>(
+          'get_config_states',
+        ),
+      ])
+      const statesById = new Map(
+        configStates.map(state => [state.config_id, state.is_running]),
+      )
 
       return configsResponse.map(config => ({
         ...config,
-        is_running:
-          configStates.find(state => state.id === config.id)?.is_running ||
-          false,
+        is_running: statesById.get(config.id) ?? false,
       }))
     } catch (error) {
       console.error('Failed to fetch configs:', error)
@@ -88,14 +138,38 @@ const KFTray = () => {
   }, [])
 
   const updateConfigsWithState = useCallback(async () => {
+    const version = ++configRefreshVersion.current
     try {
       const updatedConfigs = await fetchConfigsWithState()
 
-      setConfigs(updatedConfigs)
+      if (version === configRefreshVersion.current) {
+        setConfigs(updatedConfigs)
+      }
     } catch (error) {
       console.error('Error updating configs:', error)
     }
   }, [fetchConfigsWithState])
+
+  // Applies an authoritative local change and invalidates any refresh that is
+  // still in flight, so a stale fetch cannot resurrect what this just removed
+  // or replaced.
+  const dropConfigs = useCallback((ids: number[]) => {
+    const removed = new Set(ids)
+
+    configRefreshVersion.current += 1
+    setConfigs(current => current.filter(config => !removed.has(config.id)))
+  }, [])
+
+  const mergeConfig = useCallback((saved: Config) => {
+    configRefreshVersion.current += 1
+    setConfigs(current =>
+      current.map(config =>
+        config.id === saved.id
+          ? { ...saved, is_running: config.is_running }
+          : config,
+      ),
+    )
+  }, [])
 
   const debouncedUpdateTimer = useRef<NodeJS.Timeout | null>(null)
   const debouncedUpdateConfigs = useCallback(() => {
@@ -350,28 +424,49 @@ const KFTray = () => {
   }
 
   const handleSaveConfig = async (_configToSave: Config) => {
+    const wasRunning = Boolean(
+      isEdit && configs.find(conf => conf.id === newConfig.id)?.is_running,
+    )
+
+    if (isEdit && pendingConfigActionsRef.current.has(newConfig.id)) {
+      toaster.error({
+        title: 'Error',
+        description: 'This configuration is busy. Try again once it settles.',
+        duration: 1000,
+      })
+
+      return
+    }
+
+    // Reserved for the whole transaction, not only when a restart is needed:
+    // `update_config_cmd` does not share the backend lifecycle lock, so a start
+    // accepted while it is in flight would use the pre-edit snapshot.
+    if (isEdit) {
+      markPending(newConfig.id, wasRunning ? 'stopping' : 'starting')
+    }
+
     try {
       const updatedConfigToSave: Config = {
         ...newConfig,
         id: isEdit ? newConfig.id : 0,
       }
-      let wasRunning = false
-      const originalConfigsRunningState = new Map(
-        configs.map(conf => [conf.id, conf.is_running]),
-      )
 
-      if (isEdit && originalConfigsRunningState.get(newConfig.id)) {
-        wasRunning = true
+      if (wasRunning) {
         await stopPortForwardingForConfig(newConfig)
       }
 
       if (isEdit) {
         await invoke('update_config_cmd', { config: updatedConfigToSave })
+        // Merged before the reservation is released: the debounced refresh is
+        // 100 ms away and may fail, and a start in that window would otherwise
+        // send the pre-edit snapshot to the backend.
+        mergeConfig(updatedConfigToSave)
       } else {
         await invoke('insert_config_cmd', { config: updatedConfigToSave })
       }
 
       if (wasRunning) {
+        markPending(newConfig.id, 'starting')
         await startPortForwardingForConfig(newConfig)
       }
 
@@ -388,6 +483,13 @@ const KFTray = () => {
         description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
         duration: 1000,
       })
+    } finally {
+      if (isEdit) {
+        clearPending(newConfig.id)
+      }
+      // The optimistic update only flips is_running, and the restart's version
+      // bump discards any refresh that raced it.
+      debouncedUpdateConfigs()
     }
   }
 
@@ -417,36 +519,88 @@ const KFTray = () => {
     } else {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
+    configRefreshVersion.current += 1
+    setConfigs(current =>
+      current.map(item =>
+        item.id === config.id ? { ...item, is_running: false } : item,
+      ),
+    )
   }
 
   const startPortForwardingForConfig = async (config: Config) => {
-    if (config.workload_type === 'expose') {
-      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-    } else if (
-      (config.workload_type === 'service' || config.workload_type === 'pod') &&
-      config.protocol === 'tcp'
+    let responses: PortForwardResponse[]
+
+    if (
+      config.workload_type === 'expose' ||
+      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
+        config.protocol === 'tcp')
     ) {
-      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+      responses = await invoke('start_port_forward_tcp_cmd', {
+        configs: [config],
+      })
     } else if (
       config.workload_type.startsWith('proxy') ||
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'udp')
     ) {
-      await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
+      responses = await invoke('deploy_and_forward_pod_cmd', {
+        configs: [config],
+      })
     } else {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    }
+
+    const failure = responses.find(response => response.status !== 0)
+
+    if (failure) {
+      throw new Error(failure.stderr || 'Failed to start port forwarding.')
+    }
+
+    configRefreshVersion.current += 1
+    setConfigs(current =>
+      current.map(item =>
+        item.id === config.id ? { ...item, is_running: true } : item,
+      ),
+    )
+  }
+
+  const toggleConfigForward = async (
+    config: Config,
+    action: PortForwardAction,
+  ) => {
+    if (pendingConfigActionsRef.current.has(config.id)) {
+      return
+    }
+    markPending(config.id, action)
+    try {
+      if (action === 'starting') {
+        await startPortForwardingForConfig(config)
+      } else {
+        await stopPortForwardingForConfig(config)
+      }
+    } catch (error) {
+      await updateConfigsWithState()
+      toaster.error({
+        title:
+          action === 'starting'
+            ? 'Error starting port forwarding'
+            : 'Error stopping port forwarding',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 1000,
+      })
+    } finally {
+      clearPending(config.id)
+      debouncedUpdateConfigs()
     }
   }
 
   const abortStartOperation = useCallback(() => {
     if (startAbortControllerRef.current) {
       startAbortControllerRef.current.abort()
-      startAbortControllerRef.current = null
     }
-    setIsInitiating(false)
     toaster.info({
       title: 'Aborted',
-      description: 'Start operation was cancelled',
+      description: 'Queued starts cancelled. Active starts will finish.',
       duration: 2000,
     })
     updateConfigsWithState()
@@ -455,183 +609,150 @@ const KFTray = () => {
   const abortStopOperation = useCallback(() => {
     if (stopAbortControllerRef.current) {
       stopAbortControllerRef.current.abort()
-      stopAbortControllerRef.current = null
     }
-    setIsStopping(false)
     toaster.info({
       title: 'Aborted',
-      description: 'Stop operation was cancelled',
+      description: 'Queued stops cancelled. Active stops will finish.',
       duration: 2000,
     })
     updateConfigsWithState()
   }, [updateConfigsWithState])
 
-  const START_TIMEOUT_MS = 60000
-  const PER_CONFIG_TIMEOUT_MS = 30000
-
-  const withConfigTimeout = <T,>(
-    promise: Promise<T>,
-    configId: number,
-    ms: number,
-  ): Promise<T> => {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Config ${configId} timed out after ${ms / 1000}s`))
-      }, ms)
-
-      promise
-        .then(result => {
-          clearTimeout(timeoutId)
-          resolve(result)
-        })
-        .catch(err => {
-          clearTimeout(timeoutId)
-          reject(err)
-        })
-    })
-  }
-
-  const initiatePortForwarding = async (configsToStart: Config[]) => {
-    if (startAbortControllerRef.current) {
-      startAbortControllerRef.current.abort()
+  const runPortForwardBatch = async (
+    candidates: Config[],
+    action: PortForwardAction,
+    successMessage?: string,
+  ) => {
+    const controllerRef =
+      action === 'starting' ? startAbortControllerRef : stopAbortControllerRef
+    if (controllerRef.current) {
+      return
     }
-    const abortController = new AbortController()
+    const targets = candidates.filter(
+      config => !pendingConfigActionsRef.current.has(config.id),
+    )
+    if (targets.length === 0) {
+      return
+    }
+    const controller = new AbortController()
+    controllerRef.current = controller
+    const setBusy = action === 'starting' ? setIsInitiating : setIsStopping
+    const queued = new Set(targets.map(config => config.id))
+    const unresolved = new Set(targets.map(config => config.id))
+    for (const config of targets) {
+      pendingConfigActionsRef.current.set(config.id, action)
+    }
+    setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+    setBusy(true)
 
-    startAbortControllerRef.current = abortController
-    const abortSignal = abortController.signal
+    const cancelQueued = () => {
+      for (const id of queued) {
+        pendingConfigActionsRef.current.delete(id)
+        // Released here, so the deadline message counts only the invocations
+        // that are genuinely still running.
+        unresolved.delete(id)
+      }
+      queued.clear()
+      setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+    }
+    controller.signal.addEventListener('abort', cancelQueued, { once: true })
+    // The batch is bounded so one hung invoke cannot hold the controller guard
+    // forever and reject every later batch of the same action. Configurations
+    // that never resolved keep their reservation: they are still in flight.
+    let timedOut = false
 
-    setIsInitiating(true)
+    // Collected as workers settle, so a failure that happened before the
+    // deadline is still reported when the deadline wins the race.
+    const failures: { id: number; error: unknown }[] = []
+    const reportFailures = (reporting = failures) => {
+      if (!reporting.length) {
+        return
+      }
+      const first = reporting[0]
+      const message =
+        first.error instanceof Error ? first.error.message : String(first.error)
 
-    let globalTimeoutId: NodeJS.Timeout | null = null
+      toaster.error({
+        title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+        description:
+          reporting.length === 1
+            ? `Config ${first.id}: ${message}`
+            : `${reporting.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
+        duration: 3000,
+      })
+    }
 
     try {
-      const portForwardingPromises = configsToStart.map(async config => {
-        if (abortSignal.aborted) {
-          return { id: config.id, error: new Error('Aborted'), aborted: true }
+      const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
+        if (controller.signal.aborted) {
+          return
         }
+        queued.delete(config.id)
         try {
-          await withConfigTimeout(
-            handlePortForwarding(config),
-            config.id,
-            PER_CONFIG_TIMEOUT_MS,
-          )
-
-          return { id: config.id, error: null, aborted: false }
-        } catch (error) {
-          return { id: config.id, error, aborted: abortSignal.aborted }
-        }
-      })
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        globalTimeoutId = setTimeout(() => {
-          reject(new Error('Start operation timed out'))
-        }, START_TIMEOUT_MS)
-
-        abortSignal.addEventListener(
-          'abort',
-          () => {
-            if (globalTimeoutId) {
-              clearTimeout(globalTimeoutId)
-              globalTimeoutId = null
-            }
-            reject(new Error('Aborted'))
-          },
-          { once: true },
-        )
-      })
-
-      const results = await Promise.race([
-        Promise.allSettled(portForwardingPromises),
-        timeoutPromise,
-      ])
-
-      if (globalTimeoutId) {
-        clearTimeout(globalTimeoutId)
-        globalTimeoutId = null
-      }
-
-      if (!abortSignal.aborted) {
-        const errors: Array<{ id: number; error: unknown }> = []
-
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            const value = result.value
-
-            if (value && value.error != null && !value.aborted) {
-              errors.push({ id: value.id, error: value.error })
-            }
+          if (action === 'starting') {
+            await startPortForwardingForConfig(config)
+          } else {
+            await stopPortForwardingForConfig(config)
           }
+        } catch (error) {
+          const failure = { id: config.id, error }
+
+          failures.push(failure)
+          // After the deadline nobody is aggregating any more, so each failure
+          // reports itself instead of waiting for unrelated invocations.
+          if (timedOut) {
+            reportFailures([failure])
+          }
+        } finally {
+          unresolved.delete(config.id)
+          clearPending(config.id)
+          debouncedUpdateConfigs()
         }
+      })
+      // The handle is kept so the loser of the race can be cancelled: an
+      // uncleared timeout keeps the timer, and everything it closes over,
+      // alive for the full deadline after a batch that finished immediately.
+      let deadline: NodeJS.Timeout | undefined
+      const settled = await Promise.race([
+        batch.then(() => true),
+        new Promise<false>(resolve => {
+          deadline = setTimeout(() => resolve(false), BATCH_DEADLINE_MS)
+        }),
+      ]).finally(() => clearTimeout(deadline))
 
-        if (errors.length > 0) {
-          const errorCount = errors.length
-          const firstError = errors[0]
-          const errorMessage =
-            firstError.error instanceof Error
-              ? firstError.error.message
-              : String(firstError.error)
-          const isTimeout = errorMessage.includes('timed out')
+      if (!settled) {
+        timedOut = true
+        // Aborted while `cancelQueued` is still registered: configurations that
+        // never started release their reservation, and nothing new dispatches.
+        // Genuinely in-flight invocations keep theirs until they finish.
+        controller.abort()
+        reportFailures()
+        toaster.error({
+          title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+          description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,
+          duration: 3000,
+        })
 
-          toaster.error({
-            title: isTimeout ? 'Connection Timeout' : 'Start Failed',
-            description:
-              errorCount === 1
-                ? `Config ${firstError.id}: ${errorMessage}`
-                : `${errorCount} configs failed to start`,
-            duration: 3000,
-          })
-        }
+        return
       }
-    } catch (error) {
-      if (globalTimeoutId) {
-        clearTimeout(globalTimeoutId)
-        globalTimeoutId = null
-      }
-
-      if (error instanceof Error && error.message !== 'Aborted') {
-        console.error('Error during port forwarding:', error)
-        toaster.warning({
-          title: error.message.includes('timed out') ? 'Timeout' : 'Error',
-          description: error.message.includes('timed out')
-            ? 'Some port forwards may still be starting in the background.'
-            : `Start operation failed: ${error.message}`,
-          duration: 2000,
+      if (failures.length) {
+        reportFailures()
+      } else if (successMessage && !controller.signal.aborted) {
+        toaster.success({
+          title: 'Success',
+          description: successMessage,
+          duration: 1000,
         })
       }
     } finally {
-      if (startAbortControllerRef.current === abortController) {
-        startAbortControllerRef.current = null
+      controller.signal.removeEventListener('abort', cancelQueued)
+      if (controllerRef.current === controller) {
+        controllerRef.current = null
+        setBusy(false)
       }
-      setIsInitiating(false)
-      await updateConfigsWithState()
-    }
-  }
-  const handlePortForwarding = async (config: Config) => {
-    switch (config.workload_type) {
-      case 'expose':
-        await invoke<Response>('start_port_forward_tcp_cmd', {
-          configs: [config],
-        })
-        break
-      case 'service':
-      case 'pod':
-        if (config.protocol === 'tcp') {
-          await invoke<Response>('start_port_forward_tcp_cmd', {
-            configs: [config],
-          })
-        } else if (config.protocol === 'udp') {
-          await invoke<Response>('deploy_and_forward_pod_cmd', {
-            configs: [config],
-          })
-        }
-        break
-      case 'proxy':
-        await invoke<Response>('deploy_and_forward_pod_cmd', {
-          configs: [config],
-        })
-        break
-      default:
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      if (!timedOut) {
+        await updateConfigsWithState()
+      }
     }
   }
 
@@ -652,22 +773,72 @@ const KFTray = () => {
       return
     }
 
-    try {
-      await invoke('delete_config_cmd', { id: configToDelete })
-      toaster.success({
-        title: 'Success',
-        description: 'Configuration deleted successfully.',
-        duration: 1000,
-      })
-    } catch (error) {
-      console.error('Failed to delete configuration:', error)
+    // The same reservation, revalidation and refresh as a bulk delete.
+    await deleteConfigs([configToDelete])
+    setIsAlertOpen(false)
+  }
+
+  const deleteConfigs = async (ids: number[]): Promise<boolean> => {
+    const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
+
+    if (busy.length) {
       toaster.error({
         title: 'Error',
-        description: 'Failed to delete configuration: "unknown error"',
+        description: `${busy.length} selected configuration(s) are busy. Try again once they settle.`,
+        duration: 2000,
+      })
+
+      return false
+    }
+
+    for (const id of ids) {
+      markPending(id, 'stopping')
+    }
+    try {
+      // Revalidated while reserved: a selected start can settle between the
+      // dialog opening and its confirmation, and deleting only removes the
+      // database row, leaving the tunnel running with no way to stop it.
+      const current = await fetchConfigsWithState()
+      const running = current.filter(
+        config => ids.includes(config.id) && config.is_running,
+      )
+
+      if (running.length) {
+        toaster.error({
+          title: 'Error',
+          description: `${running.length} selected configuration(s) are running. Stop them before deleting.`,
+          duration: 2000,
+        })
+        // Through the version-guarded refresh: another operation can have
+        // settled while this snapshot was being fetched, and writing it
+        // directly would resurrect what that operation just changed.
+        await updateConfigsWithState()
+
+        return false
+      }
+      await invoke('delete_configs_cmd', { ids })
+      dropConfigs(ids)
+      toaster.success({
+        title: 'Success',
+        description: 'Configurations deleted successfully.',
         duration: 1000,
       })
+
+      return true
+    } catch (error) {
+      console.error('Failed to delete configurations:', error)
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to delete configurations.',
+        duration: 1000,
+      })
+
+      return false
+    } finally {
+      for (const id of ids) {
+        clearPending(id)
+      }
     }
-    setIsAlertOpen(false)
   }
 
   const startSelectedPortForwarding = async () => {
@@ -679,88 +850,7 @@ const KFTray = () => {
       )
 
     if (configsToStart.length > 0) {
-      await initiatePortForwarding(configsToStart)
-    }
-  }
-
-  const STOP_TIMEOUT_MS = 30000
-
-  const executeStopOperation = async (
-    configsToStop: Config[],
-    successMessage: string,
-  ) => {
-    if (stopAbortControllerRef.current) {
-      stopAbortControllerRef.current.abort()
-    }
-    const abortController = new AbortController()
-
-    stopAbortControllerRef.current = abortController
-    const abortSignal = abortController.signal
-
-    setIsStopping(true)
-    let globalTimeoutId: NodeJS.Timeout | null = null
-
-    try {
-      const stopPromises = configsToStop.map(config =>
-        stopPortForwardingForConfig(config),
-      )
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        globalTimeoutId = setTimeout(() => {
-          reject(new Error('Stop operation timed out'))
-        }, STOP_TIMEOUT_MS)
-
-        abortSignal.addEventListener(
-          'abort',
-          () => {
-            if (globalTimeoutId) {
-              clearTimeout(globalTimeoutId)
-              globalTimeoutId = null
-            }
-            reject(new Error('Aborted'))
-          },
-          { once: true },
-        )
-      })
-
-      await Promise.race([Promise.allSettled(stopPromises), timeoutPromise])
-
-      if (globalTimeoutId) {
-        clearTimeout(globalTimeoutId)
-        globalTimeoutId = null
-      }
-
-      if (!abortSignal.aborted) {
-        toaster.success({
-          title: 'Success',
-          description: successMessage,
-          duration: 1000,
-        })
-      }
-    } catch (error) {
-      if (globalTimeoutId) {
-        clearTimeout(globalTimeoutId)
-        globalTimeoutId = null
-      }
-
-      if (error instanceof Error && error.message !== 'Aborted') {
-        console.error('Error stopping port forwards:', error)
-        const isTimeout = error.message.includes('timed out')
-
-        toaster.warning({
-          title: isTimeout ? 'Partial Stop' : 'Error',
-          description: isTimeout
-            ? 'Some port forwards may not have stopped cleanly.'
-            : 'Failed to stop port forwards.',
-          duration: 2000,
-        })
-      }
-    } finally {
-      if (stopAbortControllerRef.current === abortController) {
-        stopAbortControllerRef.current = null
-      }
-      setIsStopping(false)
-      await updateConfigsWithState()
+      await runPortForwardBatch(configsToStart, 'starting')
     }
   }
 
@@ -770,8 +860,9 @@ const KFTray = () => {
       .filter((config): config is Config => config?.is_running === true)
 
     if (configsToStop.length > 0) {
-      await executeStopOperation(
+      await runPortForwardBatch(
         configsToStop,
+        'stopping',
         'Selected port forwards stopped successfully.',
       )
     }
@@ -781,8 +872,9 @@ const KFTray = () => {
     const configsToStop = configs.filter(config => config.is_running)
 
     if (configsToStop.length > 0) {
-      await executeStopOperation(
+      await runPortForwardBatch(
         configsToStop,
+        'stopping',
         'Port forwarding stopped successfully for all configurations.',
       )
     }
@@ -860,11 +952,14 @@ const KFTray = () => {
           >
             <PortForwardTable
               configs={configs}
-              initiatePortForwarding={initiatePortForwarding}
+              initiatePortForwarding={configsToStart =>
+                runPortForwardBatch(configsToStart, 'starting')
+              }
               startSelectedPortForwarding={startSelectedPortForwarding}
               isInitiating={isInitiating}
-              setIsInitiating={setIsInitiating}
               isStopping={isStopping}
+              pendingConfigActions={pendingConfigActions}
+              toggleConfigForward={toggleConfigForward}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}
               stopSelectedPortForwarding={stopSelectedPortForwarding}
@@ -909,6 +1004,7 @@ const KFTray = () => {
               onSyncComplete={handleSyncComplete}
               openShortcutModal={openShortcutModal}
               setIsAutoImportModalOpen={setIsAutoImportModalOpen}
+              deleteConfigs={deleteConfigs}
             />
           </Box>
         </Box>

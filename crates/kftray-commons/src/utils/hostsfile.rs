@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fmt,
     fs::OpenOptions,
     io::{
@@ -48,24 +47,57 @@ impl From<io::Error> for HostsFileError {
     }
 }
 
+/// Comment that records which configuration owns a managed line.
+const OWNER_MARKER: &str = " # kftray-id=";
+
+/// One line inside a managed section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionEntry {
+    pub ip: IpAddr,
+    pub hostname: String,
+    /// Configuration this entry was written for, when the writer recorded one.
+    /// Entries without an owner belong to another writer and are preserved.
+    pub owner: Option<String>,
+}
+
+/// Serializes hosts-file changes across every process that makes them.
+fn with_hosts_lock<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    let lock_path = crate::utils::config_dir::get_config_dir()
+        .map_err(HostsFileError::InvalidPath)?
+        .join("hosts.lock");
+    let mut outcome = None;
+    crate::utils::config_dir::with_file_lock(&lock_path, || {
+        outcome = Some(work());
+        Ok(())
+    })
+    .map_err(HostsFileError::Io)?;
+
+    outcome.unwrap_or_else(|| {
+        Err(HostsFileError::Io(
+            "Hosts lock produced no result".to_owned(),
+        ))
+    })
+}
+
 pub struct HostsFile {
-    entries: BTreeMap<IpAddr, Vec<String>>,
+    entries: Vec<SectionEntry>,
     tag: String,
 }
 
 impl HostsFile {
     pub fn new<S: Into<String>>(tag: S) -> Self {
         Self {
-            entries: BTreeMap::new(),
+            entries: Vec::new(),
             tag: tag.into(),
         }
     }
 
     pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> &mut Self {
-        self.entries
-            .entry(ip)
-            .or_default()
-            .push(hostname.to_string());
+        self.entries.push(SectionEntry {
+            ip,
+            hostname: hostname.to_string(),
+            owner: None,
+        });
         self
     }
 
@@ -74,10 +106,9 @@ impl HostsFile {
         I: IntoIterator<Item = S>,
         S: ToString,
     {
-        self.entries
-            .entry(ip)
-            .or_default()
-            .extend(hostnames.into_iter().map(|h| h.to_string()));
+        for hostname in hostnames {
+            self.add_entry(ip, hostname);
+        }
         self
     }
 
@@ -89,16 +120,140 @@ impl HostsFile {
         self.entries.len()
     }
 
+    /// Entries staged for the next write.
+    pub fn staged(&self) -> &[SectionEntry] {
+        &self.entries
+    }
+
     pub fn write(&self) -> Result<bool> {
         self.write_to(get_default_hosts_path()?)
+    }
+
+    /// Whether the hosts file currently carries a section with this tag.
+    ///
+    /// Lets a caller skip a write it does not need, which matters because the
+    /// file is usually only writable with elevated privileges.
+    pub fn section_exists(&self) -> Result<bool> {
+        let path = get_default_hosts_path()?;
+        let contents = std::fs::read_to_string(&path)?;
+
+        Ok(contents.contains(&HostsSection::new(&self.tag).begin_marker()))
+    }
+
+    /// Adds an entry that records which configuration owns it.
+    ///
+    /// The section is shared with the privileged helper, and entries written
+    /// without an owner cannot be told apart. The owner is written as a
+    /// trailing comment, which the hosts file format ignores, so a writer can
+    /// rebuild exactly its own lines and leave every other line alone.
+    pub fn add_owned_entry<S: ToString>(
+        &mut self, ip: IpAddr, hostname: S, owner: &str,
+    ) -> &mut Self {
+        self.entries.push(SectionEntry {
+            ip,
+            hostname: hostname.to_string(),
+            owner: Some(owner.to_owned()),
+        });
+        self
+    }
+
+    /// Reads the entries currently inside this tag's section, with the owner
+    /// recorded for each.
+    pub fn read_section(&self) -> Result<Vec<SectionEntry>> {
+        self.read_section_from(get_default_hosts_path()?)
+    }
+
+    /// Reads a section from a specific file.
+    pub fn read_section_from<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SectionEntry>> {
+        let contents = match std::fs::read_to_string(path.as_ref()) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
+        let section = HostsSection::new(&self.tag);
+        let bounds = section.find_section_bounds(&lines);
+        // Half a section is not an empty one: the aliases between a begin
+        // marker and a missing end marker still resolve, and reporting nothing
+        // would let a caller treat them as already removed.
+        if bounds.is_partial() {
+            return Err(HostsFileError::InvalidData(format!(
+                "Incomplete section markers for tag '{}'",
+                self.tag
+            )));
+        }
+        let (Some(begin), Some(end)) = (bounds.begin, bounds.end) else {
+            return Ok(Vec::new());
+        };
+        if end < begin {
+            return Err(HostsFileError::InvalidData(format!(
+                "Reversed section markers for tag '{}'",
+                self.tag
+            )));
+        }
+
+        let mut entries = Vec::new();
+        for line in lines.get(begin + 1..end).unwrap_or_default() {
+            // Everything from the first `#` is a comment. Ownership counts
+            // only when that comment is the marker itself, so a note that
+            // happens to mention the marker cannot make a foreign line look
+            // owned, and a real alias is never parsed as comment words.
+            let (fields, comment) = match line.split_once('#') {
+                Some((fields, comment)) => (fields, Some(comment)),
+                None => (line.as_str(), None),
+            };
+            let owner = comment
+                .and_then(|comment| {
+                    format!("#{comment}")
+                        .strip_prefix(OWNER_MARKER.trim_start())
+                        .map(ToOwned::to_owned)
+                })
+                .map(|owner| owner.trim().to_owned());
+            let mut fields = fields.split_whitespace();
+            let Some(Ok(ip)) = fields.next().map(str::parse::<IpAddr>) else {
+                continue;
+            };
+            for hostname in fields {
+                entries.push(SectionEntry {
+                    ip,
+                    hostname: hostname.to_owned(),
+                    owner: owner.clone(),
+                });
+            }
+        }
+
+        Ok(entries)
     }
 
     pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
         let path = path.as_ref();
         validate_hosts_path(path)?;
 
-        let writer = HostsFileWriter::new(path);
-        writer.update_section(&self.tag, &self.entries)
+        // Taken across the whole read-modify-write: the privileged helper is a
+        // separate process writing the same file, and rewriting it from a
+        // snapshot read outside the lock loses whichever change lost the race.
+        with_hosts_lock(|| {
+            let writer = HostsFileWriter::new(path);
+            writer.update_section(&self.tag, &self.entries)
+        })
+    }
+
+    /// Reads this tag's section, keeps the entries `keep` accepts, and writes
+    /// the result back as one locked operation.
+    pub fn retain_section(&self, keep: impl Fn(&SectionEntry) -> bool) -> Result<bool> {
+        let path = get_default_hosts_path()?;
+        let path = path.as_path();
+        validate_hosts_path(path)?;
+
+        with_hosts_lock(|| {
+            let kept: Vec<SectionEntry> = self
+                .read_section_from(path)?
+                .into_iter()
+                .filter(&keep)
+                .collect();
+            let writer = HostsFileWriter::new(path);
+            writer.update_section(&self.tag, &kept)
+        })
     }
 }
 
@@ -121,30 +276,27 @@ impl HostsSection {
         format!("# DO NOT EDIT {} END", self.tag)
     }
 
-    fn format_entries(&self, entries: &BTreeMap<IpAddr, Vec<String>>) -> Vec<String> {
+    /// One line per entry.
+    ///
+    /// Grouping several hostnames of one address onto a single line would put
+    /// every alias after the first behind the owner comment of that first one,
+    /// commenting them out. The SSL aliases alone always share 127.0.0.1.
+    fn format_entries(&self, entries: &[SectionEntry]) -> Vec<String> {
         if entries.is_empty() {
             return vec![];
         }
 
         let mut lines = vec![self.begin_marker()];
 
-        for (ip, hostnames) in entries {
-            lines.extend(self.format_host_entries(ip, hostnames));
+        for entry in entries {
+            lines.push(match &entry.owner {
+                Some(owner) => format!("{} {}{OWNER_MARKER}{owner}", entry.ip, entry.hostname),
+                None => format!("{} {}", entry.ip, entry.hostname),
+            });
         }
 
         lines.push(self.end_marker());
         lines
-    }
-
-    fn format_host_entries(&self, ip: &IpAddr, hostnames: &[String]) -> Vec<String> {
-        if cfg!(windows) {
-            hostnames
-                .iter()
-                .map(|hostname| format!("{} {}", ip, hostname))
-                .collect()
-        } else {
-            vec![format!("{} {}", ip, hostnames.join(" "))]
-        }
     }
 
     fn find_section_bounds(&self, lines: &[String]) -> SectionBounds {
@@ -187,7 +339,7 @@ impl<'a> HostsFileWriter<'a> {
         Self { path }
     }
 
-    fn update_section(&self, tag: &str, entries: &BTreeMap<IpAddr, Vec<String>>) -> Result<bool> {
+    fn update_section(&self, tag: &str, entries: &[SectionEntry]) -> Result<bool> {
         let mut lines = self.read_file_lines()?;
         let section = HostsSection::new(tag);
         let new_section_lines = section.format_entries(entries);
@@ -403,6 +555,132 @@ mod tests {
     use super::*;
 
     #[test]
+    fn aliases_sharing_an_address_stay_on_their_own_lines() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let mut hosts_file = HostsFile::new("test");
+        // The SSL aliases of one configuration always share 127.0.0.1.
+        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1");
+        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "b.local", "2");
+        hosts_file.add_entry([127, 0, 0, 1].into(), "plain.local");
+        hosts_file.write_to(&temp_path).unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "a.local".to_owned(),
+                    owner: Some("1".to_owned()),
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "b.local".to_owned(),
+                    owner: Some("2".to_owned()),
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "plain.local".to_owned(),
+                    owner: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_marker_inside_an_ordinary_comment_claims_nothing() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file
+            .write_all(
+                b"# DO NOT EDIT test BEGIN\n\
+                  127.0.0.7 real.local # note # kftray-id=42\n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+
+        assert_eq!(
+            entries,
+            vec![SectionEntry {
+                ip: [127, 0, 0, 7].into(),
+                hostname: "real.local".to_owned(),
+                // A note is not a claim: treating it as one would let a
+                // reconciliation delete a mapping it does not own.
+                owner: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn only_marked_lines_are_claimed_by_their_writer() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        // A section holding one line from the privileged helper, one from this
+        // writer, and one carrying a hand-written comment.
+        temp_file
+            .write_all(
+                b"# DO NOT EDIT test BEGIN\n\
+                  127.0.0.5 helper.local\n\
+                  127.0.0.6 owned.local # kftray-id=41007\n\
+                  127.0.0.7 noted.local # a note\n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+
+        let hosts_file = HostsFile::new("test");
+        let entries = hosts_file.read_section_from(&temp_path).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![
+                SectionEntry {
+                    ip: [127, 0, 0, 5].into(),
+                    hostname: "helper.local".to_owned(),
+                    owner: None,
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 6].into(),
+                    hostname: "owned.local".to_owned(),
+                    owner: Some("41007".to_owned()),
+                },
+                // The note is a comment, not two more hostnames: rewriting the
+                // line with them would put a real alias after a `#`.
+                SectionEntry {
+                    ip: [127, 0, 0, 7].into(),
+                    hostname: "noted.local".to_owned(),
+                    owner: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_owned_entry_round_trips_through_the_file() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let mut hosts_file = HostsFile::new("test");
+        hosts_file.add_owned_entry([127, 0, 0, 8].into(), "round.local", "9001");
+        hosts_file.write_to(&temp_path).unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+        assert_eq!(
+            entries,
+            vec![SectionEntry {
+                ip: [127, 0, 0, 8].into(),
+                hostname: "round.local".to_owned(),
+                owner: Some("9001".to_owned()),
+            }]
+        );
+    }
+
+    #[test]
     fn test_hosts_file_write() {
         let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
         temp_file.write_all(b"preexisting\ncontent").unwrap();
@@ -427,6 +705,8 @@ mod tests {
             .add_entry([127, 0, 0, 1].into(), "localhost")
             .add_entries([192, 168, 1, 1].into(), ["router", "gateway"]);
 
-        assert_eq!(hosts_file.entries.len(), 2);
+        // One entry per hostname: aliases of one address need their own lines
+        // so an owner comment cannot swallow the ones after it.
+        assert_eq!(hosts_file.entries.len(), 3);
     }
 }

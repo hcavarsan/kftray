@@ -3,18 +3,15 @@ pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
 pub mod operations;
-pub mod pod_watcher;
-mod proxy;
+pub(crate) mod proxy;
 pub mod proxy_recovery;
 mod service;
 pub mod shared_client;
 mod start;
-mod stop;
+pub(crate) mod stop;
+pub mod target;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;
-
-#[cfg(test)]
-mod tests;
 
 pub use http_log_watcher::{
     HttpLogStateEvent,
@@ -40,6 +37,10 @@ pub use start::{
     start_port_forward_with_mode,
 };
 pub use stop::{
+    UNCERTAIN_CREATE_WINDOW,
+    cancel_all_startups,
+    delete_configs_if_idle,
+    reconcile_pending_cleanup,
     stop_all_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward,

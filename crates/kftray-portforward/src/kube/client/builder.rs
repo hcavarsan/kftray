@@ -2,10 +2,9 @@ use std::env;
 use std::sync::Once;
 
 use anyhow::Result;
-use kube::Client;
-use kube::config::Kubeconfig;
 use log::info;
 
+use super::KubeConnection;
 use super::config::{
     create_config_with_context,
     get_kubeconfig_paths_from_option,
@@ -61,23 +60,26 @@ fn shell_path() -> Option<String> {
 
     let home = env::var("HOME").ok()?;
 
-    let shells_to_try: Vec<String> = [
-        env::var("SHELL").ok(),
-        Some("/opt/homebrew/bin/fish".into()),
-        Some("/usr/local/bin/fish".into()),
-        Some("/bin/zsh".into()),
-        Some("/bin/bash".into()),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|s| Path::new(s).exists())
-    .collect();
+    let current_shell = env::var("SHELL").ok();
+    let shells_to_try = [
+        current_shell.as_deref(),
+        Some("/opt/homebrew/bin/fish"),
+        Some("/usr/local/bin/fish"),
+        Some("/bin/zsh"),
+        Some("/bin/bash"),
+    ];
 
     let mut seen = HashSet::new();
     let mut merged = Vec::new();
 
-    for shell in shells_to_try {
-        if let Some(path) = try_shell_path(&shell, &home) {
+    for (index, candidate) in shells_to_try.iter().enumerate() {
+        let Some(shell) = *candidate else {
+            continue;
+        };
+        if shells_to_try[..index].contains(candidate) || !Path::new(shell).exists() {
+            continue;
+        }
+        if let Some(path) = try_shell_path(shell, &home) {
             info!("shell_path: {} returned {} chars", shell, path.len());
             for p in path.split(':') {
                 if !p.is_empty() && seen.insert(p.to_string()) {
@@ -254,31 +256,29 @@ fn env_debug_info() -> String {
 }
 
 pub async fn create_client_with_specific_context(
-    kubeconfig: Option<String>, context_name: Option<&str>,
-) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
+    kubeconfig: Option<String>, context_name: &str,
+) -> Result<KubeConnection> {
     init_path();
 
     let kubeconfig_paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-    let (merged_kubeconfig, all_contexts, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
+    let (merged_kubeconfig, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
 
-    if let Some(context_name) = context_name {
-        match create_config_with_context(&merged_kubeconfig, context_name).await {
-            Ok(config) => match create_client_with_config(&config).await {
-                Some(client) => {
-                    info!("Created new client for context: {context_name}");
-                    return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
-                }
-                _ => {
-                    errors.push(format!("Connection failed for context '{context_name}'"));
-                }
-            },
-            Err(e) => {
-                errors.push(format!("Config error for context '{context_name}': {e}"));
+    match create_config_with_context(&merged_kubeconfig, context_name).await {
+        Ok(config) => match create_client_with_config(&config).await {
+            Some(client) => {
+                info!("Created new client for context: {context_name}");
+                return Ok(KubeConnection {
+                    client,
+                    cluster_url: config.cluster_url,
+                });
             }
+            None => {
+                errors.push(format!("Connection failed for context '{context_name}'"));
+            }
+        },
+        Err(e) => {
+            errors.push(format!("Config error for context '{context_name}': {e}"));
         }
-    } else {
-        info!("No specific context provided, returning all available contexts.");
-        return Ok((None, None, all_contexts));
     }
 
     Err(anyhow::anyhow!(

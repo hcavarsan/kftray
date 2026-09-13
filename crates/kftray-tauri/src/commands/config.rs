@@ -160,13 +160,27 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Restart with the same protocol (assuming TCP for SSL)
-        if let Err(e) = start_port_forward(vec![config.clone()], "tcp").await {
-            warn!(
+        match start_port_forward(vec![config.clone()], "tcp").await {
+            Ok(responses) => {
+                let failures: Vec<&str> = responses
+                    .iter()
+                    .filter(|response| response.status != 0)
+                    .map(|response| response.stderr.as_str())
+                    .collect();
+                if failures.is_empty() {
+                    info!("Successfully restarted SSL proxy for config {}", config_id);
+                } else {
+                    warn!(
+                        "Failed to restart port forward for config {}: {}",
+                        config_id,
+                        failures.join("; ")
+                    );
+                }
+            }
+            Err(e) => warn!(
                 "Failed to restart port forward for config {}: {}",
                 config_id, e
-            );
-        } else {
-            info!("Successfully restarted SSL proxy for config {}", config_id);
+            ),
         }
     }
 
@@ -206,8 +220,15 @@ async fn restart_ssl_proxies_with_retry() {
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
-    clear_stopped_by_timeout(id);
-    let result = delete_config(id).await;
+    // Deleting only removes the database row, so a forward that is running,
+    // starting or still being cleaned up would be left with nothing to stop it
+    // by. Coordinated in the backend under the lifecycle lock, because
+    // shortcuts start forwards without going through the interface.
+    let result = kftray_portforward::kube::delete_configs_if_idle(&[id], || async move {
+        clear_stopped_by_timeout(id);
+        delete_config(id).await
+    })
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
@@ -217,10 +238,14 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
-    for id in &ids {
-        clear_stopped_by_timeout(*id);
-    }
-    let result = delete_configs(ids).await;
+    let targets = ids.clone();
+    let result = kftray_portforward::kube::delete_configs_if_idle(&targets, || async move {
+        for id in &ids {
+            clear_stopped_by_timeout(*id);
+        }
+        delete_configs(ids).await
+    })
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }

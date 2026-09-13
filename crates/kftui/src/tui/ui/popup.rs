@@ -623,7 +623,10 @@ pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rec
     }
 }
 
-pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
+/// Renders the error popup and reports the largest usable scroll offset.
+pub fn render_error_popup(
+    f: &mut Frame, error_message: &str, area: Rect, top_padding: usize, scroll: usize,
+) -> usize {
     let (width_percent, height_percent) = if area.width < 80 {
         (95, 80)
     } else if area.width < 120 {
@@ -670,10 +673,29 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
         }
     }
 
+    // A batch reports one message per failed configuration, so the content can
+    // be taller than the popup. Without scrolling the later failures are
+    // clipped, and dismissing the popup would discard them unseen.
+    let visible = usize::from(popup_area.height).saturating_sub(4).max(1);
+    let hidden = lines.len().saturating_sub(visible);
+    let offset = scroll.min(hidden);
+    let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
+
     lines.push("".into());
-    lines.push(Line::from(vec![
-        "  Press <Enter> to close".fg(SUBTEXT0).italic(),
-    ]));
+    // Wrapped like the content above: the popup has no wrapping of its own, so
+    // a hint wider than the inner area is cut off, and the part that gets cut
+    // is the one saying how to dismiss it.
+    let remaining = hidden - offset;
+    let hint = if remaining > 0 {
+        format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
+    } else if hidden > 0 {
+        "End of message — <Up> to scroll back, <Enter> to close".to_string()
+    } else {
+        "Press <Enter> to close".to_string()
+    };
+    for line in wrap_text_simple(&hint, content_width.saturating_sub(4)) {
+        lines.push(Line::from(vec![format!("  {line}").fg(SUBTEXT0).italic()]));
+    }
 
     let formatted_text = Text::from(lines).centered();
     render_popup(
@@ -684,6 +706,8 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
         formatted_text,
         Alignment::Center,
     );
+
+    hidden
 }
 
 fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {

@@ -16,7 +16,6 @@ use crossterm::event::{
     KeyCode,
     KeyModifiers,
 };
-use crossterm::terminal::size;
 pub use file_explorer::*;
 use kftray_commons::models::{
     config_model::Config,
@@ -244,6 +243,13 @@ pub struct App {
     pub stopped_configs: Vec<Config>,
     pub running_configs: Vec<Config>,
     pub error_message: Option<String>,
+    /// First visible line of the error popup. A batch can report more failures
+    /// than the popup shows at once, and dismissing it would otherwise discard
+    /// the ones that were never on screen.
+    pub error_scroll: usize,
+    /// Largest offset the last render could use. Kept so scrolling past the end
+    /// does not bank increments that a later key press has to undo first.
+    pub error_scroll_max: usize,
     pub active_component: ActiveComponent,
     pub selected_menu_item: usize,
     pub delete_confirmation_message: Option<String>,
@@ -285,8 +291,12 @@ pub struct App {
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
-    pub configs_being_processed:
-        std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
+    pub configs_being_processed: std::collections::HashMap<i64, Arc<PendingForward>>,
+    pub forwarding_tasks: tokio::task::JoinSet<()>,
+    pub(crate) task_configs: std::collections::HashMap<tokio::task::Id, i64>,
+    pub forwarding_slots: Arc<tokio::sync::Semaphore>,
+    pub stop_slots: Arc<tokio::sync::Semaphore>,
+    pub forwarding_cancel: tokio_util::sync::CancellationToken,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     pub search_query: String,
@@ -313,7 +323,7 @@ impl App {
         let tui_logger_state = TuiWidgetState::new();
         let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-        let mut app = Self {
+        Self {
             details_scroll_offset: 0,
             details_scroll_max_offset: 0,
             import_file_explorer,
@@ -333,6 +343,8 @@ impl App {
             stopped_configs: Vec::new(),
             running_configs: Vec::new(),
             error_message: None,
+            error_scroll: 0,
+            error_scroll_max: 0,
             active_component: ActiveComponent::StoppedTable,
             selected_menu_item: 0,
             delete_confirmation_message: None,
@@ -373,6 +385,11 @@ impl App {
             http_logs_replay_in_progress: false,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
+            forwarding_tasks: tokio::task::JoinSet::new(),
+            task_configs: std::collections::HashMap::new(),
+            forwarding_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
+            stop_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
+            forwarding_cancel: tokio_util::sync::CancellationToken::new(),
             error_receiver: Some(error_receiver),
             error_sender: Some(error_sender),
             search_query: String::new(),
@@ -383,13 +400,36 @@ impl App {
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
             update_progress_message: None,
-        };
+        }
+    }
 
-        if let Ok((_, height)) = size() {
-            app.update_visible_rows(height);
+    /// Cancels in-flight forwarding work and drains it under a deadline, so a
+    /// stalled operation cannot hold the terminal in raw mode on exit.
+    pub async fn finish_forwarding(&mut self) {
+        // Signalled before draining: an in-flight startup observes cancellation
+        // at its own safe points and runs its own rollback, instead of being
+        // dropped mid-create when the abort deadline below expires.
+        kftray_portforward::kube::cancel_all_startups();
+        self.forwarding_cancel.cancel();
+        self.forwarding_slots.close();
+        self.stop_slots.close();
+        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
+        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
+            .await
+            .is_ok()
+        {
+            return;
         }
 
-        app
+        log::warn!("Forwarding tasks did not finish in time; aborting them");
+        self.forwarding_tasks.abort_all();
+        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
+        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
+            .await
+            .is_err()
+        {
+            log::error!("Abandoning forwarding tasks that ignored abort");
+        }
     }
 
     fn matches_search_query(config: &Config, query_lower: &str) -> bool {
@@ -629,21 +669,14 @@ impl App {
 
         for config_state in config_states {
             if config_state.is_running {
-                let handle_key = format!("config:{}:service:", config_state.config_id);
+                let forwarder = CHILD_PROCESSES
+                    .get(&config_state.config_id)
+                    .and_then(|entry| entry.direct_forwarder.clone());
 
-                let matching_forwarders: Vec<_> = CHILD_PROCESSES
-                    .iter()
-                    .filter(|entry| entry.key().starts_with(&handle_key))
-                    .filter_map(|entry| entry.value().direct_forwarder.clone())
-                    .collect();
-
-                let mut active_pod = None;
-                for forwarder in matching_forwarders {
-                    if let Some(pod_name) = forwarder.get_current_active_pod().await {
-                        active_pod = Some(pod_name);
-                        break;
-                    }
-                }
+                let active_pod = match forwarder {
+                    Some(forwarder) => forwarder.get_current_active_pod().await,
+                    None => None,
+                };
 
                 self.active_pods.insert(config_state.config_id, active_pod);
             } else {
@@ -657,50 +690,81 @@ impl App {
     }
 
     pub fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
-        self.stopped_configs = configs
+        let running_ids: HashSet<_> = config_states
             .iter()
-            .filter(|config| {
-                config_states
-                    .iter()
-                    .find(|state| state.config_id == config.id.unwrap_or_default())
-                    .map(|state| !state.is_running)
-                    .unwrap_or(true)
-            })
-            .cloned()
+            .filter(|state| state.is_running)
+            .map(|state| state.config_id)
             .collect();
-
-        self.running_configs = configs
-            .iter()
-            .filter(|config| {
-                config_states
-                    .iter()
-                    .find(|state| state.config_id == config.id.unwrap_or_default())
-                    .map(|state| state.is_running)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        self.stopped_configs.clear();
+        self.running_configs.clear();
+        for config in configs {
+            if config.id.is_some_and(|id| running_ids.contains(&id)) {
+                self.running_configs.push(config.clone());
+            } else {
+                self.stopped_configs.push(config.clone());
+            }
+        }
 
         self.update_filtered_configs();
 
         let now = std::time::Instant::now();
-        self.configs_being_processed
-            .retain(|&_config_id, (completion_flag, start_time)| {
-                if completion_flag.load(Ordering::Relaxed) {
-                    return false;
+        let mut reports = Vec::new();
+        self.configs_being_processed.retain(|_, pending| {
+            if !pending.is_active() {
+                return false;
+            }
+            if let Some(warning) = pending.stall_warning(now) {
+                log::warn!("{warning}");
+                reports.push(warning);
+            }
+            true
+        });
+        let shutting_down = self.forwarding_cancel.is_cancelled();
+        while let Some(joined) = self.forwarding_tasks.try_join_next_with_id() {
+            let error = match joined {
+                Ok((id, ())) => {
+                    self.task_configs.remove(&id);
+                    continue;
                 }
+                Err(error) => error,
+            };
+            let config_id = self.task_configs.remove(&error.id());
+            if error.is_cancelled() && shutting_down {
+                continue;
+            }
+            let subject = config_id
+                .map(|id| format!("Config {id}"))
+                .unwrap_or_else(|| "A port forward operation".to_owned());
+            let report = if error.is_panic() {
+                format!("{subject} failed unexpectedly and could not be completed")
+            } else {
+                format!("{subject} was cancelled before it could be completed")
+            };
+            log::error!("{report}: {error}");
+            reports.push(report);
+        }
+        for report in reports {
+            if let Some(sender) = &self.error_sender {
+                let _ = sender.send(report);
+            }
+        }
 
-                if now.duration_since(*start_time) > std::time::Duration::from_secs(30) {
-                    return false;
-                }
+        let mut new_errors = Vec::new();
+        if let Some(receiver) = &mut self.error_receiver {
+            while let Ok(error_msg) = receiver.try_recv() {
+                new_errors.push(error_msg);
+            }
+        }
 
-                true
-            });
-
-        if let Some(ref mut receiver) = self.error_receiver
-            && let Ok(error_msg) = receiver.try_recv()
-        {
-            self.error_message = Some(error_msg);
+        if !new_errors.is_empty() {
+            let combined = new_errors.join("\n");
+            self.error_message = match (
+                self.error_message.take(),
+                self.state == AppState::ShowErrorPopup,
+            ) {
+                (Some(existing), true) => Some(format!("{existing}\n{combined}")),
+                _ => Some(combined),
+            };
             self.state = AppState::ShowErrorPopup;
         }
     }
@@ -1412,6 +1476,78 @@ pub fn toggle_row_selection(app: &mut App) {
     }
 }
 
+const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
+const FORWARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Tracks one dispatched start/stop. The watchdog measures only the time the
+/// operation actually runs, so a config waiting behind the concurrency limit
+/// keeps its busy indicator and its exclusion from a second dispatch.
+pub struct PendingForward {
+    config_id: i64,
+    done: AtomicBool,
+    running_since: std::sync::Mutex<Option<std::time::Instant>>,
+    warned: AtomicBool,
+}
+
+impl PendingForward {
+    pub(crate) fn new(config_id: i64) -> Self {
+        Self {
+            config_id,
+            done: AtomicBool::new(false),
+            running_since: std::sync::Mutex::new(None),
+            warned: AtomicBool::new(false),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.done.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn finish(&self) {
+        self.done.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn mark_running_at(&self, at: std::time::Instant) {
+        if let Ok(mut running_since) = self.running_since.lock() {
+            *running_since = Some(at);
+        }
+    }
+
+    fn mark_running(&self) {
+        self.mark_running_at(std::time::Instant::now());
+    }
+
+    /// Reports an operation that has outrun the watchdog window, once. It is
+    /// deliberately not aborted: the backend rolls back its own cluster
+    /// resources after its own timeouts, and dropping it mid-flight would
+    /// orphan a pod or a Deployment that nothing else reaps.
+    fn stall_warning(&self, now: std::time::Instant) -> Option<String> {
+        let stalled = self
+            .running_since
+            .lock()
+            .ok()
+            .and_then(|running_since| *running_since)
+            .is_some_and(|started| now.duration_since(started) > PROCESSING_WATCHDOG);
+        if !stalled || self.warned.swap(true, Ordering::Relaxed) {
+            return None;
+        }
+        Some(format!(
+            "Config {} is still working after {} seconds; waiting for it to finish",
+            self.config_id,
+            PROCESSING_WATCHDOG.as_secs()
+        ))
+    }
+}
+
+struct ProcessingFlag(Arc<PendingForward>);
+
+impl Drop for ProcessingFlag {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
 pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
@@ -1445,14 +1581,19 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     let selected_configs: Vec<Config> = selected_rows
         .iter()
         .filter_map(|&row| configs.get(row).cloned())
+        .filter(|config| {
+            !config.id.is_some_and(|id| {
+                app.configs_being_processed
+                    .get(&id)
+                    .is_some_and(|pending| pending.is_active())
+            })
+        })
         .collect();
 
-    let start_time = std::time::Instant::now();
     for config in &selected_configs {
         if let Some(id) = config.id {
-            let completion_flag = Arc::new(AtomicBool::new(false));
             app.configs_being_processed
-                .insert(id, (completion_flag.clone(), start_time));
+                .insert(id, Arc::new(PendingForward::new(id)));
         }
     }
 
@@ -1467,47 +1608,65 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     }
 
     let error_sender = app.error_sender.clone();
-    let active_table = app.active_table;
-    let logger_state_clone = app.logger_state.clone();
-    for config in selected_configs.clone() {
-        if let Some(id) = config.id {
-            let completion_flag = app
-                .configs_being_processed
-                .get(&id)
-                .map(|(flag, _)| flag.clone());
-            let sender = error_sender.clone();
-            let logger_state_for_task = logger_state_clone.clone();
-            if let Some(flag) = completion_flag {
-                tokio::spawn(async move {
-                    use crate::core::port_forward::{
-                        start_port_forwarding,
-                        stop_port_forwarding,
-                    };
-                    use crate::tui::input::{
-                        ActiveTable,
-                        App,
-                    };
+    let is_starting = app.active_table == ActiveTable::Stopped;
+    let slots = if is_starting {
+        app.forwarding_slots.clone()
+    } else {
+        app.stop_slots.clone()
+    };
+    let cancel = app.forwarding_cancel.clone();
 
-                    let mut temp_app = App::new(logger_state_for_task);
+    let dispatch: Vec<(Config, Arc<PendingForward>)> = selected_configs
+        .iter()
+        .filter_map(|config| {
+            let id = config.id?;
+            let pending = app.configs_being_processed.get(&id)?.clone();
+            Some((config.clone(), pending))
+        })
+        .collect();
 
-                    let is_starting = active_table == ActiveTable::Stopped;
+    for (config, pending) in dispatch {
+        let sender = error_sender.clone();
+        let slots = slots.clone();
+        let cancel = cancel.clone();
+        let task = pending.clone();
+        let handle = app.forwarding_tasks.spawn(async move {
+            use crate::core::port_forward::{
+                start_port_forwarding,
+                stop_port_forwarding,
+            };
 
-                    if is_starting {
-                        start_port_forwarding(&mut temp_app, config, mode).await;
-                    } else {
-                        stop_port_forwarding(&mut temp_app, config, mode).await;
-                    }
-
-                    if let Some(error_msg) = temp_app.error_message
-                        && let Some(sender) = sender
-                    {
-                        let _ = sender.send(error_msg);
-                    }
-
-                    flag.store(true, Ordering::Relaxed);
-                });
+            let finished = ProcessingFlag(task);
+            if cancel.is_cancelled() {
+                return;
             }
-        }
+            let Ok(_permit) = slots.acquire_owned().await else {
+                return;
+            };
+            if cancel.is_cancelled() {
+                return;
+            }
+            finished.0.mark_running();
+
+            // Deliberately not raced against the cancellation token: dropping
+            // the backend future here would skip its rollback and orphan a pod
+            // or Deployment it already created. The backend observes the same
+            // shutdown through its own startup cancellation and timeouts.
+            let result = if is_starting {
+                start_port_forwarding(config, mode).await
+            } else {
+                stop_port_forwarding(config, mode).await
+            };
+
+            if let Err(error_msg) = result
+                && let Some(sender) = sender
+            {
+                let _ = sender.send(error_msg);
+            }
+
+            drop(finished);
+        });
+        app.task_configs.insert(handle.id(), pending.config_id);
     }
 
     match app.active_table {
@@ -2578,11 +2737,30 @@ pub fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
 }
 
 pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    const PAGE: usize = 10;
+
     match key {
         KeyCode::Esc | KeyCode::Enter => {
             app.state = AppState::Normal;
             app.error_message = None;
+            app.error_scroll = 0;
         }
+        // Clamped to what the last render could actually show: banking
+        // increments past the end would make the first key press back up do
+        // nothing.
+        KeyCode::Up => app.error_scroll = app.error_scroll.saturating_sub(1),
+        KeyCode::Down => {
+            app.error_scroll = app.error_scroll.saturating_add(1).min(app.error_scroll_max);
+        }
+        KeyCode::PageUp => app.error_scroll = app.error_scroll.saturating_sub(PAGE),
+        KeyCode::PageDown => {
+            app.error_scroll = app
+                .error_scroll
+                .saturating_add(PAGE)
+                .min(app.error_scroll_max);
+        }
+        KeyCode::Home => app.error_scroll = 0,
+        KeyCode::End => app.error_scroll = app.error_scroll_max,
         _ => {}
     }
     Ok(())

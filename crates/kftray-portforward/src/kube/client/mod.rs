@@ -17,3 +17,8 @@ pub use error::{
     KubeClientError,
     KubeResult,
 };
+
+pub struct KubeConnection {
+    pub client: kube::Client,
+    pub cluster_url: http::Uri,
+}

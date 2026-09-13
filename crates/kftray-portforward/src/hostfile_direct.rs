@@ -1,4 +1,9 @@
 use std::collections::HashMap;
+use std::sync::atomic::{
+    AtomicBool,
+    AtomicU64,
+    Ordering,
+};
 use std::sync::{
     Arc,
     Mutex,
@@ -16,7 +21,18 @@ use log::{
 };
 
 const BATCH_DELAY_MS: u64 = 100;
+const MAX_WRITE_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_WRITE_ATTEMPTS: u32 = 8;
+/// Section the privileged helper owns, and where older versions of this
+/// manager wrote before the two were separated.
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
+/// Section this manager owns outright.
+///
+/// Sharing one section with the helper meant every write had to reconstruct
+/// another writer's lines from an unsynchronized read, which loses a concurrent
+/// change in whichever direction the race went. Separate sections remove the
+/// interaction: each writer rebuilds only what it owns.
+const KFTRAY_DIRECT_HOSTS_TAG: &str = "kftray-hosts-direct";
 
 type HostEntriesMap = HashMap<String, HostEntry>;
 
@@ -24,6 +40,21 @@ pub struct DirectHostfileManager {
     entries: Arc<RwLock<HostEntriesMap>>,
     needs_update: Arc<Mutex<bool>>,
     writer_running: Arc<Mutex<bool>>,
+    /// Bumped by every mutation, so a writer can tell whether the change it
+    /// failed on has since been superseded.
+    generation: Arc<AtomicU64>,
+    /// Mappings removed here that may also exist as an unmarked line, written
+    /// by an older version or by the privileged helper. Kept until a write has
+    /// taken them off disk, because the map alone no longer describes them.
+    retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
+    /// Set when the whole section must go, including lines with no owner. A
+    /// failed purge stays a purge: an ordinary reconciliation preserves exactly
+    /// the lines it was asked to remove.
+    purging: Arc<AtomicBool>,
+    /// Serializes the synchronous and background writes. Without it, a
+    /// background write could snapshot older entries and finish after a
+    /// synchronous one, recording a generation its content does not match.
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl DirectHostfileManager {
@@ -32,6 +63,10 @@ impl DirectHostfileManager {
             entries: Arc::new(RwLock::new(HashMap::new())),
             needs_update: Arc::new(Mutex::new(false)),
             writer_running: Arc::new(Mutex::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
+            write_lock: Arc::new(Mutex::new(())),
+            retired: Arc::new(Mutex::new(Vec::new())),
+            purging: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -50,47 +85,152 @@ impl DirectHostfileManager {
             }
         }
 
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
+        self.mark_dirty();
         self.ensure_writer_running();
 
         Ok(())
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        debug!("Removing host entry for ID {id}");
-
-        {
-            match self.entries.write() {
-                Ok(mut entries) => {
-                    entries.remove(id);
-                }
-                Err(e) => {
-                    error!("Failed to acquire host entries write lock: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
-            }
-        }
-
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
-        self.ensure_writer_running();
-
-        Ok(())
+        self.remove_host_entries(std::slice::from_ref(&id))
+            .map(drop)
     }
 
+    /// Removes several ids and reconciles them with one write.
+    ///
+    /// This manager's section is rewritten from its whole remaining map, so a
+    /// single successful write covers every id in the batch.
+    ///
+    /// Returns whether every requested id was one this manager owns. Ownership
+    /// is read from the file: each line it writes carries its configuration id,
+    /// and an id with no line of its own is one it cannot remove. A caller that
+    /// reached here through a failing helper has to learn that rather than
+    /// treat the alias as gone.
+    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
+        debug!("Removing host entries for IDs {ids:?}");
+
+        // Read before the map is touched: a failure here must leave the entry
+        // in place, or a retry would no longer know what to remove. The file is
+        // the record of what this manager wrote and it outlives the map, so an
+        // entry added before a restart is on disk and nowhere else. A failure
+        // to read is not evidence of absence either.
+        let on_disk = Self::owners_on_disk()?;
+        let removed: Vec<Option<HostEntry>> = match self.entries.write() {
+            Ok(mut entries) => ids.iter().map(|id| entries.remove(*id)).collect(),
+            Err(e) => {
+                error!("Failed to acquire host entries write lock: {e}");
+                return Err(std::io::Error::other(e.to_string()));
+            }
+        };
+        let covered = ids
+            .iter()
+            .zip(removed.iter())
+            .all(|(id, entry)| entry.is_some() || on_disk.contains(*id));
+        let held_anything =
+            removed.iter().any(Option::is_some) || ids.iter().any(|id| on_disk.contains(*id));
+        if !held_anything {
+            // Nothing of this manager's is involved, so there is nothing to
+            // write. That matters: most stops carry no alias at all, and the
+            // hosts file usually needs elevated privileges even to open for
+            // writing.
+            return Ok(covered);
+        }
+
+        // An unmarked copy of the same mapping can exist, written by an older
+        // version or by the helper. Dropping the entry from the map alone would
+        // leave that copy resolving, so the pairs are kept until a write has
+        // taken them off disk.
+        self.retired
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(
+                removed
+                    .into_iter()
+                    .flatten()
+                    .map(|entry| (entry.ip, entry.hostname)),
+            );
+
+        self.mark_dirty();
+        // Written here rather than left to the background writer: a removal is
+        // part of stopping a forward, and the caller can only keep it tracked
+        // for retry if it learns the alias is still on disk.
+        match Self::write_snapshot(
+            &self.entries,
+            &self.generation,
+            &self.write_lock,
+            &self.retired,
+        ) {
+            Ok(_) => Ok(covered),
+            Err((_, error)) => {
+                self.mark_dirty();
+                self.ensure_writer_running();
+                Err(error)
+            }
+        }
+    }
+
+    /// Removes shared-section lines that duplicate a mapping this manager owns.
+    ///
+    /// Only exact matches go: everything else in that section belongs to the
+    /// privileged helper, which is the only other writer of it.
+    fn prune_legacy_entries(
+        entries: &HostEntriesMap, dropping: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
+        let mine: std::collections::HashSet<(std::net::IpAddr, &str)> = entries
+            .values()
+            .map(|entry| (entry.ip, entry.hostname.as_str()))
+            .chain(
+                dropping
+                    .iter()
+                    .map(|(ip, hostname)| (*ip, hostname.as_str())),
+            )
+            .collect();
+        let legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
+        let existing = legacy.read_section().map_err(std::io::Error::other)?;
+        if !existing
+            .iter()
+            .any(|entry| mine.contains(&(entry.ip, entry.hostname.as_str())))
+        {
+            return Ok(());
+        }
+
+        // Read, filtered and written under one lock: the privileged helper
+        // writes this same section from another process.
+        legacy
+            .retain_section(|entry| !mine.contains(&(entry.ip, entry.hostname.as_str())))
+            .map(drop)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Whether the managed section holds lines no writer claimed.
+    ///
+    /// They belong to the privileged helper, so this manager cannot take them
+    /// off disk and a caller that needs verified cleanup has to know.
+    pub fn has_unowned_entries() -> std::io::Result<bool> {
+        HostsFile::new(KFTRAY_HOSTS_TAG)
+            .read_section()
+            .map(|entries| !entries.is_empty())
+            .map_err(std::io::Error::other)
+    }
+
+    /// Configuration ids this manager has lines for in the hosts file.
+    fn owners_on_disk() -> std::io::Result<std::collections::HashSet<String>> {
+        HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
+            .read_section()
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .filter_map(|entry| entry.owner)
+                    .collect()
+            })
+            .map_err(std::io::Error::other)
+    }
+
+    /// Removes every entry this application put in the hosts file.
+    ///
+    /// Unlike a per-id removal, this also drops lines left by an older version
+    /// that wrote no owner: they belong to this application too, and nothing
+    /// else can attribute them afterwards.
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
         info!("Removing all host entries");
 
@@ -98,6 +238,7 @@ impl DirectHostfileManager {
             match self.entries.write() {
                 Ok(mut entries) => {
                     entries.clear();
+                    self.generation.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e) => {
                     error!("Failed to acquire host entries write lock: {e}");
@@ -106,7 +247,39 @@ impl DirectHostfileManager {
             }
         }
 
-        self.update_hosts_file()
+        // Counted as a mutation like any other, so a background write that
+        // snapshotted the old entries cannot claim to have reconciled this one.
+        self.mark_dirty();
+        // The whole section goes, unmarked lines included: a per-id removal
+        // preserves them because it cannot attribute them, but this is the
+        // request to drop everything this application ever wrote.
+        // Recorded before the attempt: a failed purge has to be retried as a
+        // purge, since an ordinary reconciliation keeps every unowned line.
+        self.purging.store(true, Ordering::Relaxed);
+        match Self::purge_section(&self.generation, &self.write_lock) {
+            Ok(_) => {
+                self.purging.store(false, Ordering::Relaxed);
+                Ok(())
+            }
+            Err((_, error)) => {
+                self.mark_dirty();
+                self.ensure_writer_running();
+                Err(error)
+            }
+        }
+    }
+
+    /// Marks the hosts file as no longer matching the in-memory entries. Until
+    /// a write succeeds, a removal cannot be short-circuited: the file may
+    /// still carry an entry this process already forgot.
+    /// Whether removing an entry still requires touching the file.
+    fn mark_dirty(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+        let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
+            error!("Failed to acquire needs_update lock: {e}");
+            e.into_inner()
+        });
+        *needs_update = true;
     }
 
     pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
@@ -130,23 +303,48 @@ impl DirectHostfileManager {
 
         if !*writer_running {
             *writer_running = true;
-
-            let entries = self.entries.clone();
-            let needs_update = self.needs_update.clone();
-            let writer_running = self.writer_running.clone();
-
-            thread::spawn(move || {
-                Self::batch_writer_loop(entries, needs_update, writer_running);
-            });
+            Self::spawn_writer(
+                self.entries.clone(),
+                self.needs_update.clone(),
+                self.writer_running.clone(),
+                self.generation.clone(),
+                self.write_lock.clone(),
+                self.retired.clone(),
+                self.purging.clone(),
+            );
         }
+    }
+
+    /// Starts a writer thread. The caller owns setting `writer_running`.
+    fn spawn_writer(
+        entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
+        writer_running: Arc<Mutex<bool>>, generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>, purging: Arc<AtomicBool>,
+    ) {
+        thread::spawn(move || {
+            Self::batch_writer_loop(
+                entries,
+                needs_update,
+                writer_running,
+                generation,
+                write_lock,
+                retired,
+                purging,
+            );
+        });
     }
 
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
-        writer_running: Arc<Mutex<bool>>,
+        writer_running: Arc<Mutex<bool>>, generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>, purging: Arc<AtomicBool>,
     ) {
+        let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
+        let mut failures = 0u32;
+        let mut exhausted_at = None;
+
         loop {
-            thread::sleep(Duration::from_millis(BATCH_DELAY_MS));
+            thread::sleep(backoff);
 
             let should_update = {
                 let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
@@ -162,11 +360,7 @@ impl DirectHostfileManager {
                 }
             };
 
-            if should_update {
-                if let Err(e) = Self::update_hosts_file_static(&entries) {
-                    error!("Failed to write hosts file in background writer: {e}");
-                }
-            } else {
+            if !should_update {
                 let pending = {
                     *needs_update.lock().unwrap_or_else(|e| {
                         error!("Failed to check for pending updates: {e}");
@@ -177,21 +371,140 @@ impl DirectHostfileManager {
                 if !pending {
                     break;
                 }
+                continue;
+            }
+
+            let written = if purging.load(Ordering::Relaxed) {
+                Self::purge_section(&generation, &write_lock).inspect(|_| {
+                    purging.store(false, Ordering::Relaxed);
+                    // An add can have landed while the purge was retrying, and
+                    // the purge writes an empty section: the map still needs a
+                    // pass of its own before this work counts as done.
+                    if entries
+                        .read()
+                        .map(|entries| !entries.is_empty())
+                        .unwrap_or(false)
+                    {
+                        *needs_update.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                    }
+                })
+            } else {
+                Self::write_snapshot(&entries, &generation, &write_lock, &retired)
+            };
+            match written {
+                Ok(_) => {
+                    backoff = Duration::from_millis(BATCH_DELAY_MS);
+                    failures = 0;
+                }
+                Err((attempted, e)) => {
+                    failures += 1;
+                    // The change is still pending either way, so a later
+                    // add or removal can start a fresh writer once whatever
+                    // blocked the write clears.
+                    let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
+                        error!("Failed to re-arm the pending hosts write: {e}");
+                        e.into_inner()
+                    });
+                    *update_flag = true;
+                    drop(update_flag);
+                    // A persistent error is usually missing permissions on the
+                    // hosts file. Retry with backoff, then stop rather than
+                    // spin a thread logging forever.
+                    if failures >= MAX_WRITE_ATTEMPTS {
+                        error!(
+                            "Giving up on the hosts file after {failures} attempts, last error: {e}"
+                        );
+                        // The generation this write covered, not whatever
+                        // landed since: a mutation that arrived during the
+                        // final attempt must still earn a replacement writer.
+                        exhausted_at = Some(attempted);
+                        break;
+                    }
+                    error!("Failed to write hosts file in background writer: {e}");
+                    backoff = (backoff * 2).min(MAX_WRITE_BACKOFF);
+                }
             }
         }
 
-        let mut writer_running = writer_running.lock().unwrap_or_else(|e| {
+        // The flag is only cleared when no replacement is started, so exactly
+        // one writer exists at a time. Re-checking for work under the lock also
+        // closes the window where a mutation would see the flag still set,
+        // start nothing, and stay pending forever. After giving up, only a
+        // mutation newer than the one that failed earns a replacement, so a
+        // persistent permission error cannot spin.
+        let mut running = writer_running.lock().unwrap_or_else(|e| {
             error!("Failed to acquire writer_running lock when exiting: {e}");
             e.into_inner()
         });
-        *writer_running = false;
+        let pending = *needs_update.lock().unwrap_or_else(|e| e.into_inner());
+        let superseded =
+            exhausted_at.is_none_or(|failed| generation.load(Ordering::Relaxed) != failed);
+        if pending && superseded {
+            drop(running);
+            Self::spawn_writer(
+                entries,
+                needs_update,
+                Arc::clone(&writer_running),
+                generation,
+                write_lock,
+                retired,
+                purging,
+            );
+        } else {
+            *running = false;
+        }
     }
 
-    fn update_hosts_file(&self) -> std::io::Result<()> {
-        Self::update_hosts_file_static(&self.entries)
+    /// Writes the current entries and records which mutation the write covered.
+    /// The generation is read inside the write lock so the record always
+    /// matches the content that reached disk.
+    /// Removes the whole managed section, unowned lines included.
+    fn purge_section(
+        generation: &Arc<AtomicU64>, write_lock: &Arc<Mutex<()>>,
+    ) -> Result<u64, (u64, std::io::Error)> {
+        let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let started = generation.load(Ordering::Relaxed);
+        // Both sections go: entries written by a version that shared the
+        // helper's section belong to this application too, and a purge that
+        // left them would report complete cleanup with aliases still resolving.
+        if let Err(error) = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG).write() {
+            return Err((started, std::io::Error::other(error)));
+        }
+        match HostsFile::new(KFTRAY_HOSTS_TAG).write() {
+            Ok(_) => Ok(started),
+            Err(error) => Err((started, std::io::Error::other(error))),
+        }
     }
 
-    fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {
+    fn write_snapshot(
+        entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
+        write_lock: &Arc<Mutex<()>>, retired: &Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
+    ) -> Result<u64, (u64, std::io::Error)> {
+        let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let started = generation.load(Ordering::Relaxed);
+        let dropping = retired.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match Self::update_hosts_file_static(entries, &dropping) {
+            Ok(()) => {
+                // Cleared only for what this write covered: a removal queued
+                // while it was in flight is still pending.
+                let mut retired = retired.lock().unwrap_or_else(|e| e.into_inner());
+                let mut covered = dropping;
+                retired.retain(|entry| {
+                    covered
+                        .iter()
+                        .position(|dropped| dropped == entry)
+                        .map(|index| covered.swap_remove(index))
+                        .is_none()
+                });
+                Ok(started)
+            }
+            Err(error) => Err((started, error)),
+        }
+    }
+
+    fn update_hosts_file_static(
+        entries: &Arc<RwLock<HostEntriesMap>>, dropping: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
         let entries_snapshot = match entries.read() {
             Ok(entries) => entries.clone(),
             Err(e) => {
@@ -200,12 +513,21 @@ impl DirectHostfileManager {
             }
         };
 
-        let mut hosts_file = HostsFile::new(KFTRAY_HOSTS_TAG);
-
+        // Written from this manager's own map alone: the section belongs to it,
+        // so there is nothing of anyone else's to preserve and no read of
+        // another writer's state to race with.
+        let mut hosts_file = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG);
         for (id, entry) in &entries_snapshot {
             debug!("Adding entry for ID {id} to hosts file: {entry:?}");
-            hosts_file.add_entry(entry.ip, &entry.hostname);
+            hosts_file.add_owned_entry(entry.ip, &entry.hostname, id);
         }
+
+        // A mapping this manager holds, or has just dropped, may also exist in
+        // the shared section from a version that wrote there. That copy is this
+        // application's, so it is migrated out rather than left to resolve
+        // alongside, or after, the alias here. Reported rather than logged: a
+        // copy still on disk means the removal did not take effect.
+        Self::prune_legacy_entries(&entries_snapshot, dropping)?;
 
         match hosts_file.write() {
             Ok(_) => {
@@ -223,6 +545,7 @@ impl DirectHostfileManager {
     }
 }
 
+/// Whether removing an entry still requires touching the file.
 impl Default for DirectHostfileManager {
     fn default() -> Self {
         Self::new()

@@ -119,15 +119,14 @@ impl McpTool for ListNamespacesTool {
             None => return CallToolResult::error("Missing required argument: context"),
         };
 
-        // Create a Kubernetes client for the specified context
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
-            Some(&args.context),
+            &args.context,
         )
         .await
         {
-            Ok((Some(client), _, _)) => {
-                match kftray_portforward::list_all_namespaces(client).await {
+            Ok(connection) => {
+                match kftray_portforward::list_all_namespaces(connection.client).await {
                     Ok(namespaces) => {
                         let response = NamespacesResponse { namespaces };
                         CallToolResult::json(&response).unwrap_or_else(|e| {
@@ -137,10 +136,6 @@ impl McpTool for ListNamespacesTool {
                     Err(e) => CallToolResult::error(format!("Failed to list namespaces: {e}")),
                 }
             }
-            Ok((None, _, _)) => CallToolResult::error(format!(
-                "Could not create client for context: {}",
-                args.context
-            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -206,12 +201,12 @@ impl McpTool for ListServicesTool {
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
-            Some(&args.context),
+            &args.context,
         )
         .await
         {
-            Ok((Some(client), _, _)) => {
-                let api: Api<Service> = Api::namespaced(client, &args.namespace);
+            Ok(connection) => {
+                let api: Api<Service> = Api::namespaced(connection.client, &args.namespace);
                 match api.list(&ListParams::default()).await {
                     Ok(service_list) => {
                         let services: Vec<String> =
@@ -224,10 +219,6 @@ impl McpTool for ListServicesTool {
                     Err(e) => CallToolResult::error(format!("Failed to list services: {e}")),
                 }
             }
-            Ok((None, _, _)) => CallToolResult::error(format!(
-                "Could not create client for context: {}",
-                args.context
-            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -305,12 +296,12 @@ impl McpTool for ListPodsTool {
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
-            Some(&args.context),
+            &args.context,
         )
         .await
         {
-            Ok((Some(client), _, _)) => {
-                let api: Api<Pod> = Api::namespaced(client, &args.namespace);
+            Ok(connection) => {
+                let api: Api<Pod> = Api::namespaced(connection.client, &args.namespace);
                 let mut list_params = ListParams::default();
                 if let Some(selector) = args.label_selector {
                     list_params = list_params.labels(&selector);
@@ -351,10 +342,6 @@ impl McpTool for ListPodsTool {
                     Err(e) => CallToolResult::error(format!("Failed to list pods: {e}")),
                 }
             }
-            Ok((None, _, _)) => CallToolResult::error(format!(
-                "Could not create client for context: {}",
-                args.context
-            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -441,11 +428,12 @@ impl McpTool for ListPortsTool {
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
-            Some(&args.context),
+            &args.context,
         )
         .await
         {
-            Ok((Some(client), _, _)) => {
+            Ok(connection) => {
+                let client = connection.client;
                 let api: Api<Service> = Api::namespaced(client.clone(), &args.namespace);
 
                 match api.get(&args.service).await {
@@ -533,10 +521,6 @@ impl McpTool for ListPortsTool {
                     }
                 }
             }
-            Ok((None, _, _)) => CallToolResult::error(format!(
-                "Could not create client for context: {}",
-                args.context
-            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }

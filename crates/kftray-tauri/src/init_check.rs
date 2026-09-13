@@ -65,14 +65,21 @@ impl PortOperations for RealPortOperations {
     ) -> Result<Vec<String>, String> {
         start_port_forward(configs, protocol)
             .await
-            .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
+            .and_then(describe_start_responses)
     }
 
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String> {
         deploy_and_forward_pod(configs)
             .await
-            .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
+            .and_then(describe_start_responses)
     }
+}
+
+fn describe_start_responses(
+    responses: Vec<kftray_commons::models::response::CustomResponse>,
+) -> Result<Vec<String>, String> {
+    kftray_commons::models::response::batch_failure(&responses)?;
+    Ok(responses.iter().map(|r| format!("{r:?}")).collect())
 }
 
 async fn fetch_configs_in_parallel(

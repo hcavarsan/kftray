@@ -4,7 +4,6 @@ import { Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -102,6 +101,7 @@ const DeleteDialog = ({
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
+  deleteConfigs,
 }) => {
   const [state, setState] = useState({
     configsToDelete: [] as number[],
@@ -131,22 +131,14 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
       return
     }
 
-    try {
-      await invoke('delete_configs_cmd', { ids: state.configsToDelete })
+    // Reservation, deletion and refresh happen together in Main: deleting only
+    // removes the database row, so a queued start could otherwise still reach
+    // the cluster with a configuration that no longer exists.
+    const deleted = await deleteConfigs(state.configsToDelete)
+
+    setState(prev => ({ ...prev, isDialogOpen: false }))
+    if (deleted) {
       setSelectedConfigs([])
-      setState(prev => ({ ...prev, isDialogOpen: false }))
-      toaster.success({
-        title: 'Success',
-        description: 'Configurations deleted successfully.',
-        duration: 1000,
-      })
-    } catch (error) {
-      console.error('Failed to delete configurations:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to delete configurations.',
-        duration: 1000,
-      })
     }
   }
 

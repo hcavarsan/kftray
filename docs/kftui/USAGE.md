@@ -25,6 +25,8 @@ kftui --configs-path config.json
 
 The interface displays your configuration in the "Stopped" table on the left. Press `f` to start the port-forward. The configuration moves to the "Running" table on the right, and your service becomes accessible at `localhost:8080`. Press `f` again to stop it.
 
+In the TUI, bulk actions run independent configurations concurrently in bounded batches. A configuration stays busy until its operation finishes; pressing `f` again does not submit a duplicate operation. Quitting cancels queued operations, waits for active operations, and stops the forwards before exiting.
+
 ## Persistent Storage
 
 To avoid specifying the config file path repeatedly, save configurations to kftui's database:

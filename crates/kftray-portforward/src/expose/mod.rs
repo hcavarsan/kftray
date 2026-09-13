@@ -14,6 +14,7 @@ use log::{
     error,
     info,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
@@ -24,19 +25,51 @@ use crate::kube::shared_client::{
 pub async fn start_expose(
     configs: Vec<Config>, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
-    let mut responses = Vec::new();
-
-    for config in configs {
-        match start_single_expose(config, mode).await {
-            Ok(response) => responses.push(response),
-            Err(e) => return Err(e),
-        }
-    }
-
-    Ok(responses)
+    let configs = configs
+        .into_iter()
+        .map(|mut config| {
+            config.workload_type = Some("expose".to_string());
+            config
+        })
+        .collect();
+    crate::kube::start_port_forward_with_mode(configs, "tcp", mode, false).await
 }
 
-async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<CustomResponse, String> {
+/// Deletes exactly what this attempt created and releases its cleanup record
+/// only once that succeeded.
+///
+/// Deleting by label would also reach resources another installation created
+/// for the same configuration id, which is local to each database.
+async fn roll_back_exposure<T>(
+    client: &kube::Client, config: &Config, resources: &models::ExposeResources,
+    guard: crate::kube::stop::ClusterResourceGuard, reason: String,
+) -> Result<T, String> {
+    // Bounded as a whole: this runs while the lifecycle lock is held, and the
+    // client carries no per-request timeout, so a stalled DELETE would block
+    // both this startup and the stop that follows it. The guard stays armed on
+    // timeout, which is what keeps the cleanup retryable.
+    const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let deleted = tokio::time::timeout(
+        ROLLBACK_TIMEOUT,
+        kubernetes::delete_created_resources(client, &config.namespace, &resources.owned),
+    )
+    .await;
+    match deleted {
+        Ok(Ok(())) => {
+            guard.disarm().await;
+            Err(reason)
+        }
+        Ok(Err(cleanup_error)) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
+        Err(_) => Err(format!(
+            "{reason}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried"
+        )),
+    }
+}
+
+pub(crate) async fn start_single_expose(
+    config: Config, mode: DatabaseMode, cancellation: Option<&CancellationToken>,
+) -> Result<CustomResponse, String> {
     use self::kubernetes::create_expose_resources;
     use self::websocket_client::WebSocketTunnelClient;
     use crate::kube::models::{
@@ -49,23 +82,66 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
     use crate::port_forward::CHILD_PROCESSES;
 
     let config_id = config.id.ok_or("Config has no ID")?;
+    // Startup holds the per-config lifecycle lock, and a stop waits on that
+    // same lock, so without observing cancellation here a stop would block for
+    // the full readiness budget.
+    let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
+    if cancelled() {
+        return Err(format!("Expose startup cancelled for config {config_id}"));
+    }
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+        .get_connection(client_key)
         .await
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = (*client).clone();
+    let client = client.client.clone();
 
     info!("Creating expose resources for config {}", config_id);
-    let resources = create_expose_resources(client.clone(), &config).await?;
+    // Armed before creation so a dropped startup future, or a create whose
+    // response is lost, still leaves a trail for stop-all.
+    let mut guard =
+        crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone(), mode).await?;
+    let created = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(format!("Expose startup cancelled for config {config_id}"));
+            }
+            created = create_expose_resources(client.clone(), &config) => created,
+        },
+        None => create_expose_resources(client.clone(), &config).await,
+    };
+    // Confirmed only when the outcome is definitive. A transport failure or a
+    // server-side timeout can be answered while the object is still being
+    // applied, and rollback cannot name a resource whose create never returned.
+    let resources = match created {
+        Ok(resources) => {
+            guard.confirm();
+            resources
+        }
+        Err(error) => {
+            // Disarmed only when the outcome was definitive and UID-scoped
+            // rollback removed everything this attempt created: leaving the
+            // record would make a later stop delete by label, which can reach
+            // another installation's resources for the same config id.
+            if !error.ambiguous && error.rolled_back {
+                guard.disarm().await;
+            } else if !error.ambiguous {
+                guard.confirm();
+            }
+            return Err(error.message);
+        }
+    };
 
     info!(
         "Resources created: deployment={}, service={}, pod={}",
         resources.deployment_name, resources.service_name, resources.pod_name
     );
 
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id);
+    // Installation-scoped: the tunnel must reach this installation's relay, not
+    // another one that happens to share the locally assigned configuration id.
+    let label_selector = kubernetes::expose_owner_selector(&config_id.to_string()).await?;
     let target = Target {
         selector: TargetSelector::PodLabel(label_selector),
         port: Port::Number(9999),
@@ -80,21 +156,28 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         config.kubeconfig.clone(),
         config_id,
         "expose".to_string(),
-    )
-    .await
-    .map_err(|e| format!("Failed to create port-forward: {}", e))?;
+    );
 
-    let (websocket_port, pf_process) = port_forward
-        .port_forward_tcp(None)
-        .await
-        .map_err(|e| format!("Failed to start port-forward: {}", e))?;
+    let started = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
+            started = port_forward.port_forward_tcp(None) => started,
+        },
+        None => port_forward.port_forward_tcp(None).await,
+    };
+    let (websocket_port, mut pf_process) = match started {
+        Ok(started) => started,
+        Err(error) => {
+            let reason = format!("Failed to start port-forward: {error}");
+            return roll_back_exposure(&client, &config, &resources, guard, reason).await;
+        }
+    };
 
     info!(
         "Port-forward established: localhost:{} → pod:9999",
         websocket_port
     );
-
-    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
 
     let local_service_port = config.local_port.unwrap_or(8080);
     let local_service_address = config
@@ -112,15 +195,36 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         websocket_port, local_service_address, local_service_port
     );
 
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let ws_handle = tokio::spawn(async move {
-        if let Err(e) = ws_client.start().await {
+        if let Err(e) = ws_client.start(ready_tx).await {
             error!("WebSocket client error: {}", e);
         }
     });
+    // Attach before awaiting readiness: dropping this startup future must abort
+    // the tunnel task through the process, not detach it.
+    pf_process.set_ws_client_handle(ws_handle);
 
-    // Store the WebSocket client handle so it can be aborted when stopping
-    if let Some(mut process) = CHILD_PROCESSES.get_mut(&config_id.to_string()) {
-        process.set_ws_client_handle(ws_handle);
+    let ready = async {
+        match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(format!(
+                "Expose startup task ended before connecting: {error}"
+            )),
+            Err(_) => Err("Timed out connecting the reverse WebSocket tunnel".to_owned()),
+        }
+    };
+    let startup = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(format!("Expose startup cancelled for config {config_id}")),
+            startup = ready => startup,
+        },
+        None => ready.await,
+    };
+    if let Err(error) = startup {
+        pf_process.cleanup_and_abort().await;
+        return roll_back_exposure(&client, &config, &resources, guard, error).await;
     }
 
     let config_state = ConfigState {
@@ -132,7 +236,18 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         retry_count: None,
         last_error: None,
     };
-    update_config_state_with_mode(&config_state, mode).await?;
+    if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
+        pf_process.cleanup_and_abort().await;
+        return roll_back_exposure(&client, &config, &resources, guard, error).await;
+    }
+    pf_process.set_config(config.clone());
+    CHILD_PROCESSES.insert(config_id, pf_process);
+    // The record stays, now settled rather than uncertain: the registered
+    // process describes these resources only in memory, and a crash after the
+    // row is edited would otherwise leave cleanup looking for them at the new
+    // destination. It is dropped when cleanup actually succeeds.
+    guard.confirm();
+    drop(guard);
 
     info!("Expose tunnel fully established for config {}", config_id);
 
@@ -151,54 +266,7 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
 }
 
 pub async fn stop_expose(
-    config_id: i64, namespace: &str, mode: DatabaseMode,
+    config_id: i64, _namespace: &str, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
-    use kftray_commons::utils::config::get_config_with_mode;
-
-    use self::kubernetes::delete_expose_resources;
-    use crate::port_forward::CHILD_PROCESSES;
-
-    info!("Stopping expose for config {}", config_id);
-
-    let config = get_config_with_mode(config_id, mode).await?;
-
-    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&config_id.to_string()) {
-        info!("Cleaning up port-forward for config {}", config_id);
-        pf_process.cleanup_and_abort().await;
-    }
-
-    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-    let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
-        .await
-        .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = (*client).clone();
-
-    delete_expose_resources(client, namespace, &config_id.to_string()).await?;
-
-    let config_state = ConfigState {
-        id: None,
-        config_id,
-        is_running: false,
-        process_id: None,
-        is_retrying: false,
-        retry_count: None,
-        last_error: None,
-    };
-    update_config_state_with_mode(&config_state, mode).await?;
-
-    info!("Expose stopped for config {}", config_id);
-
-    Ok(CustomResponse {
-        id: Some(config_id),
-        service: config.service.unwrap_or_else(|| "expose".to_string()),
-        namespace: config.namespace.clone(),
-        local_port: config.local_port.unwrap_or(0),
-        remote_port: config.remote_port.unwrap_or(0),
-        context: config.context.unwrap_or_default(),
-        stdout: String::new(),
-        stderr: String::new(),
-        status: 0,
-        protocol: config.protocol.clone(),
-    })
+    crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
 }

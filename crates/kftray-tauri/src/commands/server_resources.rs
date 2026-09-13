@@ -53,12 +53,11 @@ pub async fn list_all_kftray_resources(
         context_name
     );
 
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
+    let client = connection.client;
 
     let username = whoami::username()
         .unwrap_or_else(|_| "unknown".to_string())
@@ -465,12 +464,11 @@ pub async fn delete_kftray_resource(
         }
     }
 
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
+    let client = connection.client;
 
     let delete_params = DeleteParams {
         grace_period_seconds: Some(0),

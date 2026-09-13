@@ -115,12 +115,54 @@ mod tests {
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 50);
                 let error_message = "This is an error test message";
-                render_error_popup(frame, error_message, area, 2);
+                let _ = render_error_popup(frame, error_message, area, 2, 0);
             })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
         assert!(!buffer.content.is_empty());
+    }
+
+    #[test]
+    fn a_long_error_stays_reachable_by_scrolling() {
+        // One line per failed configuration: a batch can report more than the
+        // popup shows, and dismissing it must not be the only way out.
+        let error_message: String = (0..60)
+            .map(|index| format!("config {index} failed to start: connection refused"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered = |scroll: usize| {
+            let backend = TestBackend::new(100, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = Rect::new(0, 0, 100, 24);
+                    let _ = render_error_popup(frame, &error_message, area, 1, scroll);
+                })
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+
+        let top = rendered(0);
+        let bottom = rendered(usize::MAX);
+        assert!(
+            top.contains("more line(s)"),
+            "a clipped error must say so: {top}"
+        );
+        assert_ne!(
+            top, bottom,
+            "scrolling to the end must reveal failures the first page clipped"
+        );
+        assert!(
+            bottom.contains("config 59"),
+            "the last failure must be reachable"
+        );
     }
 
     #[test]

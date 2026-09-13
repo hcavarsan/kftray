@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
@@ -54,7 +53,10 @@ use crate::tui::ui::{
 pub fn draw_configs_table(
     frame: &mut Frame, area: Rect, configs: &[Config], config_states: &[ConfigState],
     state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
-    configs_being_processed: &std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
+    configs_being_processed: &std::collections::HashMap<
+        i64,
+        Arc<crate::tui::input::PendingForward>,
+    >,
     throbber_state: &throbber_widgets_tui::ThrobberState,
 ) {
     let rows: Vec<Row> = configs
@@ -70,7 +72,7 @@ pub fn draw_configs_table(
             let is_processing = config.id.is_some_and(|id| {
                 configs_being_processed
                     .get(&id)
-                    .is_some_and(|(flag, _)| !flag.load(std::sync::atomic::Ordering::Relaxed))
+                    .is_some_and(|pending| pending.is_active())
             });
 
             let base_style = if is_processing {
@@ -87,19 +89,11 @@ pub fn draw_configs_table(
                 base_style
             };
 
-            let alias_text = if let Some(id) = config.id {
-                if configs_being_processed
-                    .get(&id)
-                    .is_some_and(|(flag, _)| !flag.load(std::sync::atomic::Ordering::Relaxed))
-                {
-                    let index = (throbber_state.index().unsigned_abs() as usize)
-                        % throbber_widgets_tui::BRAILLE_SIX.symbols.len();
-                    let symbol = throbber_widgets_tui::BRAILLE_SIX.symbols[index];
-
-                    format!("{} {}", symbol, config.alias.clone().unwrap_or_default())
-                } else {
-                    config.alias.clone().unwrap_or_default()
-                }
+            let alias_text = if is_processing {
+                let index = (throbber_state.index().unsigned_abs() as usize)
+                    % throbber_widgets_tui::BRAILLE_SIX.symbols.len();
+                let symbol = throbber_widgets_tui::BRAILLE_SIX.symbols[index];
+                format!("{} {}", symbol, config.alias.clone().unwrap_or_default())
             } else {
                 config.alias.clone().unwrap_or_default()
             };

@@ -34,6 +34,14 @@ use crate::tui::ui::draw_ui;
 
 type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 
+/// How long exit waits for cleanup targets that have not settled yet.
+///
+/// Covers the backend's uncertainty window with room for the retries inside it:
+/// a create abandoned on the way out can still be applied, and the registry
+/// tracking it does not survive the process.
+pub(crate) const CLEANUP_RECONCILE_TIMEOUT: std::time::Duration =
+    kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
+
 pub async fn run_tui(
     mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -44,6 +52,10 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(logger_state);
+
+    if let Ok(size) = terminal.size() {
+        app.update_visible_rows(size.height);
+    }
 
     #[cfg(not(debug_assertions))]
     let mut update_check: Option<UpdateCheckTask> = if !_no_update_check {
@@ -64,12 +76,46 @@ pub async fn run_tui(
 
     let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    // Restore the terminal first: stopping every forward waits on recovery
+    // locks and cluster deletions, and none of that should keep the shell in
+    // raw mode. Every step is attempted even if an earlier one fails, and the
+    // first error is held back rather than propagated, because returning here
+    // would skip the cleanup that drains the pending-resource registry.
+    let restored = [
+        disable_raw_mode(),
+        execute!(terminal.backend_mut(), LeaveAlternateScreen),
+        terminal.show_cursor(),
+    ]
+    .into_iter()
+    .find_map(Result::err);
+
+    app.finish_forwarding().await;
+    // Bounded like the reconciliation below: a stop waits on lifecycle locks
+    // and hosts-file work, and a stalled one must not keep the process alive.
+    match tokio::time::timeout(
+        CLEANUP_RECONCILE_TIMEOUT,
+        kftray_portforward::kube::stop_all_port_forward_with_mode(mode),
+    )
+    .await
+    {
+        Ok(Ok(responses)) => {
+            for response in responses {
+                if response.status != 0 {
+                    error!("Error stopping port forward: {:?}", response.stderr);
+                }
+            }
+        }
+        Ok(Err(error)) => error!("Failed to stop port forwards: {error}"),
+        Err(_) => error!("Stopping port forwards did not finish within the shutdown budget"),
+    }
+    // A create abandoned on the way out can surface after that first pass.
+    kftray_portforward::kube::reconcile_pending_cleanup(mode, CLEANUP_RECONCILE_TIMEOUT).await;
 
     if let Err(err) = res {
         error!("{err:?}");
+    }
+    if let Some(error) = restored {
+        return Err(error.into());
     }
 
     Ok(())

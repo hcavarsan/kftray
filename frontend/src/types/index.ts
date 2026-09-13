@@ -24,6 +24,21 @@ export interface Config {
   ingress_annotations?: string
 }
 
+export type PortForwardAction = 'starting' | 'stopping'
+
+export interface PortForwardResponse {
+  id: number | null
+  service: string
+  namespace: string
+  local_port: number
+  remote_port: number
+  context: string
+  stdout: string
+  stderr: string
+  status: number
+  protocol: string
+}
+
 type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {
@@ -50,6 +65,11 @@ export interface TableProps {
   configs: Config[]
   isInitiating: boolean
   isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
   initiatePortForwarding: (configs: Config[]) => Promise<void>
   startSelectedPortForwarding: () => Promise<void>
   stopSelectedPortForwarding: () => Promise<void>
@@ -64,7 +84,6 @@ export interface TableProps {
   setIsAlertOpen: (open: boolean) => void
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   openSettingsModal: () => void
   openServerResourcesModal: () => void
 }
@@ -80,9 +99,11 @@ export interface PortForwardRowProps {
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
-  _isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
 }
 
 export interface SyncStatus {
@@ -109,6 +130,7 @@ export interface FooterProps {
   onSyncComplete: () => void
   openShortcutModal: () => void
   setIsAutoImportModalOpen: (open: boolean) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface SyncConfigsButtonProps {
@@ -176,6 +198,7 @@ export interface BulkDeleteButtonProps {
   selectedConfigs: Config[]
   setSelectedConfigs: (configs: Config[]) => void
   configs: Config[]
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface ContextsAccordionProps {
@@ -191,9 +214,11 @@ export interface ContextsAccordionProps {
   handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
-  isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
 }
 
 export interface AutoImportModalProps {

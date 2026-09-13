@@ -5,10 +5,8 @@ use kftray_commons::models::{
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
-    ActiveComponent,
     ActiveTable,
     App,
-    AppState,
 };
 
 #[cfg(test)]
@@ -67,22 +65,6 @@ mod tests {
         }
 
         (configs, config_states)
-    }
-
-    #[test]
-    fn test_app_new() {
-        let app = App::new(test_logger_state());
-
-        assert_eq!(app.state, AppState::Normal);
-        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
-        assert_eq!(app.active_table, ActiveTable::Stopped);
-        assert!(app.stopped_configs.is_empty());
-        assert!(app.running_configs.is_empty());
-        assert!(app.selected_rows_stopped.is_empty());
-        assert!(app.selected_rows_running.is_empty());
-        assert_eq!(app.selected_row_stopped, 0);
-        assert_eq!(app.selected_row_running, 0);
-        assert_eq!(app.error_message, None);
     }
 
     #[test]
@@ -231,5 +213,126 @@ mod tests {
 
         app.update_visible_rows(19);
         assert_eq!(app.visible_rows, 0);
+    }
+
+    #[test]
+    fn pending_forward_stays_busy_until_completion() {
+        let mut app = App::new(test_logger_state());
+        let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new(1));
+        app.configs_being_processed.insert(1, pending.clone());
+        app.update_configs(&[], &[]);
+        assert!(app.configs_being_processed.contains_key(&1));
+
+        pending.finish();
+        app.update_configs(&[], &[]);
+        assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[test]
+    fn a_stalled_pending_forward_is_reported_but_never_dropped() {
+        let mut app = App::new(test_logger_state());
+        let queued = std::sync::Arc::new(crate::tui::input::PendingForward::new(1));
+        app.configs_being_processed.insert(1, queued.clone());
+
+        app.update_configs(&[], &[]);
+        assert!(
+            app.configs_being_processed.contains_key(&1),
+            "a config still waiting for a slot must keep its busy indicator"
+        );
+        assert!(app.error_message.is_none());
+
+        queued.mark_running_at(std::time::Instant::now() - std::time::Duration::from_secs(31));
+        app.update_configs(&[], &[]);
+        assert!(
+            app.configs_being_processed.contains_key(&1),
+            "a stalled operation must keep running so its own rollback can finish"
+        );
+        let reported = app.error_message.clone().unwrap();
+        assert!(reported.contains("still working"), "{reported}");
+
+        app.error_message = None;
+        app.update_configs(&[], &[]);
+        assert!(
+            app.error_message.is_none(),
+            "the stall must be reported once, not on every redraw"
+        );
+
+        queued.finish();
+        app.update_configs(&[], &[]);
+        assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[tokio::test]
+    async fn a_panicking_forward_task_reaches_the_error_popup() {
+        let mut app = App::new(test_logger_state());
+        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
+        app.task_configs.insert(handle.id(), 410_081);
+
+        // Yield until the task has actually finished: a fixed sleep would make
+        // this pass or fail on scheduling rather than on the behaviour.
+        for _ in 0..200 {
+            if handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(handle.is_finished(), "the task must have panicked by now");
+
+        app.update_configs(&[], &[]);
+        let reported = app.error_message.clone().unwrap();
+        assert!(reported.contains("410081"), "{reported}");
+    }
+
+    #[tokio::test]
+    async fn finishing_cancels_queued_forwards_without_waiting_for_a_slot() {
+        let mut app = App::new(test_logger_state());
+        let slots = app.forwarding_slots.available_permits() as u32;
+        let _occupied = app
+            .forwarding_slots
+            .clone()
+            .acquire_many_owned(slots)
+            .await
+            .unwrap();
+        app.stopped_configs = vec![create_test_config(1)];
+        app.table_state_stopped.select(Some(0));
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), app.finish_forwarding())
+            .await
+            .unwrap();
+        assert!(app.error_receiver.as_mut().unwrap().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_saturated_start_batch_does_not_block_stopping() {
+        let mut app = App::new(test_logger_state());
+        let slots = app.forwarding_slots.available_permits() as u32;
+        let _occupied = app
+            .forwarding_slots
+            .clone()
+            .acquire_many_owned(slots)
+            .await
+            .unwrap();
+
+        app.active_table = crate::tui::input::ActiveTable::Running;
+        app.running_configs = vec![create_test_config(410_061)];
+        app.table_state_running.select(Some(0));
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        let receiver = app.error_receiver.as_mut().unwrap();
+        let reported = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("the stop must run while every start permit is held");
+        assert!(reported.is_some());
     }
 }

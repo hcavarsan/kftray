@@ -35,6 +35,12 @@ use crate::commands::{
     },
 };
 
+fn start_error(
+    result: Result<Vec<kftray_commons::models::response::CustomResponse>, String>,
+) -> Result<(), String> {
+    kftray_commons::models::response::batch_failure(&result?)
+}
+
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
 
 pub async fn setup_shortcut_integration(
@@ -233,7 +239,7 @@ impl ActionHandler for StartAllPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = result {
+            if let Err(e) = start_error(result) {
                 error!(
                     "Failed to start port forward for config {}: {}",
                     config.id.unwrap_or(0),
@@ -283,8 +289,12 @@ impl ActionHandler for StopAllPortForwardAction {
     async fn execute(&self, _context: &ActionContext) -> kftray_shortcuts::ShortcutResult<()> {
         info!("Executing stop all port forward action");
 
-        match stop_all_port_forward_cmd(self.app_handle.clone()).await {
-            Ok(_) => {
+        let stopped = stop_all_port_forward_cmd(self.app_handle.clone())
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|responses| kftray_commons::models::response::batch_failure(&responses));
+        match stopped {
+            Ok(()) => {
                 info!("Successfully stopped all port forwards");
 
                 let _ = self
@@ -300,6 +310,14 @@ impl ActionHandler for StopAllPortForwardAction {
             }
             Err(e) => {
                 error!("Failed to stop all port forwards: {}", e);
+                let _ = self
+                    .app_handle
+                    .notification()
+                    .builder()
+                    .title("Port Forward")
+                    .body(format!("Failed to stop every port forward: {e}"))
+                    .show();
+                let _ = self.app_handle.emit("port-forward-status-changed", ());
                 Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
                     format!("Failed to stop all port forwards: {}", e),
                 ))
@@ -415,7 +433,7 @@ impl ActionHandler for StartPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = result {
+            if let Err(e) = start_error(result) {
                 error!(
                     "Failed to start port forward for config {}: {}",
                     config.id.unwrap_or(0),
@@ -741,7 +759,7 @@ impl ActionHandler for TogglePortForwardAction {
                     deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
                 };
 
-                if let Err(e) = result {
+                if let Err(e) = start_error(result) {
                     error!(
                         "Failed to start port forward for config {}: {}",
                         config.id.unwrap_or(0),

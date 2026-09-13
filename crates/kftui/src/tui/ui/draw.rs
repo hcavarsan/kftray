@@ -65,6 +65,9 @@ const NAVIGATION_HINT: &str = "[PgUp/PgDn:navigate]";
 
 pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.area();
+    // Recorded from the render that actually laid the message out, so input
+    // handling can clamp scrolling to what exists.
+    let mut max_error_scroll = 0;
 
     let background = Block::default().style(Style::default().bg(BASE));
     f.render_widget(background, size);
@@ -189,7 +192,8 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             if let Some(error_message) = &app.error_message {
                 let error_area = centered_rect(60, 40, size);
                 render_background_overlay(f, size);
-                render_error_popup(f, error_message, error_area, 1);
+                max_error_scroll =
+                    render_error_popup(f, error_message, error_area, 1, app.error_scroll);
             }
         }
         AppState::ShowDeleteConfirmation => {
@@ -244,6 +248,9 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         }
         _ => {}
     }
+
+    app.error_scroll_max = max_error_scroll;
+    app.error_scroll = app.error_scroll.min(max_error_scroll);
 }
 
 pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {

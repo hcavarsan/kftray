@@ -52,6 +52,7 @@ const Footer: React.FC<FooterProps> = ({
   onSyncComplete,
   openShortcutModal,
   setIsAutoImportModalOpen,
+  deleteConfigs,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
@@ -326,6 +327,7 @@ const Footer: React.FC<FooterProps> = ({
             setSelectedConfigs={setSelectedConfigs}
             selectedConfigs={selectedConfigs}
             configs={configs}
+            deleteConfigs={deleteConfigs}
           />
         </Group>
 
