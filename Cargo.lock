@@ -3860,9 +3860,9 @@ dependencies = [
 
 [[package]]
 name = "kube-portforward"
-version = "0.3.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24491c8f6b94601b5a7f8aa5b8c134dfadc6ffaf003789587e9e56cf538db442"
+checksum = "124da194325e605a0fd00b4c224922dc662e0703dc3f08a4322e15659a59ecaf"
 dependencies = [
  "arc-swap",
  "base64 0.23.1",
@@ -6883,9 +6883,9 @@ dependencies = [
 
 [[package]]
 name = "spdy-mux"
-version = "0.3.4"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300e6df2ac8f0334aaa4758e323bd1b9bb4126326cf43ff49e63034fad300af9"
+checksum = "3bfb721dad415731e324effb259a5c20e03b29d7c8ac7d618cfc3b3c8d3ba6bc"
 dependencies = [
  "bytes",
  "fastwebsockets",

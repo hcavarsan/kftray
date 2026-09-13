@@ -41,6 +41,12 @@ pub struct DirectHostfileManager {
     /// background write could snapshot older entries and finish after a
     /// synchronous one, recording a generation its content does not match.
     write_lock: Arc<Mutex<()>>,
+    /// Aliases removed here but not yet written out.
+    ///
+    /// The managed section is shared with the privileged helper and carries no
+    /// per-owner marker, so a write rebuilds it from what is on disk. Without
+    /// this set a removal would be undone by the very write meant to apply it.
+    retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
 }
 
 impl DirectHostfileManager {
@@ -52,6 +58,7 @@ impl DirectHostfileManager {
             reconciled_generation: Arc::new(AtomicU64::new(u64::MAX)),
             generation: Arc::new(AtomicU64::new(0)),
             write_lock: Arc::new(Mutex::new(())),
+            retired: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -86,6 +93,19 @@ impl DirectHostfileManager {
     /// The helper writes the same tagged section, so an entry it owns is
     /// invisible here. Without this, a reconciled map would report a removal as
     /// complete without even inspecting the file.
+    /// Forgets ids the privileged helper already removed from the file.
+    ///
+    /// Their entries stay in this map otherwise, and a later retry of a write
+    /// that failed earlier would put the stopped alias back on disk.
+    pub fn forget_entries(&self, ids: &[&str]) {
+        let Ok(mut entries) = self.entries.write() else {
+            return;
+        };
+        for id in ids {
+            entries.remove(*id);
+        }
+    }
+
     pub fn invalidate_reconciliation(&self) {
         self.reconciled_generation
             .store(u64::MAX, Ordering::Relaxed);
@@ -106,9 +126,16 @@ impl DirectHostfileManager {
             Ok(mut entries) => {
                 // Collected first so every id is removed, not just the ones
                 // before the first hit.
-                let removed: Vec<bool> =
-                    ids.iter().map(|id| entries.remove(*id).is_some()).collect();
-                let existed = removed.into_iter().any(|removed| removed);
+                let removed: Vec<HostEntry> =
+                    ids.iter().filter_map(|id| entries.remove(*id)).collect();
+                let existed = !removed.is_empty();
+                // Remembered until a write lands: the section is rebuilt from
+                // what is on disk, so without this the alias just removed would
+                // be written straight back.
+                self.retired
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend(removed.into_iter().map(|entry| (entry.ip, entry.hostname)));
                 // Counted while the entries lock is held: a concurrent removal
                 // of the same id would otherwise see the entry already gone and
                 // the generation still reconciled, and report success without
@@ -137,6 +164,7 @@ impl DirectHostfileManager {
             &self.generation,
             &self.reconciled_generation,
             &self.write_lock,
+            &self.retired,
         ) {
             // A successful write rewrote the whole managed section from this
             // map, so every id in the batch is off disk whether or not this
@@ -181,6 +209,7 @@ impl DirectHostfileManager {
             &self.generation,
             &self.reconciled_generation,
             &self.write_lock,
+            &self.retired,
         ) {
             Ok(_) => Ok(()),
             Err((_, error)) => {
@@ -256,6 +285,7 @@ impl DirectHostfileManager {
                 self.reconciled_generation.clone(),
                 self.generation.clone(),
                 self.write_lock.clone(),
+                self.retired.clone(),
             );
         }
     }
@@ -265,6 +295,7 @@ impl DirectHostfileManager {
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, reconciled_generation: Arc<AtomicU64>,
         generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
     ) {
         thread::spawn(move || {
             Self::batch_writer_loop(
@@ -274,6 +305,7 @@ impl DirectHostfileManager {
                 reconciled_generation,
                 generation,
                 write_lock,
+                retired,
             );
         });
     }
@@ -282,6 +314,7 @@ impl DirectHostfileManager {
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, reconciled_generation: Arc<AtomicU64>,
         generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
     ) {
         let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
         let mut failures = 0u32;
@@ -318,7 +351,13 @@ impl DirectHostfileManager {
                 continue;
             }
 
-            match Self::write_snapshot(&entries, &generation, &reconciled_generation, &write_lock) {
+            match Self::write_snapshot(
+                &entries,
+                &generation,
+                &reconciled_generation,
+                &write_lock,
+                &retired,
+            ) {
                 Ok(_) => {
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
@@ -375,6 +414,7 @@ impl DirectHostfileManager {
                 reconciled_generation,
                 generation,
                 write_lock,
+                retired,
             );
         } else {
             *running = false;
@@ -387,11 +427,20 @@ impl DirectHostfileManager {
     fn write_snapshot(
         entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
         reconciled_generation: &Arc<AtomicU64>, write_lock: &Arc<Mutex<()>>,
+        retired: &Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
     ) -> Result<u64, (u64, std::io::Error)> {
         let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
         let started = generation.load(Ordering::Relaxed);
-        match Self::update_hosts_file_static(entries) {
+        let dropping = retired.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match Self::update_hosts_file_static(entries, &dropping) {
             Ok(()) => {
+                // Retained until the write lands: an alias removed here is only
+                // off disk once the section has been rewritten without it.
+                let mut retired = retired.lock().unwrap_or_else(|e| e.into_inner());
+                retired.retain(|entry| !dropping.contains(entry));
+                // Stored under the write lock, and compared against the
+                // generation read under it too, so an invalidation that lands
+                // while this write is in flight is never marked reconciled.
                 reconciled_generation.store(started, Ordering::Relaxed);
                 Ok(started)
             }
@@ -399,7 +448,9 @@ impl DirectHostfileManager {
         }
     }
 
-    fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {
+    fn update_hosts_file_static(
+        entries: &Arc<RwLock<HostEntriesMap>>, dropping: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
         let entries_snapshot = match entries.read() {
             Ok(entries) => entries.clone(),
             Err(e) => {
@@ -409,6 +460,33 @@ impl DirectHostfileManager {
         };
 
         let mut hosts_file = HostsFile::new(KFTRAY_HOSTS_TAG);
+
+        // Rebuilt from what is on disk: the privileged helper writes into the
+        // same section, and its aliases carry no marker, so writing only this
+        // manager's map would delete them.
+        let owned: std::collections::HashSet<(std::net::IpAddr, &str)> = entries_snapshot
+            .values()
+            .map(|entry| (entry.ip, entry.hostname.as_str()))
+            .collect();
+        match hosts_file.read_section() {
+            Ok(existing) => {
+                for (ip, hostnames) in existing {
+                    for hostname in hostnames {
+                        if owned.contains(&(ip, hostname.as_str()))
+                            || dropping.iter().any(|(retired_ip, retired_hostname)| {
+                                *retired_ip == ip && *retired_hostname == hostname
+                            })
+                        {
+                            continue;
+                        }
+                        hosts_file.add_entry(ip, hostname);
+                    }
+                }
+            }
+            // Treated as an empty section: the write below still has to happen,
+            // and a section it could not read is one it cannot preserve.
+            Err(error) => log::warn!("Could not read the existing hosts section: {error}"),
+        }
 
         for (id, entry) in &entries_snapshot {
             debug!("Adding entry for ID {id} to hosts file: {entry:?}");

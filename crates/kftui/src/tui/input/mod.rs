@@ -243,6 +243,10 @@ pub struct App {
     pub stopped_configs: Vec<Config>,
     pub running_configs: Vec<Config>,
     pub error_message: Option<String>,
+    /// First visible line of the error popup. A batch can report more failures
+    /// than the popup shows at once, and dismissing it would otherwise discard
+    /// the ones that were never on screen.
+    pub error_scroll: usize,
     pub active_component: ActiveComponent,
     pub selected_menu_item: usize,
     pub delete_confirmation_message: Option<String>,
@@ -336,6 +340,7 @@ impl App {
             stopped_configs: Vec::new(),
             running_configs: Vec::new(),
             error_message: None,
+            error_scroll: 0,
             active_component: ActiveComponent::StoppedTable,
             selected_menu_item: 0,
             delete_confirmation_message: None,
@@ -2728,11 +2733,19 @@ pub fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
 }
 
 pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    const PAGE: usize = 10;
+
     match key {
         KeyCode::Esc | KeyCode::Enter => {
             app.state = AppState::Normal;
             app.error_message = None;
+            app.error_scroll = 0;
         }
+        KeyCode::Up => app.error_scroll = app.error_scroll.saturating_sub(1),
+        KeyCode::Down => app.error_scroll = app.error_scroll.saturating_add(1),
+        KeyCode::PageUp => app.error_scroll = app.error_scroll.saturating_sub(PAGE),
+        KeyCode::PageDown => app.error_scroll = app.error_scroll.saturating_add(PAGE),
+        KeyCode::Home => app.error_scroll = 0,
         _ => {}
     }
     Ok(())

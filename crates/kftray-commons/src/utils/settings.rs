@@ -337,6 +337,28 @@ pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result
     Ok(())
 }
 
+/// Reads every setting whose key starts with `prefix`.
+pub async fn get_settings_with_prefix(
+    prefix: &str,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_db_pool().await?;
+    let mut conn = pool.acquire().await?;
+    let rows = sqlx::query("SELECT key, value FROM settings WHERE key LIKE ?")
+        .bind(format!("{prefix}%"))
+        .fetch_all(&mut *conn)
+        .await?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                sqlx::Row::get::<String, _>(row, "key"),
+                sqlx::Row::get::<String, _>(row, "value"),
+            )
+        })
+        .collect())
+}
+
 /// Removes a setting, if it is present.
 pub async fn delete_setting(key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_db_pool().await?;

@@ -77,7 +77,7 @@ pub async fn resolve_target_port(
 /// connects afterwards has to know whether it is still talking to the same pod.
 pub async fn resolve_target_port_for_pod(
     forwarder: &Forwarder, pod_api: &Api<Pod>, target: &Target, timeout: Duration,
-) -> anyhow::Result<(u16, Option<String>)> {
+) -> anyhow::Result<(u16, Option<kube_portforward::ReadyPod>)> {
     match &target.port {
         Port::Number(port) => match u16::try_from(*port) {
             Ok(port) if port > 0 => Ok((port, None)),
@@ -96,9 +96,13 @@ pub async fn resolve_target_port_for_pod(
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to fetch pod '{}': {}", pod_name, e))?;
 
+            // The UID comes from the pod the number was read from, so a
+            // replacement reusing the name is still a different identity.
+            let identity = kube_portforward::ReadyPod::new(pod_name, pod.metadata.uid.clone());
+
             target
                 .find(&pod, None)
-                .map(|target_pod| (target_pod.port_number, Some(pod_name)))
+                .map(|target_pod| (target_pod.port_number, Some(identity)))
         }
     }
 }

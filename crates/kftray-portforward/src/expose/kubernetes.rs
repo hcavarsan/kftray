@@ -471,6 +471,14 @@ async fn create_deployment(
             .match_labels
             .get_or_insert_with(std::collections::BTreeMap::new)
             .extend(ownership);
+        // Expressions are ANDed with the labels above, so one naming an
+        // ownership key contradicts them: a custom template selecting
+        // `app In [custom-relay]` would be rejected outright once the pod
+        // template carries `app: kftray-expose`. The labels now pin those keys,
+        // so the expressions for them have nothing left to say.
+        if let Some(expressions) = spec.selector.match_expressions.as_mut() {
+            expressions.retain(|expression| !is_ownership_label(&expression.key));
+        }
     }
     let spec = deployment
         .spec
@@ -697,7 +705,7 @@ async fn create_ingress(
     // client seeing the response, and cleanup for a configuration later
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
-    remember_ingress_created(&config_id_str).await;
+    remember_ingress_created(&config_id_str).await?;
     let created = ingresses
         .create(&PostParams::default(), &ingress)
         .await
@@ -714,24 +722,32 @@ fn ingress_history_key(config_id: &str) -> String {
 }
 
 /// Records that this configuration created an ingress.
-async fn remember_ingress_created(config_id: &str) {
-    if let Err(error) =
-        kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id), "1").await
-    {
-        log::warn!("Failed to record the ingress history for config {config_id}: {error}");
-    }
+///
+/// Reported rather than logged: an ingress whose history could not be written
+/// is one that a later cleanup cannot know about, and creating it anyway would
+/// leave it unverifiable.
+async fn remember_ingress_created(config_id: &str) -> Result<(), String> {
+    kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id), "1")
+        .await
+        .map_err(|error| {
+            format!("Failed to record the ingress history for config {config_id}: {error}")
+        })
 }
 
-/// Whether this configuration ever created an ingress.
+/// Whether this configuration ever created an ingress, or whether that cannot
+/// be ruled out.
 ///
 /// A configuration switched from public to private keeps the ingress it
-/// created, so its current type is not evidence that none exists.
+/// created, so its current type is not evidence that none exists. A history
+/// that cannot be read is not evidence either, so it counts as possible.
 pub async fn ingress_was_created(config_id: &str) -> bool {
-    kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id))
-        .await
-        .ok()
-        .flatten()
-        .is_some()
+    match kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id)).await {
+        Ok(value) => value.is_some(),
+        Err(error) => {
+            log::warn!("Could not read the ingress history for config {config_id}: {error}");
+            true
+        }
+    }
 }
 
 /// Forgets the ingress history once cleanup has confirmed none is left.

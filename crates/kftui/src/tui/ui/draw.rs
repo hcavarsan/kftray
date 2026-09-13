@@ -189,7 +189,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             if let Some(error_message) = &app.error_message {
                 let error_area = centered_rect(60, 40, size);
                 render_background_overlay(f, size);
-                render_error_popup(f, error_message, error_area, 1);
+                render_error_popup(f, error_message, error_area, 1, app.error_scroll);
             }
         }
         AppState::ShowDeleteConfirmation => {

@@ -623,7 +623,9 @@ pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rec
     }
 }
 
-pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
+pub fn render_error_popup(
+    f: &mut Frame, error_message: &str, area: Rect, top_padding: usize, scroll: usize,
+) {
     let (width_percent, height_percent) = if area.width < 80 {
         (95, 80)
     } else if area.width < 120 {
@@ -670,10 +672,24 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
         }
     }
 
+    // A batch reports one message per failed configuration, so the content can
+    // be taller than the popup. Without scrolling the later failures are
+    // clipped, and dismissing the popup would discard them unseen.
+    let visible = usize::from(popup_area.height).saturating_sub(4).max(1);
+    let hidden = lines.len().saturating_sub(visible);
+    let offset = scroll.min(hidden);
+    let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
+
     lines.push("".into());
-    lines.push(Line::from(vec![
-        "  Press <Enter> to close".fg(SUBTEXT0).italic(),
-    ]));
+    let hint = if hidden > 0 {
+        format!(
+            "  {} more line(s) — <Up>/<Down> to scroll, <Enter> to close",
+            hidden - offset
+        )
+    } else {
+        "  Press <Enter> to close".to_string()
+    };
+    lines.push(Line::from(vec![hint.fg(SUBTEXT0).italic()]));
 
     let formatted_text = Text::from(lines).centered();
     render_popup(

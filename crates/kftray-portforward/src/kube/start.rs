@@ -253,8 +253,18 @@ async fn allocate_local_address_owned(
         {
             // A retry can allocate the same address while this task is still
             // running, and the helper hands the same address back for the same
-            // service. Removing it then would strip the alias from underneath a
-            // forward that is already using it.
+            // service. The mark and the ownership check happen under one entry
+            // lock, so a startup cannot slip between them: taking the mark
+            // fails outright while any startup holds the address.
+            let Some(_releasing) = crate::kube::stop::mark_address_release(address) else {
+                warn!(
+                    "Keeping address {address} from an abandoned startup: another startup holds it"
+                );
+                if let Some(id) = owned.id {
+                    crate::kube::stop::forget_pending_cleanup(id, &owned);
+                }
+                return;
+            };
             if address_is_in_use(address).await {
                 warn!(
                     "Keeping address {address} from an abandoned startup: a running forward \
@@ -267,9 +277,6 @@ async fn allocate_local_address_owned(
             }
 
             warn!("Releasing address {address} allocated after startup was abandoned");
-            // Marked for the same reason a stop marks its release: a startup
-            // that begins now must not adopt the address mid-removal.
-            let _releasing = crate::kube::stop::mark_address_release(address);
             match crate::network_utils::remove_loopback_address(address).await {
                 Ok(()) => {
                     if let Some(id) = owned.id {
@@ -568,13 +575,20 @@ pub(super) async fn start_config_cancellable(
     // manually configured address skips allocation, and the helper hands back
     // an address without consulting this registry. A release that timed out is
     // still executing and would remove the alias from underneath this forward.
-    if let Some(address) = &config.local_address
-        && crate::kube::stop::address_release_in_flight(address)
-    {
-        return Err(format!(
-            "Local address {address} is still being released by an earlier stop"
-        ));
-    }
+    // Claimed rather than checked: a check would pass just before an abandoned
+    // allocation task started removing the same address. The claim is held for
+    // the whole startup, and the registered process takes over from there.
+    let _address_claim = match &config.local_address {
+        Some(address) => match crate::kube::stop::AddressClaim::take(address) {
+            Some(claim) => Some(claim),
+            None => {
+                return Err(format!(
+                    "Local address {address} is still being released by an earlier stop"
+                ));
+            }
+        },
+        None => None,
+    };
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);
     }

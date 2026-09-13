@@ -104,6 +104,39 @@ impl HostsFile {
         Ok(contents.contains(&HostsSection::new(&self.tag).begin_marker()))
     }
 
+    /// Reads the entries currently inside this tag's section.
+    ///
+    /// The section is shared: the privileged helper writes the same block, and
+    /// its entries carry no marker distinguishing them. A writer that rebuilds
+    /// the section from its own state has to start from what is already there,
+    /// or it deletes aliases it does not own.
+    pub fn read_section(&self) -> Result<BTreeMap<IpAddr, Vec<String>>> {
+        let path = get_default_hosts_path()?;
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
+        let section = HostsSection::new(&self.tag);
+        let bounds = section.find_section_bounds(&lines);
+        let (Some(begin), Some(end)) = (bounds.begin, bounds.end) else {
+            return Ok(BTreeMap::new());
+        };
+
+        let mut entries: BTreeMap<IpAddr, Vec<String>> = BTreeMap::new();
+        for line in lines.get(begin + 1..end).unwrap_or_default() {
+            let mut fields = line.split_whitespace();
+            let Some(Ok(ip)) = fields.next().map(str::parse::<IpAddr>) else {
+                continue;
+            };
+            let hostnames = entries.entry(ip).or_default();
+            hostnames.extend(fields.map(ToOwned::to_owned));
+        }
+
+        Ok(entries)
+    }
+
     pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
         let path = path.as_ref();
         validate_hosts_path(path)?;

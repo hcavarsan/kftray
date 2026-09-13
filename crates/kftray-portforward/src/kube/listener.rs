@@ -70,7 +70,10 @@ impl Default for ListenerConfig {
 struct NamedPort {
     target: Target,
     pod_api: Api<Pod>,
-    resolved: Arc<std::sync::Mutex<Option<(String, u16)>>>,
+    /// The pod a number was last read from, and that number. The identity
+    /// carries the UID: a StatefulSet replacement reuses the pod name while its
+    /// spec, and so the number a port name maps to, can differ.
+    resolved: Arc<std::sync::Mutex<Option<(kube_portforward::ReadyPod, u16)>>>,
 }
 
 pub struct PortForwarder {
@@ -188,7 +191,10 @@ impl PortForwarder {
             // The stream reaches a pod this port number was not read from, so
             // it is dropped rather than used: resolving again picks up the
             // replacement's own mapping.
-            debug!("Reconnecting: resolved on {pod} but connected to {connected_pod}");
+            debug!(
+                "Reconnecting: resolved on {} but connected to {}",
+                pod.name, connected_pod.name
+            );
             named
                 .resolved
                 .lock()
@@ -206,7 +212,9 @@ impl PortForwarder {
     /// A named port is re-resolved when the ready pod changes: a rollout can
     /// map the same name to a different number, and the old one would then
     /// reach nothing or the wrong container port.
-    async fn resolve_named_port(&self, named: &NamedPort) -> anyhow::Result<(u16, String)> {
+    async fn resolve_named_port(
+        &self, named: &NamedPort,
+    ) -> anyhow::Result<(u16, kube_portforward::ReadyPod)> {
         if let Some((pod, port)) = named
             .resolved
             .lock()

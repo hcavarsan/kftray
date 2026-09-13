@@ -229,8 +229,14 @@ fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
     };
     match locked {
         Ok(()) => Ok(true),
+        // Compared as an HRESULT: `Error::code` wraps the Win32 status, so the
+        // raw ERROR_LOCK_VIOLATION value never matches and contention would be
+        // reported as a hard failure instead of reaching the retry loop.
         Err(error)
-            if error.code().0 as u32 == windows::Win32::Foundation::ERROR_LOCK_VIOLATION.0 =>
+            if error.code()
+                == windows::core::HRESULT::from_win32(
+                    windows::Win32::Foundation::ERROR_LOCK_VIOLATION.0,
+                ) =>
         {
             Ok(false)
         }

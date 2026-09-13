@@ -70,6 +70,10 @@ impl HostfileManager {
             // section, so this manager's map no longer describes the file.
             self.direct_manager.invalidate_reconciliation();
             if errors.is_empty() {
+                // Dropped here too: an add that fell back to this manager and
+                // never reached disk is still pending, and retrying it would
+                // write the alias the helper just removed back again.
+                self.direct_manager.forget_entries(ids);
                 return Ok(());
             }
             let joined = errors.join("; ");
