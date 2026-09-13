@@ -196,7 +196,23 @@ impl PortForwarder {
 
         for _ in 0..ACQUIRE_ATTEMPTS {
             let (port, pod) = self.resolve_named_port(named).await?;
-            let (stream, connected_pod) = self.forwarder.connect_on_pod(port).await?;
+            // A failed connection drops the mapping and resolves again rather
+            // than giving up: after a rollout the cached number belongs to the
+            // pod that is gone, and opening it on the replacement fails even
+            // though the port name is perfectly resolvable there.
+            let connected = match self.forwarder.connect_on_pod(port).await {
+                Ok(connected) => connected,
+                Err(error) => {
+                    named
+                        .resolved
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .take();
+                    debug!("Re-resolving the named port after a failed connection: {error}");
+                    continue;
+                }
+            };
+            let (stream, connected_pod) = connected;
             if connected_pod == pod {
                 return Ok(stream);
             }

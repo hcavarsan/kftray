@@ -459,7 +459,7 @@ async fn process_deployment_proxy(
             ..config.clone()
         },
     )
-    .await;
+    .await?;
     // Deliberately not raced against cancellation: abandoning a create in
     // flight leaves an unknown outcome, and a cleanup pass that lists before
     // the object is persisted would forget it. Bounded instead, so a stalled
@@ -649,7 +649,7 @@ async fn process_pod_proxy(
             ..config.clone()
         },
     )
-    .await;
+    .await?;
     match create_proxy_resource(&pods, &pod).await {
         CreateOutcome::Settled(Ok(())) => guard.confirm(),
         CreateOutcome::Settled(Err(error)) => {

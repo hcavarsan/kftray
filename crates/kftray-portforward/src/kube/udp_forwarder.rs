@@ -152,9 +152,19 @@ impl UdpSession {
     /// draining its writes would otherwise hold its session, and its queued
     /// payloads, forever, and the client could never open a replacement.
     fn is_working(&self, now: Instant) -> bool {
-        let activity =
+        now.duration_since(self.last_activity()) <= SESSION_IDLE_TIMEOUT
+    }
+
+    /// The most recent progress in either direction.
+    ///
+    /// A client that mostly receives has an old `last_seen` and a current
+    /// tunnel timestamp; ranking by `last_seen` alone would evict it ahead of a
+    /// quieter one.
+    fn last_activity(&self) -> Instant {
+        let tunnel =
             self.opened_at + Duration::from_millis(self.tunnel_activity.load(Ordering::Relaxed));
-        now.duration_since(self.last_seen.max(activity)) <= SESSION_IDLE_TIMEOUT
+
+        self.last_seen.max(tunnel)
     }
 
     /// A tunnel that ended is retried only after a cooldown, so a relay that
@@ -335,7 +345,7 @@ impl UdpForwarder {
         while sessions.len() >= MAX_SESSIONS {
             let Some(oldest) = sessions
                 .iter()
-                .min_by_key(|(_, session)| session.last_seen)
+                .min_by_key(|(_, session)| session.last_activity())
                 .map(|(peer, _)| *peer)
             else {
                 break;
@@ -709,6 +719,35 @@ pub(crate) mod tests {
         assert!(
             !sessions.contains_key(&other),
             "a tunnel past its cooldown is retried on the next datagram"
+        );
+    }
+
+    #[tokio::test]
+    async fn eviction_ranks_replies_as_activity() {
+        let opened_at = Instant::now() - Duration::from_secs(30);
+        let session = |last_seen: Instant, tunnel_ms: u64| {
+            let (packets, _queue) = mpsc::channel::<Queued>(SESSION_QUEUE_DEPTH);
+            UdpSession {
+                packets,
+                cancellation: CancellationToken::new(),
+                task: tokio_util::task::AbortOnDropHandle::new(
+                    tokio::spawn(std::future::pending()),
+                ),
+                last_seen,
+                opened_at,
+                tunnel_activity: Arc::new(AtomicU64::new(tunnel_ms)),
+            }
+        };
+
+        // A client that only receives: its last request is old, but replies are
+        // still arriving.
+        let receiving = session(opened_at, 29_000);
+        // A client that sent more recently but has seen nothing since.
+        let quiet = session(opened_at + Duration::from_secs(10), 0);
+
+        assert!(
+            receiving.last_activity() > quiet.last_activity(),
+            "a session still receiving replies is more recently active than one that is idle"
         );
     }
 

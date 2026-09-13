@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fmt,
     fs::OpenOptions,
     io::{
@@ -62,23 +61,24 @@ pub struct SectionEntry {
 }
 
 pub struct HostsFile {
-    entries: BTreeMap<IpAddr, Vec<String>>,
+    entries: Vec<SectionEntry>,
     tag: String,
 }
 
 impl HostsFile {
     pub fn new<S: Into<String>>(tag: S) -> Self {
         Self {
-            entries: BTreeMap::new(),
+            entries: Vec::new(),
             tag: tag.into(),
         }
     }
 
     pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> &mut Self {
-        self.entries
-            .entry(ip)
-            .or_default()
-            .push(hostname.to_string());
+        self.entries.push(SectionEntry {
+            ip,
+            hostname: hostname.to_string(),
+            owner: None,
+        });
         self
     }
 
@@ -87,10 +87,9 @@ impl HostsFile {
         I: IntoIterator<Item = S>,
         S: ToString,
     {
-        self.entries
-            .entry(ip)
-            .or_default()
-            .extend(hostnames.into_iter().map(|h| h.to_string()));
+        for hostname in hostnames {
+            self.add_entry(ip, hostname);
+        }
         self
     }
 
@@ -100,6 +99,11 @@ impl HostsFile {
 
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Entries staged for the next write.
+    pub fn staged(&self) -> &[SectionEntry] {
+        &self.entries
     }
 
     pub fn write(&self) -> Result<bool> {
@@ -126,10 +130,11 @@ impl HostsFile {
     pub fn add_owned_entry<S: ToString>(
         &mut self, ip: IpAddr, hostname: S, owner: &str,
     ) -> &mut Self {
-        self.entries
-            .entry(ip)
-            .or_default()
-            .push(format!("{}{OWNER_MARKER}{owner}", hostname.to_string()));
+        self.entries.push(SectionEntry {
+            ip,
+            hostname: hostname.to_string(),
+            owner: Some(owner.to_owned()),
+        });
         self
     }
 
@@ -155,14 +160,21 @@ impl HostsFile {
 
         let mut entries = Vec::new();
         for line in lines.get(begin + 1..end).unwrap_or_default() {
-            // Everything from the first `#` is a comment, except the owner
-            // marker this writer emits. Splitting on whitespace alone would
-            // turn a hand-written note into hostnames, and rewriting the line
-            // would then comment out a real alias.
-            let (fields, owner) = match line.split_once(OWNER_MARKER) {
-                Some((fields, owner)) => (fields, Some(owner.trim().to_owned())),
-                None => (line.split('#').next().unwrap_or_default(), None),
+            // Everything from the first `#` is a comment. Ownership counts
+            // only when that comment is the marker itself, so a note that
+            // happens to mention the marker cannot make a foreign line look
+            // owned, and a real alias is never parsed as comment words.
+            let (fields, comment) = match line.split_once('#') {
+                Some((fields, comment)) => (fields, Some(comment)),
+                None => (line.as_str(), None),
             };
+            let owner = comment
+                .and_then(|comment| {
+                    format!("#{comment}")
+                        .strip_prefix(OWNER_MARKER.trim_start())
+                        .map(ToOwned::to_owned)
+                })
+                .map(|owner| owner.trim().to_owned());
             let mut fields = fields.split_whitespace();
             let Some(Ok(ip)) = fields.next().map(str::parse::<IpAddr>) else {
                 continue;
@@ -207,30 +219,27 @@ impl HostsSection {
         format!("# DO NOT EDIT {} END", self.tag)
     }
 
-    fn format_entries(&self, entries: &BTreeMap<IpAddr, Vec<String>>) -> Vec<String> {
+    /// One line per entry.
+    ///
+    /// Grouping several hostnames of one address onto a single line would put
+    /// every alias after the first behind the owner comment of that first one,
+    /// commenting them out. The SSL aliases alone always share 127.0.0.1.
+    fn format_entries(&self, entries: &[SectionEntry]) -> Vec<String> {
         if entries.is_empty() {
             return vec![];
         }
 
         let mut lines = vec![self.begin_marker()];
 
-        for (ip, hostnames) in entries {
-            lines.extend(self.format_host_entries(ip, hostnames));
+        for entry in entries {
+            lines.push(match &entry.owner {
+                Some(owner) => format!("{} {}{OWNER_MARKER}{owner}", entry.ip, entry.hostname),
+                None => format!("{} {}", entry.ip, entry.hostname),
+            });
         }
 
         lines.push(self.end_marker());
         lines
-    }
-
-    fn format_host_entries(&self, ip: &IpAddr, hostnames: &[String]) -> Vec<String> {
-        if cfg!(windows) {
-            hostnames
-                .iter()
-                .map(|hostname| format!("{} {}", ip, hostname))
-                .collect()
-        } else {
-            vec![format!("{} {}", ip, hostnames.join(" "))]
-        }
     }
 
     fn find_section_bounds(&self, lines: &[String]) -> SectionBounds {
@@ -273,7 +282,7 @@ impl<'a> HostsFileWriter<'a> {
         Self { path }
     }
 
-    fn update_section(&self, tag: &str, entries: &BTreeMap<IpAddr, Vec<String>>) -> Result<bool> {
+    fn update_section(&self, tag: &str, entries: &[SectionEntry]) -> Result<bool> {
         let mut lines = self.read_file_lines()?;
         let section = HostsSection::new(tag);
         let new_section_lines = section.format_entries(entries);
@@ -489,6 +498,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn aliases_sharing_an_address_stay_on_their_own_lines() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let mut hosts_file = HostsFile::new("test");
+        // The SSL aliases of one configuration always share 127.0.0.1.
+        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1");
+        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "b.local", "2");
+        hosts_file.add_entry([127, 0, 0, 1].into(), "plain.local");
+        hosts_file.write_to(&temp_path).unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "a.local".to_owned(),
+                    owner: Some("1".to_owned()),
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "b.local".to_owned(),
+                    owner: Some("2".to_owned()),
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 1].into(),
+                    hostname: "plain.local".to_owned(),
+                    owner: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_marker_inside_an_ordinary_comment_claims_nothing() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file
+            .write_all(
+                b"# DO NOT EDIT test BEGIN\n\
+                  127.0.0.7 real.local # note # kftray-id=42\n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+
+        assert_eq!(
+            entries,
+            vec![SectionEntry {
+                ip: [127, 0, 0, 7].into(),
+                hostname: "real.local".to_owned(),
+                // A note is not a claim: treating it as one would let a
+                // reconciliation delete a mapping it does not own.
+                owner: None,
+            }]
+        );
+    }
+
+    #[test]
     fn only_marked_lines_are_claimed_by_their_writer() {
         let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
         // A section holding one line from the privileged helper, one from this
@@ -576,6 +648,8 @@ mod tests {
             .add_entry([127, 0, 0, 1].into(), "localhost")
             .add_entries([192, 168, 1, 1].into(), ["router", "gateway"]);
 
-        assert_eq!(hosts_file.entries.len(), 2);
+        // One entry per hostname: aliases of one address need their own lines
+        // so an owner comment cannot swallow the ones after it.
+        assert_eq!(hosts_file.entries.len(), 3);
     }
 }

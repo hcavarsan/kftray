@@ -44,12 +44,26 @@ async fn roll_back_exposure<T>(
     client: &kube::Client, config: &Config, resources: &models::ExposeResources,
     guard: crate::kube::stop::ClusterResourceGuard, reason: String,
 ) -> Result<T, String> {
-    match kubernetes::delete_created_resources(client, &config.namespace, &resources.owned).await {
-        Ok(()) => {
+    // Bounded as a whole: this runs while the lifecycle lock is held, and the
+    // client carries no per-request timeout, so a stalled DELETE would block
+    // both this startup and the stop that follows it. The guard stays armed on
+    // timeout, which is what keeps the cleanup retryable.
+    const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let deleted = tokio::time::timeout(
+        ROLLBACK_TIMEOUT,
+        kubernetes::delete_created_resources(client, &config.namespace, &resources.owned),
+    )
+    .await;
+    match deleted {
+        Ok(Ok(())) => {
             guard.disarm().await;
             Err(reason)
         }
-        Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
+        Ok(Err(cleanup_error)) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
+        Err(_) => Err(format!(
+            "{reason}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried"
+        )),
     }
 }
 
@@ -86,7 +100,7 @@ pub(crate) async fn start_single_expose(
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
-    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone()).await;
+    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone()).await?;
     let created = match cancellation {
         Some(token) => tokio::select! {
             biased;

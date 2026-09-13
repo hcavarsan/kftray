@@ -54,37 +54,54 @@ impl HostfileManager {
     /// time, so its failures stay per-id.
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
         let mut helper_error = None;
+        // Ids the direct manager has to account for. Anything the helper
+        // removed is already gone, and requiring coverage for it would turn a
+        // successful cleanup into a reported failure.
+        let mut unresolved: Vec<&str> = ids.to_vec();
         if let Some(helper) = &self.helper_client
             && helper.is_available()
         {
             let mut errors = Vec::new();
+            let mut removed: Vec<&str> = Vec::new();
             for id in ids {
-                if let Err(e) = helper.remove_host_entry(id) {
-                    errors.push(format!("{id}: {e}"));
+                match helper.remove_host_entry(id) {
+                    Ok(_) => removed.push(id),
+                    Err(e) => errors.push(format!("{id}: {e}")),
                 }
             }
+            // Dropped here too: an add that fell back to the direct manager and
+            // never reached disk is still pending, and retrying it would write
+            // the alias the helper just removed back again.
+            self.direct_manager.forget_entries(&removed);
             if errors.is_empty() {
-                // Dropped here too: an add that fell back to this manager and
-                // never reached disk is still pending, and retrying it would
-                // write the alias the helper just removed back again.
-                self.direct_manager.forget_entries(ids);
                 return Ok(());
             }
             let joined = errors.join("; ");
             warn!("Helper hostfile remove failed ({joined}), falling back to direct");
             helper_error = Some(joined);
+            unresolved.retain(|id| !removed.contains(id));
         }
 
-        match (self.direct_manager.remove_host_entries(ids), helper_error) {
-            (Ok(_), None) => Ok(()),
-            // Every id was one this manager wrote, so its rewrite took them all
-            // off disk and the helper's failure is moot.
-            (Ok(true), Some(_)) => Ok(()),
-            // At least one id has no line of this manager's, so the helper owns
-            // it and its alias is still on disk.
-            (Ok(false), Some(error)) => Err(std::io::Error::other(error)),
-            (Err(error), _) => Err(error),
+        let covered = self.direct_manager.remove_host_entries(&unresolved)?;
+        if covered {
+            return Ok(());
         }
+        // Nothing of ours matched. That is normal for a configuration with no
+        // alias, so it only matters when an alias could be there under someone
+        // else's name: the helper failed, or it wrote entries earlier and is
+        // not available to remove them now.
+        if let Some(error) = helper_error {
+            return Err(std::io::Error::other(error));
+        }
+        if self.helper_client.is_some() && DirectHostfileManager::has_unowned_entries() {
+            return Err(std::io::Error::other(format!(
+                "Host entries for {} may still be on disk: they carry no owner and the helper is \
+                 unavailable",
+                unresolved.join(", ")
+            )));
+        }
+
+        Ok(())
     }
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {

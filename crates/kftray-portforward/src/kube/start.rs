@@ -584,7 +584,7 @@ pub(super) async fn start_config_cancellable(
     // allocation task started removing the same address. The claim is held for
     // the whole startup, and the registered process takes over from there.
     let _address_claim = match &config.local_address {
-        Some(address) => match crate::kube::stop::AddressClaim::take(address) {
+        Some(address) => match crate::kube::stop::AddressClaim::take(address, config.id) {
             Some(claim) => Some(claim),
             None => {
                 return Err(format!(
