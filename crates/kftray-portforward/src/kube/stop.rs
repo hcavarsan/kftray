@@ -127,34 +127,47 @@ const UNCERTAIN_CREATE_PREFIX: &str = "uncertain_create:";
 /// abandoned on its deadline can still be admitted, and a cleanup pass that
 /// listed nothing would forget a relay that appears seconds later. The record
 /// survives a restart, which is when nothing else does.
-fn persist_uncertain_target(id: i64, config: &Config) {
+async fn persist_uncertain_target(id: i64, config: &Config) {
     let Ok(serialized) = serde_json::to_string(config) else {
         return;
     };
     let key = uncertain_create_key(id, config);
-    tokio::spawn(async move {
-        if let Err(error) = kftray_commons::utils::settings::set_setting(&key, &serialized).await {
-            warn!("Failed to persist an unsettled create for config {id}: {error}");
-        }
-    });
+    if let Err(error) = kftray_commons::utils::settings::set_setting(&key, &serialized).await {
+        warn!("Failed to persist an unsettled create for config {id}: {error}");
+    }
 }
 
 /// Forgets a persisted create once its resources are confirmed gone.
-fn forget_uncertain_target(id: i64, config: &Config) {
+///
+/// Awaited like the write it undoes: two detached tasks have no ordering, and a
+/// late delete would erase a newer attempt's record.
+async fn forget_uncertain_target(id: i64, config: &Config) {
     let key = uncertain_create_key(id, config);
-    tokio::spawn(async move {
-        if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
-            log::debug!("Failed to clear the unsettled create for config {id}: {error}");
-        }
-    });
+    if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
+        log::debug!("Failed to clear the unsettled create for config {id}: {error}");
+    }
 }
 
 /// Identifies one configuration's resources, so two different targets for the
 /// same id do not overwrite each other.
 fn uncertain_create_key(id: i64, config: &Config) -> String {
+    // The destination is part of the identity, matching `same_resources`: one
+    // configuration can owe cleanup in two clusters at once after being edited
+    // and restarted, and a key naming only the id would let the second
+    // overwrite the first's record.
     let service = config.service.as_deref().unwrap_or("default");
+    let context = config.context.as_deref().unwrap_or("default");
+    let kubeconfig = config.kubeconfig.as_deref().unwrap_or("default");
     let namespace = &config.namespace;
-    format!("{UNCERTAIN_CREATE_PREFIX}{id}:{namespace}:{service}")
+    let workload = config.workload_type.as_deref().unwrap_or("default");
+    let mut digest = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(
+        &(context, kubeconfig, namespace, service, workload),
+        &mut digest,
+    );
+    let destination = std::hash::Hasher::finish(&digest);
+
+    format!("{UNCERTAIN_CREATE_PREFIX}{id}:{destination:016x}")
 }
 
 /// Reloads creates persisted by an earlier run into the cleanup registry.
@@ -180,10 +193,16 @@ async fn restore_uncertain_targets() {
         let Ok(config) = serde_json::from_str::<Config>(&value) else {
             continue;
         };
-        // Restored as settled rather than uncertain: whatever was in flight
-        // when the process exited is long since decided, so one authoritative
-        // list is now proof either way.
-        record_target(id, config, None, true, false);
+        // Restored with a fresh window: a process can restart seconds after
+        // abandoning a create, and elapsed wall time is no more proof here than
+        // it was in the run that recorded it.
+        record_target(
+            id,
+            config,
+            Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
+            true,
+            false,
+        );
     }
 }
 
@@ -280,7 +299,9 @@ pub(crate) struct ClusterResourceGuard {
 }
 
 impl ClusterResourceGuard {
-    pub(crate) fn arm(id: i64, config: Config) -> Self {
+    /// Awaits the durable record before returning, so the create it guards can
+    /// only be issued once something outside this process knows about it.
+    pub(crate) async fn arm(id: i64, config: Config) -> Self {
         record_target(
             id,
             config.clone(),
@@ -288,7 +309,7 @@ impl ClusterResourceGuard {
             true,
             false,
         );
-        persist_uncertain_target(id, &config);
+        persist_uncertain_target(id, &config).await;
         Self {
             id,
             config: Some(config),
@@ -313,13 +334,13 @@ impl ClusterResourceGuard {
 
     /// Nothing was created, so this guard's cluster obligation is settled. Any
     /// local cleanup recorded for the same resources stays tracked.
-    pub(crate) fn disarm(mut self) {
+    pub(crate) async fn disarm(mut self) {
         let Some(config) = self.config.take() else {
             return;
         };
         // Definitively rejected, so nothing was created and the persisted
         // record has nothing left to describe.
-        forget_uncertain_target(self.id, &config);
+        forget_uncertain_target(self.id, &config).await;
         if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
             for entry in entries
                 .iter_mut()
@@ -377,10 +398,16 @@ struct AddressState {
 struct ReleaseInFlight(String);
 
 impl ReleaseInFlight {
-    /// Marks a release, unless a startup already holds the address.
-    fn mark(address: &str) -> Option<Arc<Self>> {
+    /// Marks a release, unless a startup or a registered forward holds the
+    /// address.
+    ///
+    /// Both checks happen under the same entry lock, so a startup cannot
+    /// register between them: the helper hands the same address to two
+    /// configurations of one service without reference counting, and releasing
+    /// it for either would take the alias from under the other.
+    fn mark(address: &str, keep_for: impl Fn(&str) -> bool) -> Option<Arc<Self>> {
         let mut state = RELEASING_ADDRESSES.entry(address.to_owned()).or_default();
-        if state.claims > 0 {
+        if state.claims > 0 || keep_for(address) {
             return None;
         }
         state.releases += 1;
@@ -388,6 +415,18 @@ impl ReleaseInFlight {
 
         Some(Arc::new(Self(address.to_owned())))
     }
+}
+
+/// Whether a registered forward other than `exclude` is listening on `address`.
+pub(crate) fn address_has_other_owner(address: &str, exclude: Option<i64>) -> bool {
+    CHILD_PROCESSES.iter().any(|entry| {
+        Some(*entry.key()) != exclude
+            && entry
+                .value()
+                .config()
+                .and_then(|config| config.local_address.clone())
+                .is_some_and(|local| local == address)
+    })
 }
 
 impl Drop for ReleaseInFlight {
@@ -431,8 +470,10 @@ impl Drop for AddressClaim {
 ///
 /// Returns `None` when a startup holds the address, which is the same check a
 /// caller would otherwise make separately and lose the race on.
-pub(crate) fn mark_address_release(address: &str) -> Option<Arc<impl Send + Sync + use<>>> {
-    ReleaseInFlight::mark(address)
+pub(crate) fn mark_address_release(
+    address: &str, exclude: Option<i64>,
+) -> Option<Arc<impl Send + Sync + use<>>> {
+    ReleaseInFlight::mark(address, |address| address_has_other_owner(address, exclude))
 }
 
 /// Whether an address is still being released and cannot be reused yet.
@@ -464,7 +505,7 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     let mut cleanup = LocalCleanup::default();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
-        && let Err(error) = release_address_with_fallback(address).await
+        && let Err(error) = release_address_with_fallback(address, Some(id)).await
     {
         cleanup.deferred.push(error);
     }
@@ -492,7 +533,29 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     cleanup
 }
 
+/// Deletes the cluster resources one configuration owns, under one deadline.
+///
+/// The whole operation is bounded, not just its polling: the client carries no
+/// per-request timeout, so a server that accepts a request and never answers
+/// would hold the lifecycle lock for as long as an interactive stop waits.
 async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String> {
+    const CLUSTER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
+
+    match timeout(
+        CLUSTER_CLEANUP_TIMEOUT,
+        delete_cluster_resources_inner(id, config),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "Timed out after {CLUSTER_CLEANUP_TIMEOUT:?} deleting the cluster resources for config \
+             {id}"
+        )),
+    }
+}
+
+async fn delete_cluster_resources_inner(id: i64, config: &Config) -> Result<(), String> {
     if config.workload_type.as_deref() != Some("expose")
         && config.workload_type.as_deref() != Some("proxy")
         && config.protocol != "udp"
@@ -510,6 +573,7 @@ async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String
             &config.namespace,
             &id.to_string(),
             config.exposure_type.as_deref() == Some("public"),
+            &crate::expose::kubernetes::ExposeLocation::of(config),
         )
         .await
     } else {
@@ -548,17 +612,22 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
 /// Release address with timeout. Skips osascript fallback to avoid blocking on
 /// user interaction. Address cleanup is not critical - addresses will be freed
 /// on system restart.
-async fn release_address_with_fallback(address: &str) -> Result<(), String> {
+pub(crate) async fn release_address_with_fallback(
+    address: &str, owner: Option<i64>,
+) -> Result<(), String> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
 
     // Marked for as long as a release may still be executing, and owned by the
     // work itself rather than by this future: timing out the wait does not stop
     // the helper request or the platform command, and a restart that reused the
     // address could have it removed underneath it.
-    let Some(releasing) = ReleaseInFlight::mark(address) else {
-        // A startup holds this address, so it belongs to a forward that is
-        // coming up rather than to the one being stopped.
-        log::debug!("Skipping the release of {address}: a startup is using it");
+    let Some(releasing) =
+        ReleaseInFlight::mark(address, |address| address_has_other_owner(address, owner))
+    else {
+        // Another forward holds this address: the helper hands the same one to
+        // two configurations of the same service, so releasing it here would
+        // break a forward that is up or coming up.
+        log::debug!("Skipping the release of {address}: another forward is using it");
         return Ok(());
     };
 
@@ -1169,7 +1238,7 @@ async fn stop_config(
             }
         }
         for target in settled {
-            forget_uncertain_target(id, &target);
+            forget_uncertain_target(id, &target).await;
             forget_pending_cleanup(id, &target);
         }
         if errors.is_empty() {
@@ -1404,7 +1473,10 @@ mod tests {
         // A failed startup owes a loopback release.
         record_pending_cleanup(id, config.clone());
         // The same resources are then armed and deleted as a cluster target.
-        ClusterResourceGuard::arm(id, config.clone()).disarm();
+        ClusterResourceGuard::arm(id, config.clone())
+            .await
+            .disarm()
+            .await;
 
         let targets = pending_cleanup_targets(id);
         assert_eq!(targets.len(), 1);
@@ -1422,12 +1494,13 @@ mod tests {
         let claim = AddressClaim::take(address).expect("a free address can be claimed");
 
         assert!(
-            ReleaseInFlight::mark(address).is_none(),
+            ReleaseInFlight::mark(address, |_| false).is_none(),
             "an abandoned allocation must not remove an address a startup is using"
         );
 
         drop(claim);
-        let releasing = ReleaseInFlight::mark(address).expect("the address is free again");
+        let releasing =
+            ReleaseInFlight::mark(address, |_| false).expect("the address is free again");
         assert!(
             AddressClaim::take(address).is_none(),
             "a startup must not adopt an address mid-removal"
@@ -1439,10 +1512,10 @@ mod tests {
     #[test]
     fn an_address_stays_marked_until_every_release_finishes() {
         let address = "127.0.55.1";
-        let first = ReleaseInFlight::mark(address);
+        let first = ReleaseInFlight::mark(address, |_| false);
         // A stop that timed out leaves its release running; the next attempt
         // marks the same address again.
-        let second = ReleaseInFlight::mark(address);
+        let second = ReleaseInFlight::mark(address, |_| false);
 
         drop(second);
         assert!(
@@ -1550,7 +1623,7 @@ mod tests {
             workload_type: Some("service".to_string()),
             ..Config::default()
         };
-        let guard = ClusterResourceGuard::arm(id, config.clone());
+        let guard = ClusterResourceGuard::arm(id, config.clone()).await;
         // Dropped without `confirm`: the create request was abandoned, so the
         // resource may still be persisting.
         drop(guard);
@@ -1565,7 +1638,7 @@ mod tests {
         );
 
         // Once the create's outcome is observed, the same pass settles it.
-        let mut guard = ClusterResourceGuard::arm(id, config.clone());
+        let mut guard = ClusterResourceGuard::arm(id, config.clone()).await;
         guard.confirm();
         std::mem::forget(guard);
         let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;

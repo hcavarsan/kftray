@@ -623,9 +623,10 @@ pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rec
     }
 }
 
+/// Renders the error popup and reports the largest usable scroll offset.
 pub fn render_error_popup(
     f: &mut Frame, error_message: &str, area: Rect, top_padding: usize, scroll: usize,
-) {
+) -> usize {
     let (width_percent, height_percent) = if area.width < 80 {
         (95, 80)
     } else if area.width < 120 {
@@ -700,6 +701,8 @@ pub fn render_error_popup(
         formatted_text,
         Alignment::Center,
     );
+
+    hidden
 }
 
 fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {

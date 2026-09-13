@@ -32,9 +32,6 @@ impl HostfileManager {
             match helper.add_host_entry(id.clone(), entry.clone()) {
                 Ok(_) => {
                     debug!("Successfully added host entry via helper for ID: {id}");
-                    // The helper wrote the same tagged section, so this
-                    // manager's map no longer describes the file.
-                    self.direct_manager.invalidate_reconciliation();
                     return Ok(());
                 }
                 Err(e) => {
@@ -52,8 +49,8 @@ impl HostfileManager {
 
     /// Removes several ids, reconciling them with one write where possible.
     ///
-    /// The direct manager rewrites the file from its whole remaining map, so a
-    /// single successful write covers every id. The helper removes one at a
+    /// The direct manager rewrites its own lines in one pass, so a single
+    /// successful write covers every id it owns. The helper removes one at a
     /// time, so its failures stay per-id.
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
         let mut helper_error = None;
@@ -66,9 +63,6 @@ impl HostfileManager {
                     errors.push(format!("{id}: {e}"));
                 }
             }
-            // Whatever the helper managed to remove came out of the same tagged
-            // section, so this manager's map no longer describes the file.
-            self.direct_manager.invalidate_reconciliation();
             if errors.is_empty() {
                 // Dropped here too: an add that fell back to this manager and
                 // never reached disk is still pending, and retrying it would
@@ -83,10 +77,11 @@ impl HostfileManager {
 
         match (self.direct_manager.remove_host_entries(ids), helper_error) {
             (Ok(_), None) => Ok(()),
-            // Only entries this manager owns can be removed here. An id the
-            // helper added is absent from its map, so a clean return would
-            // claim an alias was removed that is still on disk.
+            // Every id was one this manager wrote, so its rewrite took them all
+            // off disk and the helper's failure is moot.
             (Ok(true), Some(_)) => Ok(()),
+            // At least one id has no line of this manager's, so the helper owns
+            // it and its alias is still on disk.
             (Ok(false), Some(error)) => Err(std::io::Error::other(error)),
             (Err(error), _) => Err(error),
         }

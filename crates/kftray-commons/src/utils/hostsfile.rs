@@ -48,6 +48,19 @@ impl From<io::Error> for HostsFileError {
     }
 }
 
+/// Comment that records which configuration owns a managed line.
+const OWNER_MARKER: &str = " # kftray-id=";
+
+/// One line inside a managed section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionEntry {
+    pub ip: IpAddr,
+    pub hostname: String,
+    /// Configuration this entry was written for, when the writer recorded one.
+    /// Entries without an owner belong to another writer and are preserved.
+    pub owner: Option<String>,
+}
+
 pub struct HostsFile {
     entries: BTreeMap<IpAddr, Vec<String>>,
     tag: String,
@@ -104,34 +117,63 @@ impl HostsFile {
         Ok(contents.contains(&HostsSection::new(&self.tag).begin_marker()))
     }
 
-    /// Reads the entries currently inside this tag's section.
+    /// Adds an entry that records which configuration owns it.
     ///
-    /// The section is shared: the privileged helper writes the same block, and
-    /// its entries carry no marker distinguishing them. A writer that rebuilds
-    /// the section from its own state has to start from what is already there,
-    /// or it deletes aliases it does not own.
-    pub fn read_section(&self) -> Result<BTreeMap<IpAddr, Vec<String>>> {
-        let path = get_default_hosts_path()?;
-        let contents = match std::fs::read_to_string(&path) {
+    /// The section is shared with the privileged helper, and entries written
+    /// without an owner cannot be told apart. The owner is written as a
+    /// trailing comment, which the hosts file format ignores, so a writer can
+    /// rebuild exactly its own lines and leave every other line alone.
+    pub fn add_owned_entry<S: ToString>(
+        &mut self, ip: IpAddr, hostname: S, owner: &str,
+    ) -> &mut Self {
+        self.entries
+            .entry(ip)
+            .or_default()
+            .push(format!("{}{OWNER_MARKER}{owner}", hostname.to_string()));
+        self
+    }
+
+    /// Reads the entries currently inside this tag's section, with the owner
+    /// recorded for each.
+    pub fn read_section(&self) -> Result<Vec<SectionEntry>> {
+        self.read_section_from(get_default_hosts_path()?)
+    }
+
+    /// Reads a section from a specific file.
+    pub fn read_section_from<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SectionEntry>> {
+        let contents = match std::fs::read_to_string(path.as_ref()) {
             Ok(contents) => contents,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error.into()),
         };
         let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
         let section = HostsSection::new(&self.tag);
         let bounds = section.find_section_bounds(&lines);
         let (Some(begin), Some(end)) = (bounds.begin, bounds.end) else {
-            return Ok(BTreeMap::new());
+            return Ok(Vec::new());
         };
 
-        let mut entries: BTreeMap<IpAddr, Vec<String>> = BTreeMap::new();
+        let mut entries = Vec::new();
         for line in lines.get(begin + 1..end).unwrap_or_default() {
-            let mut fields = line.split_whitespace();
+            // Everything from the first `#` is a comment, except the owner
+            // marker this writer emits. Splitting on whitespace alone would
+            // turn a hand-written note into hostnames, and rewriting the line
+            // would then comment out a real alias.
+            let (fields, owner) = match line.split_once(OWNER_MARKER) {
+                Some((fields, owner)) => (fields, Some(owner.trim().to_owned())),
+                None => (line.split('#').next().unwrap_or_default(), None),
+            };
+            let mut fields = fields.split_whitespace();
             let Some(Ok(ip)) = fields.next().map(str::parse::<IpAddr>) else {
                 continue;
             };
-            let hostnames = entries.entry(ip).or_default();
-            hostnames.extend(fields.map(ToOwned::to_owned));
+            for hostname in fields {
+                entries.push(SectionEntry {
+                    ip,
+                    hostname: hostname.to_owned(),
+                    owner: owner.clone(),
+                });
+            }
         }
 
         Ok(entries)
@@ -445,6 +487,69 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[test]
+    fn only_marked_lines_are_claimed_by_their_writer() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        // A section holding one line from the privileged helper, one from this
+        // writer, and one carrying a hand-written comment.
+        temp_file
+            .write_all(
+                b"# DO NOT EDIT test BEGIN\n\
+                  127.0.0.5 helper.local\n\
+                  127.0.0.6 owned.local # kftray-id=41007\n\
+                  127.0.0.7 noted.local # a note\n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+
+        let hosts_file = HostsFile::new("test");
+        let entries = hosts_file.read_section_from(&temp_path).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![
+                SectionEntry {
+                    ip: [127, 0, 0, 5].into(),
+                    hostname: "helper.local".to_owned(),
+                    owner: None,
+                },
+                SectionEntry {
+                    ip: [127, 0, 0, 6].into(),
+                    hostname: "owned.local".to_owned(),
+                    owner: Some("41007".to_owned()),
+                },
+                // The note is a comment, not two more hostnames: rewriting the
+                // line with them would put a real alias after a `#`.
+                SectionEntry {
+                    ip: [127, 0, 0, 7].into(),
+                    hostname: "noted.local".to_owned(),
+                    owner: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_owned_entry_round_trips_through_the_file() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let mut hosts_file = HostsFile::new("test");
+        hosts_file.add_owned_entry([127, 0, 0, 8].into(), "round.local", "9001");
+        hosts_file.write_to(&temp_path).unwrap();
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+        assert_eq!(
+            entries,
+            vec![SectionEntry {
+                ip: [127, 0, 0, 8].into(),
+                hostname: "round.local".to_owned(),
+                owner: Some("9001".to_owned()),
+            }]
+        );
+    }
 
     #[test]
     fn test_hosts_file_write() {

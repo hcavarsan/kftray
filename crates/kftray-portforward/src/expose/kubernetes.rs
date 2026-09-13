@@ -68,6 +68,7 @@ pub async fn create_expose_resources(
             &config.namespace,
             &config_id_str,
             config.exposure_type.as_deref() == Some("public"),
+            &ExposeLocation::of(config),
         )
         .await
         .map_err(ExposeCreateError::from)?;
@@ -705,7 +706,7 @@ async fn create_ingress(
     // client seeing the response, and cleanup for a configuration later
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
-    remember_ingress_created(&config_id_str).await?;
+    remember_ingress_created(&config_id_str, &ExposeLocation::of(config)).await?;
     let created = ingresses
         .create(&PostParams::default(), &ingress)
         .await
@@ -717,8 +718,37 @@ async fn create_ingress(
 }
 
 /// Key under which a configuration's ingress history is kept.
-fn ingress_history_key(config_id: &str) -> String {
-    format!("expose_ingress_created:{config_id}")
+///
+/// Scoped to the destination as well as the id: one configuration can owe
+/// cleanup in more than one cluster or namespace at a time, and clearing the
+/// history after verifying one of them would discard the evidence for the rest.
+fn ingress_history_key(config_id: &str, location: &ExposeLocation<'_>) -> String {
+    let mut digest = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(
+        &(location.context, location.kubeconfig, location.namespace),
+        &mut digest,
+    );
+    let scope = std::hash::Hasher::finish(&digest);
+
+    format!("expose_ingress_created:{config_id}:{scope:016x}")
+}
+
+/// Where an exposure's resources live.
+#[derive(Clone, Copy)]
+pub struct ExposeLocation<'a> {
+    pub context: Option<&'a str>,
+    pub kubeconfig: Option<&'a str>,
+    pub namespace: &'a str,
+}
+
+impl<'a> ExposeLocation<'a> {
+    pub fn of(config: &'a Config) -> Self {
+        Self {
+            context: config.context.as_deref(),
+            kubeconfig: config.kubeconfig.as_deref(),
+            namespace: &config.namespace,
+        }
+    }
 }
 
 /// Records that this configuration created an ingress.
@@ -726,8 +756,10 @@ fn ingress_history_key(config_id: &str) -> String {
 /// Reported rather than logged: an ingress whose history could not be written
 /// is one that a later cleanup cannot know about, and creating it anyway would
 /// leave it unverifiable.
-async fn remember_ingress_created(config_id: &str) -> Result<(), String> {
-    kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id), "1")
+async fn remember_ingress_created(
+    config_id: &str, location: &ExposeLocation<'_>,
+) -> Result<(), String> {
+    kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id, location), "1")
         .await
         .map_err(|error| {
             format!("Failed to record the ingress history for config {config_id}: {error}")
@@ -740,8 +772,10 @@ async fn remember_ingress_created(config_id: &str) -> Result<(), String> {
 /// A configuration switched from public to private keeps the ingress it
 /// created, so its current type is not evidence that none exists. A history
 /// that cannot be read is not evidence either, so it counts as possible.
-pub async fn ingress_was_created(config_id: &str) -> bool {
-    match kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id)).await {
+pub async fn ingress_was_created(config_id: &str, location: &ExposeLocation<'_>) -> bool {
+    match kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id, location))
+        .await
+    {
         Ok(value) => value.is_some(),
         Err(error) => {
             log::warn!("Could not read the ingress history for config {config_id}: {error}");
@@ -751,9 +785,10 @@ pub async fn ingress_was_created(config_id: &str) -> bool {
 }
 
 /// Forgets the ingress history once cleanup has confirmed none is left.
-async fn forget_ingress_history(config_id: &str) {
+async fn forget_ingress_history(config_id: &str, location: &ExposeLocation<'_>) {
     if let Err(error) =
-        kftray_commons::utils::settings::delete_setting(&ingress_history_key(config_id)).await
+        kftray_commons::utils::settings::delete_setting(&ingress_history_key(config_id, location))
+            .await
     {
         log::debug!("Failed to clear the ingress history for config {config_id}: {error}");
     }
@@ -797,12 +832,13 @@ fn named_items<T: kube::Resource + Clone>(
 
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
+    location: &ExposeLocation<'_>,
 ) -> Result<(), String> {
     // A configuration switched from public to private still owns the ingress it
     // created, and its role may not allow listing ingresses. Inferring absence
     // from the new type would leave that ingress serving the new tunnel
     // publicly, so history decides here, not the current configuration.
-    let ingress_possible = ingress_possible || ingress_was_created(config_id_label).await;
+    let ingress_possible = ingress_possible || ingress_was_created(config_id_label, location).await;
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
@@ -877,7 +913,7 @@ pub async fn delete_expose_resources(
 
     // Nothing is left, so the history that forced the ingress checks above has
     // served its purpose.
-    forget_ingress_history(config_id_label).await;
+    forget_ingress_history(config_id_label, location).await;
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label
@@ -1185,7 +1221,12 @@ mod tests {
             deleted
         }));
         let (result, deleted) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            let result = delete_expose_resources(client, "default", "42", true).await;
+            let location = ExposeLocation {
+                context: None,
+                kubeconfig: None,
+                namespace: "default",
+            };
+            let result = delete_expose_resources(client, "default", "42", true, &location).await;
             (result, server.await.unwrap())
         })
         .await

@@ -234,6 +234,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrolling_past_the_bottom_does_not_bank_offsets() {
+        let mut app = setup_app();
+        app.error_message = Some("many failures".to_string());
+        // What the last render could actually show.
+        app.error_scroll_max = 3;
+
+        for _ in 0..10 {
+            handle_error_popup_input(&mut app, KeyCode::Down).unwrap();
+        }
+        assert_eq!(app.error_scroll, 3, "scrolling stops at the last page");
+
+        handle_error_popup_input(&mut app, KeyCode::Up).unwrap();
+        assert_eq!(
+            app.error_scroll, 2,
+            "one key press must reveal the preceding line"
+        );
+    }
+
+    #[tokio::test]
     async fn test_handle_error_popup_input() {
         let mut app = setup_app();
         app.state = AppState::ShowErrorPopup;

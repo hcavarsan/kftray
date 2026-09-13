@@ -147,10 +147,14 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// forwarder, and keeps the configuration recorded only if that did not finish.
 async fn rollback_local_resources(config: &Config, address: &str, reason: String) -> String {
     let mut errors = Vec::new();
+    // Routed through the ownership-safe release: the helper hands the same
+    // address to two configurations of one service, and removing it directly
+    // would take the alias from under a forward that is still using it.
     if crate::network_utils::is_custom_loopback_address(address)
-        && let Err(error) = crate::network_utils::remove_loopback_address(address).await
+        && let Err(error) =
+            crate::kube::stop::release_address_with_fallback(address, config.id).await
     {
-        errors.push(error.to_string());
+        errors.push(error);
     }
     let id = config.id.unwrap_or_default();
     let hosts = tokio::task::spawn_blocking(move || {
@@ -256,7 +260,8 @@ async fn allocate_local_address_owned(
             // service. The mark and the ownership check happen under one entry
             // lock, so a startup cannot slip between them: taking the mark
             // fails outright while any startup holds the address.
-            let Some(_releasing) = crate::kube::stop::mark_address_release(address) else {
+            let Some(_releasing) = crate::kube::stop::mark_address_release(address, owned.id)
+            else {
                 warn!(
                     "Keeping address {address} from an abandoned startup: another startup holds it"
                 );
@@ -565,7 +570,7 @@ pub(super) async fn start_config_cancellable(
             if let Some(address) = &config.local_address
                 && crate::network_utils::is_custom_loopback_address(address)
             {
-                let _ = crate::network_utils::remove_loopback_address(address).await;
+                let _ = crate::kube::stop::release_address_with_fallback(address, config.id).await;
             }
 
             return Err(format!("Startup cancelled for config {config_id}"));

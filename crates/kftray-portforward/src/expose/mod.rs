@@ -46,7 +46,7 @@ async fn roll_back_exposure<T>(
 ) -> Result<T, String> {
     match kubernetes::delete_created_resources(client, &config.namespace, &resources.owned).await {
         Ok(()) => {
-            guard.disarm();
+            guard.disarm().await;
             Err(reason)
         }
         Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
@@ -86,7 +86,7 @@ pub(crate) async fn start_single_expose(
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
-    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone());
+    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone()).await;
     let created = match cancellation {
         Some(token) => tokio::select! {
             biased;
@@ -111,7 +111,7 @@ pub(crate) async fn start_single_expose(
             // record would make a later stop delete by label, which can reach
             // another installation's resources for the same config id.
             if !error.ambiguous && error.rolled_back {
-                guard.disarm();
+                guard.disarm().await;
             } else if !error.ambiguous {
                 guard.confirm();
             }
@@ -228,7 +228,7 @@ pub(crate) async fn start_single_expose(
     pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);
     // Registered: stop can find the process, so the pending trail is redundant.
-    guard.disarm();
+    guard.disarm().await;
 
     info!("Expose tunnel fully established for config {}", config_id);
 

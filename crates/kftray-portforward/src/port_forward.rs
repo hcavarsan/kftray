@@ -213,11 +213,15 @@ impl PortForward {
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
         let mut errors: Vec<String> = Vec::new();
+        // Routed through the ownership-safe release: two configurations of one
+        // service can share an address, and removing it directly would take the
+        // alias from under the other forward.
         if let Some(addr) = &self.local_address
             && crate::network_utils::is_custom_loopback_address(addr)
-            && let Err(error) = crate::network_utils::remove_loopback_address(addr).await
+            && let Err(error) =
+                crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id)).await
         {
-            errors.push(error.to_string());
+            errors.push(error);
         }
         // Reported rather than swallowed: this runs when a startup failed or
         // was cancelled after adding an alias, and the caller keeps the config

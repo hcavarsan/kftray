@@ -247,6 +247,9 @@ pub struct App {
     /// than the popup shows at once, and dismissing it would otherwise discard
     /// the ones that were never on screen.
     pub error_scroll: usize,
+    /// Largest offset the last render could use. Kept so scrolling past the end
+    /// does not bank increments that a later key press has to undo first.
+    pub error_scroll_max: usize,
     pub active_component: ActiveComponent,
     pub selected_menu_item: usize,
     pub delete_confirmation_message: Option<String>,
@@ -341,6 +344,7 @@ impl App {
             running_configs: Vec::new(),
             error_message: None,
             error_scroll: 0,
+            error_scroll_max: 0,
             active_component: ActiveComponent::StoppedTable,
             selected_menu_item: 0,
             delete_confirmation_message: None,
@@ -2741,11 +2745,22 @@ pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             app.error_message = None;
             app.error_scroll = 0;
         }
+        // Clamped to what the last render could actually show: banking
+        // increments past the end would make the first key press back up do
+        // nothing.
         KeyCode::Up => app.error_scroll = app.error_scroll.saturating_sub(1),
-        KeyCode::Down => app.error_scroll = app.error_scroll.saturating_add(1),
+        KeyCode::Down => {
+            app.error_scroll = app.error_scroll.saturating_add(1).min(app.error_scroll_max);
+        }
         KeyCode::PageUp => app.error_scroll = app.error_scroll.saturating_sub(PAGE),
-        KeyCode::PageDown => app.error_scroll = app.error_scroll.saturating_add(PAGE),
+        KeyCode::PageDown => {
+            app.error_scroll = app
+                .error_scroll
+                .saturating_add(PAGE)
+                .min(app.error_scroll_max);
+        }
         KeyCode::Home => app.error_scroll = 0,
+        KeyCode::End => app.error_scroll = app.error_scroll_max,
         _ => {}
     }
     Ok(())

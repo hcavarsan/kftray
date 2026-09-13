@@ -441,7 +441,7 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let error_message = "This is an error test message";
-                render_error_popup(frame, error_message, area, 2, 0);
+                let _ = render_error_popup(frame, error_message, area, 2, 0);
             })
             .unwrap();
         assert_snapshot!("render_error_popup", terminal.backend());

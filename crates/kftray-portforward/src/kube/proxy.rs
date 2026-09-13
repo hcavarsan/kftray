@@ -458,7 +458,8 @@ async fn process_deployment_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
-    );
+    )
+    .await;
     // Deliberately not raced against cancellation: abandoning a create in
     // flight leaves an unknown outcome, and a cleanup pass that lists before
     // the object is persisted would forget it. Bounded instead, so a stalled
@@ -468,7 +469,7 @@ async fn process_deployment_proxy(
         // A definitive rejection means nothing was created, so there is nothing
         // for a later cleanup pass to find.
         CreateOutcome::Settled(Err(error)) => {
-            guard.disarm();
+            guard.disarm().await;
             return Err(error);
         }
         // No answer: the object may still appear, so the record stays uncertain
@@ -509,7 +510,7 @@ async fn process_deployment_proxy(
     .await;
     if let Err(error) = result {
         match delete_proxy_resource(&deployments, hashed_name).await {
-            Ok(()) => guard.disarm(),
+            Ok(()) => guard.disarm().await,
             Err(cleanup) => {
                 // The guard stays armed so stop-all retries this deletion.
                 return Err(format!(
@@ -519,7 +520,7 @@ async fn process_deployment_proxy(
         }
         return Err(error);
     }
-    guard.disarm();
+    guard.disarm().await;
     result
 }
 
@@ -647,11 +648,12 @@ async fn process_pod_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
-    );
+    )
+    .await;
     match create_proxy_resource(&pods, &pod).await {
         CreateOutcome::Settled(Ok(())) => guard.confirm(),
         CreateOutcome::Settled(Err(error)) => {
-            guard.disarm();
+            guard.disarm().await;
             return Err(error);
         }
         CreateOutcome::Unknown(error) => return Err(error),
@@ -679,7 +681,7 @@ async fn process_pod_proxy(
     .await;
     if let Err(error) = result {
         match delete_proxy_resource(&pods, hashed_name).await {
-            Ok(()) => guard.disarm(),
+            Ok(()) => guard.disarm().await,
             Err(cleanup) => {
                 // The guard stays armed so stop-all retries this deletion.
                 return Err(format!("{error}; failed to delete proxy pod: {cleanup}"));
@@ -687,7 +689,7 @@ async fn process_pod_proxy(
         }
         return Err(error);
     }
-    guard.disarm();
+    guard.disarm().await;
     result
 }
 

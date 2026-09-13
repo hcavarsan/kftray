@@ -165,9 +165,21 @@ impl PortForwarder {
         // Resolution is inside the deadline: it can perform a pod GET, and a
         // stalled API server would otherwise hold the client past the ten
         // seconds this promises and delay stream-failure recovery.
-        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.acquire_stream())
-            .await
-            .context("Timed out acquiring a port-forward stream")?
+        let acquired = tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.acquire_stream()).await;
+        // Any unsuccessful acquisition drops the cached mapping, including a
+        // timeout: a rollout can change the number a port name maps to, and
+        // every later client would otherwise repeat the same stale lookup.
+        if !matches!(acquired, Ok(Ok(_)))
+            && let Some(named) = &self.named_port
+        {
+            named
+                .resolved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+        }
+
+        acquired.context("Timed out acquiring a port-forward stream")?
     }
 
     /// Opens a stream on the pod whose port number it used.

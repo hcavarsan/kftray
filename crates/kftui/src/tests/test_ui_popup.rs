@@ -115,7 +115,7 @@ mod tests {
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 50);
                 let error_message = "This is an error test message";
-                render_error_popup(frame, error_message, area, 2, 0);
+                let _ = render_error_popup(frame, error_message, area, 2, 0);
             })
             .unwrap();
 
@@ -137,7 +137,7 @@ mod tests {
             terminal
                 .draw(|frame| {
                     let area = Rect::new(0, 0, 100, 24);
-                    render_error_popup(frame, &error_message, area, 1, scroll);
+                    let _ = render_error_popup(frame, &error_message, area, 1, scroll);
                 })
                 .unwrap();
             terminal
