@@ -338,6 +338,47 @@ pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result
 }
 
 /// Reads every setting whose key starts with `prefix`.
+/// Removes a setting from a specific database.
+pub async fn delete_setting_with_mode(
+    key: &str, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await?;
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Reads every setting whose key starts with `prefix`, from a specific
+/// database.
+pub async fn get_settings_with_prefix_and_mode(
+    prefix: &str, mode: DatabaseMode,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await?;
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let rows = sqlx::query("SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\\'")
+        .bind(format!("{escaped}%"))
+        .fetch_all(&mut *conn)
+        .await?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                sqlx::Row::get::<String, _>(row, "key"),
+                sqlx::Row::get::<String, _>(row, "value"),
+            )
+        })
+        .filter(|(key, _)| key.starts_with(prefix))
+        .collect())
+}
+
 pub async fn get_settings_with_prefix(
     prefix: &str,
 ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {

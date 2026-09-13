@@ -168,13 +168,16 @@ async fn persist_uncertain_target(
     // A fresh attempt starts its confirmation sequence from scratch: a count
     // left by an earlier attempt at the same destination would let this one be
     // forgotten after a single pass.
-    if let Err(error) =
-        kftray_commons::utils::settings::delete_setting(&confirmation_key(id, config, mode)).await
+    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
+        &confirmation_key(id, config, mode),
+        mode,
+    )
+    .await
     {
         log::debug!("Failed to reset the confirmation count for config {id}: {error}");
     }
 
-    kftray_commons::utils::settings::set_setting(&key, &serialized)
+    kftray_commons::utils::settings::set_setting_with_mode(&key, &serialized, mode)
         .await
         .map_err(|error| format!("Failed to persist an unsettled create for config {id}: {error}"))
 }
@@ -189,7 +192,7 @@ async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) 
     const CONFIRMATIONS_REQUIRED: u32 = 2;
 
     let key = confirmation_key(id, config, mode);
-    let seen = kftray_commons::utils::settings::get_setting(&key)
+    let seen = kftray_commons::utils::settings::get_setting_with_mode(&key, mode)
         .await
         .ok()
         .flatten()
@@ -197,7 +200,9 @@ async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) 
         .unwrap_or(0)
         + 1;
     if seen >= CONFIRMATIONS_REQUIRED {
-        if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
+        if let Err(error) =
+            kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
+        {
             log::debug!("Failed to clear the confirmation count for config {id}: {error}");
         }
         return true;
@@ -219,7 +224,9 @@ async fn forget_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) {
         uncertain_create_key(id, config, mode),
         confirmation_key(id, config, mode),
     ] {
-        if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
+        if let Err(error) =
+            kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
+        {
             log::debug!("Failed to clear the unsettled create for config {id}: {error}");
         }
     }
