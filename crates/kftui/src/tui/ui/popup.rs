@@ -682,15 +682,20 @@ pub fn render_error_popup(
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
 
     lines.push("".into());
-    let hint = if hidden > 0 {
-        format!(
-            "  {} more line(s) — <Up>/<Down> to scroll, <Enter> to close",
-            hidden - offset
-        )
+    // Wrapped like the content above: the popup has no wrapping of its own, so
+    // a hint wider than the inner area is cut off, and the part that gets cut
+    // is the one saying how to dismiss it.
+    let remaining = hidden - offset;
+    let hint = if remaining > 0 {
+        format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
+    } else if hidden > 0 {
+        "End of message — <Up> to scroll back, <Enter> to close".to_string()
     } else {
-        "  Press <Enter> to close".to_string()
+        "Press <Enter> to close".to_string()
     };
-    lines.push(Line::from(vec![hint.fg(SUBTEXT0).italic()]));
+    for line in wrap_text_simple(&hint, content_width.saturating_sub(4)) {
+        lines.push(Line::from(vec![format!("  {line}").fg(SUBTEXT0).italic()]));
+    }
 
     let formatted_text = Text::from(lines).centered();
     render_popup(

@@ -20,10 +20,7 @@ use kftray_portforward::kube::{
 };
 use log::error;
 
-use crate::tui::input::{
-    App,
-    AppState,
-};
+use crate::tui::input::App;
 
 pub async fn start_port_forwarding(config: Config, mode: DatabaseMode) -> Result<(), String> {
     start_port_forwarding_with_ssl(config, mode, false).await
@@ -83,6 +80,9 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     let _ = std::io::stdout().flush();
 
     app.finish_forwarding().await;
+    // Reported on stderr and through the exit code: the alternate screen is
+    // already gone by the time this runs, so nothing drawn here would be seen.
+    let mut failed = false;
     match tokio::time::timeout(
         crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
         stop_all_port_forward_with_mode(mode),
@@ -94,13 +94,17 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
             for response in responses {
                 if response.status != 0 {
                     error!("Error stopping port forward: {:?}", response.stderr);
+                    // The terminal is already restored and this function always
+                    // exits, so the popup would never be drawn.
+                    eprintln!("Error stopping port forward: {}", response.stderr);
+                    failed = true;
                 }
             }
         }
         Err(e) => {
-            error!("Failed to stop all port forwards: {e:?}");
-            app.error_message = Some(format!("Failed to stop all port forwards: {e:?}"));
-            app.state = AppState::ShowErrorPopup;
+            error!("Failed to stop all port forwards: {e}");
+            eprintln!("Failed to stop all port forwards: {e}");
+            failed = true;
         }
     }
 
@@ -114,11 +118,13 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
 
     if let Err(e) = cleanup_current_process_config_states_with_mode(mode).await {
         log::error!("Failed to cleanup config states: {e}");
+        eprintln!("Failed to clean up configuration states: {e}");
+        failed = true;
     }
 
     log::debug!("Exiting application...");
 
-    std::process::exit(0);
+    std::process::exit(i32::from(failed));
 }
 
 pub async fn start_port_forward(
