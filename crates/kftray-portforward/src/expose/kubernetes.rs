@@ -81,9 +81,10 @@ pub async fn create_expose_resources(
     // Service selects on app and config_id alone, so it would also select the
     // pods this attempt creates, and an old public Ingress in front of it would
     // expose a tunnel now configured as private.
-    if let Some(leftovers) =
-        check_legacy_resources(&client, &config.namespace, &config_id_str).await
-    {
+    let leftovers = check_legacy_resources(&client, &config.namespace, &config_id_str)
+        .await
+        .map_err(ExposeCreateError::from)?;
+    if !leftovers.is_empty() {
         return Err(ExposeCreateError::from(format!(
             "Exposure resources from an earlier version are still running and cannot be attributed \
              to this installation: {}. Remove them from the server resources screen before \
@@ -835,7 +836,7 @@ async fn forget_ingress_history(config_id: &str, location: &ExposeLocation<'_>) 
 /// installation: they are reported, never deleted.
 async fn check_legacy_resources(
     client: &Client, namespace: &str, config_id: &str,
-) -> Option<Vec<String>> {
+) -> Result<Vec<String>, String> {
     let unlabelled = ListParams::default().labels(&format!(
         "app=kftray-expose,config_id={config_id},!{}",
         crate::kube::proxy::INSTALLATION_LABEL
@@ -843,18 +844,38 @@ async fn check_legacy_resources(
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
     let services: Api<Service> = Api::namespaced(client.clone(), namespace);
     let mut leftovers = Vec::new();
-    if let Ok(list) = deployments.list(&unlabelled).await {
-        leftovers.extend(named_items(&list, "deployment"));
-    }
-    if let Ok(list) = services.list(&unlabelled).await {
-        leftovers.extend(named_items(&list, "service"));
-    }
+    // Reported rather than swallowed: a list that failed is not a list that
+    // came back empty, and starting on that assumption is what lets an old
+    // Service select the new relay's pods.
+    leftovers.extend(named_items(
+        &deployments
+            .list(&unlabelled)
+            .await
+            .map_err(|error| format!("Failed to list earlier exposure deployments: {error}"))?,
+        "deployment",
+    ));
+    leftovers.extend(named_items(
+        &services
+            .list(&unlabelled)
+            .await
+            .map_err(|error| format!("Failed to list earlier exposure services: {error}"))?,
+        "service",
+    ));
     let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
-    if let Ok(list) = ingresses.list(&unlabelled).await {
-        leftovers.extend(named_items(&list, "ingress"));
+    match ingresses.list(&unlabelled).await {
+        Ok(list) => leftovers.extend(named_items(&list, "ingress")),
+        // A role scoped to a private exposure may not list ingresses at all.
+        // The Deployment and Service checks above still hold, and they are what
+        // an old Service would need to select the new pods.
+        Err(kube::Error::Api(response)) if matches!(response.code, 403 | 404) => {}
+        Err(error) => {
+            return Err(format!(
+                "Failed to list earlier exposure ingresses: {error}"
+            ));
+        }
     }
 
-    (!leftovers.is_empty()).then_some(leftovers)
+    Ok(leftovers)
 }
 
 async fn check_existing_resources(
