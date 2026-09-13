@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{
+    AtomicBool,
     AtomicU64,
     Ordering,
 };
@@ -33,6 +34,14 @@ pub struct DirectHostfileManager {
     /// Bumped by every mutation, so a writer can tell whether the change it
     /// failed on has since been superseded.
     generation: Arc<AtomicU64>,
+    /// Mappings removed here that may also exist as an unmarked line, written
+    /// by an older version or by the privileged helper. Kept until a write has
+    /// taken them off disk, because the map alone no longer describes them.
+    retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
+    /// Set when the whole section must go, including lines with no owner. A
+    /// failed purge stays a purge: an ordinary reconciliation preserves exactly
+    /// the lines it was asked to remove.
+    purging: Arc<AtomicBool>,
     /// Serializes the synchronous and background writes. Without it, a
     /// background write could snapshot older entries and finish after a
     /// synchronous one, recording a generation its content does not match.
@@ -47,6 +56,8 @@ impl DirectHostfileManager {
             writer_running: Arc::new(Mutex::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             write_lock: Arc::new(Mutex::new(())),
+            retired: Arc::new(Mutex::new(Vec::new())),
+            purging: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -89,19 +100,24 @@ impl DirectHostfileManager {
         if ids.is_empty() {
             return;
         }
-        {
+        let held_any = {
             let Ok(mut entries) = self.entries.write() else {
                 return;
             };
-            for id in ids {
-                entries.remove(*id);
-            }
+            // Collected first so every id is removed, not just those before
+            // the first hit.
+            let removed: Vec<bool> = ids.iter().map(|id| entries.remove(*id).is_some()).collect();
+            removed.into_iter().any(|removed| removed)
+        };
+        // Only scheduled when this manager actually held one of them. Running a
+        // reconciliation for helper-only ids would race the helper's own
+        // writer: a pass that read the file before its delete landed would put
+        // the alias back, and both removals would already have reported
+        // success.
+        if held_any {
+            self.mark_dirty();
+            self.ensure_writer_running();
         }
-        // Counted and scheduled like any other mutation: a write already in
-        // flight holds an older snapshot, and without a following pass it would
-        // put the forgotten alias back on disk.
-        self.mark_dirty();
-        self.ensure_writer_running();
     }
 
     /// Removes several ids and reconciles them with one write.
@@ -119,14 +135,13 @@ impl DirectHostfileManager {
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
         debug!("Removing host entries for IDs {ids:?}");
 
-        let owned_in_memory: Vec<bool> = match self.entries.write() {
-            Ok(mut entries) => ids.iter().map(|id| entries.remove(*id).is_some()).collect(),
+        let removed: Vec<Option<HostEntry>> = match self.entries.write() {
+            Ok(mut entries) => ids.iter().map(|id| entries.remove(*id)).collect(),
             Err(e) => {
                 error!("Failed to acquire host entries write lock: {e}");
                 return Err(std::io::Error::other(e.to_string()));
             }
         };
-        self.generation.fetch_add(1, Ordering::Relaxed);
 
         // The file is the record of what this manager wrote, and it outlives
         // the map: an entry added before a restart is on disk with its owner
@@ -134,14 +149,42 @@ impl DirectHostfileManager {
         let on_disk = Self::owners_on_disk();
         let covered = ids
             .iter()
-            .zip(owned_in_memory)
-            .all(|(id, in_memory)| in_memory || on_disk.contains(*id));
+            .zip(removed.iter())
+            .all(|(id, entry)| entry.is_some() || on_disk.contains(*id));
+        let held_anything =
+            removed.iter().any(Option::is_some) || ids.iter().any(|id| on_disk.contains(*id));
+        if !held_anything {
+            // Nothing of this manager's is involved, so there is nothing to
+            // write. That matters: most stops carry no alias at all, and the
+            // hosts file usually needs elevated privileges even to open for
+            // writing.
+            return Ok(covered);
+        }
+
+        // An unmarked copy of the same mapping can exist, written by an older
+        // version or by the helper. Dropping the entry from the map alone would
+        // leave that copy resolving, so the pairs are kept until a write has
+        // taken them off disk.
+        self.retired
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(
+                removed
+                    .into_iter()
+                    .flatten()
+                    .map(|entry| (entry.ip, entry.hostname)),
+            );
 
         self.mark_dirty();
         // Written here rather than left to the background writer: a removal is
         // part of stopping a forward, and the caller can only keep it tracked
         // for retry if it learns the alias is still on disk.
-        match Self::write_snapshot(&self.entries, &self.generation, &self.write_lock) {
+        match Self::write_snapshot(
+            &self.entries,
+            &self.generation,
+            &self.write_lock,
+            &self.retired,
+        ) {
             Ok(_) => Ok(covered),
             Err((_, error)) => {
                 self.mark_dirty();
@@ -202,15 +245,15 @@ impl DirectHostfileManager {
         // The whole section goes, unmarked lines included: a per-id removal
         // preserves them because it cannot attribute them, but this is the
         // request to drop everything this application ever wrote.
-        let purge = {
-            let _writing = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
-            HostsFile::new(KFTRAY_HOSTS_TAG)
-                .write()
-                .map_err(std::io::Error::other)
-        };
-        match purge {
-            Ok(_) => Ok(()),
-            Err(error) => {
+        // Recorded before the attempt: a failed purge has to be retried as a
+        // purge, since an ordinary reconciliation keeps every unowned line.
+        self.purging.store(true, Ordering::Relaxed);
+        match Self::purge_section(&self.generation, &self.write_lock) {
+            Ok(_) => {
+                self.purging.store(false, Ordering::Relaxed);
+                Ok(())
+            }
+            Err((_, error)) => {
                 self.mark_dirty();
                 self.ensure_writer_running();
                 Err(error)
@@ -258,6 +301,8 @@ impl DirectHostfileManager {
                 self.writer_running.clone(),
                 self.generation.clone(),
                 self.write_lock.clone(),
+                self.retired.clone(),
+                self.purging.clone(),
             );
         }
     }
@@ -266,6 +311,7 @@ impl DirectHostfileManager {
     fn spawn_writer(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>, purging: Arc<AtomicBool>,
     ) {
         thread::spawn(move || {
             Self::batch_writer_loop(
@@ -274,6 +320,8 @@ impl DirectHostfileManager {
                 writer_running,
                 generation,
                 write_lock,
+                retired,
+                purging,
             );
         });
     }
@@ -281,6 +329,7 @@ impl DirectHostfileManager {
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+        retired: Arc<Mutex<Vec<(std::net::IpAddr, String)>>>, purging: Arc<AtomicBool>,
     ) {
         let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
         let mut failures = 0u32;
@@ -317,7 +366,14 @@ impl DirectHostfileManager {
                 continue;
             }
 
-            match Self::write_snapshot(&entries, &generation, &write_lock) {
+            let written = if purging.load(Ordering::Relaxed) {
+                Self::purge_section(&generation, &write_lock).inspect(|_| {
+                    purging.store(false, Ordering::Relaxed);
+                })
+            } else {
+                Self::write_snapshot(&entries, &generation, &write_lock, &retired)
+            };
+            match written {
                 Ok(_) => {
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
@@ -373,6 +429,8 @@ impl DirectHostfileManager {
                 Arc::clone(&writer_running),
                 generation,
                 write_lock,
+                retired,
+                purging,
             );
         } else {
             *running = false;
@@ -382,19 +440,47 @@ impl DirectHostfileManager {
     /// Writes the current entries and records which mutation the write covered.
     /// The generation is read inside the write lock so the record always
     /// matches the content that reached disk.
-    fn write_snapshot(
-        entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
-        write_lock: &Arc<Mutex<()>>,
+    /// Removes the whole managed section, unowned lines included.
+    fn purge_section(
+        generation: &Arc<AtomicU64>, write_lock: &Arc<Mutex<()>>,
     ) -> Result<u64, (u64, std::io::Error)> {
         let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
         let started = generation.load(Ordering::Relaxed);
-        match Self::update_hosts_file_static(entries) {
-            Ok(()) => Ok(started),
+        match HostsFile::new(KFTRAY_HOSTS_TAG).write() {
+            Ok(_) => Ok(started),
+            Err(error) => Err((started, std::io::Error::other(error))),
+        }
+    }
+
+    fn write_snapshot(
+        entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
+        write_lock: &Arc<Mutex<()>>, retired: &Arc<Mutex<Vec<(std::net::IpAddr, String)>>>,
+    ) -> Result<u64, (u64, std::io::Error)> {
+        let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let started = generation.load(Ordering::Relaxed);
+        let dropping = retired.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match Self::update_hosts_file_static(entries, &dropping) {
+            Ok(()) => {
+                // Cleared only for what this write covered: a removal queued
+                // while it was in flight is still pending.
+                let mut retired = retired.lock().unwrap_or_else(|e| e.into_inner());
+                let mut covered = dropping;
+                retired.retain(|entry| {
+                    covered
+                        .iter()
+                        .position(|dropped| dropped == entry)
+                        .map(|index| covered.swap_remove(index))
+                        .is_none()
+                });
+                Ok(started)
+            }
             Err(error) => Err((started, error)),
         }
     }
 
-    fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {
+    fn update_hosts_file_static(
+        entries: &Arc<RwLock<HostEntriesMap>>, dropping: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
         let entries_snapshot = match entries.read() {
             Ok(entries) => entries.clone(),
             Err(e) => {
@@ -422,6 +508,15 @@ impl DirectHostfileManager {
             Ok(existing) => {
                 for entry in existing {
                     if entry.owner.is_some() || owned.contains(&(entry.ip, entry.hostname.as_str()))
+                    {
+                        continue;
+                    }
+                    // An unmarked copy of a mapping just removed is this
+                    // application's too: keeping it would leave the stopped
+                    // alias resolving.
+                    if dropping
+                        .iter()
+                        .any(|(ip, hostname)| *ip == entry.ip && *hostname == entry.hostname)
                     {
                         continue;
                     }

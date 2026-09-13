@@ -260,8 +260,10 @@ async fn allocate_local_address_owned(
             // service. The mark and the ownership check happen under one entry
             // lock, so a startup cannot slip between them: taking the mark
             // fails outright while any startup holds the address.
-            let Some(_releasing) = crate::kube::stop::mark_address_release(address, owned.id)
-            else {
+            // No owner is exempted: a retry of this same configuration can hold
+            // the address by now, and an abandoned allocation is not that
+            // retry's rollback.
+            let Some(_releasing) = crate::kube::stop::mark_address_release(address, None) else {
                 warn!(
                     "Keeping address {address} from an abandoned startup: another startup holds it"
                 );

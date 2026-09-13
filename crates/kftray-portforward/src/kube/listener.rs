@@ -118,15 +118,28 @@ impl PortForwarder {
         let forwarder = Arc::new(forwarder);
 
         let startup = async {
-            let port = crate::kube::target::resolve_target_port(
-                &forwarder,
-                &pod_api,
-                &target,
-                tokio::time::Duration::from_secs(5),
-            )
-            .await?;
-            drop(forwarder.connect(port).await?);
-            Ok::<_, anyhow::Error>(port)
+            // Resolution and the probe have to agree on the pod for the same
+            // reason a later connection does: a rollout in between can map the
+            // name to a different number, and probing the old one would reject
+            // a startup the replacement would have served.
+            for _ in 0..3 {
+                let (port, pod) = crate::kube::target::resolve_target_port_for_pod(
+                    &forwarder,
+                    &pod_api,
+                    &target,
+                    tokio::time::Duration::from_secs(5),
+                )
+                .await?;
+                let (stream, connected_pod) = forwarder.connect_on_pod(port).await?;
+                drop(stream);
+                if pod.is_none_or(|pod| pod == connected_pod) {
+                    return Ok::<_, anyhow::Error>(port);
+                }
+            }
+
+            Err(anyhow::anyhow!(
+                "The selected pod kept changing while resolving the named port"
+            ))
         };
         let target_port = match tokio::time::timeout(tokio::time::Duration::from_secs(10), startup)
             .await

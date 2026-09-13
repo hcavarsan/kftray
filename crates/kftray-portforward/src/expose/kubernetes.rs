@@ -198,13 +198,33 @@ pub async fn create_expose_resources(
     }
     .await;
     if let Err(error) = result {
-        return match delete_created_resources(&client, &config.namespace, &created).await {
-            Ok(()) => Err(ExposeCreateError {
+        // Bounded as a whole: this runs with the lifecycle lock held and the
+        // client carries no per-request timeout, so a stalled DELETE would keep
+        // both this startup and the stop behind it waiting. Reported as not
+        // rolled back on timeout, which keeps the cleanup record armed.
+        const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+        let cleaned = tokio::time::timeout(
+            ROLLBACK_TIMEOUT,
+            delete_created_resources(&client, &config.namespace, &created),
+        )
+        .await;
+
+        return match cleaned {
+            Ok(Ok(())) => Err(ExposeCreateError {
                 rolled_back: true,
                 ..error
             }),
-            Err(cleanup_error) => Err(ExposeCreateError {
+            Ok(Err(cleanup_error)) => Err(ExposeCreateError {
                 message: format!("{}; cleanup failed: {cleanup_error}", error.message),
+                ambiguous: error.ambiguous,
+                rolled_back: false,
+            }),
+            Err(_) => Err(ExposeCreateError {
+                message: format!(
+                    "{}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried",
+                    error.message
+                ),
                 ambiguous: error.ambiguous,
                 rolled_back: false,
             }),
@@ -921,6 +941,21 @@ pub async fn delete_expose_resources(
     Ok(())
 }
 
+/// Deletes only the object that was listed.
+///
+/// Names come from aliases and are reused, so another installation can replace
+/// a listed object between the list and the delete. The UID precondition makes
+/// the request fail rather than remove the replacement.
+fn owned_delete_params(uid: Option<String>) -> DeleteParams {
+    DeleteParams {
+        preconditions: uid.map(|uid| kube::api::Preconditions {
+            uid: Some(uid),
+            resource_version: None,
+        }),
+        ..DeleteParams::default()
+    }
+}
+
 async fn delete_ingresses(
     client: &Client, namespace: &str, lp: &ListParams, ingress_possible: bool,
 ) -> Result<(), String> {
@@ -952,7 +987,10 @@ async fn delete_ingresses(
     for ingress in items.items {
         if let Some(name) = &ingress.metadata.name {
             info!("Deleting ingress: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
+            match api
+                .delete(name, &owned_delete_params(ingress.metadata.uid.clone()))
+                .await
+            {
                 Ok(_) => info!("Ingress {} deleted successfully", name),
                 Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
                 Err(e) => errors.push(format!("Failed to delete ingress {name}: {e}")),
@@ -985,7 +1023,10 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
     for service in items.items {
         if let Some(name) = &service.metadata.name {
             info!("Deleting service: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
+            match api
+                .delete(name, &owned_delete_params(service.metadata.uid.clone()))
+                .await
+            {
                 Ok(_) => info!("Service {} deleted successfully", name),
                 Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
                 Err(e) => errors.push(format!("Failed to delete service {name}: {e}")),
@@ -1081,7 +1122,7 @@ async fn delete_deployments(
                 // are gone, so waiting for it to disappear also proves the
                 // relay containers stopped.
                 propagation_policy: Some(kube::api::PropagationPolicy::Foreground),
-                ..DeleteParams::default()
+                ..owned_delete_params(deployment.metadata.uid.clone())
             };
             match api.delete(name, &dp).await {
                 Ok(_) => info!("Deployment {} deleted successfully", name),

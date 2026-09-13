@@ -138,6 +138,44 @@ async fn persist_uncertain_target(id: i64, config: &Config) -> Result<(), String
         .map_err(|error| format!("Failed to persist an unsettled create for config {id}: {error}"))
 }
 
+/// Counts one pass that found nothing, and reports whether the record has now
+/// been confirmed often enough to drop.
+///
+/// A create whose outcome was never answered is not settled by elapsed client
+/// time: the server can still admit it. The budget bounds how long this keeps
+/// costing a list, without turning one empty result into proof.
+async fn confirm_uncertain_target(id: i64, config: &Config) -> bool {
+    const CONFIRMATIONS_REQUIRED: u32 = 2;
+
+    // Deliberately a different prefix: the restore scan reads every key under
+    // the create prefix as a target, and a counter is not one.
+    let key = format!(
+        "uncertain_confirmations:{}",
+        uncertain_create_key(id, config)
+            .strip_prefix(UNCERTAIN_CREATE_PREFIX)
+            .unwrap_or_default()
+    );
+    let seen = kftray_commons::utils::settings::get_setting(&key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0)
+        + 1;
+    if seen >= CONFIRMATIONS_REQUIRED {
+        if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
+            log::debug!("Failed to clear the confirmation count for config {id}: {error}");
+        }
+        return true;
+    }
+    if let Err(error) = kftray_commons::utils::settings::set_setting(&key, &seen.to_string()).await
+    {
+        warn!("Failed to record a cleanup confirmation for config {id}: {error}");
+    }
+
+    false
+}
+
 /// Forgets a persisted create once its resources are confirmed gone.
 ///
 /// Awaited like the write it undoes: two detached tasks have no ordering, and a
@@ -1202,6 +1240,13 @@ async fn stop_config(
 
         let mut errors: Vec<String> = Vec::new();
         let mut settled: Vec<Config> = Vec::new();
+        // Targets whose create was never answered, so an empty list is not
+        // proof that nothing was created.
+        let unanswered: Vec<Config> = targets
+            .iter()
+            .filter(|target| target.uncertain_until.is_some())
+            .map(|target| target.config.clone())
+            .collect();
         let now = Instant::now();
         for target in &targets {
             let cluster = if target.cluster {
@@ -1256,7 +1301,14 @@ async fn stop_config(
             }
         }
         for target in settled {
-            forget_uncertain_target(id, &target).await;
+            // A create whose outcome was observed is settled by this pass. One
+            // that was never answered is not: the server can still admit it, so
+            // its record outlives a single empty list and goes only once a
+            // later pass has confirmed it again.
+            let answered = !unanswered.contains(&target);
+            if answered || confirm_uncertain_target(id, &target).await {
+                forget_uncertain_target(id, &target).await;
+            }
             forget_pending_cleanup(id, &target);
         }
         if errors.is_empty() {
