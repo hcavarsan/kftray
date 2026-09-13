@@ -218,6 +218,14 @@ async fn process_single_proxy_config(
         Err(format!(
             "Port forwarding is already running for config {id}"
         ))
+    } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
+        .await
+        .is_err()
+    {
+        // Re-read under the lock: deletion takes the same lock, so a start that
+        // waited on it must not create a relay for a row that has since
+        // disappeared and would leave it with nothing tracking it.
+        Err(format!("Config {id} no longer exists"))
     } else {
         start_proxy_config(config, mode, ssl_override, &startup.cancellation).await
     };

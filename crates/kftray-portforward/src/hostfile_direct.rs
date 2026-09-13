@@ -23,7 +23,16 @@ use log::{
 const BATCH_DELAY_MS: u64 = 100;
 const MAX_WRITE_BACKOFF: Duration = Duration::from_secs(30);
 const MAX_WRITE_ATTEMPTS: u32 = 8;
+/// Section the privileged helper owns, and where older versions of this
+/// manager wrote before the two were separated.
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
+/// Section this manager owns outright.
+///
+/// Sharing one section with the helper meant every write had to reconstruct
+/// another writer's lines from an unsynchronized read, which loses a concurrent
+/// change in whichever direction the race went. Separate sections remove the
+/// interaction: each writer rebuilds only what it owns.
+const KFTRAY_DIRECT_HOSTS_TAG: &str = "kftray-hosts-direct";
 
 type HostEntriesMap = HashMap<String, HostEntry>;
 
@@ -146,7 +155,10 @@ impl DirectHostfileManager {
         // The file is the record of what this manager wrote, and it outlives
         // the map: an entry added before a restart is on disk with its owner
         // marker and nowhere else.
-        let on_disk = Self::owners_on_disk();
+        // A failure to read is not evidence of absence: reporting coverage
+        // here would let a caller drop its cleanup record for an alias still on
+        // disk.
+        let on_disk = Self::owners_on_disk()?;
         let covered = ids
             .iter()
             .zip(removed.iter())
@@ -194,20 +206,64 @@ impl DirectHostfileManager {
         }
     }
 
+    /// Removes shared-section lines that duplicate a mapping this manager owns.
+    ///
+    /// Only exact matches go: everything else in that section belongs to the
+    /// privileged helper, which is the only other writer of it.
+    fn prune_legacy_entries(entries: &HostEntriesMap, dropping: &[(std::net::IpAddr, String)]) {
+        let mine: std::collections::HashSet<(std::net::IpAddr, &str)> = entries
+            .values()
+            .map(|entry| (entry.ip, entry.hostname.as_str()))
+            .chain(
+                dropping
+                    .iter()
+                    .map(|(ip, hostname)| (*ip, hostname.as_str())),
+            )
+            .collect();
+        let legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
+        let Ok(existing) = legacy.read_section() else {
+            return;
+        };
+        if !existing
+            .iter()
+            .any(|entry| mine.contains(&(entry.ip, entry.hostname.as_str())))
+        {
+            return;
+        }
+
+        let mut rewritten = HostsFile::new(KFTRAY_HOSTS_TAG);
+        for entry in existing {
+            if mine.contains(&(entry.ip, entry.hostname.as_str())) {
+                continue;
+            }
+            match entry.owner {
+                Some(owner) => {
+                    rewritten.add_owned_entry(entry.ip, entry.hostname, &owner);
+                }
+                None => {
+                    rewritten.add_entry(entry.ip, entry.hostname);
+                }
+            }
+        }
+        if let Err(error) = rewritten.write() {
+            log::warn!("Could not migrate earlier hosts entries: {error}");
+        }
+    }
+
     /// Whether the managed section holds lines no writer claimed.
     ///
     /// They belong to the privileged helper, so this manager cannot take them
     /// off disk and a caller that needs verified cleanup has to know.
-    pub fn has_unowned_entries() -> bool {
+    pub fn has_unowned_entries() -> std::io::Result<bool> {
         HostsFile::new(KFTRAY_HOSTS_TAG)
             .read_section()
-            .map(|entries| entries.iter().any(|entry| entry.owner.is_none()))
-            .unwrap_or(false)
+            .map(|entries| !entries.is_empty())
+            .map_err(std::io::Error::other)
     }
 
     /// Configuration ids this manager has lines for in the hosts file.
-    fn owners_on_disk() -> std::collections::HashSet<String> {
-        HostsFile::new(KFTRAY_HOSTS_TAG)
+    fn owners_on_disk() -> std::io::Result<std::collections::HashSet<String>> {
+        HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
             .read_section()
             .map(|entries| {
                 entries
@@ -215,7 +271,7 @@ impl DirectHostfileManager {
                     .filter_map(|entry| entry.owner)
                     .collect()
             })
-            .unwrap_or_default()
+            .map_err(std::io::Error::other)
     }
 
     /// Removes every entry this application put in the hosts file.
@@ -369,6 +425,16 @@ impl DirectHostfileManager {
             let written = if purging.load(Ordering::Relaxed) {
                 Self::purge_section(&generation, &write_lock).inspect(|_| {
                     purging.store(false, Ordering::Relaxed);
+                    // An add can have landed while the purge was retrying, and
+                    // the purge writes an empty section: the map still needs a
+                    // pass of its own before this work counts as done.
+                    if entries
+                        .read()
+                        .map(|entries| !entries.is_empty())
+                        .unwrap_or(false)
+                    {
+                        *needs_update.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                    }
                 })
             } else {
                 Self::write_snapshot(&entries, &generation, &write_lock, &retired)
@@ -446,7 +512,7 @@ impl DirectHostfileManager {
     ) -> Result<u64, (u64, std::io::Error)> {
         let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
         let started = generation.load(Ordering::Relaxed);
-        match HostsFile::new(KFTRAY_HOSTS_TAG).write() {
+        match HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG).write() {
             Ok(_) => Ok(started),
             Err(error) => Err((started, std::io::Error::other(error))),
         }
@@ -489,49 +555,20 @@ impl DirectHostfileManager {
             }
         };
 
-        let mut hosts_file = HostsFile::new(KFTRAY_HOSTS_TAG);
-
-        // Rebuilt from what is on disk: the privileged helper writes into the
-        // same section and its lines carry no owner marker, so writing only
-        // this manager's map would delete them. Marked lines are this
-        // manager's, and are replaced wholesale by the map below, which is what
-        // makes a removal take effect.
-        // An unmarked line is either another writer's or one this manager wrote
-        // before it recorded owners. A mapping this manager holds is the latter,
-        // so it is adopted rather than preserved: keeping both would leave the
-        // old copy resolving after the forward stops.
-        let owned: std::collections::HashSet<(std::net::IpAddr, &str)> = entries_snapshot
-            .values()
-            .map(|entry| (entry.ip, entry.hostname.as_str()))
-            .collect();
-        match hosts_file.read_section() {
-            Ok(existing) => {
-                for entry in existing {
-                    if entry.owner.is_some() || owned.contains(&(entry.ip, entry.hostname.as_str()))
-                    {
-                        continue;
-                    }
-                    // An unmarked copy of a mapping just removed is this
-                    // application's too: keeping it would leave the stopped
-                    // alias resolving.
-                    if dropping
-                        .iter()
-                        .any(|(ip, hostname)| *ip == entry.ip && *hostname == entry.hostname)
-                    {
-                        continue;
-                    }
-                    hosts_file.add_entry(entry.ip, entry.hostname);
-                }
-            }
-            // Treated as an empty section: the write below still has to happen,
-            // and a section it could not read is one it cannot preserve.
-            Err(error) => log::warn!("Could not read the existing hosts section: {error}"),
-        }
-
+        // Written from this manager's own map alone: the section belongs to it,
+        // so there is nothing of anyone else's to preserve and no read of
+        // another writer's state to race with.
+        let mut hosts_file = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG);
         for (id, entry) in &entries_snapshot {
             debug!("Adding entry for ID {id} to hosts file: {entry:?}");
             hosts_file.add_owned_entry(entry.ip, &entry.hostname, id);
         }
+
+        // A mapping this manager holds, or has just dropped, may also exist in
+        // the shared section from a version that wrote there. That copy is this
+        // application's, so it is migrated out rather than left to resolve
+        // alongside, or after, the alias here.
+        Self::prune_legacy_entries(&entries_snapshot, dropping);
 
         match hosts_file.write() {
             Ok(_) => {

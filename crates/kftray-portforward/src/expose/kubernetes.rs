@@ -743,12 +743,11 @@ async fn create_ingress(
 /// cleanup in more than one cluster or namespace at a time, and clearing the
 /// history after verifying one of them would discard the evidence for the rest.
 fn ingress_history_key(config_id: &str, location: &ExposeLocation<'_>) -> String {
-    let mut digest = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(
-        &(location.context, location.kubeconfig, location.namespace),
-        &mut digest,
-    );
-    let scope = std::hash::Hasher::finish(&digest);
+    let scope = crate::kube::stop::stable_digest(&[
+        location.context,
+        location.kubeconfig,
+        Some(location.namespace),
+    ]);
 
     format!("expose_ingress_created:{config_id}:{scope:016x}")
 }

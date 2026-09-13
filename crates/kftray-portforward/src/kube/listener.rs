@@ -130,7 +130,19 @@ impl PortForwarder {
                     tokio::time::Duration::from_secs(5),
                 )
                 .await?;
-                let (stream, connected_pod) = forwarder.connect_on_pod(port).await?;
+                let connected = match forwarder.connect_on_pod(port).await {
+                    Ok(connected) => connected,
+                    // A number resolved on the pod that is going away can be
+                    // invalid on its replacement. Resolving again reads the
+                    // replacement's own mapping, so this is retried rather than
+                    // rejecting a startup the new pod would serve.
+                    Err(error) if pod.is_some() => {
+                        debug!("Re-resolving the named port after a failed probe: {error}");
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                let (stream, connected_pod) = connected;
                 drop(stream);
                 if pod.is_none_or(|pod| pod == connected_pod) {
                     return Ok::<_, anyhow::Error>(port);

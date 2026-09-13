@@ -118,6 +118,37 @@ fn same_resources(left: &Config, right: &Config) -> bool {
         && left.exposure_type == right.exposure_type
 }
 
+/// Digest that survives compiler and platform changes.
+///
+/// These keys are persisted, so a hash whose algorithm may change between
+/// releases would silently orphan every record written before the change.
+/// FNV-1a is fixed here, fields are length-prefixed, and `None` is encoded
+/// distinctly from an empty string.
+pub(crate) fn stable_digest(fields: &[Option<&str>]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = OFFSET;
+    let mut feed = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    };
+    for field in fields {
+        match field {
+            Some(value) => {
+                feed(b"s");
+                feed(&(value.len() as u64).to_le_bytes());
+                feed(value.as_bytes());
+            }
+            None => feed(b"n"),
+        }
+    }
+
+    hash
+}
+
 /// Key prefix under which an ambiguous create is persisted.
 const UNCERTAIN_CREATE_PREFIX: &str = "uncertain_create:";
 
@@ -193,22 +224,17 @@ fn uncertain_create_key(id: i64, config: &Config) -> String {
     // The identity matches `same_resources` field for field: targets the
     // registry tracks separately must not share a key, or settling one would
     // delete another's restart metadata.
-    let mut digest = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(
-        &(
-            &config.namespace,
-            &config.context,
-            &config.kubeconfig,
-            &config.workload_type,
-            &config.protocol,
-            &config.service,
-            &config.local_address,
-            config.domain_enabled,
-            &config.exposure_type,
-        ),
-        &mut digest,
-    );
-    let destination = std::hash::Hasher::finish(&digest);
+    let destination = stable_digest(&[
+        Some(config.namespace.as_str()),
+        config.context.as_deref(),
+        config.kubeconfig.as_deref(),
+        config.workload_type.as_deref(),
+        Some(config.protocol.as_str()),
+        config.service.as_deref(),
+        config.local_address.as_deref(),
+        config.domain_enabled.map(|on| if on { "1" } else { "0" }),
+        config.exposure_type.as_deref(),
+    ]);
 
     format!("{UNCERTAIN_CREATE_PREFIX}{id}:{destination:016x}")
 }
@@ -238,7 +264,15 @@ async fn restore_uncertain_targets() {
         };
         // Restored with a fresh window: a process can restart seconds after
         // abandoning a create, and elapsed wall time is no more proof here than
-        // it was in the run that recorded it.
+        // it was in the run that recorded it. An entry already tracked keeps
+        // the window it has, so repeated restores cannot push it forever.
+        if PENDING_CLEANUP.get(&id).is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| same_resources(&entry.config, &config))
+        }) {
+            continue;
+        }
         record_target(
             id,
             config,
@@ -1037,6 +1071,11 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
+    // Creates abandoned by an earlier run exist only on disk: the desktop
+    // application never calls the reconciliation pass, so without this its
+    // stop-all cannot find a relay left behind by a crash.
+    restore_uncertain_targets().await;
+
     let mut ids: HashSet<i64> = CHILD_PROCESSES.iter().map(|entry| *entry.key()).collect();
     for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
         entry.value().cancel();
@@ -1308,8 +1347,13 @@ async fn stop_config(
             let answered = !unanswered.contains(&target);
             if answered || confirm_uncertain_target(id, &target).await {
                 forget_uncertain_target(id, &target).await;
+                forget_pending_cleanup(id, &target);
+                continue;
             }
-            forget_pending_cleanup(id, &target);
+            // Still unconfirmed: the obligation stays so the next pass looks
+            // again, rather than leaving the durable record with nothing in
+            // this process to act on it.
+            set_target_obligations(id, &target, None, true, false);
         }
         if errors.is_empty() {
             let state = ConfigState::new(id, false);

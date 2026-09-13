@@ -93,7 +93,7 @@ impl HostfileManager {
         if let Some(error) = helper_error {
             return Err(std::io::Error::other(error));
         }
-        if self.helper_client.is_some() && DirectHostfileManager::has_unowned_entries() {
+        if self.helper_client.is_some() && DirectHostfileManager::has_unowned_entries()? {
             return Err(std::io::Error::other(format!(
                 "Host entries for {} may still be on disk: they carry no owner and the helper is \
                  unavailable",
