@@ -337,6 +337,17 @@ pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result
     Ok(())
 }
 
+/// Removes a setting, if it is present.
+pub async fn delete_setting(key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_db_pool().await?;
+    let mut conn = pool.acquire().await?;
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_setting(
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

@@ -160,6 +160,37 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
     PENDING_CLEANUP.remove_if(&id, |_, entries| entries.is_empty());
 }
 
+/// Records what this pass left undone, replacing the entry's obligations
+/// rather than adding to them.
+///
+/// [`record_target`] widens an existing record, which is right for a new
+/// obligation but wrong here: cleanup that succeeded would be demanded again on
+/// every later stop.
+fn set_target_obligations(
+    id: i64, config: &Config, uncertain_until: Option<Instant>, cluster: bool, local: bool,
+) {
+    if !cluster && !local {
+        forget_pending_cleanup(id, config);
+        return;
+    }
+    let mut entries = PENDING_CLEANUP.entry(id).or_default();
+    if let Some(existing) = entries
+        .iter_mut()
+        .find(|entry| same_resources(&entry.config, config))
+    {
+        existing.uncertain_until = uncertain_until;
+        existing.cluster = cluster;
+        existing.local = local;
+        return;
+    }
+    entries.push(PendingTarget {
+        config: config.clone(),
+        uncertain_until,
+        cluster,
+        local,
+    });
+}
+
 fn pending_cleanup_targets(id: i64) -> Vec<PendingTarget> {
     PENDING_CLEANUP
         .get(&id)
@@ -274,6 +305,11 @@ impl Drop for ReleaseInFlight {
             *count == 0
         });
     }
+}
+
+/// Marks an address as being released until the returned guard is dropped.
+pub(crate) fn mark_address_release(address: &str) -> Arc<impl Send + Sync + use<>> {
+    ReleaseInFlight::mark(address)
 }
 
 /// Whether an address is still being released and cannot be reused yet.
@@ -673,7 +709,16 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
 
     let until = Instant::now() + deadline;
     loop {
-        let ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+        // Registered processes are enumerated too: a stop-all dropped on its
+        // deadline leaves the ones it never visited only in `CHILD_PROCESSES`,
+        // and they own cluster resources and hosts entries just the same.
+        let mut ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+        ids.extend(
+            CHILD_PROCESSES
+                .iter()
+                .map(|entry| *entry.key())
+                .filter(|id| !PENDING_CLEANUP.contains_key(id)),
+        );
         if ids.is_empty() {
             // An allocation still in flight has nothing recorded yet, so an
             // empty registry is only proof once none are outstanding.
@@ -888,16 +933,18 @@ async fn stop_config(
         // Every distinct set of resources this id ever created, not just the
         // current one: an edited config that was restarted does not describe
         // the resources an earlier failed cleanup left behind.
+        let recorded = pending
+            .iter()
+            .find(|target| same_resources(&target.config, config));
         let mut targets = vec![PendingTarget {
             config: config.clone(),
-            uncertain_until: pending
-                .iter()
-                .find(|target| same_resources(&target.config, config))
-                .and_then(|target| target.uncertain_until),
-            // The configuration being stopped owes both: it was forwarding, so
-            // its local resources are held whether or not a record says so.
-            cluster: true,
-            local: true,
+            uncertain_until: recorded.and_then(|target| target.uncertain_until),
+            // A record for these resources describes what is left: an earlier
+            // stop that deleted the Deployment and failed to release the
+            // address must not need cluster access again. Without one the
+            // configuration is still forwarding and owes both.
+            cluster: recorded.is_none_or(|target| target.cluster),
+            local: recorded.is_none_or(|target| target.local),
         }];
         targets.extend(
             pending
@@ -932,9 +979,9 @@ async fn stop_config(
             // database row can be edited or deleted while a forward runs.
             // An uncertain create keeps its cluster obligation: the list that
             // came back empty is not proof, so the next pass must look again.
-            record_target(
+            set_target_obligations(
                 id,
-                target.config.clone(),
+                &target.config,
                 target.uncertain_until,
                 target.cluster && (cluster.is_err() || uncertain),
                 target.local && !local.settled(),

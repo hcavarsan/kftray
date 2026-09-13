@@ -58,7 +58,7 @@ kube = { version = "4.2.0", features = [
   "runtime",
   "rustls-tls",
 ] }
-kube-portforward = "0.3.3"
+kube-portforward = "0.3.4"
 kube-runtime = { version = "4.2.0", features = ["unstable-runtime"] }
 lazy_static = "1.5"
 libc = "0.2.189"

@@ -138,7 +138,11 @@ impl DirectHostfileManager {
             &self.reconciled_generation,
             &self.write_lock,
         ) {
-            Ok(_) => Ok(existed),
+            // A successful write rewrote the whole managed section from this
+            // map, so every id in the batch is off disk whether or not this
+            // manager still had it: an earlier failed write can have dropped it
+            // from memory already.
+            Ok(_) => Ok(true),
             Err((_, error)) => {
                 self.mark_dirty();
                 self.ensure_writer_running();

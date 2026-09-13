@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{
     AtomicU64,
+    AtomicUsize,
     Ordering,
 };
 use std::time::{
@@ -31,9 +32,79 @@ const MAX_SESSIONS: usize = 128;
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SESSION_QUEUE_DEPTH: usize = 64;
+/// Payload bytes one listener may hold across every queue it owns.
+///
+/// The per-queue depths bound packet counts, not size: with maximum-size
+/// datagrams the counts alone would allow hundreds of megabytes per listener
+/// while tunnels are stalled. Datagrams over the budget are dropped, which is
+/// what UDP already allows.
+const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 const REPLY_QUEUE_DEPTH: usize = 256;
 const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const TUNNEL_RETRY_COOLDOWN: Duration = Duration::from_secs(1);
+
+/// Payload bytes queued by one listener.
+#[derive(Debug)]
+struct ByteBudget {
+    used: AtomicUsize,
+    limit: usize,
+}
+
+impl ByteBudget {
+    fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            used: AtomicUsize::new(0),
+            limit,
+        })
+    }
+
+    /// Reserves room for a payload, or reports that the listener is full.
+    fn reserve(self: &Arc<Self>, len: usize) -> Option<BudgetGuard> {
+        let mut used = self.used.load(Ordering::Relaxed);
+        loop {
+            if used + len > self.limit {
+                return None;
+            }
+            match self.used.compare_exchange_weak(
+                used,
+                used + len,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    return Some(BudgetGuard {
+                        budget: Arc::clone(self),
+                        len,
+                    });
+                }
+                Err(current) => used = current,
+            }
+        }
+    }
+}
+
+/// Holds a reservation for as long as its payload is queued.
+///
+/// Carried with the payload so a queue dropped with a cancelled session
+/// releases its bytes without any separate bookkeeping.
+#[derive(Debug)]
+struct BudgetGuard {
+    budget: Arc<ByteBudget>,
+    len: usize,
+}
+
+impl Drop for BudgetGuard {
+    fn drop(&mut self) {
+        self.budget.used.fetch_sub(self.len, Ordering::Relaxed);
+    }
+}
+
+/// A payload waiting in a queue, holding its share of the listener's budget.
+#[derive(Debug)]
+struct Queued {
+    payload: Vec<u8>,
+    _budget: BudgetGuard,
+}
 
 /// Opens one upstream tunnel per local UDP client.
 ///
@@ -62,7 +133,7 @@ pub trait UdpUpstream: Send + Sync + 'static {
 }
 
 struct UdpSession {
-    packets: mpsc::Sender<Vec<u8>>,
+    packets: mpsc::Sender<Queued>,
     cancellation: CancellationToken,
     task: tokio_util::task::AbortOnDropHandle<()>,
     last_seen: Instant,
@@ -124,6 +195,7 @@ impl UdpForwarder {
 
         let forward_future = async move {
             let mut sessions: HashMap<SocketAddr, UdpSession> = HashMap::new();
+            let budget = ByteBudget::new(MAX_QUEUED_BYTES);
             let mut datagram = vec![0u8; BUFFER_SIZE];
             let mut sweep = tokio::time::interval(SESSION_SWEEP_INTERVAL);
             sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -131,7 +203,7 @@ impl UdpForwarder {
             // handle: the socket stays owned by this future, so dropping it
             // releases the port even when session tasks outlive their abort.
             let (replies, mut incoming_replies) =
-                mpsc::channel::<(SocketAddr, Vec<u8>)>(REPLY_QUEUE_DEPTH);
+                mpsc::channel::<(SocketAddr, Queued)>(REPLY_QUEUE_DEPTH);
             let result: anyhow::Result<()> = loop {
                 // Cancellation is checked here rather than as a biased branch:
                 // a sustained reply flow would otherwise keep its branch ready
@@ -150,7 +222,7 @@ impl UdpForwarder {
                         Self::retire_sessions(&mut sessions);
                     }
                     Some((peer, packet)) = incoming_replies.recv() => {
-                        if let Err(e) = local_udp_socket.send_to(&packet, &peer).await {
+                        if let Err(e) = local_udp_socket.send_to(&packet.payload, &peer).await {
                             debug!("Failed to send a reply to {}: {:?}", peer, e);
                         }
                     }
@@ -171,6 +243,7 @@ impl UdpForwarder {
                             &upstream,
                             &cancellation_token,
                             &datagram[..len],
+                            &budget,
                         );
                     }
                 }
@@ -204,16 +277,34 @@ impl UdpForwarder {
     /// datagrams of every other client.
     fn dispatch_datagram<U: UdpUpstream>(
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
-        replies: &mpsc::Sender<(SocketAddr, Vec<u8>)>, upstream: &Arc<U>,
-        cancellation_token: &CancellationToken, payload: &[u8],
+        replies: &mpsc::Sender<(SocketAddr, Queued)>, upstream: &Arc<U>,
+        cancellation_token: &CancellationToken, payload: &[u8], budget: &Arc<ByteBudget>,
     ) {
-        let Some(packets) =
-            Self::session_for(sessions, peer, replies, upstream, cancellation_token)
-        else {
+        let Some(reservation) = budget.reserve(payload.len()) else {
+            debug!(
+                "Dropping a datagram from {}: the listener's queue budget is full",
+                peer
+            );
+            return;
+        };
+        let Some(packets) = Self::session_for(
+            sessions,
+            peer,
+            replies,
+            upstream,
+            cancellation_token,
+            budget,
+        ) else {
             debug!("Dropping a datagram from {}: tunnel is cooling down", peer);
             return;
         };
-        if packets.try_send(payload.to_vec()).is_err() {
+        if packets
+            .try_send(Queued {
+                payload: payload.to_vec(),
+                _budget: reservation,
+            })
+            .is_err()
+        {
             // Not counted as activity: a datagram the session could not accept
             // must not keep a stalled tunnel alive.
             debug!("Dropping a datagram from {}: tunnel is saturated", peer);
@@ -226,9 +317,9 @@ impl UdpForwarder {
 
     fn session_for<U: UdpUpstream>(
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
-        replies: &mpsc::Sender<(SocketAddr, Vec<u8>)>, upstream: &Arc<U>,
-        cancellation_token: &CancellationToken,
-    ) -> Option<mpsc::Sender<Vec<u8>>> {
+        replies: &mpsc::Sender<(SocketAddr, Queued)>, upstream: &Arc<U>,
+        cancellation_token: &CancellationToken, budget: &Arc<ByteBudget>,
+    ) -> Option<mpsc::Sender<Queued>> {
         let now = Instant::now();
         if let Some(session) = sessions.get_mut(&peer) {
             if !session.packets.is_closed() {
@@ -258,7 +349,7 @@ impl UdpForwarder {
             }
         }
 
-        let (packets, mut queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+        let (packets, mut queue) = mpsc::channel::<Queued>(SESSION_QUEUE_DEPTH);
         let cancellation = cancellation_token.child_token();
         let session_cancellation = cancellation.clone();
         let replies = replies.clone();
@@ -266,6 +357,7 @@ impl UdpForwarder {
 
         let tunnel_activity = Arc::new(AtomicU64::new(0));
         let session_activity = Arc::clone(&tunnel_activity);
+        let reply_budget = Arc::clone(budget);
 
         let task = tokio::spawn(async move {
             let stream = tokio::select! {
@@ -300,10 +392,10 @@ impl UdpForwarder {
             {
                 let uplink = async {
                     while let Some(packet) = queue.recv().await {
-                        let len = u32::try_from(packet.len())
+                        let len = u32::try_from(packet.payload.len())
                             .context("UDP datagram is larger than the tunnel framing allows")?;
                         writer.write_all(&len.to_be_bytes()).await?;
-                        writer.write_all(&packet).await?;
+                        writer.write_all(&packet.payload).await?;
                         writer.flush().await?;
                         mark_activity();
                     }
@@ -318,7 +410,23 @@ impl UdpForwarder {
                         if packet.is_empty() {
                             continue;
                         }
-                        if replies.try_send((peer, packet)).is_err() {
+                        let Some(reservation) = reply_budget.reserve(packet.len()) else {
+                            debug!(
+                                "Dropping a reply for {}: the listener's queue budget is full",
+                                peer
+                            );
+                            continue;
+                        };
+                        if replies
+                            .try_send((
+                                peer,
+                                Queued {
+                                    payload: packet,
+                                    _budget: reservation,
+                                },
+                            ))
+                            .is_err()
+                        {
                             debug!("Dropping a reply for {}: the listener is saturated", peer);
                         }
                     }
@@ -567,7 +675,7 @@ pub(crate) mod tests {
     }
 
     fn closed_session(opened_at: Instant) -> UdpSession {
-        let (packets, queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+        let (packets, queue) = mpsc::channel::<Queued>(SESSION_QUEUE_DEPTH);
         drop(queue);
         UdpSession {
             packets,
@@ -604,9 +712,25 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn the_queue_budget_bounds_bytes_not_just_packets() {
+        let budget = ByteBudget::new(1024);
+        let first = budget.reserve(1024).expect("the first payload fits");
+        assert!(
+            budget.reserve(1).is_none(),
+            "a full listener must drop rather than queue unbounded bytes"
+        );
+
+        drop(first);
+        assert!(
+            budget.reserve(1024).is_some(),
+            "dequeued payloads release their share"
+        );
+    }
+
     #[tokio::test]
     async fn a_session_is_retired_on_progress_not_on_queue_depth() {
-        let (packets, _queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+        let (packets, _queue) = mpsc::channel::<Queued>(SESSION_QUEUE_DEPTH);
         let idle_for_ages = Instant::now() - SESSION_IDLE_TIMEOUT * 2;
         let session = UdpSession {
             packets,
@@ -625,8 +749,15 @@ pub(crate) mod tests {
 
         // A tunnel that stopped draining its writes keeps its queue full. That
         // must not exempt it, or the client can never open a replacement.
+        let budget = ByteBudget::new(MAX_QUEUED_BYTES);
         for _ in 0..SESSION_QUEUE_DEPTH {
-            session.packets.try_send(b"queued".to_vec()).unwrap();
+            session
+                .packets
+                .try_send(Queued {
+                    payload: b"queued".to_vec(),
+                    _budget: budget.reserve(6).unwrap(),
+                })
+                .unwrap();
         }
         assert!(
             !session.is_working(now),

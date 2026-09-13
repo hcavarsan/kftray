@@ -229,6 +229,11 @@ async fn tag_expose_ownership(
     Ok(())
 }
 
+/// Whether a label is one this installation injects to claim its resources.
+fn is_ownership_label(key: &str) -> bool {
+    matches!(key, "app" | "config_id") || key == crate::kube::proxy::INSTALLATION_LABEL
+}
+
 /// Selector matching only the exposure resources this installation created.
 ///
 /// Configuration ids come from a local database, so `config_id` alone also
@@ -449,17 +454,23 @@ async fn create_deployment(
             config_id,
         )
         .await?;
-        // The selector has to match the tagged pods, and it also keeps another
-        // installation's deployment from adopting them.
+        // Every injected label goes into the selector, not just the
+        // installation one: tagging the template overwrites whatever `app` a
+        // customized manifest used, and a selector left on the old value would
+        // no longer match its own pods, which Kubernetes rejects outright.
+        let ownership: Vec<(String, String)> = spec
+            .template
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.labels.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(key, _)| is_ownership_label(key))
+            .collect();
         spec.selector
             .match_labels
             .get_or_insert_with(std::collections::BTreeMap::new)
-            .insert(
-                crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
-                kftray_commons::utils::config_dir::installation_id()
-                    .await?
-                    .to_owned(),
-            );
+            .extend(ownership);
     }
     let spec = deployment
         .spec
@@ -619,12 +630,13 @@ async fn create_service(
         .and_then(|spec| spec.selector.as_mut())
         .filter(|selector| !selector.is_empty())
     {
-        selector.insert(
-            crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
-            kftray_commons::utils::config_dir::installation_id()
-                .await?
-                .to_owned(),
-        );
+        // Reconciled with the labels the pod template carries, for the same
+        // reason as the Deployment selector: a customized `app` value is
+        // overwritten there, and a Service still selecting the old one would
+        // route to no pods at all.
+        let mut ownership = None;
+        tag_expose_ownership(&mut ownership, config_id).await?;
+        selector.extend(ownership.unwrap_or_default());
     }
 
     let created = services
@@ -681,6 +693,11 @@ async fn create_ingress(
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse ingress: {}", e))?;
     tag_expose_ownership(&mut ingress.metadata.labels, &config_id_str).await?;
 
+    // Recorded before the request: an ingress can be created without this
+    // client seeing the response, and cleanup for a configuration later
+    // switched to private must not infer from its new type that no ingress
+    // exists. The record survives restarts, where nothing else does.
+    remember_ingress_created(&config_id_str).await;
     let created = ingresses
         .create(&PostParams::default(), &ingress)
         .await
@@ -689,6 +706,41 @@ async fn create_ingress(
 
     info!("Created ingress");
     Ok(created)
+}
+
+/// Key under which a configuration's ingress history is kept.
+fn ingress_history_key(config_id: &str) -> String {
+    format!("expose_ingress_created:{config_id}")
+}
+
+/// Records that this configuration created an ingress.
+async fn remember_ingress_created(config_id: &str) {
+    if let Err(error) =
+        kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id), "1").await
+    {
+        log::warn!("Failed to record the ingress history for config {config_id}: {error}");
+    }
+}
+
+/// Whether this configuration ever created an ingress.
+///
+/// A configuration switched from public to private keeps the ingress it
+/// created, so its current type is not evidence that none exists.
+pub async fn ingress_was_created(config_id: &str) -> bool {
+    kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id))
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+/// Forgets the ingress history once cleanup has confirmed none is left.
+async fn forget_ingress_history(config_id: &str) {
+    if let Err(error) =
+        kftray_commons::utils::settings::delete_setting(&ingress_history_key(config_id)).await
+    {
+        log::debug!("Failed to clear the ingress history for config {config_id}: {error}");
+    }
 }
 
 async fn check_existing_resources(
@@ -730,6 +782,11 @@ fn named_items<T: kube::Resource + Clone>(
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
 ) -> Result<(), String> {
+    // A configuration switched from public to private still owns the ingress it
+    // created, and its role may not allow listing ingresses. Inferring absence
+    // from the new type would leave that ingress serving the new tunnel
+    // publicly, so history decides here, not the current configuration.
+    let ingress_possible = ingress_possible || ingress_was_created(config_id_label).await;
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
@@ -802,6 +859,9 @@ pub async fn delete_expose_resources(
         return Err(errors.join("; "));
     }
 
+    // Nothing is left, so the history that forced the ingress checks above has
+    // served its purpose.
+    forget_ingress_history(config_id_label).await;
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label

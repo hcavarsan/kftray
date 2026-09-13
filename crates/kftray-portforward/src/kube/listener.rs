@@ -162,15 +162,43 @@ impl PortForwarder {
         // Resolution is inside the deadline: it can perform a pod GET, and a
         // stalled API server would otherwise hold the client past the ten
         // seconds this promises and delay stream-failure recovery.
-        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, async {
-            let port = self.current_target_port().await?;
-            self.forwarder
-                .connect(port)
-                .await
-                .map_err(anyhow::Error::from)
-        })
-        .await
-        .context("Timed out acquiring a port-forward stream")?
+        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.acquire_stream())
+            .await
+            .context("Timed out acquiring a port-forward stream")?
+    }
+
+    /// Opens a stream on the pod whose port number it used.
+    ///
+    /// For a named port the two have to agree: a rollout between resolving the
+    /// name and opening the connection would otherwise send traffic to a port
+    /// number the replacement pod does not use.
+    async fn acquire_stream(&self) -> anyhow::Result<kube_portforward::Stream> {
+        const ACQUIRE_ATTEMPTS: usize = 3;
+
+        let Some(named) = &self.named_port else {
+            return Ok(self.forwarder.connect(self.target_port).await?);
+        };
+
+        for _ in 0..ACQUIRE_ATTEMPTS {
+            let (port, pod) = self.resolve_named_port(named).await?;
+            let (stream, connected_pod) = self.forwarder.connect_on_pod(port).await?;
+            if connected_pod == pod {
+                return Ok(stream);
+            }
+            // The stream reaches a pod this port number was not read from, so
+            // it is dropped rather than used: resolving again picks up the
+            // replacement's own mapping.
+            debug!("Reconnecting: resolved on {pod} but connected to {connected_pod}");
+            named
+                .resolved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+        }
+
+        Err(anyhow::anyhow!(
+            "The selected pod kept changing while resolving the named port"
+        ))
     }
 
     /// The port to connect to for the pod currently selected.
@@ -178,50 +206,31 @@ impl PortForwarder {
     /// A named port is re-resolved when the ready pod changes: a rollout can
     /// map the same name to a different number, and the old one would then
     /// reach nothing or the wrong container port.
-    async fn current_target_port(&self) -> anyhow::Result<u16> {
-        /// Resolution reads one pod while the forwarder selects its own. They
-        /// agree unless a rollout lands in between, so a mismatch is retried
-        /// rather than used.
-        const RESOLVE_ATTEMPTS: usize = 3;
-
-        let Some(named) = &self.named_port else {
-            return Ok(self.target_port);
-        };
-
-        for _ in 0..RESOLVE_ATTEMPTS {
-            if let Some(pod) = self.forwarder.ready_pod()
-                && let Some((cached_pod, port)) = named
-                    .resolved
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone()
-                && cached_pod == pod
-            {
-                return Ok(port);
-            }
-
-            let (port, resolved_pod) = crate::kube::target::resolve_target_port_for_pod(
-                &self.forwarder,
-                &named.pod_api,
-                &named.target,
-                tokio::time::Duration::from_secs(5),
-            )
-            .await?;
-            let Some(resolved_pod) = resolved_pod else {
-                return Ok(port);
-            };
-            // Cached only for the pod the number was actually read from, so a
-            // rollout during resolution cannot file it under the new pod.
-            *named.resolved.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some((resolved_pod.clone(), port));
-            if self.forwarder.ready_pod().as_deref() == Some(resolved_pod.as_str()) {
-                return Ok(port);
-            }
+    async fn resolve_named_port(&self, named: &NamedPort) -> anyhow::Result<(u16, String)> {
+        if let Some((pod, port)) = named
+            .resolved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            return Ok((port, pod));
         }
 
-        Err(anyhow::anyhow!(
-            "The selected pod kept changing while resolving the named port"
-        ))
+        let (port, resolved_pod) = crate::kube::target::resolve_target_port_for_pod(
+            &self.forwarder,
+            &named.pod_api,
+            &named.target,
+            tokio::time::Duration::from_secs(5),
+        )
+        .await?;
+        let pod = resolved_pod.ok_or_else(|| {
+            anyhow::anyhow!("A named port must resolve against a pod, but none was reported")
+        })?;
+        // Cached under the pod the number was read from, so the acquisition
+        // above can tell whether the stream it got belongs to that same pod.
+        *named.resolved.lock().unwrap_or_else(|e| e.into_inner()) = Some((pod.clone(), port));
+
+        Ok((port, pod))
     }
 
     pub async fn handle_tcp_listener(

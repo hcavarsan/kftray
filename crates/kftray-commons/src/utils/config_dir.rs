@@ -145,8 +145,18 @@ fn with_identity_lock<T>(
 
     let deadline = std::time::Instant::now() + LOCK_WAIT;
     loop {
-        if try_lock_exclusive(&lock) {
-            break;
+        match try_lock_exclusive(&lock) {
+            Ok(true) => break,
+            // Only contention is worth waiting out. A filesystem without
+            // advisory locking refuses every attempt, and waiting the full
+            // budget would report a timeout instead of the reason.
+            Ok(false) => {}
+            Err(error) => {
+                return Err(format!(
+                    "Failed to lock the installation identifier at {}: {error}",
+                    lock_path.display()
+                ));
+            }
         }
         if std::time::Instant::now() >= deadline {
             return Err(format!(
@@ -162,12 +172,24 @@ fn with_identity_lock<T>(
     result
 }
 
+/// Takes the lock, reporting contention as `Ok(false)` and anything else as an
+/// error: a filesystem that cannot lock at all must not look like a busy peer.
 #[cfg(unix)]
-fn try_lock_exclusive(file: &fs::File) -> bool {
+fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
     use std::os::fd::AsRawFd;
 
     // SAFETY: the descriptor is owned by `file` and outlives this call.
-    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EWOULDBLOCK) => Ok(false),
+        // Retried rather than reported: a signal interrupted the call, which
+        // says nothing about the lock.
+        Some(libc::EINTR) => Ok(false),
+        _ => Err(error),
+    }
 }
 
 #[cfg(unix)]
@@ -181,7 +203,7 @@ fn unlock(file: &fs::File) {
 }
 
 #[cfg(windows)]
-fn try_lock_exclusive(file: &fs::File) -> bool {
+fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
     use std::os::windows::io::AsRawHandle;
 
     use windows::Win32::Foundation::HANDLE;
@@ -195,7 +217,7 @@ fn try_lock_exclusive(file: &fs::File) -> bool {
     let mut overlapped = OVERLAPPED::default();
 
     // SAFETY: the handle is owned by `file` and outlives this call.
-    unsafe {
+    let locked = unsafe {
         LockFileEx(
             HANDLE(file.as_raw_handle()),
             LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
@@ -204,7 +226,15 @@ fn try_lock_exclusive(file: &fs::File) -> bool {
             u32::MAX,
             &mut overlapped,
         )
-        .is_ok()
+    };
+    match locked {
+        Ok(()) => Ok(true),
+        Err(error)
+            if error.code().0 as u32 == windows::Win32::Foundation::ERROR_LOCK_VIOLATION.0 =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(std::io::Error::other(error)),
     }
 }
 

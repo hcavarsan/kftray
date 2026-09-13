@@ -213,6 +213,17 @@ impl Drop for AllocationInFlight {
     }
 }
 
+/// Whether a registered forward is listening on this address.
+async fn address_is_in_use(address: &str) -> bool {
+    CHILD_PROCESSES.iter().any(|entry| {
+        entry
+            .value()
+            .config()
+            .and_then(|config| config.local_address.clone())
+            .is_some_and(|local| local == address)
+    })
+}
+
 async fn allocate_local_address_owned(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
@@ -240,7 +251,25 @@ async fn allocate_local_address_owned(
             && allocated
             && let Some(address) = owned.local_address.as_deref()
         {
+            // A retry can allocate the same address while this task is still
+            // running, and the helper hands the same address back for the same
+            // service. Removing it then would strip the alias from underneath a
+            // forward that is already using it.
+            if address_is_in_use(address).await {
+                warn!(
+                    "Keeping address {address} from an abandoned startup: a running forward \
+                     adopted it"
+                );
+                if let Some(id) = owned.id {
+                    crate::kube::stop::forget_pending_cleanup(id, &owned);
+                }
+                return;
+            }
+
             warn!("Releasing address {address} allocated after startup was abandoned");
+            // Marked for the same reason a stop marks its release: a startup
+            // that begins now must not adopt the address mid-removal.
+            let _releasing = crate::kube::stop::mark_address_release(address);
             match crate::network_utils::remove_loopback_address(address).await {
                 Ok(()) => {
                     if let Some(id) = owned.id {
