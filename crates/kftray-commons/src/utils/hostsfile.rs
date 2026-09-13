@@ -60,6 +60,25 @@ pub struct SectionEntry {
     pub owner: Option<String>,
 }
 
+/// Serializes hosts-file changes across every process that makes them.
+fn with_hosts_lock<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    let lock_path = crate::utils::config_dir::get_config_dir()
+        .map_err(HostsFileError::InvalidPath)?
+        .join("hosts.lock");
+    let mut outcome = None;
+    crate::utils::config_dir::with_file_lock(&lock_path, || {
+        outcome = Some(work());
+        Ok(())
+    })
+    .map_err(HostsFileError::Io)?;
+
+    outcome.unwrap_or_else(|| {
+        Err(HostsFileError::Io(
+            "Hosts lock produced no result".to_owned(),
+        ))
+    })
+}
+
 pub struct HostsFile {
     entries: Vec<SectionEntry>,
     tag: String,
@@ -154,9 +173,24 @@ impl HostsFile {
         let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
         let section = HostsSection::new(&self.tag);
         let bounds = section.find_section_bounds(&lines);
+        // Half a section is not an empty one: the aliases between a begin
+        // marker and a missing end marker still resolve, and reporting nothing
+        // would let a caller treat them as already removed.
+        if bounds.is_partial() {
+            return Err(HostsFileError::InvalidData(format!(
+                "Incomplete section markers for tag '{}'",
+                self.tag
+            )));
+        }
         let (Some(begin), Some(end)) = (bounds.begin, bounds.end) else {
             return Ok(Vec::new());
         };
+        if end < begin {
+            return Err(HostsFileError::InvalidData(format!(
+                "Reversed section markers for tag '{}'",
+                self.tag
+            )));
+        }
 
         let mut entries = Vec::new();
         for line in lines.get(begin + 1..end).unwrap_or_default() {
@@ -195,8 +229,31 @@ impl HostsFile {
         let path = path.as_ref();
         validate_hosts_path(path)?;
 
-        let writer = HostsFileWriter::new(path);
-        writer.update_section(&self.tag, &self.entries)
+        // Taken across the whole read-modify-write: the privileged helper is a
+        // separate process writing the same file, and rewriting it from a
+        // snapshot read outside the lock loses whichever change lost the race.
+        with_hosts_lock(|| {
+            let writer = HostsFileWriter::new(path);
+            writer.update_section(&self.tag, &self.entries)
+        })
+    }
+
+    /// Reads this tag's section, keeps the entries `keep` accepts, and writes
+    /// the result back as one locked operation.
+    pub fn retain_section(&self, keep: impl Fn(&SectionEntry) -> bool) -> Result<bool> {
+        let path = get_default_hosts_path()?;
+        let path = path.as_path();
+        validate_hosts_path(path)?;
+
+        with_hosts_lock(|| {
+            let kept: Vec<SectionEntry> = self
+                .read_section_from(path)?
+                .into_iter()
+                .filter(&keep)
+                .collect();
+            let writer = HostsFileWriter::new(path);
+            writer.update_section(&self.tag, &kept)
+        })
     }
 }
 

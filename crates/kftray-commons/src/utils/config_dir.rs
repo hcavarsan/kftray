@@ -127,18 +127,36 @@ fn load_or_create_installation_id() -> Result<String, String> {
 fn with_identity_lock<T>(
     config_dir: &std::path::Path, write: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
+    with_file_lock(&config_dir.join("installation_id.lock"), write)
+}
+
+/// Runs `work` while holding an exclusive advisory lock on `lock_path`.
+///
+/// The lock is held through an open descriptor, so the kernel releases it when
+/// the process exits. Every process that takes the same path serializes against
+/// the others, which is what makes a read-modify-write of a shared file safe.
+pub fn with_file_lock<T>(
+    lock_path: &std::path::Path, work: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
     const POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
-    let lock_path = config_dir.join("installation_id.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create the lock directory at {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
     let lock = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&lock_path)
+        .open(lock_path)
         .map_err(|error| {
             format!(
-                "Failed to open the installation identifier lock at {}: {error}",
+                "Failed to open the lock at {}: {error}",
                 lock_path.display()
             )
         })?;
@@ -153,21 +171,21 @@ fn with_identity_lock<T>(
             Ok(false) => {}
             Err(error) => {
                 return Err(format!(
-                    "Failed to lock the installation identifier at {}: {error}",
+                    "Failed to take the lock at {}: {error}",
                     lock_path.display()
                 ));
             }
         }
         if std::time::Instant::now() >= deadline {
             return Err(format!(
-                "Timed out waiting for the installation identifier lock at {}",
+                "Timed out waiting for the lock at {}",
                 lock_path.display()
             ));
         }
         std::thread::sleep(POLL);
     }
 
-    let result = write();
+    let result = work();
     unlock(&lock);
     result
 }

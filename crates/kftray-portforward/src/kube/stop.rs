@@ -158,11 +158,21 @@ const UNCERTAIN_CREATE_PREFIX: &str = "uncertain_create:";
 /// abandoned on its deadline can still be admitted, and a cleanup pass that
 /// listed nothing would forget a relay that appears seconds later. The record
 /// survives a restart, which is when nothing else does.
-async fn persist_uncertain_target(id: i64, config: &Config) -> Result<(), String> {
+async fn persist_uncertain_target(
+    id: i64, config: &Config, mode: DatabaseMode,
+) -> Result<(), String> {
     let serialized = serde_json::to_string(config).map_err(|error| {
         format!("Failed to describe the cleanup metadata for config {id}: {error}")
     })?;
-    let key = uncertain_create_key(id, config);
+    let key = uncertain_create_key(id, config, mode);
+    // A fresh attempt starts its confirmation sequence from scratch: a count
+    // left by an earlier attempt at the same destination would let this one be
+    // forgotten after a single pass.
+    if let Err(error) =
+        kftray_commons::utils::settings::delete_setting(&confirmation_key(id, config, mode)).await
+    {
+        log::debug!("Failed to reset the confirmation count for config {id}: {error}");
+    }
 
     kftray_commons::utils::settings::set_setting(&key, &serialized)
         .await
@@ -175,17 +185,10 @@ async fn persist_uncertain_target(id: i64, config: &Config) -> Result<(), String
 /// A create whose outcome was never answered is not settled by elapsed client
 /// time: the server can still admit it. The budget bounds how long this keeps
 /// costing a list, without turning one empty result into proof.
-async fn confirm_uncertain_target(id: i64, config: &Config) -> bool {
+async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) -> bool {
     const CONFIRMATIONS_REQUIRED: u32 = 2;
 
-    // Deliberately a different prefix: the restore scan reads every key under
-    // the create prefix as a target, and a counter is not one.
-    let key = format!(
-        "uncertain_confirmations:{}",
-        uncertain_create_key(id, config)
-            .strip_prefix(UNCERTAIN_CREATE_PREFIX)
-            .unwrap_or_default()
-    );
+    let key = confirmation_key(id, config, mode);
     let seen = kftray_commons::utils::settings::get_setting(&key)
         .await
         .ok()
@@ -211,16 +214,33 @@ async fn confirm_uncertain_target(id: i64, config: &Config) -> bool {
 ///
 /// Awaited like the write it undoes: two detached tasks have no ordering, and a
 /// late delete would erase a newer attempt's record.
-async fn forget_uncertain_target(id: i64, config: &Config) {
-    let key = uncertain_create_key(id, config);
-    if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
-        log::debug!("Failed to clear the unsettled create for config {id}: {error}");
+async fn forget_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) {
+    for key in [
+        uncertain_create_key(id, config, mode),
+        confirmation_key(id, config, mode),
+    ] {
+        if let Err(error) = kftray_commons::utils::settings::delete_setting(&key).await {
+            log::debug!("Failed to clear the unsettled create for config {id}: {error}");
+        }
     }
+}
+
+/// Key under which a target's confirmation count is kept.
+///
+/// Deliberately a different prefix: the restore scan reads every key under the
+/// create prefix as a target, and a counter is not one.
+fn confirmation_key(id: i64, config: &Config, mode: DatabaseMode) -> String {
+    format!(
+        "uncertain_confirmations:{}",
+        uncertain_create_key(id, config, mode)
+            .strip_prefix(UNCERTAIN_CREATE_PREFIX)
+            .unwrap_or_default()
+    )
 }
 
 /// Identifies one configuration's resources, so two different targets for the
 /// same id do not overwrite each other.
-fn uncertain_create_key(id: i64, config: &Config) -> String {
+fn uncertain_create_key(id: i64, config: &Config, mode: DatabaseMode) -> String {
     // The identity matches `same_resources` field for field: targets the
     // registry tracks separately must not share a key, or settling one would
     // delete another's restart metadata.
@@ -236,11 +256,19 @@ fn uncertain_create_key(id: i64, config: &Config) -> String {
         config.exposure_type.as_deref(),
     ]);
 
-    format!("{UNCERTAIN_CREATE_PREFIX}{id}:{destination:016x}")
+    // Scoped by database: an in-memory session's ids mean nothing to the file
+    // database, and restoring one there would delete another configuration's
+    // resources.
+    let scope = match mode {
+        DatabaseMode::File => "file",
+        DatabaseMode::Memory => "memory",
+    };
+
+    format!("{UNCERTAIN_CREATE_PREFIX}{scope}:{id}:{destination:016x}")
 }
 
 /// Reloads creates persisted by an earlier run into the cleanup registry.
-async fn restore_uncertain_targets() {
+async fn restore_uncertain_targets(mode: DatabaseMode) {
     let stored =
         match kftray_commons::utils::settings::get_settings_with_prefix(UNCERTAIN_CREATE_PREFIX)
             .await
@@ -251,9 +279,16 @@ async fn restore_uncertain_targets() {
                 return;
             }
         };
+    let scope = match mode {
+        DatabaseMode::File => "file:",
+        DatabaseMode::Memory => "memory:",
+    };
     for (key, value) in stored {
+        // Only this database's records: an id means something different in the
+        // other one, and acting on it would delete an unrelated relay.
         let Some(id) = key
             .strip_prefix(UNCERTAIN_CREATE_PREFIX)
+            .and_then(|rest| rest.strip_prefix(scope))
             .and_then(|rest| rest.split(':').next())
             .and_then(|id| id.parse::<i64>().ok())
         else {
@@ -373,6 +408,9 @@ pub(crate) struct ClusterResourceGuard {
     id: i64,
     config: Option<Config>,
     confirmed: bool,
+    /// Database the configuration id belongs to. Ids are only meaningful within
+    /// one, so the durable record is scoped by it.
+    mode: DatabaseMode,
 }
 
 impl ClusterResourceGuard {
@@ -381,7 +419,7 @@ impl ClusterResourceGuard {
     ///
     /// A failed write is an error rather than a warning: the caller would
     /// otherwise create a resource that a restart could never find.
-    pub(crate) async fn arm(id: i64, config: Config) -> Result<Self, String> {
+    pub(crate) async fn arm(id: i64, config: Config, mode: DatabaseMode) -> Result<Self, String> {
         record_target(
             id,
             config.clone(),
@@ -389,12 +427,13 @@ impl ClusterResourceGuard {
             true,
             false,
         );
-        persist_uncertain_target(id, &config).await?;
+        persist_uncertain_target(id, &config, mode).await?;
 
         Ok(Self {
             id,
             config: Some(config),
             confirmed: false,
+            mode,
         })
     }
 
@@ -421,7 +460,7 @@ impl ClusterResourceGuard {
         };
         // Definitively rejected, so nothing was created and the persisted
         // record has nothing left to describe.
-        forget_uncertain_target(self.id, &config).await;
+        forget_uncertain_target(self.id, &config, self.mode).await;
         if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
             for entry in entries
                 .iter_mut()
@@ -1010,7 +1049,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
 
     // Creates abandoned by an earlier run are picked up here: nothing else in
     // this process knows about them.
-    restore_uncertain_targets().await;
+    restore_uncertain_targets(mode).await;
 
     let until = Instant::now() + deadline;
     loop {
@@ -1074,7 +1113,7 @@ pub async fn stop_all_port_forward_with_mode(
     // Creates abandoned by an earlier run exist only on disk: the desktop
     // application never calls the reconciliation pass, so without this its
     // stop-all cannot find a relay left behind by a crash.
-    restore_uncertain_targets().await;
+    restore_uncertain_targets(mode).await;
 
     let mut ids: HashSet<i64> = CHILD_PROCESSES.iter().map(|entry| *entry.key()).collect();
     for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
@@ -1308,13 +1347,17 @@ async fn stop_config(
 
             // The only remaining record of where these resources live: the
             // database row can be edited or deleted while a forward runs.
-            // An uncertain create keeps its cluster obligation: the list that
-            // came back empty is not proof, so the next pass must look again.
+            // An unanswered create keeps its cluster obligation until its
+            // confirmations complete, whatever the local cleanup did: the list
+            // that came back empty is not proof, and dropping the obligation
+            // here would stop any later pass from looking again.
+            let unconfirmed = unanswered.contains(&target.config)
+                && !confirm_uncertain_target(id, &target.config, mode).await;
             set_target_obligations(
                 id,
                 &target.config,
                 target.uncertain_until,
-                target.cluster && (cluster.is_err() || uncertain),
+                target.cluster && (cluster.is_err() || uncertain || unconfirmed),
                 target.local && !local.settled(),
             );
             if let Err(error) = cluster {
@@ -1345,8 +1388,8 @@ async fn stop_config(
             // its record outlives a single empty list and goes only once a
             // later pass has confirmed it again.
             let answered = !unanswered.contains(&target);
-            if answered || confirm_uncertain_target(id, &target).await {
-                forget_uncertain_target(id, &target).await;
+            if answered || confirm_uncertain_target(id, &target, mode).await {
+                forget_uncertain_target(id, &target, mode).await;
                 forget_pending_cleanup(id, &target);
                 continue;
             }
@@ -1587,7 +1630,7 @@ mod tests {
         // A failed startup owes a loopback release.
         record_pending_cleanup(id, config.clone());
         // The same resources are then armed and deleted as a cluster target.
-        ClusterResourceGuard::arm(id, config.clone())
+        ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
             .await
             .unwrap()
             .disarm()
@@ -1759,7 +1802,9 @@ mod tests {
             workload_type: Some("service".to_string()),
             ..Config::default()
         };
-        let guard = ClusterResourceGuard::arm(id, config.clone()).await.unwrap();
+        let guard = ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
+            .await
+            .unwrap();
         // Dropped without `confirm`: the create request was abandoned, so the
         // resource may still be persisting.
         drop(guard);
@@ -1774,7 +1819,9 @@ mod tests {
         );
 
         // Once the create's outcome is observed, the same pass settles it.
-        let mut guard = ClusterResourceGuard::arm(id, config.clone()).await.unwrap();
+        let mut guard = ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
+            .await
+            .unwrap();
         guard.confirm();
         std::mem::forget(guard);
         let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;

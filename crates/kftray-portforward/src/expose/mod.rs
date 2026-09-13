@@ -100,7 +100,8 @@ pub(crate) async fn start_single_expose(
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
-    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone()).await?;
+    let mut guard =
+        crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone(), mode).await?;
     let created = match cancellation {
         Some(token) => tokio::select! {
             biased;
@@ -241,8 +242,12 @@ pub(crate) async fn start_single_expose(
     }
     pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);
-    // Registered: stop can find the process, so the pending trail is redundant.
-    guard.disarm().await;
+    // The record stays, now settled rather than uncertain: the registered
+    // process describes these resources only in memory, and a crash after the
+    // row is edited would otherwise leave cleanup looking for them at the new
+    // destination. It is dropped when cleanup actually succeeds.
+    guard.confirm();
+    drop(guard);
 
     info!("Expose tunnel fully established for config {}", config_id);
 

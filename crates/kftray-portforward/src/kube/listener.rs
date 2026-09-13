@@ -122,6 +122,7 @@ impl PortForwarder {
             // reason a later connection does: a rollout in between can map the
             // name to a different number, and probing the old one would reject
             // a startup the replacement would have served.
+            let mut last_error = None;
             for _ in 0..3 {
                 let (port, pod) = crate::kube::target::resolve_target_port_for_pod(
                     &forwarder,
@@ -138,6 +139,7 @@ impl PortForwarder {
                     // rejecting a startup the new pod would serve.
                     Err(error) if pod.is_some() => {
                         debug!("Re-resolving the named port after a failed probe: {error}");
+                        last_error = Some(error);
                         continue;
                     }
                     Err(error) => return Err(error.into()),
@@ -149,9 +151,14 @@ impl PortForwarder {
                 }
             }
 
-            Err(anyhow::anyhow!(
-                "The selected pod kept changing while resolving the named port"
-            ))
+            Err(match last_error {
+                Some(error) => {
+                    anyhow::Error::from(error).context("Could not open a stream for the named port")
+                }
+                None => {
+                    anyhow::anyhow!("The selected pod kept changing while resolving the named port")
+                }
+            })
         };
         let target_port = match tokio::time::timeout(tokio::time::Duration::from_secs(10), startup)
             .await
@@ -219,6 +226,7 @@ impl PortForwarder {
             return Ok(self.forwarder.connect(self.target_port).await?);
         };
 
+        let mut last_error = None;
         for _ in 0..ACQUIRE_ATTEMPTS {
             let (port, pod) = self.resolve_named_port(named).await?;
             // A failed connection drops the mapping and resolves again rather
@@ -234,6 +242,7 @@ impl PortForwarder {
                         .unwrap_or_else(|e| e.into_inner())
                         .take();
                     debug!("Re-resolving the named port after a failed connection: {error}");
+                    last_error = Some(error);
                     continue;
                 }
             };
@@ -255,9 +264,17 @@ impl PortForwarder {
                 .take();
         }
 
-        Err(anyhow::anyhow!(
-            "The selected pod kept changing while resolving the named port"
-        ))
+        // The last connection error is the actionable one: a role without
+        // permission to open a port-forward fails every attempt, and reporting
+        // pod churn instead would hide the cause.
+        Err(match last_error {
+            Some(error) => {
+                anyhow::Error::from(error).context("Could not open a stream for the named port")
+            }
+            None => {
+                anyhow::anyhow!("The selected pod kept changing while resolving the named port")
+            }
+        })
     }
 
     /// The port to connect to for the pod currently selected.

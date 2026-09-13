@@ -96,54 +96,25 @@ impl DirectHostfileManager {
             .map(drop)
     }
 
-    /// Marks the file as possibly out of step with this manager's map.
-    ///
-    /// The helper writes the same tagged section, so an entry it owns is
-    /// invisible here. Without this, a reconciled map would report a removal as
-    /// complete without even inspecting the file.
-    /// Forgets ids the privileged helper already removed from the file.
-    ///
-    /// Their entries stay in this map otherwise, and a later retry of a write
-    /// that failed earlier would put the stopped alias back on disk.
-    pub fn forget_entries(&self, ids: &[&str]) {
-        if ids.is_empty() {
-            return;
-        }
-        let held_any = {
-            let Ok(mut entries) = self.entries.write() else {
-                return;
-            };
-            // Collected first so every id is removed, not just those before
-            // the first hit.
-            let removed: Vec<bool> = ids.iter().map(|id| entries.remove(*id).is_some()).collect();
-            removed.into_iter().any(|removed| removed)
-        };
-        // Only scheduled when this manager actually held one of them. Running a
-        // reconciliation for helper-only ids would race the helper's own
-        // writer: a pass that read the file before its delete landed would put
-        // the alias back, and both removals would already have reported
-        // success.
-        if held_any {
-            self.mark_dirty();
-            self.ensure_writer_running();
-        }
-    }
-
     /// Removes several ids and reconciles them with one write.
     ///
-    /// The file is rewritten from the whole remaining map, so a single
-    /// successful write covers every id in the batch.
+    /// This manager's section is rewritten from its whole remaining map, so a
+    /// single successful write covers every id in the batch.
     ///
-    /// Returns whether every requested id was one this manager owns.
-    ///
-    /// Ownership is read from the file: each line this manager writes carries
-    /// its configuration id, and the privileged helper's lines carry none. An
-    /// id with no line of ours is one this manager cannot remove, and a caller
-    /// that reached here through a failing helper has to learn that rather than
+    /// Returns whether every requested id was one this manager owns. Ownership
+    /// is read from the file: each line it writes carries its configuration id,
+    /// and an id with no line of its own is one it cannot remove. A caller that
+    /// reached here through a failing helper has to learn that rather than
     /// treat the alias as gone.
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
         debug!("Removing host entries for IDs {ids:?}");
 
+        // Read before the map is touched: a failure here must leave the entry
+        // in place, or a retry would no longer know what to remove. The file is
+        // the record of what this manager wrote and it outlives the map, so an
+        // entry added before a restart is on disk and nowhere else. A failure
+        // to read is not evidence of absence either.
+        let on_disk = Self::owners_on_disk()?;
         let removed: Vec<Option<HostEntry>> = match self.entries.write() {
             Ok(mut entries) => ids.iter().map(|id| entries.remove(*id)).collect(),
             Err(e) => {
@@ -151,14 +122,6 @@ impl DirectHostfileManager {
                 return Err(std::io::Error::other(e.to_string()));
             }
         };
-
-        // The file is the record of what this manager wrote, and it outlives
-        // the map: an entry added before a restart is on disk with its owner
-        // marker and nowhere else.
-        // A failure to read is not evidence of absence: reporting coverage
-        // here would let a caller drop its cleanup record for an alias still on
-        // disk.
-        let on_disk = Self::owners_on_disk()?;
         let covered = ids
             .iter()
             .zip(removed.iter())
@@ -210,7 +173,9 @@ impl DirectHostfileManager {
     ///
     /// Only exact matches go: everything else in that section belongs to the
     /// privileged helper, which is the only other writer of it.
-    fn prune_legacy_entries(entries: &HostEntriesMap, dropping: &[(std::net::IpAddr, String)]) {
+    fn prune_legacy_entries(
+        entries: &HostEntriesMap, dropping: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
         let mine: std::collections::HashSet<(std::net::IpAddr, &str)> = entries
             .values()
             .map(|entry| (entry.ip, entry.hostname.as_str()))
@@ -221,33 +186,20 @@ impl DirectHostfileManager {
             )
             .collect();
         let legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
-        let Ok(existing) = legacy.read_section() else {
-            return;
-        };
+        let existing = legacy.read_section().map_err(std::io::Error::other)?;
         if !existing
             .iter()
             .any(|entry| mine.contains(&(entry.ip, entry.hostname.as_str())))
         {
-            return;
+            return Ok(());
         }
 
-        let mut rewritten = HostsFile::new(KFTRAY_HOSTS_TAG);
-        for entry in existing {
-            if mine.contains(&(entry.ip, entry.hostname.as_str())) {
-                continue;
-            }
-            match entry.owner {
-                Some(owner) => {
-                    rewritten.add_owned_entry(entry.ip, entry.hostname, &owner);
-                }
-                None => {
-                    rewritten.add_entry(entry.ip, entry.hostname);
-                }
-            }
-        }
-        if let Err(error) = rewritten.write() {
-            log::warn!("Could not migrate earlier hosts entries: {error}");
-        }
+        // Read, filtered and written under one lock: the privileged helper
+        // writes this same section from another process.
+        legacy
+            .retain_section(|entry| !mine.contains(&(entry.ip, entry.hostname.as_str())))
+            .map(drop)
+            .map_err(std::io::Error::other)
     }
 
     /// Whether the managed section holds lines no writer claimed.
@@ -512,7 +464,13 @@ impl DirectHostfileManager {
     ) -> Result<u64, (u64, std::io::Error)> {
         let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
         let started = generation.load(Ordering::Relaxed);
-        match HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG).write() {
+        // Both sections go: entries written by a version that shared the
+        // helper's section belong to this application too, and a purge that
+        // left them would report complete cleanup with aliases still resolving.
+        if let Err(error) = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG).write() {
+            return Err((started, std::io::Error::other(error)));
+        }
+        match HostsFile::new(KFTRAY_HOSTS_TAG).write() {
             Ok(_) => Ok(started),
             Err(error) => Err((started, std::io::Error::other(error))),
         }
@@ -567,8 +525,9 @@ impl DirectHostfileManager {
         // A mapping this manager holds, or has just dropped, may also exist in
         // the shared section from a version that wrote there. That copy is this
         // application's, so it is migrated out rather than left to resolve
-        // alongside, or after, the alias here.
-        Self::prune_legacy_entries(&entries_snapshot, dropping);
+        // alongside, or after, the alias here. Reported rather than logged: a
+        // copy still on disk means the removal did not take effect.
+        Self::prune_legacy_entries(&entries_snapshot, dropping)?;
 
         match hosts_file.write() {
             Ok(_) => {

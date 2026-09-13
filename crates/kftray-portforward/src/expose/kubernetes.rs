@@ -76,6 +76,22 @@ pub async fn create_expose_resources(
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
+    // Resources from before the installation label existed cannot be attributed
+    // and are never deleted automatically. Starting anyway is not safe: an old
+    // Service selects on app and config_id alone, so it would also select the
+    // pods this attempt creates, and an old public Ingress in front of it would
+    // expose a tunnel now configured as private.
+    if let Some(leftovers) =
+        check_legacy_resources(&client, &config.namespace, &config_id_str).await
+    {
+        return Err(ExposeCreateError::from(format!(
+            "Exposure resources from an earlier version are still running and cannot be attributed \
+             to this installation: {}. Remove them from the server resources screen before \
+             starting this configuration.",
+            leftovers.join(", ")
+        )));
+    }
+
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -811,6 +827,34 @@ async fn forget_ingress_history(config_id: &str, location: &ExposeLocation<'_>) 
     {
         log::debug!("Failed to clear the ingress history for config {config_id}: {error}");
     }
+}
+
+/// Names resources for this configuration that carry no installation label.
+///
+/// Configuration ids are local to each database, so these can belong to another
+/// installation: they are reported, never deleted.
+async fn check_legacy_resources(
+    client: &Client, namespace: &str, config_id: &str,
+) -> Option<Vec<String>> {
+    let unlabelled = ListParams::default().labels(&format!(
+        "app=kftray-expose,config_id={config_id},!{}",
+        crate::kube::proxy::INSTALLATION_LABEL
+    ));
+    let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let mut leftovers = Vec::new();
+    if let Ok(list) = deployments.list(&unlabelled).await {
+        leftovers.extend(named_items(&list, "deployment"));
+    }
+    if let Ok(list) = services.list(&unlabelled).await {
+        leftovers.extend(named_items(&list, "service"));
+    }
+    let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
+    if let Ok(list) = ingresses.list(&unlabelled).await {
+        leftovers.extend(named_items(&list, "ingress"));
+    }
+
+    (!leftovers.is_empty()).then_some(leftovers)
 }
 
 async fn check_existing_resources(

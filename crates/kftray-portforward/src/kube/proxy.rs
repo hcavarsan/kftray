@@ -466,6 +466,7 @@ async fn process_deployment_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
+        options.mode,
     )
     .await?;
     // Deliberately not raced against cancellation: abandoning a create in
@@ -656,6 +657,7 @@ async fn process_pod_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
+        options.mode,
     )
     .await?;
     match create_proxy_resource(&pods, &pod).await {

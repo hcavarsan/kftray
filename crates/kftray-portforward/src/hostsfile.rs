@@ -69,10 +69,14 @@ impl HostfileManager {
                     Err(e) => errors.push(format!("{id}: {e}")),
                 }
             }
-            // Dropped here too: an add that fell back to the direct manager and
-            // never reached disk is still pending, and retrying it would write
-            // the alias the helper just removed back again.
-            self.direct_manager.forget_entries(&removed);
+            // The helper only writes its own section, so an alias that fell
+            // back to the direct manager earlier is still in the direct one.
+            // Removed synchronously here, with its failure reported: a queued
+            // write would be lost on the next restart, whose empty map has
+            // nothing left to reconcile.
+            if !removed.is_empty() {
+                self.direct_manager.remove_host_entries(&removed)?;
+            }
             if errors.is_empty() {
                 return Ok(());
             }
