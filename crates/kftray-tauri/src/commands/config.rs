@@ -224,10 +224,14 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     // starting or still being cleaned up would be left with nothing to stop it
     // by. Coordinated in the backend under the lifecycle lock, because
     // shortcuts start forwards without going through the interface.
-    let result = kftray_portforward::kube::delete_configs_if_idle(&[id], || async move {
-        clear_stopped_by_timeout(id);
-        delete_config(id).await
-    })
+    let result = kftray_portforward::kube::delete_configs_if_idle(
+        &[id],
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+        || async move {
+            clear_stopped_by_timeout(id);
+            delete_config(id).await
+        },
+    )
     .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
@@ -239,12 +243,16 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
     let targets = ids.clone();
-    let result = kftray_portforward::kube::delete_configs_if_idle(&targets, || async move {
-        for id in &ids {
-            clear_stopped_by_timeout(*id);
-        }
-        delete_configs(ids).await
-    })
+    let result = kftray_portforward::kube::delete_configs_if_idle(
+        &targets,
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+        || async move {
+            for id in &ids {
+                clear_stopped_by_timeout(*id);
+            }
+            delete_configs(ids).await
+        },
+    )
     .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;

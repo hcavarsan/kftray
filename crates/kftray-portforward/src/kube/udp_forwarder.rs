@@ -142,6 +142,11 @@ struct UdpSession {
     /// either direction. A session waiting on slow replies is still working,
     /// even though no new local datagram has arrived.
     tunnel_activity: Arc<AtomicU64>,
+    /// Milliseconds since `opened_at` at which the tunnel ended, set by the
+    /// session task on its way out. The cooldown counts from here: a tunnel
+    /// that took a while to fail, or failed after serving, is not to be
+    /// reopened on the next datagram because it was opened long ago.
+    closed_at: Arc<AtomicU64>,
 }
 
 impl UdpSession {
@@ -170,7 +175,23 @@ impl UdpSession {
     /// A tunnel that ended is retried only after a cooldown, so a relay that
     /// refuses connections cannot be hammered once per datagram.
     fn is_cooling_down(&self, now: Instant) -> bool {
-        now.duration_since(self.opened_at) < TUNNEL_RETRY_COOLDOWN
+        let closed = self.opened_at + Duration::from_millis(self.closed_at.load(Ordering::Relaxed));
+        now.duration_since(closed) < TUNNEL_RETRY_COOLDOWN
+    }
+}
+
+/// Marks the moment a session task ends, however it ends.
+struct ClosedAt {
+    opened_at: Instant,
+    closed_at: Arc<AtomicU64>,
+}
+
+impl Drop for ClosedAt {
+    fn drop(&mut self) {
+        self.closed_at.store(
+            u64::try_from(self.opened_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -367,9 +388,15 @@ impl UdpForwarder {
 
         let tunnel_activity = Arc::new(AtomicU64::new(0));
         let session_activity = Arc::clone(&tunnel_activity);
+        let closed_at = Arc::new(AtomicU64::new(0));
+        let closed_marker = ClosedAt {
+            opened_at: now,
+            closed_at: Arc::clone(&closed_at),
+        };
         let reply_budget = Arc::clone(budget);
 
         let task = tokio::spawn(async move {
+            let _closed_marker = closed_marker;
             let stream = tokio::select! {
                 biased;
                 _ = session_cancellation.cancelled() => return,
@@ -480,6 +507,7 @@ impl UdpForwarder {
                 last_seen: now,
                 opened_at: now,
                 tunnel_activity,
+                closed_at,
             },
         );
         Some(queue)
@@ -695,6 +723,10 @@ pub(crate) mod tests {
     }
 
     fn closed_session(opened_at: Instant) -> UdpSession {
+        closed_session_at(opened_at, opened_at)
+    }
+
+    fn closed_session_at(opened_at: Instant, closed_at: Instant) -> UdpSession {
         let (packets, queue) = mpsc::channel::<Queued>(SESSION_QUEUE_DEPTH);
         drop(queue);
         UdpSession {
@@ -704,7 +736,26 @@ pub(crate) mod tests {
             last_seen: opened_at,
             opened_at,
             tunnel_activity: Arc::new(AtomicU64::new(0)),
+            closed_at: Arc::new(AtomicU64::new(
+                u64::try_from(closed_at.duration_since(opened_at).as_millis()).unwrap_or(u64::MAX),
+            )),
         }
+    }
+
+    #[tokio::test]
+    async fn the_cooldown_counts_from_the_failure_not_from_the_open() {
+        let peer: SocketAddr = "127.0.0.1:41009".parse().unwrap();
+        let mut sessions = HashMap::new();
+        // Opened long ago, served for a while, and only just failed.
+        let opened = Instant::now() - TUNNEL_RETRY_COOLDOWN * 10;
+        sessions.insert(peer, closed_session_at(opened, Instant::now()));
+
+        UdpForwarder::retire_sessions(&mut sessions);
+
+        assert!(
+            sessions.contains_key(&peer),
+            "a tunnel that failed just now must cool down however long ago it was opened"
+        );
     }
 
     #[tokio::test]
@@ -746,6 +797,7 @@ pub(crate) mod tests {
                 last_seen,
                 opened_at,
                 tunnel_activity: Arc::new(AtomicU64::new(tunnel_ms)),
+                closed_at: Arc::new(AtomicU64::new(0)),
             }
         };
 
@@ -788,6 +840,7 @@ pub(crate) mod tests {
             last_seen: idle_for_ages,
             opened_at: idle_for_ages,
             tunnel_activity: Arc::new(AtomicU64::new(0)),
+            closed_at: Arc::new(AtomicU64::new(0)),
         };
         let now = Instant::now();
 

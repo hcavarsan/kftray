@@ -67,15 +67,13 @@ impl HostfileManager {
             hostname: entry.hostname.clone(),
             owner: Some(id.clone()),
         };
+        // An unmarked copy of the same alias, written by a version of this
+        // helper that did not mark its lines, is left where it is: an older
+        // application instance may still be forwarding on it, and only a
+        // removal that knows which forwards are running can take it out.
         edit_hosts(|document| {
             document.reconcile_owners(KFTRAY_HOSTS_TAG, &[id.as_str()], &[owned])?;
-            // A copy of the same alias written by a version of this helper that
-            // did not mark its lines would stay behind when the owned line is
-            // removed, and keep resolving. It is migrated into the owned line
-            // now, in the same write.
-            document.retain(KFTRAY_HOSTS_TAG, |line| {
-                line.owner.is_some() || line.ip != entry.ip || line.hostname != entry.hostname
-            })
+            Ok(())
         })?;
         Ok(())
     }

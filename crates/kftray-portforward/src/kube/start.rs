@@ -116,7 +116,7 @@ async fn build_tls_acceptor(
 /// this runs, so a stop can race the write; a task whose process is gone by
 /// the time the lines are on disk removes them again, since the stop that
 /// removed the process has already done its hosts cleanup.
-async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
+async fn update_hosts_with_ssl(config: &Config, mode: DatabaseMode) -> Result<(), String> {
     let alias = config
         .alias
         .clone()
@@ -140,7 +140,7 @@ async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
         let abandoned = sender.send(written).is_err();
         if succeeded && (abandoned || !CHILD_PROCESSES.contains_key(&id)) {
             warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
-            let in_use = crate::kube::stop::forwarding_configs();
+            let in_use = crate::kube::stop::forwarding_configs(mode).await;
             let removed = tokio::task::spawn_blocking({
                 let snapshot = snapshot.clone();
                 move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
@@ -187,7 +187,9 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// does not finish keeps the configuration tracked, so a later stop retries it.
 /// Releases what a startup registered outside the process before it had a
 /// forwarder, and keeps the configuration recorded only if that did not finish.
-async fn rollback_local_resources(config: &Config, address: &str, reason: String) -> String {
+async fn rollback_local_resources(
+    config: &Config, address: &str, reason: String, mode: DatabaseMode,
+) -> String {
     let mut errors = Vec::new();
     // Routed through the ownership-safe release: the helper hands the same
     // address to two configurations of one service, and removing it directly
@@ -200,7 +202,7 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
     }
     let id = config.id.unwrap_or_default();
     let snapshot = config.clone();
-    let in_use = crate::kube::stop::forwarding_configs();
+    let in_use = crate::kube::stop::forwarding_configs(mode).await;
     let hosts = tokio::task::spawn_blocking(move || {
         crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
     })
@@ -224,8 +226,10 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
     }
 }
 
-async fn rollback_startup(port_forward: &PortForward, config: Config, reason: String) -> String {
-    match port_forward.cleanup_resources(Some(&config)).await {
+async fn rollback_startup(
+    port_forward: &PortForward, config: Config, reason: String, mode: DatabaseMode,
+) -> String {
+    match port_forward.cleanup_resources(Some(&config), mode).await {
         Ok(()) => {
             if let Some(id) = config.id {
                 crate::kube::stop::settle_local_cleanup(id, &config);
@@ -276,7 +280,7 @@ impl Drop for AllocationInFlight {
 /// line it just wrote and the address allocated before it, since nothing
 /// else will.
 async fn add_host_entry_owned(
-    id: i64, config: &Config, address: &str, entry: HostEntry,
+    id: i64, config: &Config, address: &str, entry: HostEntry, mode: DatabaseMode,
 ) -> Result<(), String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let counted = AllocationInFlight::start();
@@ -293,12 +297,26 @@ async fn add_host_entry_owned(
         .map_err(|error| format!("Hosts write task failed: {error}"))
         .and_then(|result| result.map_err(|error| error.to_string()));
         if sender.send(written).is_err() {
+            // Under the lifecycle lock: a retry of the same configuration can
+            // have started once the abandoned future released it, claimed the
+            // same address and written the same lines, and rolling those
+            // back would tear the retry down. A retry in progress holds the
+            // lock until it has registered its process, so once this task
+            // has it, a registered process means the resources have an owner
+            // and nothing here is abandoned any more.
+            let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+            let _guard = lock.lock().await;
+            if CHILD_PROCESSES.contains_key(&id) {
+                debug!("Config {id} was restarted; leaving its local resources to the new owner");
+                return;
+            }
             warn!(
                 "{}",
                 rollback_local_resources(
                     &snapshot,
                     &address,
                     format!("Startup for config {id} was abandoned during its hosts write"),
+                    mode,
                 )
                 .await
             );
@@ -801,7 +819,7 @@ pub(super) async fn start_config_cancellable(
             return Err(match &config.local_address {
                 Some(address) => {
                     let address = address.clone();
-                    rollback_local_resources(&config, &address, reason).await
+                    rollback_local_resources(&config, &address, reason, mode).await
                 }
                 None => reason,
             });
@@ -903,6 +921,7 @@ pub(super) async fn start_config_cancellable(
             &config,
             &final_local_address,
             host_entry,
+            mode,
         )
         .await;
         if let Err(e) = written {
@@ -914,9 +933,13 @@ pub(super) async fn start_config_cancellable(
 
             // Releases the address this startup may already have allocated, and
             // keeps the configuration recorded only if that did not finish.
-            return Err(
-                rollback_local_resources(&config, &final_local_address, error_message).await,
-            );
+            return Err(rollback_local_resources(
+                &config,
+                &final_local_address,
+                error_message,
+                mode,
+            )
+            .await);
         }
     }
 
@@ -977,7 +1000,7 @@ pub(super) async fn start_config_cancellable(
             _ = token.cancelled() => {
                 return Err(rollback_startup(&port_forward, config, format!(
                     "Startup cancelled for config {config_id}"
-                )).await);
+                ), mode).await);
             }
             forwarded = forward => forwarded,
         },
@@ -1007,6 +1030,7 @@ pub(super) async fn start_config_cancellable(
                     &port_forward,
                     config,
                     format!("Startup cancelled for config {config_id}"),
+                    mode,
                 )
                 .await);
             }
@@ -1014,7 +1038,7 @@ pub(super) async fn start_config_cancellable(
             let config_state = ConfigState::new(config_id, true);
             if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
                 handle.cleanup_and_abort().await;
-                return Err(rollback_startup(&port_forward, config, error).await);
+                return Err(rollback_startup(&port_forward, config, error, mode).await);
             }
 
             handle.set_config(config.clone());
@@ -1032,7 +1056,7 @@ pub(super) async fn start_config_cancellable(
 
             if should_use_ssl
                 && protocol == "tcp"
-                && let Err(e) = update_hosts_with_ssl(&config).await
+                && let Err(e) = update_hosts_with_ssl(&config, mode).await
             {
                 warn!("Failed to update hosts file for SSL: {}", e);
             }
@@ -1087,7 +1111,7 @@ pub(super) async fn start_config_cancellable(
             );
             error!("{}", error_message);
 
-            Err(rollback_startup(&port_forward, config, error_message).await)
+            Err(rollback_startup(&port_forward, config, error_message, mode).await)
         }
     }
 }

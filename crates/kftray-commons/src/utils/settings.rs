@@ -810,10 +810,18 @@ async fn take_expose_history_baseline(
     for row in rows {
         let id: i64 = row.try_get("id")?;
         let data: String = row.try_get("data")?;
-        let Ok(config) = serde_json::from_str::<crate::models::config_model::Config>(&data) else {
-            continue;
+        // Only the one field matters, read on its own: a row whose other
+        // fields do not decode is still an exposure if this one says so, and
+        // the baseline is taken once, so a row misread now would be treated
+        // ever after as one that has a history it never had. A row that is
+        // not even JSON is marked too, on the same reasoning.
+        let is_exposure = match serde_json::from_str::<serde_json::Value>(&data) {
+            Ok(value) => {
+                value.get("workload_type").and_then(|kind| kind.as_str()) == Some("expose")
+            }
+            Err(_) => true,
         };
-        if config.workload_type.as_deref() != Some("expose") {
+        if !is_exposure {
             continue;
         }
         sqlx::query(UPSERT)

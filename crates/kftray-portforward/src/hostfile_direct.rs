@@ -45,13 +45,14 @@ impl DirectHostfileManager {
             hostname: entry.hostname.clone(),
             owner: Some(id.clone()),
         };
-        // One locked edit for both sections: the alias gets its owned line and
-        // any unmarked copy of it left in the shared section by a version that
-        // wrote there goes in the same write, so no state in between can be
-        // observed or left behind by a failure.
+        // An unmarked copy of the same alias left in the shared section by an
+        // older version is left where it is: it may be the line an older
+        // instance, still running, resolves by, and nothing here can tell.
+        // Removal attributes such copies to the configuration and prunes
+        // them then, keeping the ones a running forward still needs.
         edit_hosts(|document| {
             document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &[id.as_str()], &[owned])?;
-            prune_legacy(document, &[(entry.ip, entry.hostname)])
+            Ok(())
         })
         .map_err(std::io::Error::other)
     }

@@ -365,12 +365,16 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
         };
         // Restored with a fresh window: a process can restart seconds after
         // abandoning a create, and elapsed wall time is no more proof here than
-        // it was in the run that recorded it. An entry already tracked keeps
-        // the window it has, so repeated restores cannot push it forever.
+        // it was in the run that recorded it. An entry that already tracks
+        // this cluster obligation keeps the window it has, so repeated
+        // restores cannot push it forever. A record for only the local
+        // resources of the same rows is not that: a startup in progress can
+        // have made one, and skipping the restore for it would leave the next
+        // stop with no cluster obligation for a relay that still exists.
         if PENDING_CLEANUP.get(&id).is_some_and(|entries| {
             entries
                 .iter()
-                .any(|entry| entry.describes(&config, destination.as_deref()))
+                .any(|entry| entry.cluster && entry.is_exactly(&config, destination.as_deref()))
         }) {
             continue;
         }
@@ -385,13 +389,37 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
     }
 }
 
-/// The configurations still forwarding in this process, as they were when
-/// they started. What they own must not be removed on another's behalf.
-pub(crate) fn forwarding_configs() -> Vec<Config> {
-    CHILD_PROCESSES
+/// The configurations still forwarding, as they were when they started: the
+/// ones in this process, and, for the file database, the ones another
+/// process sharing it reports as running. What they own must not be removed
+/// on another's behalf. The in-memory database belongs to one process, so it
+/// has nothing to add.
+pub(crate) async fn forwarding_configs(mode: DatabaseMode) -> Vec<Config> {
+    let mut configs: Vec<Config> = CHILD_PROCESSES
         .iter()
         .filter_map(|entry| entry.value().config().cloned())
-        .collect()
+        .collect();
+    if mode != DatabaseMode::File {
+        return configs;
+    }
+    let this_process = std::process::id();
+    let elsewhere =
+        match kftray_commons::utils::config_state::get_configs_state_with_mode(mode).await {
+            Ok(states) => states,
+            Err(error) => {
+                warn!("Failed to read which configurations other processes are running: {error}");
+                return configs;
+            }
+        };
+    for state in elsewhere
+        .into_iter()
+        .filter(|state| state.is_running && state.process_id != Some(this_process))
+    {
+        if let Ok(config) = get_config_with_mode(state.config_id, mode).await {
+            configs.push(config);
+        }
+    }
+    configs
 }
 
 /// Records a configuration whose resources exist but whose startup did not
@@ -770,7 +798,7 @@ impl LocalCleanup {
 }
 
 /// Releases the loopback address and host entries one target describes.
-async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
+async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -> LocalCleanup {
     let mut cleanup = LocalCleanup::default();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
@@ -782,7 +810,7 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     // on a blocking thread: several stops at once would otherwise queue up on
     // runtime workers and stall unrelated forwards.
     let snapshot = config.clone();
-    let in_use = forwarding_configs();
+    let in_use = forwarding_configs(mode).await;
     let hosts = spawn_blocking(move || {
         crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
     })
@@ -1139,7 +1167,9 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 ///
 /// Deleting the row does not stop anything, so the tunnel would keep running
 /// with no configuration to stop it by.
-pub async fn delete_configs_if_idle<F, Fut>(ids: &[i64], delete: F) -> Result<(), String>
+pub async fn delete_configs_if_idle<F, Fut>(
+    ids: &[i64], mode: DatabaseMode, delete: F,
+) -> Result<(), String>
 where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<(), String>>,
@@ -1160,6 +1190,23 @@ where
         guards.push(lock.lock_owned().await);
     }
 
+    // Creates persisted by an earlier run are only in the database until a
+    // stop or reconciliation reads them; a relay left by a crash is still a
+    // reason not to delete the row that describes it.
+    restore_uncertain_targets(mode).await;
+    // Another process sharing this database can be forwarding the row: the
+    // terminal and the desktop application both use the file database, and
+    // neither sees the other's registries. Its persisted state is the only
+    // signal, and it stays authoritative until that process clears it.
+    let this_process = std::process::id();
+    let running_elsewhere: HashSet<i64> =
+        kftray_commons::utils::config_state::get_configs_state_with_mode(mode)
+            .await?
+            .into_iter()
+            .filter(|state| state.is_running && state.process_id != Some(this_process))
+            .map(|state| state.config_id)
+            .collect();
+
     // A pending record alone is not evidence the forward is live. Local
     // cleanup that needs the privileged helper can be permanently unsatisfiable
     // on this machine, and its record would then block deleting a row that is
@@ -1172,6 +1219,7 @@ where
         .filter(|id| {
             CHILD_PROCESSES.contains_key(id)
                 || crate::kube::proxy::STARTING_PROXIES.contains_key(id)
+                || running_elsewhere.contains(id)
                 || PENDING_CLEANUP
                     .get(id)
                     .is_some_and(|entries| entries.iter().any(|entry| entry.cluster))
@@ -1589,7 +1637,7 @@ async fn stop_config(
             // Local resources are released per target too: an edited row can
             // name a different loopback address than the one still bound.
             let local = if target.local {
-                release_local_resources(id, &target.config).await
+                release_local_resources(id, &target.config, mode).await
             } else {
                 LocalCleanup::default()
             };
@@ -2203,7 +2251,7 @@ mod tests {
 
         let deleted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let marker = std::sync::Arc::clone(&deleted);
-        delete_configs_if_idle(&[id], || async move {
+        delete_configs_if_idle(&[id], DatabaseMode::Memory, || async move {
             marker.store(true, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })

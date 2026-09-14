@@ -231,6 +231,7 @@ impl PortForward {
     /// verify gone.
     pub async fn cleanup_resources(
         &self, config: Option<&kftray_commons::models::config_model::Config>,
+        mode: kftray_commons::utils::db_mode::DatabaseMode,
     ) -> anyhow::Result<()> {
         let mut errors: Vec<String> = Vec::new();
         // Routed through the ownership-safe release: two configurations of one
@@ -249,7 +250,7 @@ impl PortForward {
         // thread because the hosts file is written synchronously behind a lock.
         let config_id = self.config_id;
         let snapshot = config.cloned();
-        let in_use = crate::kube::stop::forwarding_configs();
+        let in_use = crate::kube::stop::forwarding_configs(mode).await;
         match tokio::task::spawn_blocking(
             move || match crate::hostsfile::remove_config_host_entries(
                 config_id,
