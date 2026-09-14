@@ -53,45 +53,25 @@ pub async fn create_expose_resources(
         .id
         .map_or_else(|| "default".to_string(), |id| id.to_string());
 
-    let existing = check_existing_resources(&client, &config.namespace, &config_id_str).await;
-
-    if let Some(resources) = existing {
-        info!(
-            "Resources already exist for config {}: {:?}. Cleaning up before recreating",
-            config_id_str, resources
-        );
-        // Reported rather than ignored: a pre-existing resource this attempt
-        // could not remove stays its responsibility, so it must not later claim
-        // a complete rollback and let the cleanup record be dropped.
-        delete_expose_resources(
-            client.clone(),
-            &config.namespace,
-            &config_id_str,
-            config.exposure_type.as_deref() == Some("public"),
-            &ExposeLocation::of(config),
-        )
-        .await
-        .map_err(ExposeCreateError::from)?;
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
-
-    // Resources from before the installation label existed cannot be attributed
-    // and are never deleted automatically. Starting anyway is not safe: an old
-    // Service selects on app and config_id alone, so it would also select the
-    // pods this attempt creates, and an old public Ingress in front of it would
-    // expose a tunnel now configured as private.
-    let leftovers = check_legacy_resources(&client, &config.namespace, &config_id_str)
-        .await
-        .map_err(ExposeCreateError::from)?;
-    if !leftovers.is_empty() {
-        return Err(ExposeCreateError::from(format!(
-            "Exposure resources from an earlier version are still running and cannot be attributed \
-             to this installation: {}. Remove them from the server resources screen before \
-             starting this configuration.",
-            leftovers.join(", ")
-        )));
-    }
+    // Every start begins with the same cleanup a stop performs, whether or not
+    // a Deployment is visible. Looking only for a Deployment misses the case
+    // that matters most: a partial cleanup that removed it but left the
+    // Service and a public Ingress, which would then front the tunnel this
+    // attempt creates even if it is now configured as private. The cleanup
+    // consults the ingress history, verifies that everything is gone, and
+    // reports resources from an earlier version it cannot attribute, so it
+    // must succeed before anything is created. A failure keeps the leftovers
+    // this attempt's responsibility rather than letting the cleanup record be
+    // dropped.
+    delete_expose_resources(
+        client.clone(),
+        &config.namespace,
+        &config_id_str,
+        config.exposure_type.as_deref() == Some("public"),
+        &ExposeLocation::of(config),
+    )
+    .await
+    .map_err(ExposeCreateError::from)?;
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -835,79 +815,6 @@ async fn forget_ingress_history(config_id: &str, location: &ExposeLocation<'_>) 
             .await
     {
         log::debug!("Failed to clear the ingress history for config {config_id}: {error}");
-    }
-}
-
-/// Names resources for this configuration that carry no installation label.
-///
-/// Configuration ids are local to each database, so these can belong to another
-/// installation: they are reported, never deleted.
-async fn check_legacy_resources(
-    client: &Client, namespace: &str, config_id: &str,
-) -> Result<Vec<String>, String> {
-    let unlabelled = ListParams::default().labels(&format!(
-        "app=kftray-expose,config_id={config_id},!{}",
-        crate::kube::proxy::INSTALLATION_LABEL
-    ));
-    let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
-    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
-    let mut leftovers = Vec::new();
-    // Reported rather than swallowed: a list that failed is not a list that
-    // came back empty, and starting on that assumption is what lets an old
-    // Service select the new relay's pods.
-    leftovers.extend(named_items(
-        &deployments
-            .list(&unlabelled)
-            .await
-            .map_err(|error| format!("Failed to list earlier exposure deployments: {error}"))?,
-        "deployment",
-    ));
-    leftovers.extend(named_items(
-        &services
-            .list(&unlabelled)
-            .await
-            .map_err(|error| format!("Failed to list earlier exposure services: {error}"))?,
-        "service",
-    ));
-    let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
-    match ingresses.list(&unlabelled).await {
-        Ok(list) => leftovers.extend(named_items(&list, "ingress")),
-        // A role scoped to a private exposure may not list ingresses at all.
-        // The Deployment and Service checks above still hold, and they are what
-        // an old Service would need to select the new pods.
-        Err(kube::Error::Api(response)) if matches!(response.code, 403 | 404) => {}
-        Err(error) => {
-            return Err(format!(
-                "Failed to list earlier exposure ingresses: {error}"
-            ));
-        }
-    }
-
-    Ok(leftovers)
-}
-
-async fn check_existing_resources(
-    client: &Client, namespace: &str, config_id: &str,
-) -> Option<Vec<String>> {
-    let label_selector = expose_owner_selector(config_id).await.ok()?;
-
-    let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
-    let deployment_lp = ListParams::default().labels(&label_selector);
-
-    match deployments.list(&deployment_lp).await {
-        Ok(deployment_list) if !deployment_list.items.is_empty() => {
-            let names: Vec<String> = deployment_list
-                .items
-                .iter()
-                .filter_map(|d| d.metadata.name.clone())
-                .collect();
-            debug!(
-                "Found existing deployments for config {}: {:?}",
-                config_id, names
-            );
-            Some(names)
-        }
-        _ => None,
     }
 }
 

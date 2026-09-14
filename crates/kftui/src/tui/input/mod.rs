@@ -744,18 +744,19 @@ impl App {
             log::error!("{report}: {error}");
             reports.push(report);
         }
-        // Only surfaced when nothing else is on screen. A slow start is not a
-        // fault and the operation is deliberately left running, so raising the
-        // error popup for it would destroy a confirmation, prompt or selection
-        // the user is in the middle of.
-        if !reports.is_empty() && self.state == AppState::Normal {
-            for report in reports {
-                if let Some(sender) = &self.error_sender {
-                    let _ = sender.send(report);
-                }
+        for report in reports {
+            if let Some(sender) = &self.error_sender {
+                let _ = sender.send(report);
             }
         }
 
+        // Drained only when the popup can be shown without destroying what the
+        // user is doing: a confirmation, prompt or selection stays up, and the
+        // reports wait in the channel until it closes rather than being
+        // dropped. An error popup that is already open takes them at once.
+        if !matches!(self.state, AppState::Normal | AppState::ShowErrorPopup) {
+            return;
+        }
         let mut new_errors = Vec::new();
         if let Some(receiver) = &mut self.error_receiver {
             while let Ok(error_msg) = receiver.try_recv() {

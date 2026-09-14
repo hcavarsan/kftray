@@ -499,6 +499,18 @@ pub async fn recover_bare_pod(
 // T8: Deployment Recovery
 // ============================================================================
 
+/// The relay Deployment the registered forward for `config_id` selects pods
+/// by, as recorded when it started.
+///
+/// The recovery manager's own copy of the configuration goes stale after a
+/// re-deployment: the manager outlives it, and the fresh start registers a
+/// new process rather than replacing the manager.
+fn active_relay_name(config_id: i64) -> Option<String> {
+    crate::port_forward::CHILD_PROCESSES
+        .get(&config_id)
+        .and_then(|process| process.config().and_then(|config| config.service.clone()))
+}
+
 /// Recover a deployment-based proxy by waiting for K8s to restart the pod.
 ///
 /// When the proxy runs as a Deployment, K8s will auto-restart the pod.
@@ -520,7 +532,16 @@ pub async fn recover_deployment(
     let deployments: kube::Api<k8s_openapi::api::apps::v1::Deployment> =
         kube::Api::namespaced(client.clone(), namespace);
 
+    // Only the Deployment the running forwarder is pinned to counts. The
+    // process recorded its name in `service` when it started; a timed-out
+    // create that later succeeded, or a retry, can leave a second Deployment
+    // matching the owner selector, and a started relay in that one says
+    // nothing about the forward, which selects pods by the name it was given.
     let prefix = crate::kube::proxy::proxy_resource_prefix();
+    let recorded = active_relay_name(config_id)
+        .or_else(|| config.service.clone())
+        .filter(|name| name.starts_with(&prefix))
+        .ok_or_else(|| anyhow::anyhow!("Config {config_id} records no proxy deployment name"))?;
     let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
         .await
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -532,11 +553,7 @@ pub async fn recover_deployment(
         .into_iter()
         .find(|deployment| {
             deployment.metadata.deletion_timestamp.is_none()
-                && deployment
-                    .metadata
-                    .name
-                    .as_ref()
-                    .is_some_and(|name| name.starts_with(&prefix))
+                && deployment.metadata.name.as_deref() == Some(recorded.as_str())
         });
 
     let Some(deployment) = deployment else {
@@ -855,7 +872,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repeated_recovery_uses_the_current_owned_deployment() {
+    async fn recovery_uses_the_deployment_the_forwarder_is_pinned_to() {
         use http::{
             Method,
             Request,
@@ -878,10 +895,12 @@ mod tests {
             .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
             .collect();
         let expected = owned.clone();
+        let prefix_for_server = prefix.clone();
         let installation_id = kftray_commons::utils::config_dir::installation_id()
             .await
             .expect("installation id");
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let prefix = prefix_for_server;
             for name in expected {
                 let (request, send) = requests.next_request().await.unwrap();
                 assert_eq!(request.method(), Method::GET);
@@ -909,6 +928,7 @@ mod tests {
                         "items":[
                             {"metadata":{"name":format!("{name}-retiring"),"deletionTimestamp":"2026-09-11T00:00:00Z"},"spec":relay["spec"]},
                             {"metadata":{"name":"someone-elses-deployment"},"spec":relay["spec"]},
+                            {"metadata":{"name":format!("{prefix}tcp-1-leftover")},"spec":relay["spec"]},
                             {"metadata":{"name":name},"spec":relay["spec"]}
                         ]
                     })).unwrap()
@@ -954,8 +974,21 @@ mod tests {
             }
         }));
         let cancellation = CancellationToken::new();
+        let _guard = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         tokio::time::timeout(Duration::from_secs(2), async {
-            for _ in 0..owned.len() {
+            for name in &owned {
+                // What the forwarder is actually pinned to lives with the
+                // registered process, not with the manager's stale copy.
+                let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+                let mut process = crate::port_forward::PortForwardProcess::new(
+                    task,
+                    config.id.unwrap().to_string(),
+                );
+                process.set_config(Config {
+                    service: Some(name.clone()),
+                    ..config.clone()
+                });
+                crate::port_forward::CHILD_PROCESSES.insert(config.id.unwrap(), process);
                 recover_deployment(&config, &client, DatabaseMode::Memory, false, &cancellation)
                     .await
                     .unwrap();
@@ -964,5 +997,6 @@ mod tests {
         })
         .await
         .unwrap();
+        crate::port_forward::CHILD_PROCESSES.remove(&config.id.unwrap());
     }
 }

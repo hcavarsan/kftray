@@ -7,6 +7,7 @@ use crate::tests::test_logger_state;
 use crate::tui::input::{
     ActiveTable,
     App,
+    AppState,
 };
 
 #[cfg(test)]
@@ -281,6 +282,37 @@ mod tests {
         app.update_configs(&[], &[]);
         let reported = app.error_message.clone().unwrap();
         assert!(reported.contains("410081"), "{reported}");
+    }
+
+    #[tokio::test]
+    async fn a_failure_during_a_modal_is_shown_once_the_modal_closes() {
+        let mut app = App::new(test_logger_state());
+        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
+        app.task_configs.insert(handle.id(), 410_082);
+        for _ in 0..200 {
+            if handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(handle.is_finished(), "the task must have panicked by now");
+
+        // The user is in the middle of confirming a delete when the task dies.
+        app.state = AppState::ShowDeleteConfirmation;
+        app.update_configs(&[], &[]);
+        assert_eq!(
+            app.state,
+            AppState::ShowDeleteConfirmation,
+            "a failure must not tear down the confirmation the user is answering"
+        );
+        assert!(app.error_message.is_none());
+
+        // The modal closes; the report was held, not dropped.
+        app.state = AppState::Normal;
+        app.update_configs(&[], &[]);
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        let reported = app.error_message.clone().unwrap();
+        assert!(reported.contains("410082"), "{reported}");
     }
 
     #[tokio::test]

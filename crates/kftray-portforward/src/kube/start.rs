@@ -217,17 +217,6 @@ impl Drop for AllocationInFlight {
     }
 }
 
-/// Whether a registered forward is listening on this address.
-async fn address_is_in_use(address: &str) -> bool {
-    CHILD_PROCESSES.iter().any(|entry| {
-        entry
-            .value()
-            .config()
-            .and_then(|config| config.local_address.clone())
-            .is_some_and(|local| local == address)
-    })
-}
-
 async fn allocate_local_address_owned(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
@@ -255,36 +244,15 @@ async fn allocate_local_address_owned(
             && allocated
             && let Some(address) = owned.local_address.as_deref()
         {
-            // A retry can allocate the same address while this task is still
-            // running, and the helper hands the same address back for the same
-            // service. The mark and the ownership check happen under one entry
-            // lock, so a startup cannot slip between them: taking the mark
-            // fails outright while any startup holds the address.
-            // No owner is exempted: a retry of this same configuration can hold
-            // the address by now, and an abandoned allocation is not that
-            // retry's rollback.
-            let Some(_releasing) = crate::kube::stop::mark_address_release(address, None) else {
-                warn!(
-                    "Keeping address {address} from an abandoned startup: another startup holds it"
-                );
-                if let Some(id) = owned.id {
-                    crate::kube::stop::forget_pending_cleanup(id, &owned);
-                }
-                return;
-            };
-            if address_is_in_use(address).await {
-                warn!(
-                    "Keeping address {address} from an abandoned startup: a running forward \
-                     adopted it"
-                );
-                if let Some(id) = owned.id {
-                    crate::kube::stop::forget_pending_cleanup(id, &owned);
-                }
-                return;
-            }
-
+            // Released through the same path a stop uses: the helper keeps a
+            // pool reservation next to the alias, and removing only the alias
+            // would leave that reservation consumed by every abandoned startup.
+            // The release marks the address under the entry lock and stands
+            // down if any startup or running forward holds it by now, which is
+            // why no owner is exempted: a retry of this same configuration is
+            // not what this task is rolling back.
             warn!("Releasing address {address} allocated after startup was abandoned");
-            match crate::network_utils::remove_loopback_address(address).await {
+            match crate::kube::stop::release_address_with_fallback(address, None).await {
                 Ok(()) => {
                     if let Some(id) = owned.id {
                         crate::kube::stop::forget_pending_cleanup(id, &owned);
@@ -1043,6 +1011,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = insert_fixture(setup_test_config()).await;
         let id = config.id.unwrap();
 
@@ -1065,6 +1036,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_config_does_not_hide_its_siblings_results() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let healthy = insert_fixture(setup_config_with_domain()).await;
         let broken = insert_fixture(setup_config_with_invalid_ip()).await;
         let expected = {
@@ -1093,6 +1067,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_stop_overtakes_a_start_waiting_on_the_lifecycle_lock() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_150;
         let config = Config {
             id: Some(id),
@@ -1134,6 +1111,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_batch_start_registers_through_the_shared_pending_registry() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_090;
         let (queued, _) = crate::kube::proxy::register_start_batch(vec![Config {
             id: Some(id),

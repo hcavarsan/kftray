@@ -603,18 +603,6 @@ impl Drop for AddressClaim {
     }
 }
 
-/// Marks an address as being released until the returned guard is dropped.
-///
-/// Returns `None` when a startup holds the address, which is the same check a
-/// caller would otherwise make separately and lose the race on.
-pub(crate) fn mark_address_release(
-    address: &str, exclude: Option<i64>,
-) -> Option<Arc<impl Send + Sync + use<>>> {
-    ReleaseInFlight::mark(address, exclude, |address| {
-        address_has_other_owner(address, exclude)
-    })
-}
-
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
     RELEASING_ADDRESSES
@@ -1380,11 +1368,21 @@ async fn stop_config(
                 && (cluster.is_err()
                     || uncertain
                     || !confirm_uncertain_target(id, &target.config, mode).await);
+            let cluster_owed = target.cluster && (cluster.is_err() || uncertain || unconfirmed);
+            // A cluster obligation that is confirmed complete clears its
+            // durable record now, whatever the local cleanup did. Left in
+            // place, a restart would resurrect it with a fresh uncertainty
+            // window, need cluster access again for resources already proven
+            // gone, and block deleting a configuration that is only waiting on
+            // a loopback alias.
+            if target.cluster && !cluster_owed && unanswered.contains(&target.config) {
+                forget_uncertain_target(id, &target.config, mode).await;
+            }
             set_target_obligations(
                 id,
                 &target.config,
                 target.uncertain_until,
-                target.cluster && (cluster.is_err() || uncertain || unconfirmed),
+                cluster_owed,
                 target.local && !local.settled(),
             );
             if let Err(error) = cluster {

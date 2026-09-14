@@ -358,34 +358,8 @@ pub async fn get_settings_with_prefix_and_mode(
 ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
     let context = DatabaseManager::get_context(mode).await?;
     let mut conn = context.pool.acquire().await?;
-    let escaped = prefix
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let rows = sqlx::query("SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\\'")
-        .bind(format!("{escaped}%"))
-        .fetch_all(&mut *conn)
-        .await?;
-
-    Ok(rows
-        .iter()
-        .map(|row| {
-            (
-                sqlx::Row::get::<String, _>(row, "key"),
-                sqlx::Row::get::<String, _>(row, "value"),
-            )
-        })
-        .filter(|(key, _)| key.starts_with(prefix))
-        .collect())
-}
-
-pub async fn get_settings_with_prefix(
-    prefix: &str,
-) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
-    let pool = get_db_pool().await?;
-    let mut conn = pool.acquire().await?;
     // `LIKE` treats `_` and `%` as wildcards and ignores ASCII case, so it is
-    // used only to narrow the scan; the prefix itself is enforced here.
+    // used only to narrow the scan; the prefix itself is enforced below.
     let escaped = prefix
         .replace('\\', "\\\\")
         .replace('%', "\\%")

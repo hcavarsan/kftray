@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fmt,
     fs::OpenOptions,
     io::{
@@ -61,22 +62,60 @@ pub struct SectionEntry {
 }
 
 /// Serializes hosts-file changes across every process that makes them.
+///
+/// The lock lives in the system temporary directory rather than the
+/// configuration directory: the hosts file is one system-wide resource, and a
+/// lock under `KFTRAY_CONFIG` would give two instances, or the unprivileged
+/// app and the privileged helper installed with a different configuration
+/// path, two different locks for it.
 fn with_hosts_lock<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
-    let lock_path = crate::utils::config_dir::get_config_dir()
-        .map_err(HostsFileError::InvalidPath)?
-        .join("hosts.lock");
+    let lock_path = std::env::temp_dir().join("kftray-hosts.lock");
     let mut outcome = None;
     crate::utils::config_dir::with_file_lock(&lock_path, || {
         outcome = Some(work());
         Ok(())
     })
     .map_err(HostsFileError::Io)?;
+    // Every writer of the hosts file has to be able to take it, including one
+    // running as a different user.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o666));
+    }
 
     outcome.unwrap_or_else(|| {
         Err(HostsFileError::Io(
             "Hosts lock produced no result".to_owned(),
         ))
     })
+}
+
+/// Rejects an owner that could change the structure of the file.
+///
+/// Ids are plain tokens (`42`, `42-https-local`), so anything outside that
+/// alphabet is a mistake or an injection, never a real owner.
+fn validate_owner(owner: &str) -> Result<()> {
+    if owner.is_empty()
+        || !owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    {
+        return Err(HostsFileError::InvalidData(format!(
+            "Invalid hosts entry owner {owner:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// Rejects a hostname that would not stay on its own line.
+fn validate_hostname(hostname: &str) -> Result<()> {
+    if hostname.is_empty() || hostname.chars().any(|c| c.is_whitespace() || c == '#') {
+        return Err(HostsFileError::InvalidData(format!(
+            "Invalid hostname {hostname:?}"
+        )));
+    }
+    Ok(())
 }
 
 pub struct HostsFile {
@@ -142,19 +181,74 @@ impl HostsFile {
 
     /// Adds an entry that records which configuration owns it.
     ///
-    /// The section is shared with the privileged helper, and entries written
-    /// without an owner cannot be told apart. The owner is written as a
-    /// trailing comment, which the hosts file format ignores, so a writer can
-    /// rebuild exactly its own lines and leave every other line alone.
+    /// Entries written without an owner cannot be told apart, and a writer
+    /// that rebuilt a section from what it remembers would drop every line it
+    /// did not write itself. The owner goes into a trailing comment, which the
+    /// hosts file format ignores, so a writer can replace exactly its own
+    /// lines and leave every other line alone.
+    ///
+    /// Owners are restricted to a plain token. The value ends up inside the
+    /// file, and an owner carrying a line break or a `#` would otherwise turn
+    /// into an active mapping, or comment out the one it was meant to mark.
     pub fn add_owned_entry<S: ToString>(
         &mut self, ip: IpAddr, hostname: S, owner: &str,
-    ) -> &mut Self {
+    ) -> Result<&mut Self> {
+        validate_owner(owner)?;
+        let hostname = hostname.to_string();
+        validate_hostname(&hostname)?;
         self.entries.push(SectionEntry {
             ip,
-            hostname: hostname.to_string(),
+            hostname,
             owner: Some(owner.to_owned()),
         });
-        self
+        Ok(self)
+    }
+
+    /// Replaces the lines owned by `owners` with the staged entries and leaves
+    /// every other line in the section alone, as one locked read-modify-write.
+    ///
+    /// Staging nothing removes those owners. The section is never rebuilt from
+    /// memory: another process, or an earlier run of this one, may have lines
+    /// in it that this writer knows nothing about.
+    ///
+    /// Returns the subset of `owners` that had lines on disk before the write,
+    /// so a caller can tell an id it never held apart from one it just took
+    /// off disk.
+    pub fn reconcile_owners(&self, owners: &[&str]) -> Result<HashSet<String>> {
+        self.reconcile_owners_in(get_default_hosts_path()?, owners)
+    }
+
+    /// [`reconcile_owners`](Self::reconcile_owners) against a specific file.
+    pub fn reconcile_owners_in<P: AsRef<Path>>(
+        &self, path: P, owners: &[&str],
+    ) -> Result<HashSet<String>> {
+        for owner in owners {
+            validate_owner(owner)?;
+        }
+        let path = path.as_ref();
+        validate_hosts_path(path)?;
+
+        with_hosts_lock(|| {
+            let current = self.read_section_from(path)?;
+            let present: HashSet<String> = current
+                .iter()
+                .filter_map(|entry| entry.owner.as_deref())
+                .filter(|owner| owners.contains(owner))
+                .map(ToOwned::to_owned)
+                .collect();
+            let mut next: Vec<SectionEntry> = current
+                .into_iter()
+                .filter(|entry| {
+                    entry
+                        .owner
+                        .as_deref()
+                        .is_none_or(|owner| !owners.contains(&owner))
+                })
+                .collect();
+            next.extend(self.entries.iter().cloned());
+            HostsFileWriter::new(path).update_section(&self.tag, &next)?;
+            Ok(present)
+        })
     }
 
     /// Reads the entries currently inside this tag's section, with the owner
@@ -241,8 +335,14 @@ impl HostsFile {
     /// Reads this tag's section, keeps the entries `keep` accepts, and writes
     /// the result back as one locked operation.
     pub fn retain_section(&self, keep: impl Fn(&SectionEntry) -> bool) -> Result<bool> {
-        let path = get_default_hosts_path()?;
-        let path = path.as_path();
+        self.retain_section_in(get_default_hosts_path()?, keep)
+    }
+
+    /// [`retain_section`](Self::retain_section) against a specific file.
+    pub fn retain_section_in<P: AsRef<Path>>(
+        &self, path: P, keep: impl Fn(&SectionEntry) -> bool,
+    ) -> Result<bool> {
+        let path = path.as_ref();
         validate_hosts_path(path)?;
 
         with_hosts_lock(|| {
@@ -353,13 +453,15 @@ impl<'a> HostsFileWriter<'a> {
         Ok(changed)
     }
 
+    /// Read-only: opening for write would need the privileges the file
+    /// usually requires, and a reconciliation that changes nothing must not
+    /// fail for lack of them.
     fn read_file_lines(&self) -> Result<Vec<String>> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(self.path)?;
+        let file = match OpenOptions::new().read(true).open(self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
 
         Ok(BufReader::new(file)
             .lines()
@@ -555,13 +657,110 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reconciling_owners_leaves_every_other_line_alone() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        // What an earlier run, and another writer, left behind: two owned
+        // lines and one unmarked one.
+        let mut earlier = HostsFile::new("test");
+        earlier
+            .add_owned_entry([127, 0, 0, 1].into(), "a.local", "1")
+            .unwrap()
+            .add_owned_entry([127, 0, 0, 1].into(), "b.local", "2")
+            .unwrap()
+            .add_entry([127, 0, 0, 1].into(), "plain.local");
+        earlier.write_to(&temp_path).unwrap();
+
+        // Owner 1 changes its alias; owner 3 appears; owner 2 is untouched.
+        let mut next = HostsFile::new("test");
+        next.add_owned_entry([127, 0, 0, 2].into(), "a2.local", "1")
+            .unwrap()
+            .add_owned_entry([127, 0, 0, 3].into(), "c.local", "3")
+            .unwrap();
+        let present = next.reconcile_owners_in(&temp_path, &["1", "3"]).unwrap();
+        assert_eq!(
+            present,
+            HashSet::from(["1".to_owned()]),
+            "only the owner that already had a line is reported present"
+        );
+
+        let entries = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap();
+        let mut aliases: Vec<(String, Option<String>)> = entries
+            .into_iter()
+            .map(|entry| (entry.hostname, entry.owner))
+            .collect();
+        aliases.sort();
+        assert_eq!(
+            aliases,
+            vec![
+                ("a2.local".to_owned(), Some("1".to_owned())),
+                ("b.local".to_owned(), Some("2".to_owned())),
+                ("c.local".to_owned(), Some("3".to_owned())),
+                ("plain.local".to_owned(), None),
+            ],
+            "the old line of a rewritten owner is gone, everything else survives"
+        );
+
+        // Staging nothing removes the named owners and nothing else.
+        let present = HostsFile::new("test")
+            .reconcile_owners_in(&temp_path, &["2", "missing"])
+            .unwrap();
+        assert_eq!(present, HashSet::from(["2".to_owned()]));
+        let remaining: Vec<String> = HostsFile::new("test")
+            .read_section_from(&temp_path)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.hostname)
+            .collect();
+        assert_eq!(remaining, vec!["plain.local", "a2.local", "c.local"]);
+    }
+
+    #[test]
+    fn an_owner_cannot_change_the_shape_of_the_file() {
+        let mut hosts_file = HostsFile::new("test");
+        // An id with a line break would end the comment and start a mapping.
+        assert!(
+            hosts_file
+                .add_owned_entry([127, 0, 0, 1].into(), "a.local", "42\n127.0.0.1 injected")
+                .is_err()
+        );
+        assert!(
+            hosts_file
+                .add_owned_entry([127, 0, 0, 1].into(), "a.local", "42 # not-mine")
+                .is_err()
+        );
+        assert!(
+            hosts_file
+                .add_owned_entry([127, 0, 0, 1].into(), "a.local\nevil", "42")
+                .is_err()
+        );
+        assert!(
+            hosts_file
+                .add_owned_entry([127, 0, 0, 1].into(), "a.local", "42-https-local")
+                .is_ok()
+        );
+        assert!(
+            HostsFile::new("test")
+                .reconcile_owners_in("/nonexistent", &["42\n"])
+                .is_err(),
+            "removal is validated too, or a bad id could match a comment line"
+        );
+    }
+
+    #[test]
     fn aliases_sharing_an_address_stay_on_their_own_lines() {
         let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
 
         let mut hosts_file = HostsFile::new("test");
         // The SSL aliases of one configuration always share 127.0.0.1.
-        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1");
-        hosts_file.add_owned_entry([127, 0, 0, 1].into(), "b.local", "2");
+        hosts_file
+            .add_owned_entry([127, 0, 0, 1].into(), "a.local", "1")
+            .unwrap();
+        hosts_file
+            .add_owned_entry([127, 0, 0, 1].into(), "b.local", "2")
+            .unwrap();
         hosts_file.add_entry([127, 0, 0, 1].into(), "plain.local");
         hosts_file.write_to(&temp_path).unwrap();
 
@@ -664,7 +863,9 @@ mod tests {
         let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
 
         let mut hosts_file = HostsFile::new("test");
-        hosts_file.add_owned_entry([127, 0, 0, 8].into(), "round.local", "9001");
+        hosts_file
+            .add_owned_entry([127, 0, 0, 8].into(), "round.local", "9001")
+            .unwrap();
         hosts_file.write_to(&temp_path).unwrap();
 
         let entries = HostsFile::new("test")
