@@ -109,19 +109,61 @@ async fn build_tls_acceptor(
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
 
+/// Writes the HTTPS aliases from a task that outlives the startup.
+///
+/// Off the runtime for the same reason as the domain alias: the write waits
+/// on the cross-process hosts lock. The process is already registered when
+/// this runs, so a stop can race the write; a task whose process is gone by
+/// the time the lines are on disk removes them again, since the stop that
+/// removed the process has already done its hosts cleanup.
 async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
     let alias = config
         .alias
-        .as_ref()
+        .clone()
         .ok_or("Alias required for SSL hosts entry")?;
-
-    let config_id = &config.id.unwrap_or(-1).to_string();
+    let id = config.id.ok_or("Config id required for SSL hosts entry")?;
     let port = config.local_port.unwrap_or(8080);
 
-    add_ssl_host_entry(config_id, alias, port)
-        .map_err(|e| format!("Failed to add HTTPS hosts entries: {}", e))?;
-
-    Ok(())
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let counted = AllocationInFlight::start();
+    let snapshot = config.clone();
+    tokio::spawn(async move {
+        let _counted = counted;
+        let written =
+            tokio::task::spawn_blocking(move || add_ssl_host_entry(&id.to_string(), &alias, port))
+                .await
+                .map_err(|error| format!("Hosts write task failed: {error}"))
+                .and_then(|result| {
+                    result.map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"))
+                });
+        let succeeded = written.is_ok();
+        let abandoned = sender.send(written).is_err();
+        if succeeded && (abandoned || !CHILD_PROCESSES.contains_key(&id)) {
+            warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
+            let in_use = crate::kube::stop::forwarding_configs();
+            let removed = tokio::task::spawn_blocking({
+                let snapshot = snapshot.clone();
+                move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+            })
+            .await;
+            match removed {
+                Ok(Ok(())) => {}
+                // Recorded so a later stop retries: the stop that removed the
+                // process has already run its cleanup and will not look again.
+                Ok(Err(error)) => {
+                    warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
+                    crate::kube::stop::record_local_cleanup(id, snapshot);
+                }
+                Err(error) => {
+                    warn!("Hosts cleanup task failed for config {id}: {error}");
+                    crate::kube::stop::record_local_cleanup(id, snapshot);
+                }
+            }
+        }
+    });
+    receiver
+        .await
+        .map_err(|_| "Hosts write ended unexpectedly".to_string())?
 }
 
 fn workload_type_description(workload_type: Option<&str>) -> &'static str {
@@ -229,13 +271,18 @@ impl Drop for AllocationInFlight {
 /// runs off the runtime; and a startup abandoned while it waits (the
 /// terminal's shutdown drain aborts forwarding tasks after its deadline)
 /// would otherwise leave the line behind after every cleanup has run and
-/// forgotten it. The task observes its own completion: a line written for a
-/// startup that is no longer waiting is removed again by the same task.
-async fn add_host_entry_owned(id: i64, config: &Config, entry: HostEntry) -> Result<(), String> {
+/// forgotten it. The task observes its own completion: for a startup that is
+/// no longer waiting it rolls back everything that startup held locally, the
+/// line it just wrote and the address allocated before it, since nothing
+/// else will.
+async fn add_host_entry_owned(
+    id: i64, config: &Config, address: &str, entry: HostEntry,
+) -> Result<(), String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let counted = AllocationInFlight::start();
     let entry_id = id.to_string();
     let snapshot = config.clone();
+    let address = address.to_owned();
     tokio::spawn(async move {
         let _counted = counted;
         let written = tokio::task::spawn_blocking({
@@ -245,26 +292,16 @@ async fn add_host_entry_owned(id: i64, config: &Config, entry: HostEntry) -> Res
         .await
         .map_err(|error| format!("Hosts write task failed: {error}"))
         .and_then(|result| result.map_err(|error| error.to_string()));
-        let succeeded = written.is_ok();
-        if sender.send(written).is_err() && succeeded {
-            warn!("Removing hosts entry {entry_id} written after startup was abandoned");
-            let in_use = crate::kube::stop::forwarding_configs();
-            let removed = tokio::task::spawn_blocking({
-                let snapshot = snapshot.clone();
-                move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
-            })
-            .await;
-            match removed {
-                Ok(Ok(())) => crate::kube::stop::settle_local_cleanup(id, &snapshot),
-                // The record taken before the write stays, so a later stop
-                // retries the removal.
-                Ok(Err(error)) => {
-                    warn!(
-                        "Failed to remove hosts entry {entry_id} after an abandoned startup: {error}"
-                    )
-                }
-                Err(error) => warn!("Hosts cleanup task failed for {entry_id}: {error}"),
-            }
+        if sender.send(written).is_err() {
+            warn!(
+                "{}",
+                rollback_local_resources(
+                    &snapshot,
+                    &address,
+                    format!("Startup for config {id} was abandoned during its hosts write"),
+                )
+                .await
+            );
         }
     });
     receiver
@@ -714,12 +751,6 @@ pub async fn start_port_forward(
     start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
-pub(super) async fn start_config(
-    config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
-) -> Result<CustomResponse, String> {
-    start_config_cancellable(config, protocol, mode, ssl_override, None, None).await
-}
-
 /// `cancellation` covers the phase after the relay is ready: loopback
 /// allocation, TLS setup and stream acquisition all run while the proxy
 /// lifecycle lock is held, so a stop issued during them would otherwise wait
@@ -867,8 +898,13 @@ pub(super) async fn start_config_cancellable(
             ip: ip_addr,
             hostname: config.alias.clone().unwrap_or_default(),
         };
-        let written =
-            add_host_entry_owned(config.id.unwrap_or_default(), &config, host_entry).await;
+        let written = add_host_entry_owned(
+            config.id.unwrap_or_default(),
+            &config,
+            &final_local_address,
+            host_entry,
+        )
+        .await;
         if let Err(e) = written {
             let error_message = format!(
                 "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \

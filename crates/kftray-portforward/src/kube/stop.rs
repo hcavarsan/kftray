@@ -538,12 +538,13 @@ impl ClusterResourceGuard {
     pub(crate) async fn arm(
         id: i64, config: Config, destination: Option<String>, mode: DatabaseMode,
     ) -> Result<Self, String> {
-        let now = Instant::now();
+        // Expired or not: an expired window is not a settled create, it is
+        // one whose confirmation passes have not run yet, and this attempt's
+        // outcome does not stand in for them.
         let inherited_until = PENDING_CLEANUP.get(&id).and_then(|entries| {
             entries
                 .iter()
                 .find(|entry| entry.is_exactly(&config, destination.as_deref()))
-                .filter(|entry| entry.is_uncertain(now))
                 .and_then(|entry| entry.uncertain_until)
         });
         record_target(
@@ -1630,8 +1631,12 @@ async fn stop_config(
             // the pass that finally releases the alias treat the target as
             // unanswered again, restart a counter that no longer exists and
             // recreate a cluster obligation already proven settled.
+            // Every armed create was persisted, not only the unanswered ones,
+            // so a settled cluster obligation clears its durable record
+            // whatever the local cleanup did: left behind, a restart would
+            // resurrect a cluster obligation for a relay already removed.
             let cluster_settled = target.cluster && !cluster_owed;
-            if cluster_settled && is_unanswered(target) {
+            if cluster_settled {
                 forget_uncertain_target(id, &target.config, target.destination.as_deref(), mode)
                     .await;
             }

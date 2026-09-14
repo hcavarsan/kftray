@@ -57,7 +57,7 @@ impl DirectHostfileManager {
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        self.remove_host_entries(std::slice::from_ref(&id))
+        self.remove_host_entries(std::slice::from_ref(&id), &[])
             .map(|_| ())
     }
 
@@ -66,24 +66,23 @@ impl DirectHostfileManager {
     /// Returns whether any of the ids had a line here: a caller that reached
     /// this through a failing helper needs to tell "already gone" apart from
     /// "this manager never owned it".
-    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
+    /// `protected` are mappings a still-forwarding configuration could have
+    /// written; an unmarked copy of one of them is never pruned on this
+    /// configuration's behalf.
+    pub fn remove_host_entries(
+        &self, ids: &[&str], protected: &[HostEntry],
+    ) -> std::io::Result<bool> {
         debug!("Removing host entries for IDs {ids:?}");
 
         edit_hosts(|document| {
             // Read inside the same edit that drops them: once the owned lines
             // are gone nothing else records which mapping a legacy copy would
             // be, and a failure between the two would lose it.
-            let dropping: Vec<(std::net::IpAddr, String)> = document
-                .section(KFTRAY_DIRECT_HOSTS_TAG)?
-                .into_iter()
-                .filter(|entry| {
-                    entry
-                        .owner
-                        .as_deref()
-                        .is_some_and(|owner| ids.contains(&owner))
-                })
-                .map(|entry| (entry.ip, entry.hostname))
-                .collect();
+            let dropping = legacy_mappings_to_prune(
+                &document.section(KFTRAY_DIRECT_HOSTS_TAG)?,
+                ids,
+                protected,
+            );
             let present = document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, ids, &[])?;
             prune_legacy(document, &dropping)?;
             Ok(!present.is_empty())
@@ -175,6 +174,28 @@ impl DirectHostfileManager {
     }
 }
 
+/// The mappings whose unmarked copies go with the owned lines of `ids`, less
+/// the ones another running configuration still needs.
+fn legacy_mappings_to_prune(
+    owned: &[SectionEntry], ids: &[&str], protected: &[HostEntry],
+) -> Vec<(std::net::IpAddr, String)> {
+    owned
+        .iter()
+        .filter(|entry| {
+            entry
+                .owner
+                .as_deref()
+                .is_some_and(|owner| ids.contains(&owner))
+        })
+        .filter(|entry| {
+            !protected
+                .iter()
+                .any(|kept| kept.ip == entry.ip && kept.hostname == entry.hostname)
+        })
+        .map(|entry| (entry.ip, entry.hostname.clone()))
+        .collect()
+}
+
 /// Takes unmarked copies of `mappings` out of the shared section.
 ///
 /// Only lines with no owner are candidates: they were written by a version
@@ -205,6 +226,30 @@ mod tests {
 
     fn addr(last: u8) -> IpAddr {
         IpAddr::from([127, 0, 0, last])
+    }
+
+    #[test]
+    fn a_mapping_a_running_configuration_still_needs_is_not_pruned_on_anothers_behalf() {
+        let owned = vec![
+            SectionEntry {
+                ip: addr(1),
+                hostname: "shared.local".to_owned(),
+                owner: Some("7".to_owned()),
+            },
+            SectionEntry {
+                ip: addr(1),
+                hostname: "only-mine.local".to_owned(),
+                owner: Some("7".to_owned()),
+            },
+        ];
+        let protected = [HostEntry {
+            ip: addr(1),
+            hostname: "shared.local".to_owned(),
+        }];
+        assert_eq!(
+            legacy_mappings_to_prune(&owned, &["7"], &protected),
+            vec![(addr(1), "only-mine.local".to_owned())]
+        );
     }
 
     #[test]

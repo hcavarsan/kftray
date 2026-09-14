@@ -107,12 +107,24 @@ const MEMORY_OWNER_SEPARATOR: &str = "-m";
 /// The identity is a label value, so the whole derived form has to fit the
 /// 63-character limit with a full 128-bit session identifier after it; two
 /// sessions of one installation must not be able to collide on the resources
-/// they select by configuration id. A persisted id longer than that is
-/// shortened here only, and recognised through the same derivation, leaving
-/// file-mode ownership as it was.
-fn memory_owner_base(installation: &str) -> &str {
+/// they select by configuration id. A persisted id too long for that is
+/// replaced by a digest of the whole of it, so two long ids that share a
+/// prefix still derive different bases, and recognised through the same
+/// derivation, leaving file-mode ownership as it was.
+fn memory_owner_base(installation: &str) -> std::borrow::Cow<'_, str> {
     const SUFFIX_LEN: usize = MEMORY_OWNER_SEPARATOR.len() + 32;
-    &installation[..installation.len().min(63 - SUFFIX_LEN)]
+    const BASE_LEN: usize = 63 - SUFFIX_LEN;
+    if installation.len() <= BASE_LEN {
+        return std::borrow::Cow::Borrowed(installation);
+    }
+    // FNV-1a, fixed here: the value is written into labels that outlive this
+    // binary, so it must not follow whatever the standard hasher does.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in installation.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    std::borrow::Cow::Owned(format!("h{hash:016x}"))
 }
 
 /// Whether an ownership label names this installation, directly or through
@@ -120,7 +132,7 @@ fn memory_owner_base(installation: &str) -> &str {
 pub fn owned_by_installation(owner: &str, installation: &str) -> bool {
     owner == installation
         || owner
-            .strip_prefix(memory_owner_base(installation))
+            .strip_prefix(memory_owner_base(installation).as_ref())
             .and_then(|rest| rest.strip_prefix(MEMORY_OWNER_SEPARATOR))
             .is_some_and(|session| session.len() == 32)
 }
@@ -555,6 +567,12 @@ mod tests {
         assert!(owned_by_installation(&installation, &installation));
         assert!(!owned_by_installation(
             &format!("{}-m{session}", memory_owner_base(&"b".repeat(63))),
+            &installation
+        ));
+        // Two long ids that share every character the base could have kept.
+        let sibling = format!("{}b", &installation[..62]);
+        assert!(!owned_by_installation(
+            &format!("{}-m{session}", memory_owner_base(&sibling)),
             &installation
         ));
         assert!(

@@ -71,8 +71,11 @@ impl HostfileManager {
     /// call, whichever writer reported what. An alias the application cannot
     /// remove itself is reported so the caller keeps the cleanup owed and a
     /// later stop, with the helper back, retries it.
+    /// `protected` are the aliases a configuration still forwarding could
+    /// have written. They are never pruned, never verified against, and never
+    /// handed to the helper for removal, whatever this run's history says.
     pub fn remove_host_entries(
-        &self, ids: &[&str], expected: &[(String, HostEntry)],
+        &self, ids: &[&str], expected: &[(String, HostEntry)], protected: &[HostEntry],
     ) -> std::io::Result<()> {
         let mut asked_helper = false;
         if let Some(helper) = self.helper() {
@@ -87,7 +90,7 @@ impl HostfileManager {
         // The helper only writes its own section, so an alias that fell back
         // to the direct manager earlier is still in the direct one. Removed
         // synchronously with its failure reported: nothing else records it.
-        self.direct_manager.remove_host_entries(ids)?;
+        self.direct_manager.remove_host_entries(ids, protected)?;
 
         // Read rather than inferred. Coverage in the direct section proves
         // nothing about the helper's copy: an id can be added through the
@@ -99,12 +102,14 @@ impl HostfileManager {
         // handed to the helper, and what the configuration itself says its
         // aliases are. The second survives restarts and a reply that never
         // arrived, which the first does not.
-        let mut handed = self
-            .handed_to_helper
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        handed.extend(expected.iter().cloned());
+        let handed = attributable_lines(
+            &self
+                .handed_to_helper
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+            expected,
+            protected,
+        );
         // A helper from before this change answers before it writes: it queues
         // the removal for a background writer that runs within a fraction of
         // a second. Its lines are given that long to disappear before they are
@@ -212,6 +217,21 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
     HOSTFILE_MANAGER.add_host_entry(id, entry)
 }
 
+/// The unmarked lines a removal may attribute to the ids it is removing: what
+/// this run handed to the helper plus what the configuration says its aliases
+/// are, less anything a configuration still forwarding could have written.
+fn attributable_lines(
+    handed: &HashSet<(String, HostEntry)>, expected: &[(String, HostEntry)],
+    protected: &[HostEntry],
+) -> HashSet<(String, HostEntry)> {
+    handed
+        .iter()
+        .chain(expected)
+        .filter(|(_, entry)| !protected.contains(entry))
+        .cloned()
+        .collect()
+}
+
 /// Every alias a configuration may have written, keyed by the id each was
 /// written under.
 ///
@@ -294,11 +314,8 @@ pub fn remove_config_host_entries(
         .flat_map(|other| config_host_entries(other.id.unwrap_or_default(), Some(other)))
         .map(|(_, entry)| entry)
         .collect();
-    let expected: Vec<(String, HostEntry)> = config_host_entries(id, config)
-        .into_iter()
-        .filter(|(_, entry)| !protected.contains(entry))
-        .collect();
-    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected)
+    let expected = config_host_entries(id, config);
+    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)
 }
 
 pub fn remove_all_host_entries() -> std::io::Result<()> {
@@ -340,6 +357,33 @@ mod tests {
     // system hosts file, and it rewrote that file as a side effect. The
     // decisions it was meant to cover are asserted without touching it in
     // `hostfile_direct::tests`.
+
+    #[test]
+    fn history_handed_to_the_helper_never_claims_a_line_a_running_forward_needs() {
+        let shared = HostEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "shared.local".to_owned(),
+        };
+        // This run handed the alias to the helper for configuration 7, and an
+        // older helper left it unmarked. Configuration 9 is still forwarding
+        // on the same alias, so it is not stranded on 7's behalf.
+        let section = vec![kftray_commons::utils::hostsfile::SectionEntry {
+            ip: shared.ip,
+            hostname: shared.hostname.clone(),
+            owner: None,
+        }];
+        let mut history: HashSet<(String, HostEntry)> = HashSet::new();
+        history.insert(("7".to_owned(), shared.clone()));
+        let handed = attributable_lines(&history, &[], &[]);
+        assert_eq!(
+            DirectHostfileManager::stranded_in_helper_section(&section, &["7"], &handed),
+            vec!["7"]
+        );
+        let handed = attributable_lines(&history, &[], std::slice::from_ref(&shared));
+        assert!(
+            DirectHostfileManager::stranded_in_helper_section(&section, &["7"], &handed).is_empty()
+        );
+    }
 
     #[test]
     fn a_configuration_names_the_aliases_its_removal_must_verify() {

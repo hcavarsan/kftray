@@ -62,14 +62,6 @@ pub async fn resolve_pod_selector(
     }
 }
 
-pub async fn resolve_target_port(
-    forwarder: &Forwarder, pod_api: &Api<Pod>, target: &Target, timeout: Duration,
-) -> anyhow::Result<u16> {
-    resolve_target_port_for_pod(forwarder, pod_api, target, timeout)
-        .await
-        .map(|(port, _)| port)
-}
-
 /// Resolves the port and reports the pod it was read from.
 ///
 /// The pod identity matters for a named port: the name maps to a number in that

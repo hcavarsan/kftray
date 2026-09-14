@@ -629,9 +629,19 @@ pub async fn recover_deployment(
                     cleanup_child_processes_for_config(config_id).await;
                     let mut current_config = config.clone();
                     current_config.service = Some(hashed_name.clone());
-                    crate::kube::start::start_config(current_config, "udp", mode, ssl_override)
-                        .await
-                        .map_err(anyhow::Error::msg)?;
+                    // Pinned to the server the relay was recovered on: the
+                    // listener resolves the context again, and the cached
+                    // client can have expired since the check at the start.
+                    crate::kube::start::start_config_cancellable(
+                        current_config,
+                        "udp",
+                        mode,
+                        ssl_override,
+                        Some(cancellation),
+                        Some(destination.to_owned()),
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
                 }
                 return Ok::<_, anyhow::Error>(());
             }

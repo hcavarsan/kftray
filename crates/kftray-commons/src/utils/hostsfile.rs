@@ -742,7 +742,28 @@ impl<'a> AtomicFileWriter<'a> {
             staging.push(".tmp");
             PathBuf::from(staging)
         };
-        self.write_file(&staging, content)?;
+        // The documented setup grants write access to the hosts file alone,
+        // not to its directory. A caller that cannot create the copy still
+        // gets its write, without the recovery the copy would have given it.
+        let staged = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&staging);
+        let mut staged = match staged {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                log::warn!(
+                    "Cannot create {}: rewriting the hosts file in place without a recovery copy",
+                    staging.display()
+                );
+                return self.write_directly(content);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        staged.write_all(content)?;
+        staged.sync_all()?;
+        drop(staged);
         std::fs::rename(&staging, &pending)?;
         self.write_directly(content)?;
         OpenOptions::new()
