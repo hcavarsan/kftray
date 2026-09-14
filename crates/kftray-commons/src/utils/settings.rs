@@ -781,16 +781,13 @@ pub async fn establish_expose_history_baseline(
     // between, which do have a history, as ones that never had one. An
     // immediate transaction takes the write lock up front, so the second
     // initialiser sees the marker the first wrote.
-    let mut conn = pool.acquire().await?;
-    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-    let outcome = take_expose_history_baseline(&mut conn, &baseline, mode).await;
-    let finish = if outcome.is_ok() {
-        "COMMIT"
-    } else {
-        "ROLLBACK"
-    };
-    sqlx::query(finish).execute(&mut *conn).await?;
-    outcome
+    // Through the transaction guard: a future dropped partway, or a failed
+    // commit, must not hand the pooled connection back with a write
+    // transaction still open on it.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    take_expose_history_baseline(&mut tx, &baseline, mode).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn take_expose_history_baseline(

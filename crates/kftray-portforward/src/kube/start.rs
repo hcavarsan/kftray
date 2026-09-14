@@ -158,8 +158,9 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
     }
     let id = config.id.unwrap_or_default();
     let snapshot = config.clone();
+    let in_use = crate::kube::stop::forwarding_configs();
     let hosts = tokio::task::spawn_blocking(move || {
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot))
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
     })
     .await;
     match hosts {
@@ -170,12 +171,12 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
 
     if errors.is_empty() {
         if let Some(id) = config.id {
-            crate::kube::stop::forget_pending_cleanup(id, config, None);
+            crate::kube::stop::settle_local_cleanup(id, config);
         }
         reason
     } else {
         if let Some(id) = config.id {
-            crate::kube::stop::record_pending_cleanup(id, config.clone());
+            crate::kube::stop::record_local_cleanup(id, config.clone());
         }
         format!("{reason}; cleanup incomplete: {}", errors.join("; "))
     }
@@ -185,31 +186,90 @@ async fn rollback_startup(port_forward: &PortForward, config: Config, reason: St
     match port_forward.cleanup_resources(Some(&config)).await {
         Ok(()) => {
             if let Some(id) = config.id {
-                crate::kube::stop::forget_pending_cleanup(id, &config, None);
+                crate::kube::stop::settle_local_cleanup(id, &config);
             }
             reason
         }
         Err(error) => {
             if let Some(id) = config.id {
-                crate::kube::stop::record_pending_cleanup(id, config);
+                crate::kube::stop::record_local_cleanup(id, config);
             }
             format!("{reason}; cleanup incomplete: {error}")
         }
     }
 }
 
-/// Address allocations that have been started but whose result has not been
-/// observed yet.
+/// Local setup tasks (address allocations, hosts writes) that have been
+/// started but whose result has not been observed yet. A startup dropped
+/// while one runs leaves the task to roll its own work back, and shutdown
+/// reconciliation waits for that: nothing is in the cleanup registry until
+/// the task records it.
 pub(crate) static OUTSTANDING_ALLOCATIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// Decrements the outstanding count however the allocation task ends.
+/// Decrements the outstanding count however the task ends.
 struct AllocationInFlight;
+
+impl AllocationInFlight {
+    fn start() -> Self {
+        OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
 
 impl Drop for AllocationInFlight {
     fn drop(&mut self) {
         OUTSTANDING_ALLOCATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// Writes a domain alias from a task that outlives the startup.
+///
+/// The write is synchronous and waits on the cross-process hosts lock, so it
+/// runs off the runtime; and a startup abandoned while it waits (the
+/// terminal's shutdown drain aborts forwarding tasks after its deadline)
+/// would otherwise leave the line behind after every cleanup has run and
+/// forgotten it. The task observes its own completion: a line written for a
+/// startup that is no longer waiting is removed again by the same task.
+async fn add_host_entry_owned(id: i64, config: &Config, entry: HostEntry) -> Result<(), String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let counted = AllocationInFlight::start();
+    let entry_id = id.to_string();
+    let snapshot = config.clone();
+    tokio::spawn(async move {
+        let _counted = counted;
+        let written = tokio::task::spawn_blocking({
+            let entry_id = entry_id.clone();
+            move || add_host_entry(entry_id, entry)
+        })
+        .await
+        .map_err(|error| format!("Hosts write task failed: {error}"))
+        .and_then(|result| result.map_err(|error| error.to_string()));
+        let succeeded = written.is_ok();
+        if sender.send(written).is_err() && succeeded {
+            warn!("Removing hosts entry {entry_id} written after startup was abandoned");
+            let in_use = crate::kube::stop::forwarding_configs();
+            let removed = tokio::task::spawn_blocking({
+                let snapshot = snapshot.clone();
+                move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+            })
+            .await;
+            match removed {
+                Ok(Ok(())) => crate::kube::stop::settle_local_cleanup(id, &snapshot),
+                // The record taken before the write stays, so a later stop
+                // retries the removal.
+                Ok(Err(error)) => {
+                    warn!(
+                        "Failed to remove hosts entry {entry_id} after an abandoned startup: {error}"
+                    )
+                }
+                Err(error) => warn!("Hosts cleanup task failed for {entry_id}: {error}"),
+            }
+        }
+    });
+    receiver
+        .await
+        .map_err(|_| "Hosts write ended unexpectedly".to_string())?
 }
 
 /// Allocates a loopback address and returns it together with the claim that
@@ -227,9 +287,9 @@ async fn allocate_local_address_owned(
     // Counted before the task exists: shutdown reconciliation waits for these,
     // because an allocation still in flight has nothing in the cleanup registry
     // yet and would otherwise be abandoned.
-    OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let counted = AllocationInFlight::start();
     tokio::spawn(async move {
-        let _counted = AllocationInFlight;
+        let _counted = counted;
         let Allocated {
             result,
             claim,
@@ -245,7 +305,7 @@ async fn allocate_local_address_owned(
         if acquired.is_some()
             && let Some(id) = held.id
         {
-            crate::kube::stop::record_pending_cleanup(id, held.clone());
+            crate::kube::stop::record_local_cleanup(id, held.clone());
         }
         let failed = result.is_err();
         let handed_over = match sender.send((result, owned, claim)) {
@@ -273,7 +333,7 @@ async fn allocate_local_address_owned(
             match crate::kube::stop::release_address_with_fallback(address, None).await {
                 Ok(()) => {
                     if let Some(id) = held.id {
-                        crate::kube::stop::forget_pending_cleanup(id, &held, None);
+                        crate::kube::stop::settle_local_cleanup(id, &held);
                     }
                 }
                 Err(error) => {
@@ -381,7 +441,7 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
             // claim, and the fallback's fresh alias is not wanted.
             Ok((other, _)) => {
                 if other != address {
-                    release_stray_alias(&other).await;
+                    release_stray_alias(owned, &other).await;
                 }
                 owned.local_address = Some(address.clone());
                 return Allocated {
@@ -425,9 +485,18 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
 
 /// Removes an alias the fallback allocator created while the helper's address
 /// was being confirmed; nothing will ever forward on it.
-async fn release_stray_alias(address: &str) {
+///
+/// A release that fails leaves the alias bound with nothing else naming it,
+/// so it is recorded as this configuration's local obligation and a later
+/// stop retries it.
+async fn release_stray_alias(owned: &Config, address: &str) {
     if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None).await {
         warn!("Failed to release stray alias {address}: {error}");
+        if let Some(id) = owned.id {
+            let mut stray = owned.clone();
+            stray.local_address = Some(address.to_owned());
+            crate::kube::stop::record_local_cleanup(id, stray);
+        }
     }
 }
 
@@ -648,7 +717,7 @@ pub async fn start_port_forward(
 pub(super) async fn start_config(
     config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
-    start_config_cancellable(config, protocol, mode, ssl_override, None).await
+    start_config_cancellable(config, protocol, mode, ssl_override, None, None).await
 }
 
 /// `cancellation` covers the phase after the relay is ready: loopback
@@ -657,7 +726,7 @@ pub(super) async fn start_config(
 /// for the whole startup to finish.
 pub(super) async fn start_config_cancellable(
     mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
-    cancellation: Option<&CancellationToken>,
+    cancellation: Option<&CancellationToken>, expected_destination: Option<String>,
 ) -> Result<CustomResponse, String> {
     let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
     let config_id = config.id.ok_or("Config has no ID")?;
@@ -792,19 +861,14 @@ pub(super) async fn start_config_cancellable(
         // entry, and being dropped before the process is registered would
         // otherwise leave it behind with nothing tracking it.
         if let Some(id) = config.id {
-            crate::kube::stop::record_pending_cleanup(id, config.clone());
+            crate::kube::stop::record_local_cleanup(id, config.clone());
         }
-        let entry_id = format!("{}", config.id.unwrap_or_default());
         let host_entry = HostEntry {
             ip: ip_addr,
             hostname: config.alias.clone().unwrap_or_default(),
         };
-        // Off the runtime: the write waits on the cross-process hosts lock,
-        // and a worker parked on it would stall unrelated forwards.
-        let written = tokio::task::spawn_blocking(move || add_host_entry(entry_id, host_entry))
-            .await
-            .map_err(|error| format!("Hosts write task failed: {error}"))
-            .and_then(|result| result.map_err(|error| error.to_string()));
+        let written =
+            add_host_entry_owned(config.id.unwrap_or_default(), &config, host_entry).await;
         if let Err(e) = written {
             let error_message = format!(
                 "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
@@ -839,7 +903,8 @@ pub(super) async fn start_config_cancellable(
         kubeconfig.flatten(),
         actual_config.id.unwrap_or_default(),
         actual_config.workload_type.clone().unwrap_or_default(),
-    );
+    )
+    .expecting_destination(expected_destination);
 
     let tls_acceptor = if protocol == "tcp" && should_use_ssl {
         if let Some(settings) = &settings {
@@ -919,8 +984,10 @@ pub(super) async fn start_config_cancellable(
             handle.set_config(config.clone());
             CHILD_PROCESSES.insert(config_id, handle);
             // The process now owns the local resources, so the record taken
-            // when the address was allocated is no longer needed.
-            crate::kube::stop::forget_pending_cleanup(config_id, &config, None);
+            // when the address was allocated is no longer needed. Only the
+            // local obligation goes: a cluster obligation left by an earlier
+            // attempt on another server is not settled by this start.
+            crate::kube::stop::settle_local_cleanup(config_id, &config);
             let timeout_callback = create_static_timeout_callback(mode);
 
             if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
@@ -1027,8 +1094,15 @@ pub(super) async fn start_config_locked(
                 } else if config.workload_type.as_deref() == Some("expose") {
                     crate::expose::start_single_expose(config, mode, cancellation).await
                 } else {
-                    start_config_cancellable(config, protocol, mode, ssl_override, cancellation)
-                        .await
+                    start_config_cancellable(
+                        config,
+                        protocol,
+                        mode,
+                        ssl_override,
+                        cancellation,
+                        None,
+                    )
+                    .await
                 };
                 drop(guard);
                 result

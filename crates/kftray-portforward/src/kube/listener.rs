@@ -103,10 +103,22 @@ impl PortForwarder {
 
     pub async fn new(
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
-        pod_readiness: kube_portforward::PodReadiness,
+        pod_readiness: kube_portforward::PodReadiness, expected_destination: Option<&str>,
     ) -> anyhow::Result<Self> {
         let client_key = ServiceClientKey::new(context_name, kubeconfig);
         let connection = SHARED_CLIENT_MANAGER.get_connection(client_key).await?;
+        // The relay this forward reaches was created by an earlier step that
+        // resolved the same context; a cached client that expired in between
+        // can resolve it to another server, and forwarding there would look
+        // for a relay that is not on it, or find another installation's.
+        if let Some(expected) = expected_destination
+            && connection.cluster_url != expected
+        {
+            anyhow::bail!(
+                "Context resolves to {} but the forward was set up against {expected}",
+                connection.cluster_url
+            );
+        }
 
         let pod_selector =
             crate::kube::target::resolve_pod_selector(&connection.client, namespace, &target)

@@ -202,13 +202,10 @@ fn belongs_here(
 }
 
 /// Whether an ownership label names this installation. A memory-mode run
-/// extends the identity with a process suffix; its resources are still this
-/// installation's to manage.
+/// extends the identity with a session identifier; its resources are still
+/// this installation's to manage.
 fn owned_by(owner: &str, installation_id: &str) -> bool {
-    owner == installation_id
-        || owner
-            .strip_prefix(installation_id)
-            .is_some_and(|rest| rest.starts_with("-m"))
+    kftray_commons::utils::config_dir::owned_by_installation(owner, installation_id)
 }
 
 /// Whether a resource is this installation's to show, by label or, for

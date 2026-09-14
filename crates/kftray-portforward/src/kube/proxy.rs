@@ -229,7 +229,7 @@ async fn process_single_proxy_config(
         // disappeared and would leave it with nothing tracking it.
         Err(format!("Config {id} no longer exists"))
     } else {
-        start_proxy_config(config, mode, ssl_override, &startup.cancellation).await
+        start_proxy_config(config, mode, ssl_override, &startup.cancellation, None).await
     };
     drop(guard);
     drop(lock);
@@ -238,6 +238,7 @@ async fn process_single_proxy_config(
 
 pub(super) async fn start_proxy_config(
     mut config: Config, mode: DatabaseMode, ssl_override: bool, cancellation: &CancellationToken,
+    expected_destination: Option<&str>,
 ) -> Result<CustomResponse, String> {
     let protocol = config.protocol.to_ascii_lowercase();
     if !matches!(protocol.as_str(), "tcp" | "udp") {
@@ -255,6 +256,15 @@ pub(super) async fn start_proxy_config(
     };
     let client = shared_client.client.clone();
     let destination = shared_client.cluster_url.to_string();
+    // Recovery resolved the context once already and deleted the old relay on
+    // that server; the replacement has to go to the same one.
+    if let Some(expected) = expected_destination
+        && destination != expected
+    {
+        return Err(format!(
+            "Context resolves to {destination} but the relay being replaced was on {expected}"
+        ));
+    }
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -506,6 +516,7 @@ async fn process_deployment_proxy(
             options.mode,
             options.ssl_override,
             Some(options.cancellation),
+            Some(options.destination.to_owned()),
         )
         .await
         .map_err(|error| format!("Failed to start port forwarding: {error}"))?;
@@ -680,6 +691,7 @@ async fn process_pod_proxy(
             options.mode,
             options.ssl_override,
             Some(options.cancellation),
+            Some(options.destination.to_owned()),
         )
         .await
         .map_err(|error| format!("Failed to start port forwarding: {error}"))?;

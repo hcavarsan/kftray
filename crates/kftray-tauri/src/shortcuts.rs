@@ -58,11 +58,17 @@ impl StartOutcome {
     }
 
     fn into_result(self) -> Result<(), kftray_shortcuts::ShortcutError> {
+        self.into_result_as("start")
+    }
+
+    /// The result of an action that may also have stopped forwards, so the
+    /// wording does not claim every failure was a start.
+    fn into_result_as(self, verb: &str) -> Result<(), kftray_shortcuts::ShortcutError> {
         if self.failures.is_empty() {
             Ok(())
         } else {
             Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                format!("Failed to start: {}", self.failures.join("; ")),
+                format!("Failed to {verb}: {}", self.failures.join("; ")),
             ))
         }
     }
@@ -764,6 +770,7 @@ impl ActionHandler for TogglePortForwardAction {
                         config.id.unwrap_or(0),
                         e
                     );
+                    failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
                 } else {
                     stopped_count += 1;
                 }
@@ -818,7 +825,7 @@ impl ActionHandler for TogglePortForwardAction {
 
             let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-            return outcome.into_result();
+            return outcome.into_result_as("toggle");
         }
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());

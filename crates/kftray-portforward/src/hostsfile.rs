@@ -218,6 +218,10 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
 /// Derived from the configuration rather than remembered: it is the one
 /// description of these aliases that survives a restart, and it is what
 /// lets a removal recognise an unmarked line an older helper left behind.
+/// Only aliases this configuration could have created are listed: the
+/// domain line is written only for a domain-enabled service, and the HTTPS
+/// lines only for a TCP forward, so a configuration that merely shares an
+/// alias with one that did write them does not claim their lines.
 pub fn config_host_entries(
     id: i64, config: Option<&kftray_commons::models::config_model::Config>,
 ) -> Vec<(String, HostEntry)> {
@@ -231,10 +235,12 @@ pub fn config_host_entries(
     let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     // The same default creation uses: a configuration with no address gets
     // its domain alias on 127.0.0.1, so that is the line to look for.
-    if let Some(ip) = config
-        .local_address
-        .as_deref()
-        .map_or(Some(loopback), |address| address.parse().ok())
+    if config.domain_enabled.unwrap_or_default()
+        && config.service.is_some()
+        && let Some(ip) = config
+            .local_address
+            .as_deref()
+            .map_or(Some(loopback), |address| address.parse().ok())
     {
         entries.push((
             id.to_string(),
@@ -244,30 +250,37 @@ pub fn config_host_entries(
             },
         ));
     }
-    entries.push((
-        format!("{id}-https"),
-        HostEntry {
-            ip: loopback,
-            hostname: alias.to_owned(),
-        },
-    ));
-    entries.push((
-        format!("{id}-https-local"),
-        HostEntry {
-            ip: loopback,
-            hostname: format!("{alias}.local"),
-        },
-    ));
+    if config.protocol == "tcp" {
+        entries.push((
+            format!("{id}-https"),
+            HostEntry {
+                ip: loopback,
+                hostname: alias.to_owned(),
+            },
+        ));
+        entries.push((
+            format!("{id}-https-local"),
+            HostEntry {
+                ip: loopback,
+                hostname: format!("{alias}.local"),
+            },
+        ));
+    }
     entries
 }
 
 /// Removes every alias a configuration may have written, domain and SSL
 /// alike, with one reconciliation and one verification.
 ///
+/// `in_use` are the configurations still forwarding: an unmarked line that
+/// one of them could have written is theirs to keep, however much it looks
+/// like this configuration's, and is neither pruned nor reported.
+///
 /// Reported rather than swallowed, so a caller keeps the configuration
 /// tracked for retry when an alias could not be verified gone.
 pub fn remove_config_host_entries(
     id: i64, config: Option<&kftray_commons::models::config_model::Config>,
+    in_use: &[kftray_commons::models::config_model::Config],
 ) -> std::io::Result<()> {
     let ids = [
         id.to_string(),
@@ -275,7 +288,17 @@ pub fn remove_config_host_entries(
         format!("{id}-https-local"),
     ];
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
-    HOSTFILE_MANAGER.remove_host_entries(&ids, &config_host_entries(id, config))
+    let protected: Vec<HostEntry> = in_use
+        .iter()
+        .filter(|other| other.id != Some(id))
+        .flat_map(|other| config_host_entries(other.id.unwrap_or_default(), Some(other)))
+        .map(|(_, entry)| entry)
+        .collect();
+    let expected: Vec<(String, HostEntry)> = config_host_entries(id, config)
+        .into_iter()
+        .filter(|(_, entry)| !protected.contains(entry))
+        .collect();
+    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected)
 }
 
 pub fn remove_all_host_entries() -> std::io::Result<()> {
@@ -326,12 +349,25 @@ mod tests {
             id: Some(41),
             alias: Some("app.local".to_owned()),
             local_address: Some("127.0.0.7".to_owned()),
+            domain_enabled: Some(true),
+            service: Some("app".to_owned()),
+            protocol: "tcp".to_owned(),
             ..Config::default()
         };
         let entries = config_host_entries(41, Some(&config));
         let ids: Vec<String> = entries.iter().map(|(id, _)| id.clone()).collect();
         let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
         assert_eq!(ids, vec!["41", "41-https", "41-https-local"]);
+
+        // A configuration that could not have written a line does not claim
+        // it: no domain line without the domain feature, no HTTPS lines for
+        // UDP.
+        let plain = Config {
+            domain_enabled: Some(false),
+            protocol: "udp".to_owned(),
+            ..config.clone()
+        };
+        assert!(config_host_entries(41, Some(&plain)).is_empty());
         assert_eq!(
             entries[0].1.ip,
             "127.0.0.7".parse::<std::net::IpAddr>().unwrap()

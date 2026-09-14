@@ -205,7 +205,14 @@ impl PortForward {
             kubeconfig,
             config_id,
             workload_type,
+            expected_destination: None,
         }
+    }
+
+    /// Requires the connection this forward resolves to reach `destination`.
+    pub fn expecting_destination(mut self, destination: Option<String>) -> Self {
+        self.expected_destination = destination;
+        self
     }
 
     pub fn local_port(&self) -> u16 {
@@ -242,9 +249,13 @@ impl PortForward {
         // thread because the hosts file is written synchronously behind a lock.
         let config_id = self.config_id;
         let snapshot = config.cloned();
+        let in_use = crate::kube::stop::forwarding_configs();
         match tokio::task::spawn_blocking(
-            move || match crate::hostsfile::remove_config_host_entries(config_id, snapshot.as_ref())
-            {
+            move || match crate::hostsfile::remove_config_host_entries(
+                config_id,
+                snapshot.as_ref(),
+                &in_use,
+            ) {
                 Ok(()) => Vec::new(),
                 Err(error) => vec![error.to_string()],
             },
@@ -279,6 +290,7 @@ impl PortForward {
             self.context_name.clone(),
             self.kubeconfig.clone(),
             pod_readiness_for(&self.workload_type),
+            self.expected_destination.as_deref(),
         )
         .await?;
         let direct_forwarder = Arc::new(direct_forwarder);
@@ -332,6 +344,7 @@ impl PortForward {
             self.context_name.clone(),
             self.kubeconfig.clone(),
             pod_readiness_for(&self.workload_type),
+            self.expected_destination.as_deref(),
         )
         .await?;
         let direct_forwarder = Arc::new(direct_forwarder);

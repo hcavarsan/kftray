@@ -53,7 +53,7 @@ use crate::port_forward::CHILD_PROCESSES;
 use crate::port_forward::PortForwardProcess;
 
 /// One tracked cleanup target.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct PendingTarget {
     config: Config,
     /// Set while a create request's outcome is unknown. Until it expires, an
@@ -79,19 +79,28 @@ impl PendingTarget {
         self.uncertain_until.is_some_and(|until| now < until)
     }
 
-    /// Whether this record describes the given resources.
+    /// Whether this record may describe the given resources.
     ///
     /// The destination is part of the identity: a configuration names a
     /// context and a kubeconfig, and both can come to mean another server
     /// between two attempts, so resources created on each are different
     /// obligations. A side that never resolved its destination matches any:
     /// it describes the same rows and cannot say which server they reached.
+    /// Used to find a record; clearing one goes through [`Self::is_exactly`].
     fn describes(&self, config: &Config, destination: Option<&str>) -> bool {
         same_resources(&self.config, config)
             && match (self.destination.as_deref(), destination) {
                 (Some(left), Some(right)) => left == right,
                 _ => true,
             }
+    }
+
+    /// Whether this record is the one for exactly these resources on exactly
+    /// this destination. A record with no destination is only matched by
+    /// none: clearing an obligation for "wherever" must not clear the one
+    /// for a server that is known.
+    fn is_exactly(&self, config: &Config, destination: Option<&str>) -> bool {
+        same_resources(&self.config, config) && self.destination.as_deref() == destination
     }
 }
 
@@ -376,11 +385,46 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
     }
 }
 
+/// The configurations still forwarding in this process, as they were when
+/// they started. What they own must not be removed on another's behalf.
+pub(crate) fn forwarding_configs() -> Vec<Config> {
+    CHILD_PROCESSES
+        .iter()
+        .filter_map(|entry| entry.value().config().cloned())
+        .collect()
+}
+
 /// Records a configuration whose resources exist but whose startup did not
 /// finish, so stop-all still reaches them. Dropping a startup future (the
 /// terminal's shutdown drain, an aborted task) skips its own rollback.
+#[cfg(test)]
 pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
     record_target(id, config, None, true, true, None);
+}
+
+/// Records local resources a startup holds: a loopback alias or hosts entries
+/// that exist before, or without, anything in the cluster. Nothing here says
+/// where in the cluster anything is, so the record carries no destination and
+/// no cluster obligation.
+pub(crate) fn record_local_cleanup(id: i64, config: Config) {
+    record_target(id, config, None, false, true, None);
+}
+
+/// Marks the local resources for these rows as released, on every server
+/// they were recorded for. Loopback aliases and hosts entries do not depend on
+/// which server the rows reached, so one release settles them all; a record
+/// that still owes cluster cleanup keeps that.
+pub(crate) fn settle_local_cleanup(id: i64, config: &Config) {
+    if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
+        for entry in entries
+            .iter_mut()
+            .filter(|entry| same_resources(&entry.config, config))
+        {
+            entry.local = false;
+        }
+        entries.retain(|entry| entry.cluster || entry.local);
+    }
+    PENDING_CLEANUP.remove_if(&id, |_, entries| entries.is_empty());
 }
 
 fn record_target(
@@ -413,9 +457,11 @@ fn record_target(
 }
 
 /// Drops one recorded target, leaving any other resources for this id tracked.
+///
+/// Exact: a record for a known server is only dropped by naming that server.
 pub(crate) fn forget_pending_cleanup(id: i64, config: &Config, destination: Option<&str>) {
     if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
-        entries.retain(|entry| !entry.describes(config, destination));
+        entries.retain(|entry| !entry.is_exactly(config, destination));
     }
     // Removed only while still empty: allocation tasks record targets outside
     // the lifecycle lock, so one can arrive between the retain above and this
@@ -439,7 +485,7 @@ fn set_target_obligations(
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
     if let Some(existing) = entries
         .iter_mut()
-        .find(|entry| entry.describes(&target.config, target.destination.as_deref()))
+        .find(|entry| entry.is_exactly(&target.config, target.destination.as_deref()))
     {
         existing.uncertain_until = uncertain_until;
         existing.cluster = cluster;
@@ -476,6 +522,11 @@ pub(crate) struct ClusterResourceGuard {
     /// one, so the durable record is scoped by it.
     mode: DatabaseMode,
     destination: Option<String>,
+    /// Uncertainty the record already carried when this guard was armed: an
+    /// earlier attempt at the same target whose create was never answered.
+    /// This attempt's outcome says nothing about that one, so confirming or
+    /// disarming this guard leaves it in place.
+    inherited_until: Option<Instant>,
 }
 
 impl ClusterResourceGuard {
@@ -487,6 +538,14 @@ impl ClusterResourceGuard {
     pub(crate) async fn arm(
         id: i64, config: Config, destination: Option<String>, mode: DatabaseMode,
     ) -> Result<Self, String> {
+        let now = Instant::now();
+        let inherited_until = PENDING_CLEANUP.get(&id).and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry.is_exactly(&config, destination.as_deref()))
+                .filter(|entry| entry.is_uncertain(now))
+                .and_then(|entry| entry.uncertain_until)
+        });
         record_target(
             id,
             config.clone(),
@@ -503,6 +562,7 @@ impl ClusterResourceGuard {
             confirmed: false,
             mode,
             destination,
+            inherited_until,
         })
     }
 
@@ -515,9 +575,9 @@ impl ClusterResourceGuard {
             && let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id)
             && let Some(entry) = entries
                 .iter_mut()
-                .find(|entry| entry.describes(config, self.destination.as_deref()))
+                .find(|entry| entry.is_exactly(config, self.destination.as_deref()))
         {
-            entry.uncertain_until = None;
+            entry.uncertain_until = self.inherited_until;
         }
     }
 
@@ -527,14 +587,28 @@ impl ClusterResourceGuard {
         let Some(config) = self.config.take() else {
             return;
         };
+        let destination = self.destination.take();
+        // An earlier attempt at this target may still be creating something:
+        // this one settling with nothing created does not answer for it, so
+        // its record, in memory and on disk, stays until its own passes do.
+        if let Some(inherited) = self.inherited_until {
+            self.confirmed = true;
+            if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id)
+                && let Some(entry) = entries
+                    .iter_mut()
+                    .find(|entry| entry.is_exactly(&config, destination.as_deref()))
+            {
+                entry.uncertain_until = Some(inherited);
+            }
+            return;
+        }
         // Definitively rejected, so nothing was created and the persisted
         // record has nothing left to describe.
-        let destination = self.destination.take();
         forget_uncertain_target(self.id, &config, destination.as_deref(), self.mode).await;
         if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
             for entry in entries
                 .iter_mut()
-                .filter(|entry| entry.describes(&config, destination.as_deref()))
+                .filter(|entry| entry.is_exactly(&config, destination.as_deref()))
             {
                 entry.cluster = false;
                 entry.uncertain_until = None;
@@ -707,9 +781,11 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     // on a blocking thread: several stops at once would otherwise queue up on
     // runtime workers and stall unrelated forwards.
     let snapshot = config.clone();
-    let hosts =
-        spawn_blocking(move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot)))
-            .await;
+    let in_use = forwarding_configs();
+    let hosts = spawn_blocking(move || {
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+    })
+    .await;
     match hosts {
         Ok(Ok(())) => {}
         Ok(Err(error)) => cleanup.failures.push(error.to_string()),
@@ -1227,21 +1303,25 @@ async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
             );
         }
     }
-    for entry in PENDING_CLEANUP.iter() {
-        for target in entry.value().iter().filter(|target| target.cluster) {
-            if let Err(error) = persist_uncertain_target(
-                *entry.key(),
-                &target.config,
-                target.destination.as_deref(),
-                mode,
-            )
-            .await
-            {
-                warn!(
-                    "Failed to persist the outstanding cleanup for config {}: {error}",
-                    entry.key()
-                );
-            }
+    // Copied out before anything is awaited: an allocation task that finishes
+    // now records its address under this map's write lock, and a read guard
+    // held across the database write would block it for the whole write.
+    let owed: Vec<(i64, PendingTarget)> = PENDING_CLEANUP
+        .iter()
+        .flat_map(|entry| {
+            entry
+                .value()
+                .iter()
+                .filter(|target| target.cluster)
+                .map(|target| (*entry.key(), target.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for (id, target) in owed {
+        if let Err(error) =
+            persist_uncertain_target(id, &target.config, target.destination.as_deref(), mode).await
+        {
+            warn!("Failed to persist the outstanding cleanup for config {id}: {error}");
         }
     }
     ids.sort_unstable();
@@ -1924,6 +2004,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_retry_settling_does_not_answer_for_an_earlier_unanswered_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            id: Some(730_412),
+            namespace: "shared".to_string(),
+            service: Some("relay".to_string()),
+            workload_type: Some("expose".to_string()),
+            ..Config::default()
+        };
+        let id = config.id.unwrap();
+        PENDING_CLEANUP.remove(&id);
+        let destination = Some("https://a".to_string());
+
+        // An earlier attempt whose create was never answered.
+        record_target(
+            id,
+            config.clone(),
+            Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
+            true,
+            false,
+            destination.clone(),
+        );
+
+        // The retry is definitively rejected before creating anything.
+        ClusterResourceGuard::arm(
+            id,
+            config.clone(),
+            destination.clone(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap()
+        .disarm()
+        .await;
+        let targets = pending_cleanup_targets(id);
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.cluster && target.is_uncertain(Instant::now())),
+            "the earlier create is still unanswered: {targets:?}"
+        );
+
+        // A retry that is answered does not settle it either.
+        let mut guard =
+            ClusterResourceGuard::arm(id, config.clone(), destination, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        guard.confirm();
+        drop(guard);
+        let targets = pending_cleanup_targets(id);
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.cluster && target.is_uncertain(Instant::now())),
+            "confirming the retry must not clear inherited uncertainty: {targets:?}"
+        );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
     async fn the_same_rows_on_two_servers_are_two_cleanup_targets() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
@@ -2131,7 +2271,23 @@ mod tests {
             "an unconfirmed create must not be forgotten on one empty pass"
         );
 
-        // Once the create's outcome is observed, the same pass settles it.
+        // A later attempt at the same target does not answer for the abandoned
+        // one; its confirmation leaves the record uncertain.
+        let mut guard = ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        guard.confirm();
+        std::mem::forget(guard);
+        let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;
+        assert!(
+            !pending_cleanup_targets(id).is_empty(),
+            "a retry's confirmation does not settle the abandoned create"
+        );
+
+        // Once nothing unanswered is left, a create whose outcome was observed
+        // is settled by the same pass.
+        PENDING_CLEANUP.remove(&id);
+        forget_uncertain_target(id, &config, None, DatabaseMode::Memory).await;
         let mut guard = ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
             .await
             .unwrap();

@@ -116,6 +116,10 @@ pub struct PortForward {
     pub kubeconfig: Option<String>,
     pub config_id: i64,
     pub workload_type: String,
+    /// The API server the forward has to reach, when an earlier step of the
+    /// same operation already resolved it: a relay created on one server must
+    /// not be forwarded to on another the context has since come to mean.
+    pub expected_destination: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

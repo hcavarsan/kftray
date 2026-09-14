@@ -429,6 +429,7 @@ impl ProxyRecoveryManager {
                     self.mode,
                     self.ssl_override,
                     &self.cancel_token,
+                    &self.destination,
                 )
                 .await
             }
@@ -439,6 +440,7 @@ impl ProxyRecoveryManager {
                     self.mode,
                     self.ssl_override,
                     &self.cancel_token,
+                    &self.destination,
                 )
                 .await
             }
@@ -497,7 +499,7 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
 pub async fn recover_bare_pod(
     config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
-    cancellation: &CancellationToken,
+    cancellation: &CancellationToken, destination: &str,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -511,9 +513,15 @@ pub async fn recover_bare_pod(
 
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
-    crate::kube::proxy::start_proxy_config(config.clone(), mode, ssl_override, cancellation)
-        .await
-        .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
+    crate::kube::proxy::start_proxy_config(
+        config.clone(),
+        mode,
+        ssl_override,
+        cancellation,
+        Some(destination),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
 
     Ok(())
 }
@@ -545,7 +553,7 @@ fn active_relay_name(config_id: i64) -> Option<String> {
 /// 5. For TCP: the existing pod_watcher detects the new pod automatically
 pub async fn recover_deployment(
     config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
-    cancellation: &CancellationToken,
+    cancellation: &CancellationToken, destination: &str,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -584,7 +592,15 @@ pub async fn recover_deployment(
             "Proxy deployment not found, falling back to bare pod recovery for config {}",
             config_id
         );
-        return recover_bare_pod(config, client, mode, ssl_override, cancellation).await;
+        return recover_bare_pod(
+            config,
+            client,
+            mode,
+            ssl_override,
+            cancellation,
+            destination,
+        )
+        .await;
     };
     let container_name = deployment
         .spec
@@ -1016,9 +1032,16 @@ mod tests {
                     ..config.clone()
                 });
                 crate::port_forward::CHILD_PROCESSES.insert(config.id.unwrap(), process);
-                recover_deployment(&config, &client, DatabaseMode::Memory, false, &cancellation)
-                    .await
-                    .unwrap();
+                recover_deployment(
+                    &config,
+                    &client,
+                    DatabaseMode::Memory,
+                    false,
+                    &cancellation,
+                    "http://127.0.0.1:1/",
+                )
+                .await
+                .unwrap();
             }
             server.await.unwrap();
         })

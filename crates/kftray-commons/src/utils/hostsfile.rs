@@ -203,6 +203,10 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
             pending.display()
         );
         std::fs::copy(&pending, path)?;
+        // Durable before the copy it was restored from goes: a power loss
+        // after the removal would otherwise leave the file partial with
+        // nothing left to complete it from.
+        OpenOptions::new().write(true).open(path)?.sync_all()?;
         std::fs::remove_file(&pending)?;
     }
     Ok(file)
@@ -260,14 +264,35 @@ impl HostsDocument {
     /// Half a section is an error, not an empty one: the aliases between a
     /// begin marker and a missing end marker still resolve, and reporting
     /// nothing would let a caller treat them as already removed.
+    /// The section's marker lines, or `None` when the file has no section for
+    /// the tag.
+    ///
+    /// A file with two sections for one tag is refused rather than read as
+    /// its first: an edit would touch only that one, and a verification that
+    /// followed would report an alias gone while the other section still
+    /// resolves it. Nothing here writes a second section, so one is a file
+    /// that was edited by hand and has to be repaired by hand.
     fn bounds(&self, tag: &str) -> Result<Option<(usize, usize)>> {
         let begin_marker = Self::begin_marker(tag);
         let end_marker = Self::end_marker(tag);
-        let begin = self
+        let mut begins = self
             .lines
             .iter()
-            .position(|line| line.trim() == begin_marker);
-        let end = self.lines.iter().position(|line| line.trim() == end_marker);
+            .enumerate()
+            .filter(|(_, line)| line.trim() == begin_marker)
+            .map(|(index, _)| index);
+        let mut ends = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == end_marker)
+            .map(|(index, _)| index);
+        let (begin, end) = (begins.next(), ends.next());
+        if begins.next().is_some() || ends.next().is_some() {
+            return Err(HostsFileError::InvalidData(format!(
+                "Duplicate section markers for tag '{tag}'"
+            )));
+        }
         match (begin, end) {
             (None, None) => Ok(None),
             (Some(begin), Some(end)) if begin < end => Ok(Some((begin, end))),
@@ -720,6 +745,10 @@ impl<'a> AtomicFileWriter<'a> {
         self.write_file(&staging, content)?;
         std::fs::rename(&staging, &pending)?;
         self.write_directly(content)?;
+        OpenOptions::new()
+            .write(true)
+            .open(self.target_path)?
+            .sync_all()?;
         std::fs::remove_file(&pending)?;
         Ok(())
     }
@@ -827,6 +856,25 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[test]
+    fn a_duplicated_section_is_refused_rather_than_read_as_its_first() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        let mut file = HostsFile::new("test");
+        file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1")
+            .unwrap();
+        file.write_to(&temp_path).unwrap();
+        // A copy of the whole section pasted below it, as a hand edit could.
+        let content = std::fs::read_to_string(&temp_path).unwrap();
+        std::fs::write(&temp_path, format!("{content}{content}")).unwrap();
+
+        let error = read_hosts_at(&temp_path, |document| document.section("test"))
+            .expect_err("two sections for one tag cannot be edited safely");
+        assert!(
+            error.to_string().contains("Duplicate section markers"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn reconciling_owners_leaves_every_other_line_alone() {

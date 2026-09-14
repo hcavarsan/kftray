@@ -84,25 +84,45 @@ static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new()
 /// installation, and the two allocate the same configuration ids; without a
 /// distinct identity a memory-mode run would find, and clean up, the file
 /// database's resources for the same id. The memory identity extends the
-/// installation's with a process-scoped suffix, so the resources screen can
+/// installation's with a session identifier, so the resources screen can
 /// still recognise both as this installation's.
 pub async fn owner_identity(mode: crate::utils::db_mode::DatabaseMode) -> Result<String, String> {
     let installation = installation_id().await?;
     Ok(match mode {
         crate::utils::db_mode::DatabaseMode::File => installation.to_owned(),
-        crate::utils::db_mode::DatabaseMode::Memory => {
-            // The identity is a label value, so the whole derived form has to
-            // fit the 63-character limit; a long persisted id is shortened
-            // here only, leaving file-mode ownership as it was.
-            const SUFFIX_LEN: usize = "-m".len() + 6;
-            let base = &installation[..installation.len().min(63 - SUFFIX_LEN)];
-            format!(
-                "{base}-m{}",
-                MEMORY_DATABASE_IDENTITY
-                    .get_or_init(|| uuid::Uuid::new_v4().simple().to_string()[..6].to_owned())
-            )
-        }
+        crate::utils::db_mode::DatabaseMode::Memory => format!(
+            "{}{MEMORY_OWNER_SEPARATOR}{}",
+            memory_owner_base(installation),
+            MEMORY_DATABASE_IDENTITY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+        ),
     })
+}
+
+/// Separates the installation's part of a memory-mode identity from the
+/// session's.
+const MEMORY_OWNER_SEPARATOR: &str = "-m";
+
+/// The part of the installation id a memory-mode identity is derived from.
+///
+/// The identity is a label value, so the whole derived form has to fit the
+/// 63-character limit with a full 128-bit session identifier after it; two
+/// sessions of one installation must not be able to collide on the resources
+/// they select by configuration id. A persisted id longer than that is
+/// shortened here only, and recognised through the same derivation, leaving
+/// file-mode ownership as it was.
+fn memory_owner_base(installation: &str) -> &str {
+    const SUFFIX_LEN: usize = MEMORY_OWNER_SEPARATOR.len() + 32;
+    &installation[..installation.len().min(63 - SUFFIX_LEN)]
+}
+
+/// Whether an ownership label names this installation, directly or through
+/// one of its memory-mode sessions.
+pub fn owned_by_installation(owner: &str, installation: &str) -> bool {
+    owner == installation
+        || owner
+            .strip_prefix(memory_owner_base(installation))
+            .and_then(|rest| rest.strip_prefix(MEMORY_OWNER_SEPARATOR))
+            .is_some_and(|session| session.len() == 32)
 }
 
 static MEMORY_DATABASE_IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -521,6 +541,27 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn a_memory_session_of_a_long_installation_id_is_still_recognised_as_its_own() {
+        let installation = "a".repeat(63);
+        let session = uuid::Uuid::new_v4().simple().to_string();
+        let owner = format!("{}-m{session}", memory_owner_base(&installation));
+        assert!(
+            owner.len() <= 63,
+            "the derived identity must fit a label value"
+        );
+        assert!(owned_by_installation(&owner, &installation));
+        assert!(owned_by_installation(&installation, &installation));
+        assert!(!owned_by_installation(
+            &format!("{}-m{session}", memory_owner_base(&"b".repeat(63))),
+            &installation
+        ));
+        assert!(
+            !owned_by_installation(&format!("{installation}-m"), &installation),
+            "a bare separator is not a session"
+        );
+    }
 
     lazy_static! {
         static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
