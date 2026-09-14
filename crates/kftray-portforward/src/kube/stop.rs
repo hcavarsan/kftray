@@ -1089,12 +1089,15 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
             {
                 return;
             }
-            if Instant::now() >= until {
+            // One clock read for both the deadline test and the sleep: with two
+            // reads the deadline can pass in between, and the subtraction that
+            // follows would panic and abort the whole reconciliation.
+            let Some(remaining) = until.checked_duration_since(Instant::now()) else {
                 warn!("Giving up on address allocations that never finished");
 
                 return;
-            }
-            tokio::time::sleep(RETRY_DELAY.min(until - Instant::now())).await;
+            };
+            tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
             continue;
         }
         let Some(remaining) = until.checked_duration_since(Instant::now()) else {

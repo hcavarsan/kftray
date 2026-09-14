@@ -218,6 +218,19 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     // which can hang stop operations indefinitely.
     #[cfg(target_os = "macos")]
     {
+        // An alias that is not there needs no removal. Without this check a
+        // machine with no helper reports every stop as leaving an alias
+        // behind, and the cleanup record that failure keeps would block
+        // deleting the configuration for the rest of the session.
+        //
+        // Only a successful query proves absence: a failed one must stay an
+        // error, or a broken `ifconfig` would read as confirmed cleanup.
+        if !macos_alias_exists(addr)? {
+            debug!("No loopback alias for {addr}; nothing to remove");
+
+            return Ok(());
+        }
+
         // Reported as a failure rather than silently skipped: the alias is
         // still configured, and the caller keeps the configuration tracked so a
         // later stop, with the helper available, retries it.
@@ -323,6 +336,42 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
     }
 }
 
+/// Whether `addr` is configured on the loopback interface.
+///
+/// Matched field by field rather than by substring: `127.0.0.1` is a substring
+/// of `127.0.0.10`, and treating one as the other would either skip a removal
+/// that is owed or report one that is not.
+#[cfg(target_os = "macos")]
+fn macos_alias_exists(addr: &str) -> Result<bool> {
+    let output = Command::new("/sbin/ifconfig")
+        .arg("lo0")
+        .output()
+        .map_err(|error| anyhow!("Failed to query loopback aliases: {error}"))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to query loopback aliases: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(ifconfig_lists_address(
+        &String::from_utf8_lossy(&output.stdout),
+        addr,
+    ))
+}
+
+/// Whether `ifconfig` output lists `addr` as a configured address.
+#[cfg(target_os = "macos")]
+fn ifconfig_lists_address(output: &str, addr: &str) -> bool {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            matches!(fields.next(), Some("inet" | "inet6")).then(|| fields.next())?
+        })
+        .any(|configured| configured == addr)
+}
+
 #[cfg(target_os = "linux")]
 fn linux_alias_exists(addr: &str) -> Result<bool> {
     let output = Command::new("ip")
@@ -392,6 +441,26 @@ mod tests {
         assert!(!is_loopback_address("192.168.1.1"));
         assert!(!is_loopback_address("10.0.0.1"));
         assert!(!is_loopback_address("invalid-ip"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_configured_alias_is_matched_whole() {
+        let output = "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384\n\
+                      \toptions=1203<RXCSUM,TXCSUM,TXSTATUS,SW_TIMESTAMP>\n\
+                      \tinet 127.0.0.1 netmask 0xff000000\n\
+                      \tinet6 ::1 prefixlen 128\n\
+                      \tinet 127.0.0.10 netmask 0xff000000\n";
+
+        assert!(ifconfig_lists_address(output, "127.0.0.1"));
+        assert!(ifconfig_lists_address(output, "127.0.0.10"));
+        assert!(ifconfig_lists_address(output, "::1"));
+        // A prefix of a configured address is not configured itself, and
+        // treating it as present would keep reporting a removal that is owed.
+        assert!(!ifconfig_lists_address(output, "127.0.0.2"));
+        assert!(!ifconfig_lists_address(output, "127.0.0."));
+        // Only the address field counts, never the flags or netmask columns.
+        assert!(!ifconfig_lists_address(output, "0xff000000"));
     }
 
     #[test]
