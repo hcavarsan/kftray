@@ -413,23 +413,55 @@ impl App {
         self.forwarding_cancel.cancel();
         self.forwarding_slots.close();
         self.stop_slots.close();
-        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
-        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
-            .await
-            .is_ok()
-        {
-            return;
+        let mut timed_out = self.drain_forwarding_tasks().await.is_err();
+        if timed_out {
+            log::warn!("Forwarding tasks did not finish in time; aborting them");
+            self.forwarding_tasks.abort_all();
+            timed_out = self.drain_forwarding_tasks().await.is_err();
         }
-
-        log::warn!("Forwarding tasks did not finish in time; aborting them");
-        self.forwarding_tasks.abort_all();
-        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
-        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
-            .await
-            .is_err()
-        {
+        if timed_out {
             log::error!("Abandoning forwarding tasks that ignored abort");
         }
+
+        // The event loop is over, so nothing draws a popup any more: whatever
+        // reached the error channel and was never shown goes to the log and to
+        // the terminal, which is back in its normal mode by now.
+        if let Some(receiver) = &mut self.error_receiver {
+            while let Ok(report) = receiver.try_recv() {
+                log::error!("{report}");
+                eprintln!("{report}");
+            }
+        }
+    }
+
+    /// Joins every forwarding task under the shutdown deadline, reporting the
+    /// ones that failed by the configuration they were working on. A task
+    /// cancelled by this shutdown is not a failure.
+    async fn drain_forwarding_tasks(&mut self) -> Result<(), tokio::time::error::Elapsed> {
+        tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, async {
+            while let Some(joined) = self.forwarding_tasks.join_next_with_id().await {
+                let error = match joined {
+                    Ok((id, ())) => {
+                        self.task_configs.remove(&id);
+                        continue;
+                    }
+                    Err(error) => error,
+                };
+                let config_id = self.task_configs.remove(&error.id());
+                if error.is_cancelled() {
+                    continue;
+                }
+                let subject = config_id
+                    .map(|id| format!("Config {id}"))
+                    .unwrap_or_else(|| "A port forward operation".to_owned());
+                let report = format!("{subject} failed unexpectedly during shutdown: {error}");
+                log::error!("{report}");
+                if let Some(sender) = &self.error_sender {
+                    let _ = sender.send(report);
+                }
+            }
+        })
+        .await
     }
 
     fn matches_search_query(config: &Config, query_lower: &str) -> bool {

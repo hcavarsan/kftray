@@ -23,6 +23,7 @@ pub use listener::{
     Protocol,
 };
 pub use proxy::{
+    INSTALLATION_LABEL,
     deploy_and_forward_pod,
     deploy_and_forward_pod_with_mode,
     proxy_resource_prefix,

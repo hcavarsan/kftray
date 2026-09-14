@@ -58,6 +58,7 @@ pub async fn list_all_kftray_resources(
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client = connection.client;
+    let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
     let username = whoami::username()
         .unwrap_or_else(|_| "unknown".to_string())
@@ -111,15 +112,26 @@ pub async fn list_all_kftray_resources(
         let mut resources = Vec::new();
 
         resources.extend(
-            list_pods_in_namespace(&client, &namespace, &clean_username, &config_ids)
-                .await
-                .unwrap_or_default(),
+            list_pods_in_namespace(
+                &client,
+                &namespace,
+                &clean_username,
+                &config_ids,
+                installation_id,
+            )
+            .await
+            .unwrap_or_default(),
         );
 
-        let user_deployments =
-            list_deployments_in_namespace(&client, &namespace, &clean_username, &config_ids)
-                .await
-                .unwrap_or_default();
+        let user_deployments = list_deployments_in_namespace(
+            &client,
+            &namespace,
+            &clean_username,
+            &config_ids,
+            installation_id,
+        )
+        .await
+        .unwrap_or_default();
 
         let deployment_config_ids: Vec<String> = user_deployments
             .iter()
@@ -129,14 +141,26 @@ pub async fn list_all_kftray_resources(
         resources.extend(user_deployments);
 
         resources.extend(
-            list_services_in_namespace(&client, &namespace, &deployment_config_ids, &config_ids)
-                .await
-                .unwrap_or_default(),
+            list_services_in_namespace(
+                &client,
+                &namespace,
+                &deployment_config_ids,
+                &config_ids,
+                installation_id,
+            )
+            .await
+            .unwrap_or_default(),
         );
         resources.extend(
-            list_ingresses_in_namespace(&client, &namespace, &deployment_config_ids, &config_ids)
-                .await
-                .unwrap_or_default(),
+            list_ingresses_in_namespace(
+                &client,
+                &namespace,
+                &deployment_config_ids,
+                &config_ids,
+                installation_id,
+            )
+            .await
+            .unwrap_or_default(),
         );
 
         if !resources.is_empty() {
@@ -162,8 +186,23 @@ pub async fn list_all_kftray_resources(
     Ok(namespace_groups)
 }
 
+/// Whether a resource may be shown and deleted from this screen.
+///
+/// A name prefix is not proof of ownership: it truncates the username, so two
+/// users, or two installations of one user, can produce the same one. A
+/// resource labelled with another installation's id is theirs and is hidden.
+/// One with no such label predates the label and cannot be attributed, and
+/// this screen is exactly where those are meant to be removed by hand.
+fn belongs_here(
+    labels: &std::collections::BTreeMap<String, String>, installation_id: &str,
+) -> bool {
+    labels
+        .get(kftray_portforward::kube::INSTALLATION_LABEL)
+        .is_none_or(|owner| owner == installation_id)
+}
+
 async fn list_pods_in_namespace(
-    client: &Client, namespace: &str, username: &str, config_ids: &[String],
+    client: &Client, namespace: &str, username: &str, config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
@@ -186,6 +225,7 @@ async fn list_pods_in_namespace(
 
             if !pod_name.starts_with(&user_prefix_forward)
                 && !pod_name.starts_with(&user_prefix_expose)
+                || !belongs_here(pod.labels(), installation_id)
             {
                 return None;
             }
@@ -225,7 +265,7 @@ async fn list_pods_in_namespace(
 }
 
 async fn list_deployments_in_namespace(
-    client: &Client, namespace: &str, username: &str, config_ids: &[String],
+    client: &Client, namespace: &str, username: &str, config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
@@ -245,7 +285,8 @@ async fn list_deployments_in_namespace(
         .into_iter()
         .filter(|deployment| {
             let name = deployment.name_any();
-            name.starts_with(&expose_prefix) || name.starts_with(&forward_prefix)
+            (name.starts_with(&expose_prefix) || name.starts_with(&forward_prefix))
+                && belongs_here(deployment.labels(), installation_id)
         })
         .map(|deployment| {
             let config_id = deployment.labels().get("config_id").map(|s| s.to_string());
@@ -288,6 +329,7 @@ async fn list_deployments_in_namespace(
 
 async fn list_services_in_namespace(
     client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
+    installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let services_api: Api<Service> = Api::namespaced(client.clone(), namespace);
     let lp = ListParams::default().labels("app=kftray-expose");
@@ -301,6 +343,9 @@ async fn list_services_in_namespace(
         .items
         .into_iter()
         .filter_map(|service| {
+            if !belongs_here(service.labels(), installation_id) {
+                return None;
+            }
             let config_id = service.labels().get("config_id").map(|s| s.to_string());
 
             if let Some(ref id) = config_id {
@@ -345,6 +390,7 @@ async fn list_services_in_namespace(
 
 async fn list_ingresses_in_namespace(
     client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
+    installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let ingresses_api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
     let lp = ListParams::default().labels("app=kftray-expose");
@@ -358,6 +404,9 @@ async fn list_ingresses_in_namespace(
         .items
         .into_iter()
         .filter_map(|ingress| {
+            if !belongs_here(ingress.labels(), installation_id) {
+                return None;
+            }
             let config_id = ingress.labels().get("config_id").map(|s| s.to_string());
 
             if let Some(ref id) = config_id {
@@ -483,31 +532,72 @@ pub async fn delete_kftray_resource(
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
+    let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
+
+    // Checked on the object itself, not on what the screen listed: the name
+    // alone reaches another installation's resource, and deleting one by
+    // mistake takes down a forward that is not ours.
+    async fn delete_owned<K>(
+        api: Api<K>, name: &str, params: &DeleteParams, installation_id: &str, kind: &str,
+    ) -> Result<(), String>
+    where
+        K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
+    {
+        let object = api
+            .get(name)
+            .await
+            .map_err(|e| format!("Failed to read {kind}: {e}"))?;
+        if !belongs_here(
+            object.meta().labels.as_ref().unwrap_or(&Default::default()),
+            installation_id,
+        ) {
+            return Err(format!(
+                "{kind} {name} belongs to another kftray installation and was left alone"
+            ));
+        }
+        api.delete(name, params)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("Failed to delete {kind}: {e}"))
+    }
 
     match resource_type {
         "pod" => {
             let api: Api<Pod> = Api::namespaced(client, namespace);
-            api.delete(resource_name, &delete_params)
-                .await
-                .map_err(|e| format!("Failed to delete pod: {e}"))?;
+            delete_owned(api, resource_name, &delete_params, installation_id, "pod").await?;
         }
         "deployment" => {
             let api: Api<Deployment> = Api::namespaced(client, namespace);
-            api.delete(resource_name, &delete_params)
-                .await
-                .map_err(|e| format!("Failed to delete deployment: {e}"))?;
+            delete_owned(
+                api,
+                resource_name,
+                &delete_params,
+                installation_id,
+                "deployment",
+            )
+            .await?;
         }
         "service" => {
             let api: Api<Service> = Api::namespaced(client, namespace);
-            api.delete(resource_name, &delete_params)
-                .await
-                .map_err(|e| format!("Failed to delete service: {e}"))?;
+            delete_owned(
+                api,
+                resource_name,
+                &delete_params,
+                installation_id,
+                "service",
+            )
+            .await?;
         }
         "ingress" => {
             let api: Api<Ingress> = Api::namespaced(client, namespace);
-            api.delete(resource_name, &delete_params)
-                .await
-                .map_err(|e| format!("Failed to delete ingress: {e}"))?;
+            delete_owned(
+                api,
+                resource_name,
+                &delete_params,
+                installation_id,
+                "ingress",
+            )
+            .await?;
         }
         _ => {
             return Err(format!("Unsupported resource type: {}", resource_type));

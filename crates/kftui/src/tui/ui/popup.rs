@@ -677,9 +677,13 @@ pub fn render_error_popup(
     // be taller than the popup. Without scrolling the later failures are
     // clipped, and dismissing the popup would discard them unseen.
     //
-    // The hint is measured before the content is budgeted: the popup does not
-    // wrap, so a hint that needs two rows would otherwise push itself past the
-    // bottom border and lose the part saying how to dismiss it.
+    // The hint is budgeted before the content: the popup does not wrap, so a
+    // hint that needs two rows would otherwise push itself past the bottom
+    // border and lose the part saying how to dismiss it. When even that budget
+    // does not fit the inner height, the separator goes and the hint shrinks
+    // to one row that leads with how to close, so the smallest terminal still
+    // shows a way out.
+    let inner_height = usize::from(popup_area.height.saturating_sub(2));
     let hint_width = content_width.saturating_sub(4);
     let hint_rows = |text: &str| wrap_text_simple(text, hint_width).len();
     let widest_hint = hint_rows(&format!(
@@ -690,23 +694,33 @@ pub fn render_error_popup(
         "End of message — <Up> to scroll back, <Enter> to close",
     ))
     .max(hint_rows("Press <Enter> to close"));
-    let visible = usize::from(popup_area.height)
-        .saturating_sub(3 + widest_hint)
+    let compact = inner_height < 2 + widest_hint;
+    let (separator_rows, hint_budget) = if compact { (0, 1) } else { (1, widest_hint) };
+    let visible = inner_height
+        .saturating_sub(separator_rows + hint_budget)
         .max(1);
     let hidden = lines.len().saturating_sub(visible);
     let offset = scroll.min(hidden);
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
 
-    lines.push("".into());
     let remaining = hidden - offset;
-    let hint = if remaining > 0 {
-        format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
-    } else if hidden > 0 {
-        "End of message — <Up> to scroll back, <Enter> to close".to_string()
-    } else {
-        "Press <Enter> to close".to_string()
+    let hint = match (compact, remaining > 0, hidden > 0) {
+        (true, true, _) => format!("<Enter> closes, {remaining} more, <Up>/<Down>"),
+        (true, false, true) => "<Enter> closes, <Up> scrolls back".to_string(),
+        (true, false, false) => "<Enter> closes".to_string(),
+        (false, true, _) => {
+            format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
+        }
+        (false, false, true) => {
+            "End of message — <Up> to scroll back, <Enter> to close".to_string()
+        }
+        (false, false, false) => "Press <Enter> to close".to_string(),
     };
-    for line in wrap_text_simple(&hint, hint_width) {
+    if !compact {
+        lines.push("".into());
+    }
+    let hint_lines = wrap_text_simple(&hint, hint_width);
+    for line in hint_lines.into_iter().take(hint_budget) {
         lines.push(Line::from(vec![format!("  {line}").fg(SUBTEXT0).italic()]));
     }
 

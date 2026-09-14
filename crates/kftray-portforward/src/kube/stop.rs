@@ -665,12 +665,14 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
 /// The whole operation is bounded, not just its polling: the client carries no
 /// per-request timeout, so a server that accepts a request and never answers
 /// would hold the lifecycle lock for as long as an interactive stop waits.
-async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String> {
+async fn delete_cluster_resources(
+    id: i64, config: &Config, mode: DatabaseMode,
+) -> Result<(), String> {
     const CLUSTER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
 
     match timeout(
         CLUSTER_CLEANUP_TIMEOUT,
-        delete_cluster_resources_inner(id, config),
+        delete_cluster_resources_inner(id, config, mode),
     )
     .await
     {
@@ -682,7 +684,9 @@ async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String
     }
 }
 
-async fn delete_cluster_resources_inner(id: i64, config: &Config) -> Result<(), String> {
+async fn delete_cluster_resources_inner(
+    id: i64, config: &Config, mode: DatabaseMode,
+) -> Result<(), String> {
     if config.workload_type.as_deref() != Some("expose")
         && config.workload_type.as_deref() != Some("proxy")
         && config.protocol != "udp"
@@ -700,7 +704,11 @@ async fn delete_cluster_resources_inner(id: i64, config: &Config) -> Result<(), 
             &config.namespace,
             &id.to_string(),
             config.exposure_type.as_deref() == Some("public"),
-            &crate::expose::kubernetes::ExposeLocation::of(config),
+            &crate::expose::kubernetes::ExposeLocation::resolve(
+                &connection.cluster_url,
+                &config.namespace,
+            ),
+            mode,
         )
         .await
     } else {
@@ -1337,7 +1345,7 @@ async fn stop_config(
         let now = Instant::now();
         for target in &targets {
             let cluster = if target.cluster {
-                delete_cluster_resources(id, &target.config).await
+                delete_cluster_resources(id, &target.config, mode).await
             } else {
                 Ok(())
             };
@@ -1375,13 +1383,23 @@ async fn stop_config(
             // window, need cluster access again for resources already proven
             // gone, and block deleting a configuration that is only waiting on
             // a loopback alias.
-            if target.cluster && !cluster_owed && unanswered.contains(&target.config) {
+            // The uncertainty marker goes with the obligation it qualified:
+            // kept on a target that only owes local cleanup, it would make
+            // the pass that finally releases the alias treat the target as
+            // unanswered again, restart a counter that no longer exists and
+            // recreate a cluster obligation already proven settled.
+            let cluster_settled = target.cluster && !cluster_owed;
+            if cluster_settled && unanswered.contains(&target.config) {
                 forget_uncertain_target(id, &target.config, mode).await;
             }
             set_target_obligations(
                 id,
                 &target.config,
-                target.uncertain_until,
+                if cluster_settled {
+                    None
+                } else {
+                    target.uncertain_until
+                },
                 cluster_owed,
                 target.local && !local.settled(),
             );

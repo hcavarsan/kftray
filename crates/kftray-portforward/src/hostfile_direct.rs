@@ -2,8 +2,10 @@ use std::collections::HashSet;
 
 use kftray_commons::models::hostfile::HostEntry;
 use kftray_commons::utils::hostsfile::{
-    HostsFile,
+    HostsDocument,
     SectionEntry,
+    edit_hosts,
+    read_hosts,
 };
 use log::debug;
 
@@ -38,18 +40,20 @@ impl DirectHostfileManager {
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> std::io::Result<()> {
         debug!("Adding host entry for ID {id}: {entry:?}");
 
-        let mut hosts = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG);
-        hosts
-            .add_owned_entry(entry.ip, &entry.hostname, &id)
-            .map_err(std::io::Error::other)?;
-        hosts
-            .reconcile_owners(&[id.as_str()])
-            .map_err(std::io::Error::other)?;
-
-        // A copy of the same alias left in the shared section by a version that
-        // wrote there would keep resolving after this line is removed, so it is
-        // migrated out now that the alias has an owned line of its own.
-        Self::prune_legacy_entries(&[(entry.ip, entry.hostname)])
+        let owned = SectionEntry {
+            ip: entry.ip,
+            hostname: entry.hostname.clone(),
+            owner: Some(id.clone()),
+        };
+        // One locked edit for both sections: the alias gets its owned line and
+        // any unmarked copy of it left in the shared section by a version that
+        // wrote there goes in the same write, so no state in between can be
+        // observed or left behind by a failure.
+        edit_hosts(|document| {
+            document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &[id.as_str()], &[owned])?;
+            prune_legacy(document, &[(entry.ip, entry.hostname)])
+        })
+        .map_err(std::io::Error::other)
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
@@ -65,56 +69,26 @@ impl DirectHostfileManager {
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
         debug!("Removing host entries for IDs {ids:?}");
 
-        // Read first so the aliases being dropped are known: once their lines
-        // are gone nothing else records which mapping a legacy copy would be.
-        let dropping: Vec<(std::net::IpAddr, String)> = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
-            .read_section()
-            .map_err(std::io::Error::other)?
-            .into_iter()
-            .filter(|entry| {
-                entry
-                    .owner
-                    .as_deref()
-                    .is_some_and(|owner| ids.contains(&owner))
-            })
-            .map(|entry| (entry.ip, entry.hostname))
-            .collect();
-
-        let present = HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
-            .reconcile_owners(ids)
-            .map_err(std::io::Error::other)?;
-
-        Self::prune_legacy_entries(&dropping)?;
-
-        Ok(!present.is_empty())
-    }
-
-    /// Takes unmarked copies of `mappings` out of the shared section.
-    ///
-    /// Only lines with no owner are candidates: they were written by a version
-    /// that shared the helper's section and cannot be attributed any other
-    /// way. A line the helper marked with another configuration's id is that
-    /// configuration's, however similar its alias, and stays.
-    fn prune_legacy_entries(mappings: &[(std::net::IpAddr, String)]) -> std::io::Result<()> {
-        if mappings.is_empty() {
-            return Ok(());
-        }
-        let legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
-        // Skipped without a write when the section is absent: the hosts file
-        // usually needs elevated privileges even to open for writing, and a
-        // rewrite that changes nothing would still fail on that.
-        if !legacy.section_exists().map_err(std::io::Error::other)? {
-            return Ok(());
-        }
-        legacy
-            .retain_section(|entry: &SectionEntry| {
-                entry.owner.is_some()
-                    || !mappings
-                        .iter()
-                        .any(|(ip, hostname)| entry.ip == *ip && entry.hostname == *hostname)
-            })
-            .map(|_| ())
-            .map_err(std::io::Error::other)
+        edit_hosts(|document| {
+            // Read inside the same edit that drops them: once the owned lines
+            // are gone nothing else records which mapping a legacy copy would
+            // be, and a failure between the two would lose it.
+            let dropping: Vec<(std::net::IpAddr, String)> = document
+                .section(KFTRAY_DIRECT_HOSTS_TAG)?
+                .into_iter()
+                .filter(|entry| {
+                    entry
+                        .owner
+                        .as_deref()
+                        .is_some_and(|owner| ids.contains(&owner))
+                })
+                .map(|entry| (entry.ip, entry.hostname))
+                .collect();
+            let present = document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, ids, &[])?;
+            prune_legacy(document, &dropping)?;
+            Ok(!present.is_empty())
+        })
+        .map_err(std::io::Error::other)
     }
 
     /// The privileged helper's section, as it is on disk.
@@ -122,9 +96,7 @@ impl DirectHostfileManager {
     /// This manager cannot write there, so a caller that needs verified
     /// cleanup has to look at what is actually left.
     pub fn helper_section() -> std::io::Result<Vec<SectionEntry>> {
-        HostsFile::new(KFTRAY_HOSTS_TAG)
-            .read_section()
-            .map_err(std::io::Error::other)
+        read_hosts(|document| document.section(KFTRAY_HOSTS_TAG)).map_err(std::io::Error::other)
     }
 
     /// Removes both sections whole, unowned lines included.
@@ -135,33 +107,32 @@ impl DirectHostfileManager {
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
         debug!("Removing all host entries");
 
-        HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
-            .write()
-            .map_err(std::io::Error::other)?;
-        HostsFile::new(KFTRAY_HOSTS_TAG)
-            .write()
-            .map(|_| ())
-            .map_err(std::io::Error::other)
+        edit_hosts(|document| {
+            document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
+            document.clear_section(KFTRAY_HOSTS_TAG)
+        })
+        .map_err(std::io::Error::other)
     }
 
     /// Every owned alias in this manager's section.
     pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
-        Ok(HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
-            .read_section()
-            .map_err(std::io::Error::other)?
-            .into_iter()
-            .filter_map(|entry| {
-                entry.owner.map(|owner| {
-                    (
-                        owner,
-                        HostEntry {
-                            ip: entry.ip,
-                            hostname: entry.hostname,
-                        },
-                    )
+        Ok(
+            read_hosts(|document| document.section(KFTRAY_DIRECT_HOSTS_TAG))
+                .map_err(std::io::Error::other)?
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.owner.map(|owner| {
+                        (
+                            owner,
+                            HostEntry {
+                                ip: entry.ip,
+                                hostname: entry.hostname,
+                            },
+                        )
+                    })
                 })
-            })
-            .collect())
+                .collect(),
+        )
     }
 
     /// Whether any of `ids` still has a line in the helper's section, judged
@@ -189,26 +160,33 @@ impl DirectHostfileManager {
             })
             .collect()
     }
+}
 
-    #[cfg(test)]
-    fn prune_legacy_entries_in(
-        path: &std::path::Path, mappings: &[(std::net::IpAddr, String)],
-    ) -> std::io::Result<()> {
-        HostsFile::new(KFTRAY_HOSTS_TAG)
-            .retain_section_in(path, |entry: &SectionEntry| {
-                entry.owner.is_some()
-                    || !mappings
-                        .iter()
-                        .any(|(ip, hostname)| entry.ip == *ip && entry.hostname == *hostname)
-            })
-            .map(|_| ())
-            .map_err(std::io::Error::other)
+/// Takes unmarked copies of `mappings` out of the shared section.
+///
+/// Only lines with no owner are candidates: they were written by a version
+/// that shared the helper's section and cannot be attributed any other way. A
+/// line the helper marked with another configuration's id is that
+/// configuration's, however similar its alias, and stays.
+fn prune_legacy(
+    document: &mut HostsDocument, mappings: &[(std::net::IpAddr, String)],
+) -> kftray_commons::utils::hostsfile::Result<()> {
+    if mappings.is_empty() {
+        return Ok(());
     }
+    document.retain(KFTRAY_HOSTS_TAG, |entry: &SectionEntry| {
+        entry.owner.is_some()
+            || !mappings
+                .iter()
+                .any(|(ip, hostname)| entry.ip == *ip && entry.hostname == *hostname)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::IpAddr;
+
+    use kftray_commons::utils::hostsfile::HostsFile;
 
     use super::*;
 
@@ -231,10 +209,9 @@ mod tests {
             .add_entry(addr(1), "other.local");
         legacy.write_to(&temp_path).unwrap();
 
-        DirectHostfileManager::prune_legacy_entries_in(
-            &temp_path,
-            &[(addr(1), "shared.local".to_owned())],
-        )
+        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {
+            prune_legacy(document, &[(addr(1), "shared.local".to_owned())])
+        })
         .unwrap();
 
         let remaining: Vec<(String, Option<String>)> = HostsFile::new(KFTRAY_HOSTS_TAG)

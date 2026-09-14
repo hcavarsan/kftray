@@ -1,5 +1,9 @@
 use kftray_commons::models::hostfile::HostEntry;
-use kftray_commons::utils::hostsfile::HostsFile;
+use kftray_commons::utils::hostsfile::{
+    SectionEntry,
+    edit_hosts,
+    read_hosts,
+};
 use log::{
     debug,
     info,
@@ -42,20 +46,29 @@ impl HostfileManager {
     pub fn add_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileError> {
         debug!("Adding host entry for ID {id}: {entry:?}");
 
-        let mut hosts = HostsFile::new(KFTRAY_HOSTS_TAG);
         // Marked with the configuration it belongs to: an unattributable line
         // cannot be told apart from another writer's, so the application
         // verifying one removal would have to treat every line as possibly
         // its own.
-        hosts.add_owned_entry(entry.ip, &entry.hostname, &id)?;
-        hosts.reconcile_owners(&[id.as_str()])?;
+        let owned = SectionEntry {
+            ip: entry.ip,
+            hostname: entry.hostname,
+            owner: Some(id.clone()),
+        };
+        edit_hosts(|document| {
+            document.reconcile_owners(KFTRAY_HOSTS_TAG, &[id.as_str()], &[owned])?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     pub fn remove_entry(&self, id: &str) -> Result<(), HostfileError> {
         debug!("Removing host entry for ID {id}");
 
-        HostsFile::new(KFTRAY_HOSTS_TAG).reconcile_owners(&[id])?;
+        edit_hosts(|document| {
+            document.reconcile_owners(KFTRAY_HOSTS_TAG, &[id], &[])?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -63,14 +76,13 @@ impl HostfileManager {
     pub fn remove_all_entries(&self) -> Result<(), HostfileError> {
         info!("Removing all host entries");
 
-        HostsFile::new(KFTRAY_HOSTS_TAG).write()?;
+        edit_hosts(|document| document.clear_section(KFTRAY_HOSTS_TAG))?;
         Ok(())
     }
 
     /// Every owned alias in this helper's section.
     pub fn list_entries(&self) -> Result<Vec<(String, HostEntry)>, HostfileError> {
-        Ok(HostsFile::new(KFTRAY_HOSTS_TAG)
-            .read_section()?
+        Ok(read_hosts(|document| document.section(KFTRAY_HOSTS_TAG))?
             .into_iter()
             .filter_map(|entry| {
                 entry.owner.map(|owner| {

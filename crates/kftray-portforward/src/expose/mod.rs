@@ -91,11 +91,11 @@ pub(crate) async fn start_single_expose(
     }
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-    let client = SHARED_CLIENT_MANAGER
+    let connection = SHARED_CLIENT_MANAGER
         .get_connection(client_key)
         .await
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = client.client.clone();
+    let client = connection.client.clone();
 
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
@@ -108,9 +108,9 @@ pub(crate) async fn start_single_expose(
             _ = token.cancelled() => {
                 return Err(format!("Expose startup cancelled for config {config_id}"));
             }
-            created = create_expose_resources(client.clone(), &config) => created,
+            created = create_expose_resources(&connection, &config, mode) => created,
         },
-        None => create_expose_resources(client.clone(), &config).await,
+        None => create_expose_resources(&connection, &config, mode).await,
     };
     // Confirmed only when the outcome is definitive. A transport failure or a
     // server-side timeout can be answered while the object is still being

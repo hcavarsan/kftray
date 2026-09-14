@@ -138,9 +138,6 @@ fn with_identity_lock<T>(
 pub fn with_file_lock<T>(
     lock_path: &std::path::Path, work: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
-    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
-    const POLL: std::time::Duration = std::time::Duration::from_millis(25);
-
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -161,39 +158,58 @@ pub fn with_file_lock<T>(
             )
         })?;
 
+    wait_for_exclusive_lock(&lock, LockRegion::Whole, &lock_path.display().to_string())?;
+
+    let result = work();
+    unlock(&lock, LockRegion::Whole);
+    result
+}
+
+/// Which bytes of a file an exclusive lock covers.
+///
+/// Advisory `flock` locks cover the whole file whatever the region. Windows
+/// locks are mandatory and enforced against every other handle, including the
+/// holder's own, so a file that the holder also has to rewrite is locked on
+/// a byte far beyond any length it will ever have instead.
+#[derive(Clone, Copy)]
+pub(crate) enum LockRegion {
+    Whole,
+    /// A single byte at a 1 GiB offset, in the manner of SQLite's pending byte.
+    PendingByte,
+}
+
+/// Waits for an exclusive lock on `file`, up to a fixed budget.
+///
+/// `what` names the file in errors.
+pub(crate) fn wait_for_exclusive_lock(
+    file: &fs::File, region: LockRegion, what: &str,
+) -> Result<(), String> {
+    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
     let deadline = std::time::Instant::now() + LOCK_WAIT;
     loop {
-        match try_lock_exclusive(&lock) {
-            Ok(true) => break,
+        match try_lock_exclusive(file, region) {
+            Ok(true) => return Ok(()),
             // Only contention is worth waiting out. A filesystem without
             // advisory locking refuses every attempt, and waiting the full
             // budget would report a timeout instead of the reason.
             Ok(false) => {}
             Err(error) => {
-                return Err(format!(
-                    "Failed to take the lock at {}: {error}",
-                    lock_path.display()
-                ));
+                return Err(format!("Failed to take the lock at {what}: {error}"));
             }
         }
         if std::time::Instant::now() >= deadline {
-            return Err(format!(
-                "Timed out waiting for the lock at {}",
-                lock_path.display()
-            ));
+            return Err(format!("Timed out waiting for the lock at {what}"));
         }
         std::thread::sleep(POLL);
     }
-
-    let result = work();
-    unlock(&lock);
-    result
 }
 
 /// Takes the lock, reporting contention as `Ok(false)` and anything else as an
 /// error: a filesystem that cannot lock at all must not look like a busy peer.
 #[cfg(unix)]
-fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
+fn try_lock_exclusive(file: &fs::File, _region: LockRegion) -> std::io::Result<bool> {
     use std::os::fd::AsRawFd;
 
     // SAFETY: the descriptor is owned by `file` and outlives this call.
@@ -211,7 +227,7 @@ fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
 }
 
 #[cfg(unix)]
-fn unlock(file: &fs::File) {
+pub(crate) fn unlock(file: &fs::File, _region: LockRegion) {
     use std::os::fd::AsRawFd;
 
     // SAFETY: the descriptor is owned by `file` and outlives this call.
@@ -220,8 +236,25 @@ fn unlock(file: &fs::File) {
     }
 }
 
+/// Offset and length of the bytes a region locks.
 #[cfg(windows)]
-fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
+fn region_bytes(region: LockRegion) -> (u64, u32, u32) {
+    match region {
+        LockRegion::Whole => (0, u32::MAX, u32::MAX),
+        LockRegion::PendingByte => (1 << 30, 1, 0),
+    }
+}
+
+#[cfg(windows)]
+fn overlapped_at(offset: u64) -> windows::Win32::System::IO::OVERLAPPED {
+    let mut overlapped = windows::Win32::System::IO::OVERLAPPED::default();
+    overlapped.Anonymous.Anonymous.Offset = offset as u32;
+    overlapped.Anonymous.Anonymous.OffsetHigh = (offset >> 32) as u32;
+    overlapped
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &fs::File, region: LockRegion) -> std::io::Result<bool> {
     use std::os::windows::io::AsRawHandle;
 
     use windows::Win32::Foundation::HANDLE;
@@ -230,9 +263,9 @@ fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
         LOCKFILE_FAIL_IMMEDIATELY,
         LockFileEx,
     };
-    use windows::Win32::System::IO::OVERLAPPED;
 
-    let mut overlapped = OVERLAPPED::default();
+    let (offset, low, high) = region_bytes(region);
+    let mut overlapped = overlapped_at(offset);
 
     // SAFETY: the handle is owned by `file` and outlives this call.
     let locked = unsafe {
@@ -240,8 +273,8 @@ fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
             HANDLE(file.as_raw_handle()),
             LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
             None,
-            u32::MAX,
-            u32::MAX,
+            low,
+            high,
             &mut overlapped,
         )
     };
@@ -263,22 +296,22 @@ fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
 }
 
 #[cfg(windows)]
-fn unlock(file: &fs::File) {
+pub(crate) fn unlock(file: &fs::File, region: LockRegion) {
     use std::os::windows::io::AsRawHandle;
 
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::UnlockFileEx;
-    use windows::Win32::System::IO::OVERLAPPED;
 
-    let mut overlapped = OVERLAPPED::default();
+    let (offset, low, high) = region_bytes(region);
+    let mut overlapped = overlapped_at(offset);
 
     // SAFETY: the handle is owned by `file` and outlives this call.
     unsafe {
         let _ = UnlockFileEx(
             HANDLE(file.as_raw_handle()),
             None,
-            u32::MAX,
-            u32::MAX,
+            low,
+            high,
             &mut overlapped,
         );
     }

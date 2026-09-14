@@ -120,16 +120,19 @@ impl HostfileManager {
         if let Err(e) = self.direct_manager.remove_all_host_entries() {
             errors.push(format!("direct: {e}"));
         }
+
+        if !errors.is_empty() {
+            // The attribution stays: an unmarked line an older helper left
+            // behind can only be tied to its id through what was handed over,
+            // and a later per-id removal would otherwise pass verification with
+            // the alias still resolving.
+            return Err(std::io::Error::other(errors.join("; ")));
+        }
         self.handed_to_helper
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(std::io::Error::other(errors.join("; ")))
-        }
+        Ok(())
     }
 }
 

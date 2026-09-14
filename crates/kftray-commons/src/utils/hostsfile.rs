@@ -4,8 +4,6 @@ use std::{
     fs::OpenOptions,
     io::{
         self,
-        BufRead,
-        BufReader,
         Write,
     },
     net::IpAddr,
@@ -19,7 +17,7 @@ use std::{
     },
 };
 
-pub type Result<T> = std::result::Result<T, HostsFileError>;
+pub type Result<T, E = HostsFileError> = std::result::Result<T, E>;
 
 #[derive(Debug, Clone)]
 pub enum HostsFileError {
@@ -48,7 +46,7 @@ impl From<io::Error> for HostsFileError {
     }
 }
 
-/// Comment that records which configuration owns a managed line.
+/// Trailing comment that records which configuration a line belongs to.
 const OWNER_MARKER: &str = " # kftray-id=";
 
 /// One line inside a managed section.
@@ -59,36 +57,6 @@ pub struct SectionEntry {
     /// Configuration this entry was written for, when the writer recorded one.
     /// Entries without an owner belong to another writer and are preserved.
     pub owner: Option<String>,
-}
-
-/// Serializes hosts-file changes across every process that makes them.
-///
-/// The lock lives in the system temporary directory rather than the
-/// configuration directory: the hosts file is one system-wide resource, and a
-/// lock under `KFTRAY_CONFIG` would give two instances, or the unprivileged
-/// app and the privileged helper installed with a different configuration
-/// path, two different locks for it.
-fn with_hosts_lock<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
-    let lock_path = std::env::temp_dir().join("kftray-hosts.lock");
-    let mut outcome = None;
-    crate::utils::config_dir::with_file_lock(&lock_path, || {
-        outcome = Some(work());
-        Ok(())
-    })
-    .map_err(HostsFileError::Io)?;
-    // Every writer of the hosts file has to be able to take it, including one
-    // running as a different user.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o666));
-    }
-
-    outcome.unwrap_or_else(|| {
-        Err(HostsFileError::Io(
-            "Hosts lock produced no result".to_owned(),
-        ))
-    })
 }
 
 /// Rejects an owner that could change the structure of the file.
@@ -118,6 +86,383 @@ fn validate_hostname(hostname: &str) -> Result<()> {
     Ok(())
 }
 
+/// Runs `work` while holding an exclusive lock on the hosts file itself.
+///
+/// The file is the resource, so it is also the lock: there is no separate
+/// path to agree on between the unprivileged application and the privileged
+/// helper, nothing to create, nothing to chmod and nothing a symlink could
+/// redirect. It is opened read-only, which every writer can do.
+///
+/// On Unix the writer replaces the file by renaming a temporary over it. The
+/// lock lives on the inode, so a process that acquires it after such a rename
+/// holds a lock on the file that was just retired and no longer excludes
+/// anyone. That case is detected by comparing the locked descriptor with the
+/// path and starting over, which makes the lock on the current inode
+/// exclusive for as long as its holder is the one doing the rename.
+///
+/// Windows locks are mandatory and would block the holder's own write, so the
+/// lock covers one byte far past the end of the file instead of its content.
+fn with_hosts_lock<T>(path: &Path, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    use crate::utils::config_dir::{
+        LockRegion,
+        unlock,
+        wait_for_exclusive_lock,
+    };
+
+    const REGION: LockRegion = LockRegion::PendingByte;
+    let what = path.display().to_string();
+
+    loop {
+        let file = OpenOptions::new().read(true).open(path)?;
+        wait_for_exclusive_lock(&file, REGION, &what).map_err(HostsFileError::Io)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let locked = file.metadata()?;
+            match std::fs::metadata(path) {
+                Ok(current) if current.dev() == locked.dev() && current.ino() == locked.ino() => {}
+                Ok(_) => {
+                    unlock(&file, REGION);
+                    continue;
+                }
+                Err(error) => {
+                    unlock(&file, REGION);
+                    return Err(error.into());
+                }
+            }
+        }
+
+        let result = work();
+        unlock(&file, REGION);
+        return result;
+    }
+}
+
+/// The hosts file as raw lines, edited under one lock and written once.
+///
+/// Every operation preserves the lines it was not asked to touch exactly as
+/// they were: a comment, a blank line or an alias written by hand or by another
+/// writer is never reformatted or dropped, and a document that ends up
+/// unchanged is never written. That last property is what lets an
+/// unprivileged caller find out that nothing of its own is on disk without
+/// needing permission to write.
+pub struct HostsDocument {
+    lines: Vec<String>,
+    original: Vec<String>,
+}
+
+/// One parsed line of a managed section.
+struct ParsedLine {
+    ip: IpAddr,
+    hostnames: Vec<String>,
+    owner: Option<String>,
+}
+
+impl HostsDocument {
+    fn load(path: &Path) -> Result<Self> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.into()),
+        };
+        let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
+        Ok(Self {
+            original: lines.clone(),
+            lines,
+        })
+    }
+
+    /// Whether anything differs from what was read.
+    pub fn is_dirty(&self) -> bool {
+        self.lines != self.original
+    }
+
+    fn begin_marker(tag: &str) -> String {
+        format!("# DO NOT EDIT {tag} BEGIN")
+    }
+
+    fn end_marker(tag: &str) -> String {
+        format!("# DO NOT EDIT {tag} END")
+    }
+
+    /// Indices of the begin and end markers of `tag`'s section.
+    ///
+    /// Half a section is an error, not an empty one: the aliases between a
+    /// begin marker and a missing end marker still resolve, and reporting
+    /// nothing would let a caller treat them as already removed.
+    fn bounds(&self, tag: &str) -> Result<Option<(usize, usize)>> {
+        let begin_marker = Self::begin_marker(tag);
+        let end_marker = Self::end_marker(tag);
+        let begin = self
+            .lines
+            .iter()
+            .position(|line| line.trim() == begin_marker);
+        let end = self.lines.iter().position(|line| line.trim() == end_marker);
+        match (begin, end) {
+            (None, None) => Ok(None),
+            (Some(begin), Some(end)) if begin < end => Ok(Some((begin, end))),
+            (Some(_), Some(_)) => Err(HostsFileError::InvalidData(format!(
+                "Reversed section markers for tag '{tag}'"
+            ))),
+            _ => Err(HostsFileError::InvalidData(format!(
+                "Incomplete section markers for tag '{tag}'"
+            ))),
+        }
+    }
+
+    pub fn section_exists(&self, tag: &str) -> Result<bool> {
+        Ok(self.bounds(tag)?.is_some())
+    }
+
+    /// Parses one line of a section. Comments and blank lines yield nothing.
+    fn parse_line(line: &str) -> Option<ParsedLine> {
+        // Everything from the first `#` is a comment. Ownership counts only
+        // when that comment is the marker itself, so a note that happens to
+        // mention the marker cannot make a foreign line look owned, and a real
+        // alias is never parsed as comment words.
+        let (fields, comment) = match line.split_once('#') {
+            Some((fields, comment)) => (fields, Some(comment)),
+            None => (line, None),
+        };
+        let owner = comment
+            .and_then(|comment| {
+                format!("#{comment}")
+                    .strip_prefix(OWNER_MARKER.trim_start())
+                    .map(ToOwned::to_owned)
+            })
+            .map(|owner| owner.trim().to_owned());
+        let mut fields = fields.split_whitespace();
+        let ip = fields.next()?.parse::<IpAddr>().ok()?;
+        let hostnames: Vec<String> = fields.map(ToOwned::to_owned).collect();
+        if hostnames.is_empty() {
+            return None;
+        }
+        Some(ParsedLine {
+            ip,
+            hostnames,
+            owner,
+        })
+    }
+
+    fn format_line(ip: IpAddr, hostnames: &[String], owner: Option<&str>) -> String {
+        match owner {
+            Some(owner) => format!("{ip} {}{OWNER_MARKER}{owner}", hostnames.join(" ")),
+            None => format!("{ip} {}", hostnames.join(" ")),
+        }
+    }
+
+    /// Every alias inside `tag`'s section, in file order.
+    pub fn section(&self, tag: &str) -> Result<Vec<SectionEntry>> {
+        let Some((begin, end)) = self.bounds(tag)? else {
+            return Ok(Vec::new());
+        };
+        Ok(self.lines[begin + 1..end]
+            .iter()
+            .filter_map(|line| Self::parse_line(line))
+            .flat_map(|parsed| {
+                parsed
+                    .hostnames
+                    .into_iter()
+                    .map(move |hostname| SectionEntry {
+                        ip: parsed.ip,
+                        hostname,
+                        owner: parsed.owner.clone(),
+                    })
+            })
+            .collect())
+    }
+
+    /// Replaces the body of `tag`'s section with `body`, creating the section
+    /// at the end of the file when it does not exist and removing it, markers
+    /// included, when `body` is empty.
+    fn set_body(&mut self, tag: &str, body: Vec<String>) -> Result<()> {
+        match self.bounds(tag)? {
+            Some((begin, end)) => {
+                if body.is_empty() {
+                    self.lines.drain(begin..=end);
+                    // The blank line that separated the section from what came
+                    // before it goes with it, so repeated add-and-remove cycles
+                    // do not grow the file.
+                    if begin > 0
+                        && begin <= self.lines.len()
+                        && self.lines[begin - 1].is_empty()
+                        && self.lines.get(begin).is_none_or(String::is_empty)
+                    {
+                        self.lines.remove(begin - 1);
+                    }
+                } else {
+                    self.lines.splice(begin + 1..end, body);
+                }
+            }
+            None => {
+                if body.is_empty() {
+                    return Ok(());
+                }
+                if self.lines.last().is_some_and(|last| !last.is_empty()) {
+                    self.lines.push(String::new());
+                }
+                self.lines.push(Self::begin_marker(tag));
+                self.lines.extend(body);
+                self.lines.push(Self::end_marker(tag));
+            }
+        }
+        Ok(())
+    }
+
+    /// Replaces `tag`'s section outright with one line per entry.
+    pub fn replace_section(&mut self, tag: &str, entries: &[SectionEntry]) -> Result<()> {
+        let body = entries
+            .iter()
+            .map(|entry| {
+                Self::format_line(
+                    entry.ip,
+                    std::slice::from_ref(&entry.hostname),
+                    entry.owner.as_deref(),
+                )
+            })
+            .collect();
+        self.set_body(tag, body)
+    }
+
+    /// Removes `tag`'s section whole, whoever wrote its lines.
+    pub fn clear_section(&mut self, tag: &str) -> Result<()> {
+        self.set_body(tag, Vec::new())
+    }
+
+    /// Replaces the lines owned by `owners` with `entries` and leaves every
+    /// other line of the section as it is.
+    ///
+    /// Passing no entries removes those owners. Returns the subset of
+    /// `owners` that had lines before the change, so a caller can tell an id
+    /// it never held apart from one it just took off disk.
+    pub fn reconcile_owners(
+        &mut self, tag: &str, owners: &[&str], entries: &[SectionEntry],
+    ) -> Result<HashSet<String>> {
+        for owner in owners {
+            validate_owner(owner)?;
+        }
+        for entry in entries {
+            validate_hostname(&entry.hostname)?;
+            if let Some(owner) = &entry.owner {
+                validate_owner(owner)?;
+            }
+        }
+        let mut present = HashSet::new();
+        let mut body: Vec<String> = match self.bounds(tag)? {
+            Some((begin, end)) => self.lines[begin + 1..end]
+                .iter()
+                .filter(
+                    |line| match Self::parse_line(line).and_then(|parsed| parsed.owner) {
+                        Some(owner) if owners.contains(&owner.as_str()) => {
+                            present.insert(owner);
+                            false
+                        }
+                        _ => true,
+                    },
+                )
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
+        body.extend(entries.iter().map(|entry| {
+            Self::format_line(
+                entry.ip,
+                std::slice::from_ref(&entry.hostname),
+                entry.owner.as_deref(),
+            )
+        }));
+        self.set_body(tag, body)?;
+        Ok(present)
+    }
+
+    /// Keeps the aliases of `tag`'s section that `keep` accepts.
+    ///
+    /// A line none of whose aliases is rejected is preserved byte for byte;
+    /// one with some rejected is rewritten with the rest.
+    pub fn retain(&mut self, tag: &str, keep: impl Fn(&SectionEntry) -> bool) -> Result<()> {
+        let Some((begin, end)) = self.bounds(tag)? else {
+            return Ok(());
+        };
+        let body: Vec<String> = self.lines[begin + 1..end]
+            .iter()
+            .filter_map(|line| {
+                let Some(parsed) = Self::parse_line(line) else {
+                    return Some(line.clone());
+                };
+                let kept: Vec<String> = parsed
+                    .hostnames
+                    .iter()
+                    .filter(|hostname| {
+                        keep(&SectionEntry {
+                            ip: parsed.ip,
+                            hostname: (*hostname).clone(),
+                            owner: parsed.owner.clone(),
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                if kept.len() == parsed.hostnames.len() {
+                    Some(line.clone())
+                } else if kept.is_empty() {
+                    None
+                } else {
+                    Some(Self::format_line(parsed.ip, &kept, parsed.owner.as_deref()))
+                }
+            })
+            .collect();
+        self.set_body(tag, body)
+    }
+
+    fn commit(&self, path: &Path) -> Result<bool> {
+        if !self.is_dirty() {
+            return Ok(false);
+        }
+        let mut content = Vec::new();
+        for line in &self.lines {
+            writeln!(content, "{line}")?;
+        }
+        AtomicFileWriter::new(path).write_content(&content)?;
+        Ok(true)
+    }
+}
+
+/// Edits the system hosts file under its lock and writes it back once, only
+/// if anything changed.
+pub fn edit_hosts<T>(edit: impl FnOnce(&mut HostsDocument) -> Result<T>) -> Result<T> {
+    edit_hosts_at(&get_default_hosts_path()?, edit)
+}
+
+/// [`edit_hosts`] against a specific file.
+pub fn edit_hosts_at<T>(
+    path: &Path, edit: impl FnOnce(&mut HostsDocument) -> Result<T>,
+) -> Result<T> {
+    validate_hosts_path(path)?;
+    with_hosts_lock(path, || {
+        let mut document = HostsDocument::load(path)?;
+        let outcome = edit(&mut document)?;
+        document.commit(path)?;
+        Ok(outcome)
+    })
+}
+
+/// Reads the system hosts file under its lock.
+///
+/// Locked like a write: the writer's fallback rewrites the file in place, and
+/// a read in the middle of that would see an empty file and report aliases
+/// gone that the completed write still holds.
+pub fn read_hosts<T>(read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T> {
+    read_hosts_at(&get_default_hosts_path()?, read)
+}
+
+/// [`read_hosts`] against a specific file.
+pub fn read_hosts_at<T>(path: &Path, read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T> {
+    validate_hosts_path(path)?;
+    with_hosts_lock(path, || read(&HostsDocument::load(path)?))
+}
+
+/// A set of aliases to write as one tagged section.
 pub struct HostsFile {
     entries: Vec<SectionEntry>,
     tag: String,
@@ -151,34 +496,6 @@ impl HostsFile {
         self
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Entries staged for the next write.
-    pub fn staged(&self) -> &[SectionEntry] {
-        &self.entries
-    }
-
-    pub fn write(&self) -> Result<bool> {
-        self.write_to(get_default_hosts_path()?)
-    }
-
-    /// Whether the hosts file currently carries a section with this tag.
-    ///
-    /// Lets a caller skip a write it does not need, which matters because the
-    /// file is usually only writable with elevated privileges.
-    pub fn section_exists(&self) -> Result<bool> {
-        let path = get_default_hosts_path()?;
-        let contents = std::fs::read_to_string(&path)?;
-
-        Ok(contents.contains(&HostsSection::new(&self.tag).begin_marker()))
-    }
-
     /// Adds an entry that records which configuration owns it.
     ///
     /// Entries written without an owner cannot be told apart, and a writer
@@ -204,16 +521,51 @@ impl HostsFile {
         Ok(self)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Entries staged for the next write.
+    pub fn staged(&self) -> &[SectionEntry] {
+        &self.entries
+    }
+
+    /// Replaces this tag's section with the staged entries. No entries
+    /// removes the section. Returns whether the file changed.
+    pub fn write(&self) -> Result<bool> {
+        self.write_to(get_default_hosts_path()?)
+    }
+
+    pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
+        edit_hosts_at(path.as_ref(), |document| {
+            document.replace_section(&self.tag, &self.entries)?;
+            Ok(document.is_dirty())
+        })
+    }
+
+    /// Whether the hosts file currently carries a section with this tag.
+    pub fn section_exists(&self) -> Result<bool> {
+        read_hosts(|document| document.section_exists(&self.tag))
+    }
+
+    /// Reads the entries currently inside this tag's section, with the owner
+    /// recorded for each.
+    pub fn read_section(&self) -> Result<Vec<SectionEntry>> {
+        self.read_section_from(get_default_hosts_path()?)
+    }
+
+    /// Reads a section from a specific file.
+    pub fn read_section_from<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SectionEntry>> {
+        read_hosts_at(path.as_ref(), |document| document.section(&self.tag))
+    }
+
     /// Replaces the lines owned by `owners` with the staged entries and leaves
-    /// every other line in the section alone, as one locked read-modify-write.
-    ///
-    /// Staging nothing removes those owners. The section is never rebuilt from
-    /// memory: another process, or an earlier run of this one, may have lines
-    /// in it that this writer knows nothing about.
-    ///
-    /// Returns the subset of `owners` that had lines on disk before the write,
-    /// so a caller can tell an id it never held apart from one it just took
-    /// off disk.
+    /// every other line alone, as one locked read-modify-write. See
+    /// [`HostsDocument::reconcile_owners`].
     pub fn reconcile_owners(&self, owners: &[&str]) -> Result<HashSet<String>> {
         self.reconcile_owners_in(get_default_hosts_path()?, owners)
     }
@@ -225,110 +577,8 @@ impl HostsFile {
         for owner in owners {
             validate_owner(owner)?;
         }
-        let path = path.as_ref();
-        validate_hosts_path(path)?;
-
-        with_hosts_lock(|| {
-            let current = self.read_section_from(path)?;
-            let present: HashSet<String> = current
-                .iter()
-                .filter_map(|entry| entry.owner.as_deref())
-                .filter(|owner| owners.contains(owner))
-                .map(ToOwned::to_owned)
-                .collect();
-            let mut next: Vec<SectionEntry> = current
-                .into_iter()
-                .filter(|entry| {
-                    entry
-                        .owner
-                        .as_deref()
-                        .is_none_or(|owner| !owners.contains(&owner))
-                })
-                .collect();
-            next.extend(self.entries.iter().cloned());
-            HostsFileWriter::new(path).update_section(&self.tag, &next)?;
-            Ok(present)
-        })
-    }
-
-    /// Reads the entries currently inside this tag's section, with the owner
-    /// recorded for each.
-    pub fn read_section(&self) -> Result<Vec<SectionEntry>> {
-        self.read_section_from(get_default_hosts_path()?)
-    }
-
-    /// Reads a section from a specific file.
-    pub fn read_section_from<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SectionEntry>> {
-        let contents = match std::fs::read_to_string(path.as_ref()) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error.into()),
-        };
-        let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
-        let section = HostsSection::new(&self.tag);
-        let bounds = section.find_section_bounds(&lines);
-        // Half a section is not an empty one: the aliases between a begin
-        // marker and a missing end marker still resolve, and reporting nothing
-        // would let a caller treat them as already removed.
-        if bounds.is_partial() {
-            return Err(HostsFileError::InvalidData(format!(
-                "Incomplete section markers for tag '{}'",
-                self.tag
-            )));
-        }
-        let (Some(begin), Some(end)) = (bounds.begin, bounds.end) else {
-            return Ok(Vec::new());
-        };
-        if end < begin {
-            return Err(HostsFileError::InvalidData(format!(
-                "Reversed section markers for tag '{}'",
-                self.tag
-            )));
-        }
-
-        let mut entries = Vec::new();
-        for line in lines.get(begin + 1..end).unwrap_or_default() {
-            // Everything from the first `#` is a comment. Ownership counts
-            // only when that comment is the marker itself, so a note that
-            // happens to mention the marker cannot make a foreign line look
-            // owned, and a real alias is never parsed as comment words.
-            let (fields, comment) = match line.split_once('#') {
-                Some((fields, comment)) => (fields, Some(comment)),
-                None => (line.as_str(), None),
-            };
-            let owner = comment
-                .and_then(|comment| {
-                    format!("#{comment}")
-                        .strip_prefix(OWNER_MARKER.trim_start())
-                        .map(ToOwned::to_owned)
-                })
-                .map(|owner| owner.trim().to_owned());
-            let mut fields = fields.split_whitespace();
-            let Some(Ok(ip)) = fields.next().map(str::parse::<IpAddr>) else {
-                continue;
-            };
-            for hostname in fields {
-                entries.push(SectionEntry {
-                    ip,
-                    hostname: hostname.to_owned(),
-                    owner: owner.clone(),
-                });
-            }
-        }
-
-        Ok(entries)
-    }
-
-    pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
-        let path = path.as_ref();
-        validate_hosts_path(path)?;
-
-        // Taken across the whole read-modify-write: the privileged helper is a
-        // separate process writing the same file, and rewriting it from a
-        // snapshot read outside the lock loses whichever change lost the race.
-        with_hosts_lock(|| {
-            let writer = HostsFileWriter::new(path);
-            writer.update_section(&self.tag, &self.entries)
+        edit_hosts_at(path.as_ref(), |document| {
+            document.reconcile_owners(&self.tag, owners, &self.entries)
         })
     }
 
@@ -342,197 +592,10 @@ impl HostsFile {
     pub fn retain_section_in<P: AsRef<Path>>(
         &self, path: P, keep: impl Fn(&SectionEntry) -> bool,
     ) -> Result<bool> {
-        let path = path.as_ref();
-        validate_hosts_path(path)?;
-
-        with_hosts_lock(|| {
-            let kept: Vec<SectionEntry> = self
-                .read_section_from(path)?
-                .into_iter()
-                .filter(&keep)
-                .collect();
-            let writer = HostsFileWriter::new(path);
-            writer.update_section(&self.tag, &kept)
+        edit_hosts_at(path.as_ref(), |document| {
+            document.retain(&self.tag, keep)?;
+            Ok(document.is_dirty())
         })
-    }
-}
-
-struct HostsSection {
-    tag: String,
-}
-
-impl HostsSection {
-    fn new(tag: &str) -> Self {
-        Self {
-            tag: tag.to_string(),
-        }
-    }
-
-    fn begin_marker(&self) -> String {
-        format!("# DO NOT EDIT {} BEGIN", self.tag)
-    }
-
-    fn end_marker(&self) -> String {
-        format!("# DO NOT EDIT {} END", self.tag)
-    }
-
-    /// One line per entry.
-    ///
-    /// Grouping several hostnames of one address onto a single line would put
-    /// every alias after the first behind the owner comment of that first one,
-    /// commenting them out. The SSL aliases alone always share 127.0.0.1.
-    fn format_entries(&self, entries: &[SectionEntry]) -> Vec<String> {
-        if entries.is_empty() {
-            return vec![];
-        }
-
-        let mut lines = vec![self.begin_marker()];
-
-        for entry in entries {
-            lines.push(match &entry.owner {
-                Some(owner) => format!("{} {}{OWNER_MARKER}{owner}", entry.ip, entry.hostname),
-                None => format!("{} {}", entry.ip, entry.hostname),
-            });
-        }
-
-        lines.push(self.end_marker());
-        lines
-    }
-
-    fn find_section_bounds(&self, lines: &[String]) -> SectionBounds {
-        let begin_marker = self.begin_marker();
-        let end_marker = self.end_marker();
-
-        let begin = lines.iter().position(|line| line.trim() == begin_marker);
-        let end = lines.iter().position(|line| line.trim() == end_marker);
-
-        SectionBounds { begin, end }
-    }
-}
-
-#[derive(Debug)]
-struct SectionBounds {
-    begin: Option<usize>,
-    end: Option<usize>,
-}
-
-impl SectionBounds {
-    fn is_complete(&self) -> bool {
-        self.begin.is_some() && self.end.is_some()
-    }
-
-    fn is_missing(&self) -> bool {
-        self.begin.is_none() && self.end.is_none()
-    }
-
-    fn is_partial(&self) -> bool {
-        !self.is_complete() && !self.is_missing()
-    }
-}
-
-struct HostsFileWriter<'a> {
-    path: &'a Path,
-}
-
-impl<'a> HostsFileWriter<'a> {
-    fn new(path: &'a Path) -> Self {
-        Self { path }
-    }
-
-    fn update_section(&self, tag: &str, entries: &[SectionEntry]) -> Result<bool> {
-        let mut lines = self.read_file_lines()?;
-        let section = HostsSection::new(tag);
-        let new_section_lines = section.format_entries(entries);
-
-        let changed = self.apply_section_update(&mut lines, &section, new_section_lines)?;
-
-        if changed {
-            self.write_file_lines(&lines)?;
-        }
-
-        Ok(changed)
-    }
-
-    /// Read-only: opening for write would need the privileges the file
-    /// usually requires, and a reconciliation that changes nothing must not
-    /// fail for lack of them.
-    fn read_file_lines(&self) -> Result<Vec<String>> {
-        let file = match OpenOptions::new().read(true).open(self.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error.into()),
-        };
-
-        Ok(BufReader::new(file)
-            .lines()
-            .collect::<io::Result<Vec<_>>>()?)
-    }
-
-    fn apply_section_update(
-        &self, lines: &mut Vec<String>, section: &HostsSection, new_section_lines: Vec<String>,
-    ) -> Result<bool> {
-        let bounds = section.find_section_bounds(lines);
-
-        if bounds.is_partial() {
-            return Err(HostsFileError::InvalidData(format!(
-                "Incomplete section markers for tag '{}'",
-                section.tag
-            )));
-        }
-
-        if bounds.is_complete() {
-            self.replace_existing_section(lines, &bounds, new_section_lines)
-        } else {
-            self.add_new_section(lines, new_section_lines)
-        }
-    }
-
-    fn replace_existing_section(
-        &self, lines: &mut Vec<String>, bounds: &SectionBounds, new_section_lines: Vec<String>,
-    ) -> Result<bool> {
-        let begin = bounds.begin.unwrap();
-        let end = bounds.end.unwrap();
-
-        let old_section: Vec<String> = lines.drain(begin..=end).collect();
-
-        if old_section == new_section_lines {
-            lines.splice(begin..begin, old_section);
-            return Ok(false);
-        }
-
-        lines.splice(begin..begin, new_section_lines);
-        Ok(true)
-    }
-
-    fn add_new_section(
-        &self, lines: &mut Vec<String>, new_section_lines: Vec<String>,
-    ) -> Result<bool> {
-        if new_section_lines.is_empty() {
-            return Ok(false);
-        }
-
-        if let Some(last_line) = lines.last()
-            && !last_line.is_empty()
-        {
-            lines.push(String::new());
-        }
-
-        lines.extend(new_section_lines);
-        Ok(true)
-    }
-
-    fn write_file_lines(&self, lines: &[String]) -> Result<()> {
-        let content = self.format_file_content(lines)?;
-        let writer = AtomicFileWriter::new(self.path);
-        writer.write_content(&content)
-    }
-
-    fn format_file_content(&self, lines: &[String]) -> Result<Vec<u8>> {
-        let mut buffer = Vec::new();
-        for line in lines {
-            writeln!(buffer, "{}", line)?;
-        }
-        Ok(buffer)
     }
 }
 
@@ -909,5 +972,101 @@ mod tests {
         // One entry per hostname: aliases of one address need their own lines
         // so an owner comment cannot swallow the ones after it.
         assert_eq!(hosts_file.entries.len(), 3);
+    }
+
+    #[test]
+    fn untouched_lines_survive_byte_for_byte_and_a_no_op_never_writes() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file
+            .write_all(
+                b"127.0.0.1 localhost\n\n\
+                  # DO NOT EDIT test BEGIN\n\
+                  # a hand-written note\n\
+                  127.0.0.1   other.local   # note\n\
+                  127.0.0.2 two.local three.local # kftray-id=9\n\
+                  \n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+        let before = std::fs::read_to_string(&temp_path).unwrap();
+        let modified = std::fs::metadata(&temp_path).unwrap().modified().unwrap();
+
+        // Removing an owner that is not there is a no-op: nothing is written,
+        // which an unprivileged caller depends on to find out it owns nothing.
+        let present = HostsFile::new("test")
+            .reconcile_owners_in(&temp_path, &["missing"])
+            .unwrap();
+        assert!(present.is_empty());
+        assert_eq!(std::fs::read_to_string(&temp_path).unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&temp_path).unwrap().modified().unwrap(),
+            modified
+        );
+
+        // Removing owner 9 keeps the note, the spacing and the blank line of
+        // everything else exactly as they were.
+        HostsFile::new("test")
+            .reconcile_owners_in(&temp_path, &["9"])
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&temp_path).unwrap(),
+            "127.0.0.1 localhost\n\n\
+             # DO NOT EDIT test BEGIN\n\
+             # a hand-written note\n\
+             127.0.0.1   other.local   # note\n\
+             \n\
+             # DO NOT EDIT test END\n"
+        );
+    }
+
+    #[test]
+    fn retaining_rewrites_only_the_lines_it_changes() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file
+            .write_all(
+                b"# DO NOT EDIT test BEGIN\n\
+                  127.0.0.1  keep.local   # note\n\
+                  127.0.0.2 gone.local stay.local\n\
+                  127.0.0.3 all-gone.local\n\
+                  # DO NOT EDIT test END\n",
+            )
+            .unwrap();
+
+        HostsFile::new("test")
+            .retain_section_in(&temp_path, |entry| {
+                !matches!(entry.hostname.as_str(), "gone.local" | "all-gone.local")
+            })
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&temp_path).unwrap(),
+            "# DO NOT EDIT test BEGIN\n\
+             127.0.0.1  keep.local   # note\n\
+             127.0.0.2 stay.local\n\
+             # DO NOT EDIT test END\n",
+            "an untouched line keeps its spacing and note; a partly kept line is rewritten; a \
+             fully rejected line goes"
+        );
+    }
+
+    #[test]
+    fn removing_the_last_alias_removes_the_section_and_its_separator() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file.write_all(b"127.0.0.1 localhost\n").unwrap();
+
+        let mut hosts = HostsFile::new("test");
+        hosts
+            .add_owned_entry([127, 0, 0, 1].into(), "only.local", "1")
+            .unwrap();
+        hosts.reconcile_owners_in(&temp_path, &["1"]).unwrap();
+        HostsFile::new("test")
+            .reconcile_owners_in(&temp_path, &["1"])
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&temp_path).unwrap(),
+            "127.0.0.1 localhost\n",
+            "add-and-remove cycles must not grow the file"
+        );
     }
 }

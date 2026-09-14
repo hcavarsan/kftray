@@ -19,6 +19,7 @@ use k8s_openapi::api::{
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kube::api::{
     DeleteParams,
     ListParams,
@@ -47,8 +48,10 @@ fn extract_subdomain(domain: &str) -> String {
 }
 
 pub async fn create_expose_resources(
-    client: Client, config: &Config,
+    connection: &crate::kube::client::KubeConnection, config: &Config, mode: DatabaseMode,
 ) -> Result<ExposeResources, ExposeCreateError> {
+    let client = connection.client.clone();
+    let location = ExposeLocation::resolve(&connection.cluster_url, &config.namespace);
     let config_id_str = config
         .id
         .map_or_else(|| "default".to_string(), |id| id.to_string());
@@ -63,14 +66,29 @@ pub async fn create_expose_resources(
     // must succeed before anything is created. A failure keeps the leftovers
     // this attempt's responsibility rather than letting the cleanup record be
     // dropped.
-    delete_expose_resources(
-        client.clone(),
-        &config.namespace,
-        &config_id_str,
-        config.exposure_type.as_deref() == Some("public"),
-        &ExposeLocation::of(config),
+    // Bounded as a whole: the client carries no per-request timeout, and a
+    // stalled request here would otherwise hold the start, and the batch
+    // collecting its result, until the user cancelled it. The cleanup record
+    // this attempt is responsible for is untouched by the deadline.
+    const PRE_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
+    tokio::time::timeout(
+        PRE_START_CLEANUP_TIMEOUT,
+        delete_expose_resources(
+            client.clone(),
+            &config.namespace,
+            &config_id_str,
+            config.exposure_type.as_deref() == Some("public"),
+            &location,
+            mode,
+        ),
     )
     .await
+    .unwrap_or_else(|_| {
+        Err(format!(
+            "Timed out after {PRE_START_CLEANUP_TIMEOUT:?} cleaning up the earlier exposure for \
+             config {config_id_str}"
+        ))
+    })
     .map_err(ExposeCreateError::from)?;
 
     let timestamp = SystemTime::now()
@@ -172,6 +190,8 @@ pub async fn create_expose_resources(
                     &ingress_name,
                     &service_name,
                     config,
+                    &location,
+                    mode,
                 )
                 .await?,
             );
@@ -685,6 +705,7 @@ async fn create_service(
 
 async fn create_ingress(
     client: &Client, namespace: &str, ingress_name: &str, service_name: &str, config: &Config,
+    location: &ExposeLocation, mode: DatabaseMode,
 ) -> Result<CreatedResource, ExposeCreateError> {
     let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
@@ -731,7 +752,7 @@ async fn create_ingress(
     // client seeing the response, and cleanup for a configuration later
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
-    remember_ingress_created(&config_id_str, &ExposeLocation::of(config)).await?;
+    remember_ingress_created(&config_id_str, location, mode).await?;
     let created = ingresses
         .create(&PostParams::default(), &ingress)
         .await
@@ -747,30 +768,32 @@ async fn create_ingress(
 /// Scoped to the destination as well as the id: one configuration can owe
 /// cleanup in more than one cluster or namespace at a time, and clearing the
 /// history after verifying one of them would discard the evidence for the rest.
-fn ingress_history_key(config_id: &str, location: &ExposeLocation<'_>) -> String {
+/// The destination is the resolved API server, not the context name or the
+/// kubeconfig path: `@current` moves, and a kubeconfig can change its server
+/// without changing either, so those would let cleanup in one cluster erase
+/// what was recorded for another.
+fn ingress_history_key(config_id: &str, location: &ExposeLocation) -> String {
     let scope = crate::kube::stop::stable_digest(&[
-        location.context,
-        location.kubeconfig,
-        Some(location.namespace),
+        Some(location.cluster.as_str()),
+        Some(location.namespace.as_str()),
     ]);
 
     format!("expose_ingress_created:{config_id}:{scope:016x}")
 }
 
-/// Where an exposure's resources live.
-#[derive(Clone, Copy)]
-pub struct ExposeLocation<'a> {
-    pub context: Option<&'a str>,
-    pub kubeconfig: Option<&'a str>,
-    pub namespace: &'a str,
+/// Where an exposure's resources live, as resolved through the connection
+/// that reaches them.
+#[derive(Clone)]
+pub struct ExposeLocation {
+    pub cluster: String,
+    pub namespace: String,
 }
 
-impl<'a> ExposeLocation<'a> {
-    pub fn of(config: &'a Config) -> Self {
+impl ExposeLocation {
+    pub fn resolve(cluster_url: &http::Uri, namespace: &str) -> Self {
         Self {
-            context: config.context.as_deref(),
-            kubeconfig: config.kubeconfig.as_deref(),
-            namespace: &config.namespace,
+            cluster: cluster_url.to_string(),
+            namespace: namespace.to_owned(),
         }
     }
 }
@@ -781,13 +804,17 @@ impl<'a> ExposeLocation<'a> {
 /// is one that a later cleanup cannot know about, and creating it anyway would
 /// leave it unverifiable.
 async fn remember_ingress_created(
-    config_id: &str, location: &ExposeLocation<'_>,
+    config_id: &str, location: &ExposeLocation, mode: DatabaseMode,
 ) -> Result<(), String> {
-    kftray_commons::utils::settings::set_setting(&ingress_history_key(config_id, location), "1")
-        .await
-        .map_err(|error| {
-            format!("Failed to record the ingress history for config {config_id}: {error}")
-        })
+    kftray_commons::utils::settings::set_setting_with_mode(
+        &ingress_history_key(config_id, location),
+        "1",
+        mode,
+    )
+    .await
+    .map_err(|error| {
+        format!("Failed to record the ingress history for config {config_id}: {error}")
+    })
 }
 
 /// Whether this configuration ever created an ingress, or whether that cannot
@@ -796,9 +823,14 @@ async fn remember_ingress_created(
 /// A configuration switched from public to private keeps the ingress it
 /// created, so its current type is not evidence that none exists. A history
 /// that cannot be read is not evidence either, so it counts as possible.
-pub async fn ingress_was_created(config_id: &str, location: &ExposeLocation<'_>) -> bool {
-    match kftray_commons::utils::settings::get_setting(&ingress_history_key(config_id, location))
-        .await
+pub async fn ingress_was_created(
+    config_id: &str, location: &ExposeLocation, mode: DatabaseMode,
+) -> bool {
+    match kftray_commons::utils::settings::get_setting_with_mode(
+        &ingress_history_key(config_id, location),
+        mode,
+    )
+    .await
     {
         Ok(value) => value.is_some(),
         Err(error) => {
@@ -809,10 +841,12 @@ pub async fn ingress_was_created(config_id: &str, location: &ExposeLocation<'_>)
 }
 
 /// Forgets the ingress history once cleanup has confirmed none is left.
-async fn forget_ingress_history(config_id: &str, location: &ExposeLocation<'_>) {
-    if let Err(error) =
-        kftray_commons::utils::settings::delete_setting(&ingress_history_key(config_id, location))
-            .await
+async fn forget_ingress_history(config_id: &str, location: &ExposeLocation, mode: DatabaseMode) {
+    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
+        &ingress_history_key(config_id, location),
+        mode,
+    )
+    .await
     {
         log::debug!("Failed to clear the ingress history for config {config_id}: {error}");
     }
@@ -831,13 +865,14 @@ fn named_items<T: kube::Resource + Clone>(
 
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
-    location: &ExposeLocation<'_>,
+    location: &ExposeLocation, mode: DatabaseMode,
 ) -> Result<(), String> {
     // A configuration switched from public to private still owns the ingress it
     // created, and its role may not allow listing ingresses. Inferring absence
     // from the new type would leave that ingress serving the new tunnel
     // publicly, so history decides here, not the current configuration.
-    let ingress_possible = ingress_possible || ingress_was_created(config_id_label, location).await;
+    let ingress_possible =
+        ingress_possible || ingress_was_created(config_id_label, location, mode).await;
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
@@ -914,7 +949,7 @@ pub async fn delete_expose_resources(
 
     // Nothing is left, so the history that forced the ingress checks above has
     // served its purpose.
-    forget_ingress_history(config_id_label, location).await;
+    forget_ingress_history(config_id_label, location, mode).await;
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label
@@ -1243,12 +1278,17 @@ mod tests {
             deleted
         }));
         let (result, deleted) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            let location = ExposeLocation {
-                context: None,
-                kubeconfig: None,
-                namespace: "default",
-            };
-            let result = delete_expose_resources(client, "default", "42", true, &location).await;
+            let location =
+                ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+            let result = delete_expose_resources(
+                client,
+                "default",
+                "42",
+                true,
+                &location,
+                DatabaseMode::Memory,
+            )
+            .await;
             (result, server.await.unwrap())
         })
         .await

@@ -217,9 +217,16 @@ impl Drop for AllocationInFlight {
     }
 }
 
+/// Allocates a loopback address and returns it together with the claim that
+/// keeps any release away from it until the startup registers its process.
+///
+/// The claim is taken by the allocating task itself, before the address is
+/// handed over: between the allocation and the claim a stop of another
+/// configuration sharing the same helper allocation would find neither a
+/// claim nor a process and release the alias and its pool reservation.
 async fn allocate_local_address_owned(
     config: &mut Config, mode: DatabaseMode,
-) -> Result<String, String> {
+) -> Result<(String, Option<crate::kube::stop::AddressClaim>), String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let mut owned = config.clone();
     // Counted before the task exists: shutdown reconciliation waits for these,
@@ -240,10 +247,34 @@ async fn allocate_local_address_owned(
         if allocated && let Some(id) = owned.id {
             crate::kube::stop::record_pending_cleanup(id, owned.clone());
         }
-        if let Err((_, owned)) = sender.send((result, owned))
+        // Claimed here, under the release registry's entry lock, so that no
+        // moment exists in which the address is allocated and unclaimed. A
+        // release already running wins: the address is not usable yet.
+        let claim = match (allocated, owned.local_address.as_deref()) {
+            (true, Some(address)) => {
+                match crate::kube::stop::AddressClaim::take(address, owned.id) {
+                    Some(claim) => Some(claim),
+                    None => {
+                        let _ = sender.send((
+                            Err(format!(
+                                "Local address {address} is still being released by an earlier \
+                                 stop"
+                            )),
+                            owned,
+                            None,
+                        ));
+                        return;
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Err((_, owned, claim)) = sender.send((result, owned, claim))
             && allocated
             && let Some(address) = owned.local_address.as_deref()
         {
+            // Our own claim must not block our own release.
+            drop(claim);
             // Released through the same path a stop uses: the helper keeps a
             // pool reservation next to the alias, and removing only the alias
             // would leave that reservation consumed by every abandoned startup.
@@ -266,7 +297,7 @@ async fn allocate_local_address_owned(
         }
     });
 
-    let (result, owned) = receiver
+    let (result, owned, claim) = receiver
         .await
         .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
     let address = result?;
@@ -280,7 +311,7 @@ async fn allocate_local_address_owned(
         error!("Failed to save allocated address {address} for config {id}: {error}");
     }
     *config = owned;
-    Ok(address)
+    Ok((address, claim))
 }
 
 /// Writes only the allocated address, and only while the stored configuration
@@ -515,6 +546,7 @@ pub(super) async fn start_config_cancellable(
     if cancelled() {
         return Err(format!("Startup cancelled for config {config_id}"));
     }
+    let mut allocated_claim = None;
     if config.auto_loopback_address || config.local_address.is_none() {
         const ALLOCATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -529,7 +561,10 @@ pub(super) async fn start_config_cancellable(
         )
         .await
         {
-            Ok(allocated) => allocated?,
+            Ok(allocated) => {
+                let (_, claim) = allocated?;
+                allocated_claim = claim;
+            }
             Err(_) => {
                 return Err(format!(
                     "Timed out allocating a local address for config {config_id}"
@@ -551,15 +586,17 @@ pub(super) async fn start_config_cancellable(
             });
         }
     }
-    // Checked for the address actually chosen, whichever path chose it: a
-    // manually configured address skips allocation, and the helper hands back
-    // an address without consulting this registry. A release that timed out is
-    // still executing and would remove the alias from underneath this forward.
-    // Claimed rather than checked: a check would pass just before an abandoned
-    // allocation task started removing the same address. The claim is held for
-    // the whole startup, and the registered process takes over from there.
-    let _address_claim = match &config.local_address {
-        Some(address) => match crate::kube::stop::AddressClaim::take(address, config.id) {
+    // Claimed for the address actually chosen, whichever path chose it. An
+    // allocated address arrives already claimed by the allocating task; a
+    // manually configured one skips allocation and is claimed here. A release
+    // that timed out is still executing and would remove the alias from
+    // underneath this forward, and a check instead of a claim would pass just
+    // before an abandoned allocation task started removing the same address.
+    // The claim is held for the whole startup, and the registered process
+    // takes over from there.
+    let _address_claim = match (allocated_claim, &config.local_address) {
+        (Some(claim), _) => Some(claim),
+        (None, Some(address)) => match crate::kube::stop::AddressClaim::take(address, config.id) {
             Some(claim) => Some(claim),
             None => {
                 return Err(format!(
@@ -567,7 +604,7 @@ pub(super) async fn start_config_cancellable(
                 ));
             }
         },
-        None => None,
+        (None, None) => None,
     };
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);

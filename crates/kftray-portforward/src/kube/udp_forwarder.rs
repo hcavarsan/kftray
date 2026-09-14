@@ -443,11 +443,21 @@ impl UdpForwarder {
                     Err(anyhow::anyhow!("the relay closed the tunnel"))
                 };
 
+                // Cancellation first, then the two directions polled fairly:
+                // a biased order would poll the whole uplink loop before the
+                // downlink on every wake, and under sustained client traffic
+                // the uplink can consume the task's cooperative budget each
+                // time, starving replies and the callbacks that clear recovery
+                // failures.
                 let result = tokio::select! {
                     biased;
                     _ = session_cancellation.cancelled() => Ok(()),
-                    result = uplink => result,
-                    result = downlink => result,
+                    result = async {
+                        tokio::select! {
+                            result = uplink => result,
+                            result = downlink => result,
+                        }
+                    } => result,
                 };
                 if let Err(error) = result {
                     debug!("UDP tunnel for {} ended: {:?}", peer, error);

@@ -120,7 +120,7 @@ pub fn proxy_resource_prefix() -> String {
 }
 
 /// Label carried by every proxy resource this installation creates.
-pub(crate) const INSTALLATION_LABEL: &str = "installation_id";
+pub const INSTALLATION_LABEL: &str = "installation_id";
 
 /// Selector that matches only this installation's resources for `config_id`.
 /// Two machines can hold the same local config id under the same username, so

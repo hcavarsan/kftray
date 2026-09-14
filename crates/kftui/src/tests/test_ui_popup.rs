@@ -166,6 +166,48 @@ mod tests {
     }
 
     #[test]
+    fn a_short_terminal_still_shows_how_to_close_a_long_error() {
+        use crate::tui::input::AppState;
+        use crate::tui::ui::draw::draw_ui;
+
+        // Through `draw_ui`, which sizes the popup area itself: rendering the
+        // popup directly would skip the reduction that makes small terminals
+        // tight in the first place.
+        let mut app = create_test_app();
+        app.state = AppState::ShowErrorPopup;
+        app.error_message = Some(
+            (0..40)
+                .map(|index| format!("config {index} failed to start: connection refused"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        app.error_scroll = usize::MAX;
+
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw_ui(frame, &mut app, &[]))
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(
+            screen.contains("<Enter>"),
+            "the way to dismiss the popup must be on screen even at the last scroll offset: \
+             {screen}"
+        );
+        assert!(
+            screen.contains("config 39"),
+            "the last failure must be reachable on a short terminal: {screen}"
+        );
+    }
+
+    #[test]
     fn test_render_delete_confirmation_popup() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();

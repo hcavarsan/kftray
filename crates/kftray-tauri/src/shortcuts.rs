@@ -41,6 +41,72 @@ fn start_error(
     kftray_commons::models::response::batch_failure(&result?)
 }
 
+/// What a batch of starts actually did.
+struct StartOutcome {
+    started: usize,
+    failures: Vec<String>,
+}
+
+impl StartOutcome {
+    /// `, N failed` for a notification, or nothing when every start succeeded.
+    fn failed_suffix(&self) -> String {
+        if self.failures.is_empty() {
+            String::new()
+        } else {
+            format!(", {} failed", self.failures.len())
+        }
+    }
+
+    fn into_result(self) -> Result<(), kftray_shortcuts::ShortcutError> {
+        if self.failures.is_empty() {
+            Ok(())
+        } else {
+            Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
+                format!("Failed to start: {}", self.failures.join("; ")),
+            ))
+        }
+    }
+}
+
+/// Starts one configuration through the command its kind uses, the same
+/// dispatch the desktop UI performs.
+async fn start_one(app_handle: &tauri::AppHandle, config: &Config) -> Result<(), String> {
+    let kind = config.workload_type.as_deref();
+    let result = if kind == Some("expose")
+        || (matches!(kind, Some("service" | "pod")) && config.protocol == "tcp")
+    {
+        start_port_forward_tcp_cmd(vec![config.clone()], app_handle.clone()).await
+    } else {
+        deploy_and_forward_pod_cmd(vec![config.clone()], app_handle.clone()).await
+    };
+    start_error(result)
+}
+
+/// Starts each configuration in turn and counts what actually started: a
+/// batch where every start failed used to be announced as a success.
+async fn start_each(app_handle: &tauri::AppHandle, configs: Vec<Config>) -> StartOutcome {
+    let mut outcome = StartOutcome {
+        started: 0,
+        failures: Vec::new(),
+    };
+    for config in configs {
+        match start_one(app_handle, &config).await {
+            Ok(()) => outcome.started += 1,
+            Err(e) => {
+                error!(
+                    "Failed to start port forward for config {}: {}",
+                    config.id.unwrap_or(0),
+                    e
+                );
+                outcome
+                    .failures
+                    .push(format!("{}: {e}", config.id.unwrap_or(0)));
+            }
+        }
+    }
+    outcome
+}
+
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
 
 pub async fn setup_shortcut_integration(
@@ -224,36 +290,7 @@ impl ActionHandler for StartAllPortForwardAction {
             return Ok(());
         }
 
-        // Counted from what actually started, not from what was attempted: a
-        // batch where every config failed used to be announced as a success.
-        let mut started = 0usize;
-        let mut failures: Vec<String> = Vec::new();
-
-        for config in configs_to_start {
-            let result = if config.workload_type.as_deref() == Some("service")
-                || config.workload_type.as_deref() == Some("pod")
-            {
-                if config.protocol == "tcp" {
-                    start_port_forward_tcp_cmd(vec![config.clone()], self.app_handle.clone()).await
-                } else {
-                    deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
-                }
-            } else {
-                deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
-            };
-
-            match start_error(result) {
-                Ok(()) => started += 1,
-                Err(e) => {
-                    error!(
-                        "Failed to start port forward for config {}: {}",
-                        config.id.unwrap_or(0),
-                        e
-                    );
-                    failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
-                }
-            }
-        }
+        let outcome = start_each(&self.app_handle, configs_to_start).await;
 
         let _ = self
             .app_handle
@@ -262,25 +299,15 @@ impl ActionHandler for StartAllPortForwardAction {
             .title("Port Forward")
             .body(format!(
                 "Started {} port forward{}{}",
-                started,
-                if started == 1 { "" } else { "s" },
-                if failures.is_empty() {
-                    String::new()
-                } else {
-                    format!(", {} failed", failures.len())
-                }
+                outcome.started,
+                if outcome.started == 1 { "" } else { "s" },
+                outcome.failed_suffix()
             ))
             .show();
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                format!("Failed to start: {}", failures.join("; ")),
-            ))
-        }
+        outcome.into_result()
     }
 
     fn action_type(&self) -> &str {
@@ -436,36 +463,7 @@ impl ActionHandler for StartPortForwardAction {
             return Ok(());
         }
 
-        // Counted from what actually started, not from what was attempted: a
-        // batch where every config failed used to be announced as a success.
-        let mut started = 0usize;
-        let mut failures: Vec<String> = Vec::new();
-
-        for config in configs_to_start {
-            let result = if config.workload_type.as_deref() == Some("service")
-                || config.workload_type.as_deref() == Some("pod")
-            {
-                if config.protocol == "tcp" {
-                    start_port_forward_tcp_cmd(vec![config.clone()], self.app_handle.clone()).await
-                } else {
-                    deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
-                }
-            } else {
-                deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
-            };
-
-            match start_error(result) {
-                Ok(()) => started += 1,
-                Err(e) => {
-                    error!(
-                        "Failed to start port forward for config {}: {}",
-                        config.id.unwrap_or(0),
-                        e
-                    );
-                    failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
-                }
-            }
-        }
+        let outcome = start_each(&self.app_handle, configs_to_start).await;
 
         let _ = self
             .app_handle
@@ -474,25 +472,15 @@ impl ActionHandler for StartPortForwardAction {
             .title("Port Forward")
             .body(format!(
                 "Started {} selected port forward{}{}",
-                started,
-                if started == 1 { "" } else { "s" },
-                if failures.is_empty() {
-                    String::new()
-                } else {
-                    format!(", {} failed", failures.len())
-                }
+                outcome.started,
+                if outcome.started == 1 { "" } else { "s" },
+                outcome.failed_suffix()
             ))
             .show();
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                format!("Failed to start: {}", failures.join("; ")),
-            ))
-        }
+        outcome.into_result()
     }
 
     fn action_type(&self) -> &str {
@@ -735,6 +723,7 @@ impl ActionHandler for TogglePortForwardAction {
 
         let mut started_count = 0;
         let mut stopped_count = 0;
+        let mut failures: Vec<String> = Vec::new();
 
         for config in target_configs {
             let is_running = running_config_ids.contains(&config.id.unwrap_or(0));
@@ -779,49 +768,45 @@ impl ActionHandler for TogglePortForwardAction {
                     stopped_count += 1;
                 }
             } else {
-                let result = if config.workload_type.as_deref() == Some("expose") {
-                    start_port_forward_tcp_cmd(vec![config.clone()], self.app_handle.clone()).await
-                } else if config.workload_type.as_deref() == Some("service")
-                    || config.workload_type.as_deref() == Some("pod")
-                {
-                    if config.protocol == "tcp" {
-                        start_port_forward_tcp_cmd(vec![config.clone()], self.app_handle.clone())
-                            .await
-                    } else {
-                        deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone())
-                            .await
+                match start_one(&self.app_handle, &config).await {
+                    Ok(()) => started_count += 1,
+                    Err(e) => {
+                        error!(
+                            "Failed to start port forward for config {}: {}",
+                            config.id.unwrap_or(0),
+                            e
+                        );
+                        failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
                     }
-                } else {
-                    deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
-                };
-
-                if let Err(e) = start_error(result) {
-                    error!(
-                        "Failed to start port forward for config {}: {}",
-                        config.id.unwrap_or(0),
-                        e
-                    );
-                } else {
-                    started_count += 1;
                 }
             }
         }
 
-        if started_count > 0 || stopped_count > 0 {
+        // A toggle whose starts all failed is a failed toggle: it is reported
+        // to the caller and in the notification rather than as nothing.
+        if started_count > 0 || stopped_count > 0 || !failures.is_empty() {
+            let outcome = StartOutcome {
+                started: started_count,
+                failures,
+            };
             let message = match (started_count, stopped_count) {
-                (0, stopped) => format!(
+                (0, stopped) if outcome.failures.is_empty() => format!(
                     "Stopped {} port forward{}",
                     stopped,
                     if stopped == 1 { "" } else { "s" }
                 ),
                 (started, 0) => format!(
-                    "Started {} port forward{}",
+                    "Started {} port forward{}{}",
                     started,
-                    if started == 1 { "" } else { "s" }
+                    if started == 1 { "" } else { "s" },
+                    outcome.failed_suffix()
                 ),
-                (started, stopped) => {
-                    format!("Started {}, stopped {} port forwards", started, stopped)
-                }
+                (started, stopped) => format!(
+                    "Started {}, stopped {} port forwards{}",
+                    started,
+                    stopped,
+                    outcome.failed_suffix()
+                ),
             };
             let _ = self
                 .app_handle
@@ -830,6 +815,10 @@ impl ActionHandler for TogglePortForwardAction {
                 .title("Port Forward")
                 .body(message)
                 .show();
+
+            let _ = self.app_handle.emit("port-forward-status-changed", ());
+
+            return outcome.into_result();
         }
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
