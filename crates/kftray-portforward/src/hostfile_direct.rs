@@ -57,11 +57,6 @@ impl DirectHostfileManager {
         .map_err(std::io::Error::from)
     }
 
-    pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        self.remove_host_entries(std::slice::from_ref(&id), &[])
-            .map(|_| ())
-    }
-
     /// Removes several ids with one write.
     ///
     /// Returns whether any of the ids had a line here: a caller that reached
@@ -102,6 +97,19 @@ impl DirectHostfileManager {
         &self, mappings: &[(std::net::IpAddr, String)],
     ) -> std::io::Result<()> {
         edit_hosts(|document| prune_legacy(document, mappings)).map_err(std::io::Error::from)
+    }
+
+    /// Removes these owners' marked lines from the section the privileged
+    /// helper normally writes, for when the helper is gone but this process
+    /// can still write the hosts file itself.
+    ///
+    /// The section is not privileged at the OS level, only by convention: a
+    /// process that can write the file at all can take a line out of it
+    /// whether the line is marked for the helper's section or this
+    /// manager's own. Only entries owned by one of `ids` are touched; an
+    /// unmarked line, or one owned by another configuration, stays.
+    pub fn remove_owned_from_helper_section(&self, ids: &[&str]) -> std::io::Result<()> {
+        edit_hosts(|document| remove_owned_lines(document, ids)).map_err(std::io::Error::from)
     }
 
     /// This manager's own section, as it is on disk.
@@ -223,6 +231,22 @@ fn prune_legacy(
     })
 }
 
+/// Takes these owners' marked lines out of the section the privileged
+/// helper normally writes.
+///
+/// The section is not privileged at the OS level, only by convention: a
+/// process that can write the file at all can take a line out of it
+/// whether the line is marked for the helper's section or this manager's
+/// own. Only entries owned by one of `ids` are touched; an unmarked line,
+/// or one owned by another configuration, stays.
+fn remove_owned_lines(
+    document: &mut HostsDocument, ids: &[&str],
+) -> kftray_commons::utils::hostsfile::Result<()> {
+    document
+        .reconcile_owners(KFTRAY_HOSTS_TAG, ids, &[])
+        .map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::IpAddr;
@@ -328,6 +352,41 @@ mod tests {
             vec!["1-https", "2-https"],
             "a marked line names its owner; an unmarked one counts only for the id it was \
              handed over for; an id with neither is not stranded"
+        );
+    }
+
+    #[test]
+    fn no_helper_fallback_removes_only_the_stranded_ids_own_marked_line() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let mut file = HostsFile::new(KFTRAY_HOSTS_TAG);
+        file.add_owned_entry(addr(1), "mine.local", "7")
+            .unwrap()
+            .add_owned_entry(addr(1), "theirs.local", "9")
+            .unwrap()
+            .add_entry(addr(1), "unmarked.local");
+        file.write_to(&temp_path).unwrap();
+
+        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {
+            remove_owned_lines(document, &["7"])
+        })
+        .unwrap();
+
+        let remaining: Vec<(String, Option<String>)> = HostsFile::new(KFTRAY_HOSTS_TAG)
+            .read_section_from(&temp_path)
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.hostname, entry.owner))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec![
+                ("theirs.local".to_owned(), Some("9".to_owned())),
+                ("unmarked.local".to_owned(), None),
+            ],
+            "the no-helper fallback removes only the stranded id's own marked line; another \
+             configuration's line and an unmarked one stay, so a stop does not fail forever \
+             once the helper is gone"
         );
     }
 }

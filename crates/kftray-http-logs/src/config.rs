@@ -39,7 +39,9 @@ impl LogConfig {
     }
 
     pub fn default_log_directory() -> Result<PathBuf> {
-        kftray_commons::utils::config_dir::get_log_folder_path().map_err(anyhow::Error::msg)
+        kftray_commons::utils::config_dir::get_log_folder_path()
+            .map_err(anyhow::Error::msg)
+            .context("Failed to resolve the HTTP log directory")
     }
 
     pub fn log_dir(&self) -> &Path {
@@ -213,5 +215,27 @@ mod tests {
 
         assert!(log_subdir.exists());
         assert!(log_subdir.is_dir());
+    }
+
+    #[test]
+    fn test_default_log_directory_uses_kftray_config() {
+        static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let temp_dir = TempDir::new().unwrap();
+        let previous = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", temp_dir.path()) };
+
+        let result = LogConfig::default_log_directory();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("KFTRAY_CONFIG", value) },
+            None => unsafe { std::env::remove_var("KFTRAY_CONFIG") },
+        }
+
+        let log_dir = result.expect("default_log_directory should resolve");
+        assert!(log_dir.ends_with("http_logs"));
     }
 }

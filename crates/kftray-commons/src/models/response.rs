@@ -25,10 +25,19 @@ impl CustomResponse {
 /// all-failed batch still returns `Ok`; every consumer has to inspect the
 /// statuses rather than the outer result.
 pub fn batch_failure(responses: &[CustomResponse]) -> Result<(), String> {
-    let failures: Vec<&str> = responses
+    let failures: Vec<String> = responses
         .iter()
         .filter(|response| response.failed())
-        .map(|response| response.stderr.as_str())
+        .map(|response| {
+            if response.stderr.trim().is_empty() {
+                match response.id {
+                    Some(id) => format!("config {id} failed with no error message"),
+                    None => "a configuration failed with no error message".to_owned(),
+                }
+            } else {
+                response.stderr.clone()
+            }
+        })
         .collect();
     if failures.is_empty() {
         Ok(())

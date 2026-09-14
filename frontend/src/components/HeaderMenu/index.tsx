@@ -119,7 +119,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               }
               onClick={
                 isInitiating
-                  ? abortStartOperation
+                  ? undefined
                   : selectedConfigs.length > 0
                     ? startSelectedPortForwarding
                     : () =>
@@ -127,7 +127,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                           configs.filter(config => !config.is_running),
                         )
               }
-              aria-label={isInitiating ? 'Cancel queued starts' : undefined}
               _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'
@@ -236,12 +235,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               }
               onClick={
                 isStopping
-                  ? abortStopOperation
+                  ? undefined
                   : selectedConfigs.length > 0
                     ? stopSelectedPortForwarding
                     : stopAllPortForwarding
               }
-              aria-label={isStopping ? 'Cancel queued stops' : undefined}
               _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'

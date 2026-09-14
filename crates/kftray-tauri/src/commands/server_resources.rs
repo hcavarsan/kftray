@@ -144,6 +144,7 @@ pub async fn list_all_kftray_resources(
             list_services_in_namespace(
                 &client,
                 &namespace,
+                &clean_username,
                 &deployment_config_ids,
                 &config_ids,
                 installation_id,
@@ -155,6 +156,7 @@ pub async fn list_all_kftray_resources(
             list_ingresses_in_namespace(
                 &client,
                 &namespace,
+                &clean_username,
                 &deployment_config_ids,
                 &config_ids,
                 installation_id,
@@ -221,10 +223,7 @@ fn is_ours(
 ) -> bool {
     match labels.get(kftray_portforward::kube::INSTALLATION_LABEL) {
         Some(owner) => owned_by(owner, installation_id),
-        None => {
-            is_forward_name(name, username)
-                || name.starts_with(&format!("kftray-expose-{username}"))
-        }
+        None => is_forward_name(name, username) || is_expose_name(name, username),
     }
 }
 
@@ -237,6 +236,32 @@ fn is_ours(
 fn is_forward_name(name: &str, username: &str) -> bool {
     name.starts_with(&kftray_portforward::kube::proxy_resource_prefix())
         || name.starts_with(&format!("kftray-forward-{username}-"))
+}
+
+/// Whether `name` is an exposure this application could have created for the
+/// current user, under the current naming rule or the one before it. Mirrors
+/// `is_forward_name`.
+fn is_expose_name(name: &str, username: &str) -> bool {
+    name.starts_with(&kftray_portforward::expose::kubernetes::expose_resource_prefix())
+        || name.starts_with(&format!("kftray-expose-{username}"))
+}
+
+/// Whether a service or ingress belongs to this installation: by label, by a
+/// name this application could have generated, or, because a public
+/// exposure can rename its edge resource to an arbitrary subdomain, by
+/// `config_id` when that id already belongs to a deployment known to be
+/// ours.
+fn is_ours_dependent(
+    name: &str, labels: &std::collections::BTreeMap<String, String>, config_id: Option<&str>,
+    deployment_config_ids: &[String], username: &str, installation_id: &str,
+) -> bool {
+    match labels.get(kftray_portforward::kube::INSTALLATION_LABEL) {
+        Some(owner) => owned_by(owner, installation_id),
+        None => {
+            is_expose_name(name, username)
+                || config_id.is_some_and(|id| deployment_config_ids.contains(&id.to_string()))
+        }
+    }
 }
 
 async fn list_pods_in_namespace(
@@ -298,11 +323,14 @@ async fn list_deployments_in_namespace(
 ) -> Result<Vec<ServerResource>, String> {
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
-    // Unfiltered by label: a relay Deployment carries its own hashed name as
-    // `app`, not a shared value, so listing only `app=kftray-expose` hid every
-    // proxy relay from the screen that exists to remove them by hand.
+    // Selects on `config_id` existing rather than any specific label value: a
+    // relay Deployment carries its own hashed name as `app`, not a shared
+    // value, so listing only `app=kftray-expose` hid every proxy relay from
+    // the screen that exists to remove them by hand. Both proxy and expose
+    // manifests always carry `config_id`, so this stays cheap without
+    // needing every Deployment in the namespace.
     let deployments = deployments_api
-        .list(&ListParams::default())
+        .list(&ListParams::default().labels("config_id"))
         .await
         .map_err(|e| format!("Failed to list deployments: {e}"))?;
 
@@ -353,14 +381,16 @@ async fn list_deployments_in_namespace(
 }
 
 async fn list_services_in_namespace(
-    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
-    installation_id: &str,
+    client: &Client, namespace: &str, username: &str, deployment_config_ids: &[String],
+    config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let services_api: Api<Service> = Api::namespaced(client.clone(), namespace);
-    let lp = ListParams::default().labels("app=kftray-expose");
 
+    // Same treatment as deployments: a proxy or expose Service does not
+    // carry `app=kftray-expose`, only `config_id`, so filtering on the app
+    // label hid it from the screen that exists to remove it by hand.
     let services = services_api
-        .list(&lp)
+        .list(&ListParams::default().labels("config_id"))
         .await
         .map_err(|e| format!("Failed to list services: {e}"))?;
 
@@ -368,10 +398,18 @@ async fn list_services_in_namespace(
         .items
         .into_iter()
         .filter_map(|service| {
-            if !belongs_here(service.labels(), installation_id) {
+            let name = service.name_any();
+            let config_id = service.labels().get("config_id").map(|s| s.to_string());
+            if !is_ours_dependent(
+                &name,
+                service.labels(),
+                config_id.as_deref(),
+                deployment_config_ids,
+                username,
+                installation_id,
+            ) {
                 return None;
             }
-            let config_id = service.labels().get("config_id").map(|s| s.to_string());
 
             // A service whose deployment is gone is exactly what a partial
             // cleanup leaves behind, and what a start then refuses to run next
@@ -397,7 +435,7 @@ async fn list_services_in_namespace(
 
             Some(ServerResource {
                 resource_type: "service".to_string(),
-                name: service.name_any(),
+                name,
                 namespace: namespace.to_string(),
                 config_id,
                 is_orphaned,
@@ -409,14 +447,15 @@ async fn list_services_in_namespace(
 }
 
 async fn list_ingresses_in_namespace(
-    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
-    installation_id: &str,
+    client: &Client, namespace: &str, username: &str, deployment_config_ids: &[String],
+    config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let ingresses_api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
-    let lp = ListParams::default().labels("app=kftray-expose");
 
+    // Same treatment as deployments and services: a proxy or expose Ingress
+    // does not carry `app=kftray-expose`, only `config_id`.
     let ingresses = ingresses_api
-        .list(&lp)
+        .list(&ListParams::default().labels("config_id"))
         .await
         .map_err(|e| format!("Failed to list ingresses: {e}"))?;
 
@@ -424,10 +463,18 @@ async fn list_ingresses_in_namespace(
         .items
         .into_iter()
         .filter_map(|ingress| {
-            if !belongs_here(ingress.labels(), installation_id) {
+            let name = ingress.name_any();
+            let config_id = ingress.labels().get("config_id").map(|s| s.to_string());
+            if !is_ours_dependent(
+                &name,
+                ingress.labels(),
+                config_id.as_deref(),
+                deployment_config_ids,
+                username,
+                installation_id,
+            ) {
                 return None;
             }
-            let config_id = ingress.labels().get("config_id").map(|s| s.to_string());
 
             // An ingress without its deployment is the most important leftover
             // of all: it still routes a public hostname. Listed as orphaned so
@@ -459,7 +506,7 @@ async fn list_ingresses_in_namespace(
 
             Some(ServerResource {
                 resource_type: "ingress".to_string(),
-                name: ingress.name_any(),
+                name,
                 namespace: namespace.to_string(),
                 config_id,
                 is_orphaned,
@@ -491,25 +538,6 @@ fn calculate_age(creation_timestamp: &Time) -> String {
     }
 }
 
-/// The ownership label on a resource, or `None` when it carries none or no
-/// longer exists.
-async fn owner_label<K>(api: Api<K>, name: &str) -> Result<Option<String>, String>
-where
-    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
-{
-    match api.get_opt(name).await {
-        Ok(object) => Ok(object.and_then(|object| {
-            object
-                .meta()
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.get(kftray_portforward::kube::INSTALLATION_LABEL))
-                .cloned()
-        })),
-        Err(e) => Err(format!("Failed to read {name}: {e}")),
-    }
-}
-
 #[tauri::command]
 pub async fn delete_kftray_resource(
     context_name: &str, namespace: &str, resource_type: &str, resource_name: &str,
@@ -527,114 +555,80 @@ pub async fn delete_kftray_resource(
     let client = connection.client;
     let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
-    // The configuration id on the object only names a row in the database
-    // that created it. Only a resource labelled with this installation's file
-    // identity was created from the file database this command stops
-    // through; a memory-mode session's relay with the same id, or a legacy
-    // resource with no label, is deleted without touching a local forward
-    // that merely shares the number.
-    let owner = match resource_type {
-        "pod" => {
-            owner_label(
-                Api::<Pod>::namespaced(client.clone(), namespace),
-                resource_name,
-            )
-            .await
-        }
-        "deployment" => {
-            owner_label(
-                Api::<Deployment>::namespaced(client.clone(), namespace),
-                resource_name,
-            )
-            .await
-        }
-        "service" => {
-            owner_label(
-                Api::<Service>::namespaced(client.clone(), namespace),
-                resource_name,
-            )
-            .await
-        }
-        "ingress" => {
-            owner_label(
-                Api::<Ingress>::namespaced(client.clone(), namespace),
-                resource_name,
-            )
-            .await
-        }
-        _ => return Err(format!("Unsupported resource type: {}", resource_type)),
-    }?;
-    let created_from_file_database = owner.as_deref() == Some(installation_id);
-
-    if created_from_file_database
-        && let Some(ref config_id_str) = config_id
-        && let Ok(id) = config_id_str.parse::<i64>()
-        && let Ok(config) = kftray_commons::config::get_config(id).await
-    {
-        info!("Config found, stopping port-forward before deleting resource");
-
-        let workload_type = config.workload_type.as_deref().unwrap_or("");
-
-        match workload_type {
-            "proxy" => {
-                let _ = kftray_portforward::stop_proxy_forward(
-                    id,
-                    namespace,
-                    resource_name.to_string(),
-                )
-                .await;
-            }
-            "expose" => {
-                let _ = kftray_portforward::stop_expose(id, namespace, DatabaseMode::File).await;
-            }
-            _ => {
-                let _ = kftray_portforward::stop_port_forward_with_mode(
-                    config_id_str.clone(),
-                    DatabaseMode::File,
-                )
-                .await;
-            }
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
-
     let delete_params = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
 
-    // Checked on the object itself, not on what the screen listed: the name
-    // alone reaches another installation's resource, and deleting one by
-    // mistake takes down a forward that is not ours.
-    async fn delete_owned<K>(
-        api: Api<K>, name: &str, params: &DeleteParams, installation_id: &str, kind: &str,
+    // Fetched once and reused for the ownership gate, the stop decision and
+    // the delete precondition: refetching between them let an unrelated
+    // status write on the object turn a legitimate delete into a spurious
+    // 409, and reading it twice asked the API server for the same object for
+    // no reason. A resource labelled with another installation's id, or one
+    // with no label that cannot be attributed either way, is left alone
+    // entirely: neither stopped nor deleted.
+    async fn delete_kube_resource<K>(
+        api: Api<K>, name: &str, config_id: &Option<String>, params: &DeleteParams,
+        installation_id: &str, namespace: &str, kind: &str,
     ) -> Result<(), String>
     where
         K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
     {
-        // Already gone is the outcome this command wants: the stop that ran
-        // just before can have deleted it, and so can a concurrent cleanup.
         let object = match api.get_opt(name).await {
             Ok(Some(object)) => object,
             Ok(None) => return Ok(()),
             Err(e) => return Err(format!("Failed to read {kind}: {e}")),
         };
-        if !belongs_here(
-            object.meta().labels.as_ref().unwrap_or(&Default::default()),
-            installation_id,
-        ) {
+        let labels = object.meta().labels.clone().unwrap_or_default();
+        if !belongs_here(&labels, installation_id) {
             return Err(format!(
                 "{kind} {name} belongs to another kftray installation and was left alone"
             ));
         }
-        // Deleted only if it is still the object that passed the check: the
-        // name can be reused, or the labels changed, between the read and the
-        // delete, and the preconditions make the server refuse in that case.
+
+        // The configuration id on the object only names a row in the
+        // database that created it. A memory-mode session's relay with the
+        // same id, or a legacy resource with no label, was already rejected
+        // above and never reaches this point.
+        if let Some(config_id_str) = config_id
+            && let Ok(id) = config_id_str.parse::<i64>()
+            && let Ok(config) = kftray_commons::config::get_config(id).await
+        {
+            info!("Config found, stopping port-forward before deleting resource");
+
+            let workload_type = config.workload_type.as_deref().unwrap_or("");
+
+            match workload_type {
+                "proxy" => {
+                    let _ = kftray_portforward::stop_proxy_forward(id, namespace, name.to_string())
+                        .await;
+                }
+                "expose" => {
+                    let _ = kftray_portforward::stop_expose(id, DatabaseMode::File).await;
+                }
+                _ => {
+                    let _ = kftray_portforward::stop_port_forward_with_mode(
+                        config_id_str.clone(),
+                        DatabaseMode::File,
+                    )
+                    .await;
+                }
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+
+        // Deleted only if it is still the object identified by this uid: the
+        // name can be reused between the fetch above and this delete, and
+        // the precondition makes the server refuse in that case. Unlike the
+        // uid, the resource version is expected to change on any unrelated
+        // status write between the fetch and the delete, which made the
+        // precondition fail with 409 far more than the reused-name case it
+        // was meant to catch.
         let params = DeleteParams {
             preconditions: Some(kube::api::Preconditions {
                 uid: object.meta().uid.clone(),
-                resource_version: object.meta().resource_version.clone(),
+                resource_version: None,
             }),
             ..params.clone()
         };
@@ -651,41 +645,52 @@ pub async fn delete_kftray_resource(
 
     match resource_type {
         "pod" => {
-            let api: Api<Pod> = Api::namespaced(client, namespace);
-            delete_owned(api, resource_name, &delete_params, installation_id, "pod").await?;
+            delete_kube_resource(
+                Api::<Pod>::namespaced(client, namespace),
+                resource_name,
+                &config_id,
+                &delete_params,
+                installation_id,
+                namespace,
+                "pod",
+            )
+            .await?
         }
         "deployment" => {
-            let api: Api<Deployment> = Api::namespaced(client, namespace);
-            delete_owned(
-                api,
+            delete_kube_resource(
+                Api::<Deployment>::namespaced(client, namespace),
                 resource_name,
+                &config_id,
                 &delete_params,
                 installation_id,
+                namespace,
                 "deployment",
             )
-            .await?;
+            .await?
         }
         "service" => {
-            let api: Api<Service> = Api::namespaced(client, namespace);
-            delete_owned(
-                api,
+            delete_kube_resource(
+                Api::<Service>::namespaced(client, namespace),
                 resource_name,
+                &config_id,
                 &delete_params,
                 installation_id,
+                namespace,
                 "service",
             )
-            .await?;
+            .await?
         }
         "ingress" => {
-            let api: Api<Ingress> = Api::namespaced(client, namespace);
-            delete_owned(
-                api,
+            delete_kube_resource(
+                Api::<Ingress>::namespaced(client, namespace),
                 resource_name,
+                &config_id,
                 &delete_params,
                 installation_id,
+                namespace,
                 "ingress",
             )
-            .await?;
+            .await?
         }
         _ => {
             return Err(format!("Unsupported resource type: {}", resource_type));

@@ -49,16 +49,6 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
 /// Only a success is cached: a transient filesystem error or lock timeout would
 /// otherwise disable proxy ownership for the rest of the process even after the
 /// cause cleared.
-pub fn get_installation_id() -> Result<&'static str, String> {
-    if let Some(id) = INSTALLATION_ID.get() {
-        return Ok(id);
-    }
-    let id = load_or_create_installation_id()?;
-
-    Ok(INSTALLATION_ID.get_or_init(|| id))
-}
-
-/// Async form of [`get_installation_id`].
 ///
 /// Creation touches the filesystem and can wait on the lock, so it runs on a
 /// blocking thread rather than stalling a runtime worker and delaying unrelated
@@ -102,6 +92,15 @@ pub async fn owner_identity(mode: crate::utils::db_mode::DatabaseMode) -> Result
 /// session's.
 const MEMORY_OWNER_SEPARATOR: &str = "-m";
 
+/// Marks the digest form of a memory-mode owner base.
+///
+/// A generated installation id is lowercase hex, so it can never contain
+/// this letter; [`is_valid_installation_id`] also rejects a persisted id
+/// that starts with it. That makes a digest form unmistakable for a real
+/// installation id, so [`owned_by_installation`] cannot recognise another
+/// installation's raw id as this installation's digest.
+const MEMORY_OWNER_DIGEST_PREFIX: char = 'h';
+
 /// The part of the installation id a memory-mode identity is derived from.
 ///
 /// The identity is a label value, so the whole derived form has to fit the
@@ -124,7 +123,7 @@ fn memory_owner_base(installation: &str) -> std::borrow::Cow<'_, str> {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    std::borrow::Cow::Owned(format!("h{hash:016x}"))
+    std::borrow::Cow::Owned(format!("{MEMORY_OWNER_DIGEST_PREFIX}{hash:016x}"))
 }
 
 /// Whether an ownership label names this installation, directly or through
@@ -134,7 +133,9 @@ pub fn owned_by_installation(owner: &str, installation: &str) -> bool {
         || owner
             .strip_prefix(memory_owner_base(installation).as_ref())
             .and_then(|rest| rest.strip_prefix(MEMORY_OWNER_SEPARATOR))
-            .is_some_and(|session| session.len() == 32)
+            .is_some_and(|session| {
+                session.len() == 32 && session.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
 }
 
 static MEMORY_DATABASE_IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -166,12 +167,16 @@ fn load_or_create_installation_id() -> Result<String, String> {
             }
         };
         if is_valid_installation_id(&stored) {
-            sync_directory(&config_dir).map_err(|error| {
-                format!(
+            // Durability matters when publishing a new identifier, not when
+            // merely reading one back: a filesystem that rejects fsync on a
+            // read-only directory descriptor (some network or container
+            // mounts) must not stop this installation from ever starting.
+            if let Err(error) = sync_directory(&config_dir) {
+                log::warn!(
                     "Failed to synchronize {} before using its installation identifier: {error}",
                     config_dir.display()
-                )
-            })?;
+                );
+            }
 
             return Ok(stored);
         }
@@ -191,6 +196,18 @@ fn with_identity_lock<T>(
     config_dir: &std::path::Path, write: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     with_file_lock(&config_dir.join("installation_id.lock"), write)
+}
+
+/// Releases the lock when dropped, so [`with_file_lock`] unlocks on every
+/// exit path `work` can take, a panic included, not only its normal return.
+struct FileLockGuard<'a> {
+    file: &'a fs::File,
+}
+
+impl Drop for FileLockGuard<'_> {
+    fn drop(&mut self) {
+        unlock(self.file, LockRegion::Whole);
+    }
 }
 
 /// Runs `work` while holding an exclusive advisory lock on `lock_path`.
@@ -222,10 +239,8 @@ pub fn with_file_lock<T>(
         })?;
 
     wait_for_exclusive_lock(&lock, LockRegion::Whole, &lock_path.display().to_string())?;
-
-    let result = work();
-    unlock(&lock, LockRegion::Whole);
-    result
+    let _guard = FileLockGuard { file: &lock };
+    work()
 }
 
 /// A lock on one configuration, shared by every process that uses the file
@@ -252,6 +267,12 @@ impl Drop for ConfigLock {
 ///
 /// The wait runs on a blocking thread: it can sleep for the whole budget, and
 /// a runtime worker parked on it would stall unrelated forwards.
+///
+/// The lock file this creates under `locks/` is never removed. Unlinking it
+/// while another process still holds it open would let a third process
+/// create and lock a new inode at the same path, so the two existing holders
+/// would no longer exclude each other. One small file per configuration id
+/// is an acceptable, bounded cost next to that risk.
 pub async fn lock_config(
     id: i64, mode: crate::utils::db_mode::DatabaseMode, budget: std::time::Duration,
 ) -> Result<Option<ConfigLock>, String> {
@@ -532,6 +553,7 @@ fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
 fn is_valid_installation_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 63
+        && !value.starts_with(MEMORY_OWNER_DIGEST_PREFIX)
         && value
             .chars()
             .all(|character| character.is_ascii_alphanumeric())
@@ -649,6 +671,29 @@ mod tests {
         assert!(
             !owned_by_installation(&format!("{installation}-m"), &installation),
             "a bare separator is not a session"
+        );
+    }
+
+    #[test]
+    fn a_session_that_is_not_hex_is_not_recognised_even_at_the_right_length() {
+        let installation = "abc123abc123".to_string();
+        // Same length as a real session (32 chars), but not hex.
+        let fake_session = "g".repeat(32);
+        let owner = format!("{}-m{fake_session}", memory_owner_base(&installation));
+        assert!(!owned_by_installation(&owner, &installation));
+    }
+
+    #[test]
+    fn the_digest_prefix_can_never_be_a_persisted_installation_id() {
+        // A digest form the fallback base can actually produce.
+        let long_installation = "b".repeat(63);
+        let digest = memory_owner_base(&long_installation).into_owned();
+        assert!(digest.starts_with(MEMORY_OWNER_DIGEST_PREFIX));
+        assert!(
+            !is_valid_installation_id(&digest),
+            "a raw id equal to another installation's digest must never load, \
+             or owned_by_installation could mistake that installation's memory \
+             sessions for its own"
         );
     }
 

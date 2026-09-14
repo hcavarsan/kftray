@@ -19,22 +19,39 @@ pub struct HostfileManager {
     /// id. The helper marks the lines it writes, but a line left by a version
     /// that did not is only attributable through what was asked for.
     handed_to_helper: std::sync::Mutex<HashSet<(String, HostEntry)>>,
+    /// Full ids (`{config_id}-https`, `{config_id}-https-local`) actually
+    /// written by `add_ssl_host_entry` in this run. Whether a configuration's
+    /// HTTPS aliases were written depends on the SSL setting at the time it
+    /// started, which the configuration itself does not record, so an
+    /// unrelated unmarked line sharing the same alias must not be attributed
+    /// to an id that was never written.
+    ssl_ids_written: std::sync::Mutex<HashSet<String>>,
 }
 
 impl HostfileManager {
     pub fn new() -> Self {
-        // Unit tests never talk to an installed helper: its state is shared
-        // with every other test and with the machine, so a test's outcome
-        // would depend on what happens to be in the system hosts file.
-        let helper_client = if cfg!(test) {
-            None
-        } else {
-            HostfileHelperClient::new().ok()
-        };
         Self {
-            helper_client,
+            helper_client: HostfileHelperClient::new().ok(),
             direct_manager: DirectHostfileManager::new(),
             handed_to_helper: std::sync::Mutex::new(HashSet::new()),
+            ssl_ids_written: std::sync::Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// A manager that never talks to an installed helper.
+    ///
+    /// Unit tests share the machine's helper and its hosts file with every
+    /// other test, so their outcome must not depend on what happens to be
+    /// installed and running there. This is the explicit seam for that,
+    /// rather than a runtime `cfg!(test)` check baked into the production
+    /// constructor.
+    #[cfg(test)]
+    fn without_helper() -> Self {
+        Self {
+            helper_client: None,
+            direct_manager: DirectHostfileManager::new(),
+            handed_to_helper: std::sync::Mutex::new(HashSet::new()),
+            ssl_ids_written: std::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -62,6 +79,41 @@ impl HostfileManager {
         }
 
         self.direct_manager.add_host_entry(id, entry)
+    }
+
+    /// Writes the HTTPS aliases for `config_id` and records their full ids
+    /// as written, so a later removal can tell an unrelated unmarked line
+    /// that merely shares the alias from one this run actually wrote.
+    pub fn add_ssl_host_entry(&self, config_id: &str, alias: &str) -> std::io::Result<()> {
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+
+        let https_id = format!("{config_id}-https");
+        self.add_host_entry(
+            https_id.clone(),
+            HostEntry {
+                ip: loopback,
+                hostname: alias.to_string(),
+            },
+        )?;
+        self.ssl_ids_written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(https_id);
+
+        let https_local_id = format!("{config_id}-https-local");
+        self.add_host_entry(
+            https_local_id.clone(),
+            HostEntry {
+                ip: loopback,
+                hostname: format!("{alias}.local"),
+            },
+        )?;
+        self.ssl_ids_written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(https_local_id);
+
+        Ok(())
     }
 
     /// Removes several ids from wherever they were written.
@@ -181,9 +233,11 @@ impl HostfileManager {
         // the removal for a background writer that runs within a fraction of
         // a second. Its lines are given that long to disappear before they are
         // reported, so an installed helper that has not been upgraded yet does
-        // not fail every stop.
+        // not fail every stop. An upgraded helper's write has already landed by
+        // the time it replies, so this budget only ever costs latency against
+        // one that has not been upgraded.
         const HELPER_SETTLE: std::time::Duration = std::time::Duration::from_millis(100);
-        const HELPER_SETTLE_ATTEMPTS: usize = 20;
+        const HELPER_SETTLE_ATTEMPTS: usize = 3;
         let mut stranded = Vec::new();
         for attempt in 0..HELPER_SETTLE_ATTEMPTS {
             let section = DirectHostfileManager::helper_section()?;
@@ -210,9 +264,12 @@ impl HostfileManager {
                 Some(helper) => helper
                     .remove_unowned_host_entries(legacy)
                     .map_err(|e| e.to_string()),
-                // Without a helper the same attributed lines are pruned here,
-                // if this process can write the file: an installation that
-                // only ever wrote directly has them from before ownership.
+                // Without a helper the same attributed unmarked lines are
+                // pruned here, and so are the stranded ids' own marked lines:
+                // the helper's section is not privileged at the OS level,
+                // only by convention, and a process that can write the hosts
+                // file at all can take a line out of it whether the line is
+                // marked for the helper or not.
                 None => {
                     let mappings: Vec<(std::net::IpAddr, String)> = legacy
                         .into_iter()
@@ -220,6 +277,10 @@ impl HostfileManager {
                         .collect();
                     self.direct_manager
                         .prune_legacy_entries(&mappings)
+                        .and_then(|_| {
+                            self.direct_manager
+                                .remove_owned_from_helper_section(&stranded)
+                        })
                         .map_err(|e| e.to_string())
                 }
             };
@@ -238,6 +299,11 @@ impl HostfileManager {
                 stranded.join(", ")
             )));
         }
+
+        self.handed_to_helper
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(owner, _)| !ids.contains(&owner.as_str()));
 
         Ok(())
     }
@@ -267,6 +333,10 @@ impl HostfileManager {
             return Err(std::io::Error::other(errors.join("; ")));
         }
         self.handed_to_helper
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.ssl_ids_written
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
@@ -302,15 +372,18 @@ fn attributable_lines(
 /// Every alias a configuration may have written, keyed by the id each was
 /// written under.
 ///
-/// Derived from the configuration rather than remembered: it is the one
-/// description of these aliases that survives a restart, and it is what
-/// lets a removal recognise an unmarked line an older helper left behind.
-/// Only aliases this configuration could have created are listed: the
-/// domain line is written only for a domain-enabled service, and the HTTPS
-/// lines only for a TCP forward, so a configuration that merely shares an
-/// alias with one that did write them does not claim their lines.
-pub fn config_host_entries(
+/// The domain alias is derived from the configuration alone: it is the one
+/// description that survives a restart, and a configuration that could not
+/// have written it (no domain feature, no service) does not claim it. The
+/// HTTPS aliases cannot be derived the same way: whether they were written
+/// depends on the SSL setting at the time the forward started, which the
+/// configuration itself does not record. They are claimed only for the ids
+/// `ssl_ids_written` actually recorded, so an unrelated unmarked line that
+/// merely shares an HTTPS alias is never attributed to a configuration that
+/// never wrote it.
+fn config_host_entries(
     id: i64, config: Option<&kftray_commons::models::config_model::Config>,
+    ssl_ids_written: &HashSet<String>,
 ) -> Vec<(String, HostEntry)> {
     let Some(config) = config else {
         return Vec::new();
@@ -338,20 +411,26 @@ pub fn config_host_entries(
         ));
     }
     if config.protocol == "tcp" {
-        entries.push((
-            format!("{id}-https"),
-            HostEntry {
-                ip: loopback,
-                hostname: alias.to_owned(),
-            },
-        ));
-        entries.push((
-            format!("{id}-https-local"),
-            HostEntry {
-                ip: loopback,
-                hostname: format!("{alias}.local"),
-            },
-        ));
+        let https_id = format!("{id}-https");
+        if ssl_ids_written.contains(&https_id) {
+            entries.push((
+                https_id,
+                HostEntry {
+                    ip: loopback,
+                    hostname: alias.to_owned(),
+                },
+            ));
+        }
+        let https_local_id = format!("{id}-https-local");
+        if ssl_ids_written.contains(&https_local_id) {
+            entries.push((
+                https_local_id,
+                HostEntry {
+                    ip: loopback,
+                    hostname: format!("{alias}.local"),
+                },
+            ));
+        }
     }
     entries
 }
@@ -375,13 +454,20 @@ pub fn remove_config_host_entries(
         format!("{id}-https-local"),
     ];
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let ssl_ids_written = HOSTFILE_MANAGER
+        .ssl_ids_written
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let protected: Vec<HostEntry> = in_use
         .iter()
         .filter(|other| other.id != Some(id))
-        .flat_map(|other| config_host_entries(other.id.unwrap_or_default(), Some(other)))
+        .flat_map(|other| {
+            config_host_entries(other.id.unwrap_or_default(), Some(other), &ssl_ids_written)
+        })
         .map(|(_, entry)| entry)
         .collect();
-    let expected = config_host_entries(id, config);
+    let expected = config_host_entries(id, config, &ssl_ids_written);
     HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)
 }
 
@@ -390,19 +476,7 @@ pub fn remove_all_host_entries() -> std::io::Result<()> {
 }
 
 pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std::io::Result<()> {
-    let https_entry = HostEntry {
-        ip: "127.0.0.1".parse().unwrap(),
-        hostname: alias.to_string(),
-    };
-    add_host_entry(format!("{}-https", config_id), https_entry)?;
-
-    let local_entry = HostEntry {
-        ip: "127.0.0.1".parse().unwrap(),
-        hostname: format!("{}.local", alias),
-    };
-    add_host_entry(format!("{}-https-local", config_id), local_entry)?;
-
-    Ok(())
+    HOSTFILE_MANAGER.add_ssl_host_entry(config_id, alias)
 }
 
 #[cfg(test)]
@@ -465,7 +539,8 @@ mod tests {
             protocol: "tcp".to_owned(),
             ..Config::default()
         };
-        let entries = config_host_entries(41, Some(&config));
+        let ssl_written = HashSet::from(["41-https".to_owned(), "41-https-local".to_owned()]);
+        let entries = config_host_entries(41, Some(&config), &ssl_written);
         let ids: Vec<String> = entries.iter().map(|(id, _)| id.clone()).collect();
         let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
         assert_eq!(ids, vec!["41", "41-https", "41-https-local"]);
@@ -478,7 +553,7 @@ mod tests {
             protocol: "udp".to_owned(),
             ..config.clone()
         };
-        assert!(config_host_entries(41, Some(&plain)).is_empty());
+        assert!(config_host_entries(41, Some(&plain), &ssl_written).is_empty());
         assert_eq!(
             entries[0].1.ip,
             "127.0.0.7".parse::<std::net::IpAddr>().unwrap()
@@ -506,13 +581,41 @@ mod tests {
     }
 
     #[test]
-    fn unit_tests_never_reach_an_installed_helper() {
+    fn https_aliases_are_claimed_only_for_ids_this_run_actually_wrote() {
+        use kftray_commons::models::config_model::Config;
+
+        // A TCP configuration whose SSL was never enabled: the helper's
+        // `add_ssl_host_entry` was never called for it, so nothing recorded
+        // "44-https" as written. An unrelated unmarked line that happens to
+        // share the alias must not be attributed to it.
+        let config = Config {
+            id: Some(44),
+            alias: Some("plain.local".to_owned()),
+            protocol: "tcp".to_owned(),
+            ..Config::default()
+        };
+        assert!(
+            config_host_entries(44, Some(&config), &HashSet::new()).is_empty(),
+            "an id whose HTTPS aliases were never written must not claim any lines"
+        );
+
+        // Once this run's helper call records the id as written, the same
+        // configuration claims exactly those lines.
+        let written = HashSet::from(["44-https".to_owned()]);
+        let entries = config_host_entries(44, Some(&config), &written);
+        let ids: Vec<&str> = entries.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["44-https"]);
+    }
+
+    #[test]
+    fn a_manager_without_a_helper_never_reaches_one() {
         init();
-        let manager = HostfileManager::new();
+        let manager = HostfileManager::without_helper();
 
         assert!(
-            manager.helper_client.is_none(),
-            "a test outcome must not depend on the machine's helper or hosts file"
+            manager.helper().is_none(),
+            "the direct-fallback seam must not resolve a helper, whatever is installed on the \
+             machine running the test"
         );
     }
 }

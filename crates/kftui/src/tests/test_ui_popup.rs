@@ -29,6 +29,19 @@ mod tests {
         app
     }
 
+    fn rendered_screen(width: u16, height: u16, draw: impl FnOnce(&mut ratatui::Frame)) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(draw).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
     #[test]
     fn test_render_background_overlay() {
         let backend = TestBackend::new(100, 50);
@@ -132,21 +145,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let rendered = |scroll: usize| {
-            let backend = TestBackend::new(100, 24);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| {
-                    let area = Rect::new(0, 0, 100, 24);
-                    let _ = render_error_popup(frame, &error_message, area, 1, scroll);
-                })
-                .unwrap();
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>()
+            rendered_screen(100, 24, |frame| {
+                let area = Rect::new(0, 0, 100, 24);
+                let _ = render_error_popup(frame, &error_message, area, 1, scroll);
+            })
         };
 
         let top = rendered(0);
@@ -166,44 +168,53 @@ mod tests {
     }
 
     #[test]
+    fn each_newline_separated_failure_starts_its_own_row() {
+        let width = 60u16;
+        let screen = rendered_screen(width, 20, |frame| {
+            let area = Rect::new(0, 0, width, 20);
+            let error_message = "config 1 failed: reason one\nconfig 2 failed: reason two";
+            let _ = render_error_popup(frame, error_message, area, 0, 0);
+        });
+
+        let chars: Vec<char> = screen.chars().collect();
+        let rows: Vec<String> = chars
+            .chunks(width as usize)
+            .map(|row| row.iter().collect())
+            .collect();
+
+        assert!(
+            rows.iter().any(|row| row.contains("reason one")),
+            "the first failure must be on screen: {screen}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("reason two")),
+            "the second failure must be on screen: {screen}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.contains("reason one") && row.contains("config 2")),
+            "failures joined by \\n must not be merged onto the same rendered row: {screen}"
+        );
+    }
+
+    #[test]
     fn a_narrow_popup_keeps_the_dismissal_key_visible() {
         // Sixteen columns leave an interior the wrapper gives up on.
-        let backend = TestBackend::new(16, 8);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 16, 8);
-                let _ = render_error_popup(frame, "boom", area, 0, 0);
-            })
-            .unwrap();
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let screen = rendered_screen(16, 8, |frame| {
+            let area = Rect::new(0, 0, 16, 8);
+            let _ = render_error_popup(frame, "boom", area, 0, 0);
+        });
         assert!(screen.contains("<Enter>"), "{screen}");
     }
 
     #[test]
     fn a_popup_with_one_interior_row_shows_only_the_way_out() {
         // A three-row area leaves one row inside the borders.
-        let backend = TestBackend::new(60, 3);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 60, 3);
-                let _ = render_error_popup(frame, "first line\nsecond line", area, 0, 0);
-            })
-            .unwrap();
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let screen = rendered_screen(60, 3, |frame| {
+            let area = Rect::new(0, 0, 60, 3);
+            let _ = render_error_popup(frame, "first line\nsecond line", area, 0, 0);
+        });
         assert!(screen.contains("<Enter>"), "{screen}");
     }
 
@@ -225,18 +236,7 @@ mod tests {
         );
         app.error_scroll = usize::MAX;
 
-        let backend = TestBackend::new(80, 15);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| draw_ui(frame, &mut app, &[]))
-            .unwrap();
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let screen = rendered_screen(80, 15, |frame| draw_ui(frame, &mut app, &[]));
 
         assert!(
             screen.contains("<Enter>"),
@@ -246,6 +246,14 @@ mod tests {
         assert!(
             screen.contains("config 39"),
             "the last failure must be reachable on a short terminal: {screen}"
+        );
+        assert!(
+            app.error_scroll_max > 0,
+            "a batch this long must have offsets to scroll through"
+        );
+        assert_eq!(
+            app.error_scroll, app.error_scroll_max,
+            "scrolling past the end clamps to the last offset"
         );
     }
 

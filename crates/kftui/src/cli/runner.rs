@@ -194,14 +194,9 @@ impl PortForwardRunner {
     async fn wait_for_shutdown_signal(
         configs: &[Config], mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let ctrl_c = signal::ctrl_c();
-
-        tokio::select! {
-            _ = ctrl_c => {
-                println!("\nStopping port forwards");
-                Self::stop_all_port_forwards(configs, mode).await
-            }
-        }
+        signal::ctrl_c().await?;
+        println!("\nStopping port forwards");
+        Self::stop_all_port_forwards(configs, mode).await
     }
 
     async fn stop_all_port_forwards(
@@ -246,11 +241,8 @@ impl PortForwardRunner {
         // stop left outstanding has to be retried before it exits. Both
         // interactive exits do this; without it a transient delete failure on
         // Ctrl+C leaks a relay Deployment with nothing left to remove it.
-        let still_owed = kftray_portforward::kube::reconcile_pending_cleanup(
-            mode,
-            crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
-        )
-        .await;
+        let (still_owed, cleanup_result) =
+            crate::core::port_forward::reconcile_shutdown_cleanup(mode).await;
         if !still_owed.is_empty() {
             let message = format!(
                 "cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
@@ -260,13 +252,7 @@ impl PortForwardRunner {
             failures.push(message);
         }
 
-        if let Err(error) =
-            kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode(
-                mode,
-                &still_owed,
-            )
-            .await
-        {
+        if let Err(error) = cleanup_result {
             eprintln!("Warning: failed to clean up configuration states: {error}");
             failures.push(format!("failed to clean up configuration states: {error}"));
         }

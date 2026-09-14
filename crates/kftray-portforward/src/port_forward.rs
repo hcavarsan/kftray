@@ -178,6 +178,27 @@ lazy_static! {
     pub static ref CHILD_PROCESSES: DashMap<i64, PortForwardProcess> = DashMap::new();
 }
 
+/// Active pod for every registered forward, gathered by a single pass over
+/// [`CHILD_PROCESSES`] rather than one registry lookup per configuration id.
+/// The forwarder handles are cloned and the registry guard released before
+/// any of them is awaited.
+pub async fn active_pods() -> std::collections::HashMap<i64, Option<String>> {
+    let forwarders: Vec<(i64, Option<Arc<PortForwarder>>)> = CHILD_PROCESSES
+        .iter()
+        .map(|entry| (*entry.key(), entry.value().direct_forwarder.clone()))
+        .collect();
+
+    let mut pods = std::collections::HashMap::with_capacity(forwarders.len());
+    for (id, forwarder) in forwarders {
+        let pod = match forwarder {
+            Some(forwarder) => forwarder.get_current_active_pod().await,
+            None => None,
+        };
+        pods.insert(id, pod);
+    }
+    pods
+}
+
 #[cfg(test)]
 lazy_static! {
     pub(crate) static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
@@ -243,7 +264,7 @@ impl PortForward {
                 crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id), mode)
                     .await
         {
-            errors.push(error);
+            errors.push(error.to_string());
         }
         // Reported rather than swallowed: this runs when a startup failed or
         // was cancelled after adding an alias, and the caller keeps the config

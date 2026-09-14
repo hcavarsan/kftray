@@ -190,16 +190,36 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
     }
 }
 
+/// Outcome of attempting to release a loopback alias.
+///
+/// A caller cannot treat every non-removal the same way: one where the
+/// helper is missing or `sudo` needs a password will not resolve itself by
+/// retrying, so it must be surfaced once and recorded as unsatisfiable here,
+/// rather than kept as a cleanup that is retried forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopbackRelease {
+    /// The alias was configured and has been removed.
+    Released,
+    /// Nothing was configured for this address; there was nothing to remove.
+    AlreadyAbsent,
+    /// The alias is still configured, but this process cannot escalate the
+    /// privileges removal needs right now (helper unavailable, `sudo -n`
+    /// needs a password). Retrying without a privilege change will not help.
+    PrivilegeUnavailable(String),
+    /// The alias is still configured and removal failed for a reason a later
+    /// attempt might resolve.
+    Failed(String),
+}
+
 /// Remove loopback address. Only uses helper service - skips osascript fallback
 /// to avoid blocking on user interaction during stop operations.
-/// Address cleanup is not critical - addresses will be freed on system restart.
-pub async fn remove_loopback_address(addr: &str) -> Result<()> {
+pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
     if !is_loopback_address(addr) {
-        return Ok(());
+        return Ok(LoopbackRelease::AlreadyAbsent);
     }
 
     if addr == "127.0.0.1" {
-        return Ok(());
+        return Ok(LoopbackRelease::AlreadyAbsent);
     }
 
     debug!("Removing loopback address: {}", addr);
@@ -209,7 +229,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
 
     if helper_result.is_ok() {
         debug!("Successfully removed loopback address via helper: {}", addr);
-        return Ok(());
+        return Ok(LoopbackRelease::Released);
     } else if let Err(e) = &helper_result {
         warn!("Failed to remove loopback address with helper: {}", e);
     }
@@ -228,19 +248,19 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
         if !macos_alias_exists(addr)? {
             debug!("No loopback alias for {addr}; nothing to remove");
 
-            return Ok(());
+            return Ok(LoopbackRelease::AlreadyAbsent);
         }
 
-        // Reported as a failure rather than silently skipped: the alias is
-        // still configured, and the caller keeps the configuration tracked so a
-        // later stop, with the helper available, retries it.
+        // The helper is the only non-blocking removal path on macOS, so its
+        // absence is a privilege problem, not a transient one: nothing this
+        // process retries on its own will remove the alias.
         warn!(
             "Could not remove loopback address {} via helper, and the osascript fallback would block.",
             addr
         );
-        Err(anyhow!(
+        Ok(LoopbackRelease::PrivilegeUnavailable(format!(
             "Loopback address {addr} is still configured: removing it needs the helper"
-        ))
+        )))
     }
 
     #[cfg(target_os = "linux")]
@@ -255,29 +275,39 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
         if !linux_alias_exists(addr)? {
             debug!("No explicit loopback alias for {addr}; nothing to remove");
 
-            return Ok(());
+            return Ok(LoopbackRelease::AlreadyAbsent);
         }
         if unsafe { libc::geteuid() } == 0 {
-            execute_command("ip", &["addr", "del", addr, "dev", "lo"])?;
+            match execute_command("ip", &["addr", "del", addr, "dev", "lo"]) {
+                Ok(()) => Ok(LoopbackRelease::Released),
+                Err(e) => Ok(LoopbackRelease::Failed(e.to_string())),
+            }
         } else {
             // `-n` keeps this non-interactive: a password prompt during a stop
             // would block until someone typed into a terminal that may not even
-            // be attached.
-            execute_command("sudo", &["-n", "ip", "addr", "del", addr, "dev", "lo"])?;
+            // be attached. `sudo -n` failing outright, rather than prompting,
+            // means this process cannot escalate without one, so it is a
+            // privilege problem rather than a failure a retry can fix.
+            match execute_command("sudo", &["-n", "ip", "addr", "del", addr, "dev", "lo"]) {
+                Ok(()) => Ok(LoopbackRelease::Released),
+                Err(e) => Ok(LoopbackRelease::PrivilegeUnavailable(format!(
+                    "Removing loopback address {addr} needs a privileged `ip addr del`, and \
+                     `sudo -n` failed (a password may be required): {e}"
+                ))),
+            }
         }
-        Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
         info!("Using Windows-specific method for loopback removal");
-        Ok(())
+        Ok(LoopbackRelease::AlreadyAbsent)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows",)))]
     {
-        Err(anyhow!(
-            "Loopback address removal not supported on this platform"
+        Ok(LoopbackRelease::Failed(
+            "Loopback address removal not supported on this platform".to_string(),
         ))
     }
 }
@@ -492,6 +522,22 @@ mod tests {
     #[tokio::test]
     async fn test_ensure_loopback_address_default() {
         assert!(ensure_loopback_address("127.0.0.1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_remove_loopback_address_non_loopback_is_already_absent() {
+        assert_eq!(
+            remove_loopback_address("192.168.1.1").await.unwrap(),
+            LoopbackRelease::AlreadyAbsent
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_loopback_address_default_is_already_absent() {
+        assert_eq!(
+            remove_loopback_address("127.0.0.1").await.unwrap(),
+            LoopbackRelease::AlreadyAbsent
+        );
     }
 
     #[cfg(test)]

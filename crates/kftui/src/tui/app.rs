@@ -109,13 +109,16 @@ pub async fn run_tui(
         Err(_) => error!("Stopping port forwards did not finish within the shutdown budget"),
     }
     // A create abandoned on the way out can surface after that first pass.
-    let still_owed =
-        kftray_portforward::kube::reconcile_pending_cleanup(mode, CLEANUP_RECONCILE_TIMEOUT).await;
+    let (still_owed, cleanup_result) =
+        crate::core::port_forward::reconcile_shutdown_cleanup(mode).await;
     if !still_owed.is_empty() {
         error!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
              running and are retried on the next stop"
         );
+    }
+    if let Err(error) = cleanup_result {
+        error!("Failed to clean up configuration states: {error}");
     }
 
     if let Err(err) = res {

@@ -1,4 +1,6 @@
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::response::CustomResponse;
+use kftray_portforward::kube::NO_READY_PODS_ERROR;
 use log::{
     error,
     info,
@@ -85,7 +87,9 @@ impl ConfigManager {
 
         if !other_configs.is_empty() {
             match kftray_portforward::kube::start_port_forward(other_configs, protocol).await {
-                Ok(responses) => report_restart_outcome(&responses, protocol, "port forwards"),
+                Ok(responses) => {
+                    report_restart_outcome(&responses, protocol, "port forwards", true)
+                }
                 Err(e) => error!("Failed to restart {protocol} port forwards: {e}"),
             }
         }
@@ -96,8 +100,7 @@ impl ConfigManager {
                 .into_iter()
                 .filter(|config| {
                     if let Some(config_id) = config.id
-                        && kftray_portforward::kube::proxy_recovery::RECOVERY_LOCKS
-                            .contains_key(&config_id)
+                        && kftray_portforward::kube::recovery_in_progress(config_id)
                     {
                         info!(
                             "Skipping network monitor restart for config {} \
@@ -113,7 +116,7 @@ impl ConfigManager {
             if !configs_to_restart.is_empty() {
                 match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
                     Ok(responses) => {
-                        report_restart_outcome(&responses, protocol, "proxy port forwards")
+                        report_restart_outcome(&responses, protocol, "proxy port forwards", false)
                     }
                     Err(e) => error!("Failed to restart {protocol} proxy port forwards: {e}"),
                 }
@@ -122,17 +125,32 @@ impl ConfigManager {
     }
 }
 
-fn report_restart_outcome(
-    responses: &[kftray_commons::models::response::CustomResponse], protocol: &str, kind: &str,
-) {
-    // Classify per response: a batch can mix a readiness wait with a real
-    // failure, and joining them first would demote the real one to a warning.
+/// Splits a restart batch's responses into a restarted count, UDP "not ready
+/// yet" responses that should only warn, and everything else that failed.
+///
+/// `downgrade_no_ready_pods` is false for the proxy batch: a proxy UDP
+/// restart failing with the same message is a real failure, not a transient
+/// readiness wait, and must not be demoted to a warning (see
+/// `proxy_udp_configs_are_not_skipped_on_no_ready_pods`).
+fn classify_restart_outcome<'a>(
+    responses: &'a [CustomResponse], protocol: &str, downgrade_no_ready_pods: bool,
+) -> (usize, Vec<&'a str>, Vec<&'a str>) {
     let (pending_pods, failures): (Vec<&str>, Vec<&str>) = responses
         .iter()
-        .filter(|response| response.status != 0)
+        .filter(|response| response.failed())
         .map(|response| response.stderr.as_str())
-        .partition(|error| protocol == "udp" && error.contains("No ready pods available"));
+        .partition(|stderr| {
+            downgrade_no_ready_pods && protocol == "udp" && stderr.contains(NO_READY_PODS_ERROR)
+        });
     let restarted = responses.len() - pending_pods.len() - failures.len();
+    (restarted, pending_pods, failures)
+}
+
+fn report_restart_outcome(
+    responses: &[CustomResponse], protocol: &str, kind: &str, downgrade_no_ready_pods: bool,
+) {
+    let (restarted, pending_pods, failures) =
+        classify_restart_outcome(responses, protocol, downgrade_no_ready_pods);
     if restarted > 0 {
         info!("Restarted {restarted} {protocol} {kind}");
     }
@@ -161,8 +179,12 @@ fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Conf
 #[cfg(test)]
 mod tests {
     use kftray_commons::models::config_model::Config;
+    use kftray_commons::models::response::CustomResponse;
 
-    use super::partition_configs_by_workload;
+    use super::{
+        classify_restart_outcome,
+        partition_configs_by_workload,
+    };
 
     fn make_config(id: i64, workload_type: &str, protocol: &str) -> Config {
         Config {
@@ -303,5 +325,41 @@ mod tests {
             Some("service"),
             "other partition must contain service workload_type"
         );
+
+        // The proxy branch calls report_restart_outcome with
+        // downgrade_no_ready_pods=false: a "No ready pods available" failure
+        // there must stay a real failure, not get demoted to a warning like
+        // the non-proxy UDP branch does.
+        let response = make_response("No ready pods available to resolve port name 'foo'");
+        let (restarted, pending_pods, failures) =
+            classify_restart_outcome(std::slice::from_ref(&response), "udp", false);
+        assert_eq!(restarted, 0);
+        assert!(
+            pending_pods.is_empty(),
+            "proxy branch must not downgrade a no-ready-pods failure to a warning"
+        );
+        assert_eq!(failures.len(), 1);
+
+        // The non-proxy branch still downgrades the same message.
+        let (restarted, pending_pods, failures) =
+            classify_restart_outcome(std::slice::from_ref(&response), "udp", true);
+        assert_eq!(restarted, 0);
+        assert_eq!(pending_pods.len(), 1);
+        assert!(failures.is_empty());
+    }
+
+    fn make_response(stderr: &str) -> CustomResponse {
+        CustomResponse {
+            id: Some(1),
+            service: "svc".to_string(),
+            namespace: "ns".to_string(),
+            local_port: 8080,
+            remote_port: 8080,
+            context: "ctx".to_string(),
+            stdout: String::new(),
+            stderr: stderr.to_string(),
+            status: 1,
+            protocol: "udp".to_string(),
+        }
     }
 }

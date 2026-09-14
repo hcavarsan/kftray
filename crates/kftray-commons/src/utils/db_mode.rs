@@ -54,10 +54,17 @@ impl DatabaseManager {
                         .map_err(|e| e.to_string())?,
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
+                if let Err(error) =
+                    crate::utils::settings::establish_expose_history_baseline(&pool, mode).await
+                {
+                    // Bookkeeping only: expose::kubernetes::ensure_expose_history_baseline
+                    // re-establishes it lazily, and a missing baseline fails
+                    // safe. A transient SQLITE_BUSY must not stop this
+                    // database from initialising, or the pool below would
+                    // never be cached and every access would re-fail.
+                    log::warn!("Failed to establish the expose history baseline: {error}");
+                }
                 crate::utils::migration::migrate_configs(Some(&pool))
-                    .await
-                    .map_err(|e| e.to_string())?;
-                crate::utils::settings::establish_expose_history_baseline(&pool, mode)
                     .await
                     .map_err(|e| e.to_string())?;
 

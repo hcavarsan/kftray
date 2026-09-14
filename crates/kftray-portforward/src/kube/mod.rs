@@ -30,6 +30,7 @@ pub use proxy::{
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };
+pub use proxy_recovery::recovery_in_progress;
 pub use service::retrieve_service_configs;
 pub use start::{
     cleanup_stale_timeout_entries,
@@ -48,3 +49,4 @@ pub use stop::{
     stop_port_forward,
     stop_port_forward_with_mode,
 };
+pub use target::NO_READY_PODS_ERROR;

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
@@ -53,10 +52,7 @@ use crate::tui::ui::{
 pub fn draw_configs_table(
     frame: &mut Frame, area: Rect, configs: &[Config], config_states: &[ConfigState],
     state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
-    configs_being_processed: &std::collections::HashMap<
-        i64,
-        Arc<crate::tui::input::PendingForward>,
-    >,
+    configs_being_processed: &crate::tui::input::PendingForwards,
     throbber_state: &throbber_widgets_tui::ThrobberState,
 ) {
     let rows: Vec<Row> = configs

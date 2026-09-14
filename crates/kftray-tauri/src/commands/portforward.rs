@@ -5,11 +5,13 @@ use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_commons::utils::config_state::{
-    cleanup_current_process_config_states,
+    cleanup_current_process_config_states_with_mode,
     get_configs_state,
 };
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::{
     deploy_and_forward_pod,
+    reconcile_pending_cleanup,
     start_port_forward,
     stop_all_port_forward,
     stop_port_forward,
@@ -58,17 +60,12 @@ pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
                 continue;
             }
         };
+        let all_active_pods = kftray_portforward::port_forward::active_pods().await;
         let mut current_active_pods = HashMap::new();
         for state in &current_config_states {
             if state.is_running {
-                match get_active_pod_cmd(state.config_id.to_string()).await {
-                    Ok(pod_name) => {
-                        current_active_pods.insert(state.config_id.to_string(), pod_name);
-                    }
-                    Err(_) => {
-                        current_active_pods.insert(state.config_id.to_string(), None);
-                    }
-                }
+                let pod_name = all_active_pods.get(&state.config_id).cloned().flatten();
+                current_active_pods.insert(state.config_id.to_string(), pod_name);
             }
         }
         let mut prev_pods = previous_active_pods.lock().await;
@@ -126,6 +123,47 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
     }
 
     true
+}
+
+/// Bounds the exit-time reconciliation below: a stop or a pending-create
+/// wait up against lifecycle locks and cluster deletes, and a stalled one
+/// must not keep the process from exiting. Mirrors kftui's
+/// `CLEANUP_RECONCILE_TIMEOUT`.
+const CLEANUP_RECONCILE_TIMEOUT: Duration =
+    kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
+
+/// Starts one configuration through the dispatch its kind uses: expose and
+/// tcp service/pod configs go through a plain TCP port-forward, everything
+/// else (proxy, udp) is deployed and forwarded through a relay pod. Shared
+/// by the global shortcut handlers and the SSL certificate restart path so
+/// the two cannot silently diverge on which configs get which treatment.
+pub(crate) async fn dispatch_start(config: &Config) -> Result<Vec<CustomResponse>, String> {
+    let kind = config.workload_type.as_deref();
+    if kind == Some("expose")
+        || (matches!(kind, Some("service" | "pod")) && config.protocol == "tcp")
+    {
+        start_port_forward(vec![config.clone()], "tcp").await
+    } else {
+        deploy_and_forward_pod(vec![config.clone()]).await
+    }
+}
+
+/// Reconciles anything this process still owes a cluster delete for, then
+/// clears its rows from `config_state` so the next launch does not see them
+/// as still running. Mirrors kftui's shutdown sequence.
+async fn reconcile_and_cleanup_on_exit() {
+    let still_owed = reconcile_pending_cleanup(DatabaseMode::File, CLEANUP_RECONCILE_TIMEOUT).await;
+    if !still_owed.is_empty() {
+        error!(
+            "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
+             running and are retried on the next stop"
+        );
+    }
+    if let Err(e) =
+        cleanup_current_process_config_states_with_mode(DatabaseMode::File, &still_owed).await
+    {
+        error!("Failed to cleanup config states: {e}");
+    }
 }
 
 #[tauri::command]
@@ -205,9 +243,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             let any_running = config_states.iter().any(|config| config.is_running);
 
             if !any_running {
-                if let Err(e) = cleanup_current_process_config_states().await {
-                    error!("Failed to cleanup config states: {e}");
-                }
+                reconcile_and_cleanup_on_exit().await;
                 // Stop MCP server if running
                 if let Err(e) = crate::mcp::stop().await {
                     error!("Failed to stop MCP server: {e}");
@@ -234,9 +270,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                                     error!("Failed to stop port forwards: {err:?}");
                                 }
                             }
-                            if let Err(e) = cleanup_current_process_config_states().await {
-                                error!("Failed to cleanup config states: {e}");
-                            }
+                            reconcile_and_cleanup_on_exit().await;
                             // Stop MCP server if running
                             if let Err(e) = crate::mcp::stop().await {
                                 error!("Failed to stop MCP server: {e}");
@@ -260,9 +294,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
         }
         _ => {
             error!("No windows found, exiting application.");
-            if let Err(e) = cleanup_current_process_config_states().await {
-                error!("Failed to cleanup config states: {e}");
-            }
+            reconcile_and_cleanup_on_exit().await;
             // Stop MCP server if running
             if let Err(e) = crate::mcp::stop().await {
                 error!("Failed to stop MCP server: {e}");

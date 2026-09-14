@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import {
   ClipboardIcon,
   Copy,
@@ -43,7 +43,7 @@ import type { PortForwardAction, PortForwardRowProps } from '@/types'
 
 import '../../styles.css'
 
-const PortForwardRow: React.FC<PortForwardRowProps> = ({
+const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   config,
   confirmDeleteConfig,
   handleDeleteConfig,
@@ -51,7 +51,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   handleDuplicateConfig,
   selected,
   onSelectionChange,
-  pendingConfigActions,
+  pendingAction,
   toggleConfigForward,
 }) => {
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
@@ -60,10 +60,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
   const [activePod, setActivePod] = useState<string | null>(null)
-  const [localAction, setLocalAction] = useState<PortForwardAction | null>(null)
-  const pendingAction =
-    localAction ?? pendingConfigActions.get(config.id) ?? null
   const isPending = pendingAction !== null
+  const isPendingRef = useRef(isPending)
+
+  isPendingRef.current = isPending
 
   useEffect(() => {
     const fallback = config.http_logs_enabled ?? false
@@ -84,7 +84,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }, [config.id, config.http_logs_enabled])
 
   useEffect(() => {
-    if (!config.is_running && !isPending) {
+    if (!config.is_running && !isPendingRef.current) {
       setActivePod(null)
     } else if (config.is_running) {
       const fetchInitialPod = async () => {
@@ -102,7 +102,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
       fetchInitialPod()
     }
-  }, [config.is_running, config.id, isPending])
+  }, [config.is_running, config.id])
 
   useEffect(() => {
     const setupListener = async () => {
@@ -213,17 +213,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
-    if (pendingConfigActions.has(config.id)) {
-      return
-    }
     const action: PortForwardAction = isChecked ? 'starting' : 'stopping'
 
-    setLocalAction(action)
-    try {
-      await toggleConfigForward(config, action)
-    } finally {
-      setLocalAction(null)
-    }
+    await toggleConfigForward(config, action)
   }
 
   const handleOpenChange = (details: { open: boolean }) => {
@@ -327,6 +319,17 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           config.workload_type === 'expose'
             ? 'Expose tunnel is stopping...'
             : 'Port forward is stopping...',
+      }
+    }
+
+    if (pendingAction === 'saving' || pendingAction === 'deleting') {
+      return {
+        color: 'rgba(100, 116, 139, 0.6)',
+        status: 'Busy',
+        description:
+          pendingAction === 'saving'
+            ? 'Saving configuration...'
+            : 'Deleting configuration...',
       }
     }
 
@@ -703,4 +706,4 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   )
 }
 
-export default PortForwardRow
+export default memo(PortForwardRowComponent)

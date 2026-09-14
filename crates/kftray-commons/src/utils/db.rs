@@ -11,6 +11,7 @@ use lazy_static::lazy_static;
 use log::{
     error,
     info,
+    warn,
 };
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
@@ -66,9 +67,16 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     create_db_table(&pool).await?;
-    crate::utils::settings::establish_expose_history_baseline(&pool, DatabaseMode::File)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(error) =
+        crate::utils::settings::establish_expose_history_baseline(&pool, DatabaseMode::File).await
+    {
+        // Bookkeeping only: expose::kubernetes::ensure_expose_history_baseline
+        // re-establishes it lazily, and a missing baseline fails safe (an
+        // exposure without one is treated as "history possibly missing"). A
+        // transient SQLITE_BUSY from another kftray process sharing this file
+        // database must not stop this one from starting.
+        warn!("Failed to establish the expose history baseline: {error}");
+    }
 
     Ok(())
 }

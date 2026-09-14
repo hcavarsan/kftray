@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -37,6 +38,11 @@ type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
 const POOL_MAX_IDLE_PER_HOST: usize = 5;
 
+/// Fallback deadline for the API-server version probe when the config
+/// carries no `read_timeout` (e.g. exec credential plugins that can take
+/// longer than a fixed short timeout).
+const DEFAULT_CONNECTION_TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
     let mut connector = HttpConnector::new();
     connector.set_nodelay(true);
@@ -44,7 +50,7 @@ static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
     connector
 });
 
-pub async fn create_client_with_config(config: &Config) -> Option<Client> {
+pub async fn create_client_with_config(config: &Config) -> KubeResult<Client> {
     let strategies = if config.accept_invalid_certs {
         info!("Creating insecure connection strategies for skip-tls-verify=true");
         create_insecure_connection_strategies(config)
@@ -52,25 +58,33 @@ pub async fn create_client_with_config(config: &Config) -> Option<Client> {
         create_connection_strategies(config)
     };
 
-    execute_strategies(strategies).await
+    let probe_timeout = config
+        .read_timeout
+        .unwrap_or(DEFAULT_CONNECTION_TEST_TIMEOUT);
+
+    execute_strategies(strategies, probe_timeout).await
 }
 
-async fn execute_strategies(strategies: Vec<Strategy<'_>>) -> Option<Client> {
+async fn execute_strategies(
+    strategies: Vec<Strategy<'_>>, probe_timeout: Duration,
+) -> KubeResult<Client> {
     let mut failed_attempts = Vec::new();
-    let mut last_error = None;
+    let mut last_error: Option<KubeClientError> = None;
 
     for (description, strategy) in strategies {
         info!("Attempting strategy: {description}");
 
         let result = match strategy.await {
-            Ok(client) => test_client_connection(&client).await.map(|_| client),
+            Ok(client) => test_client_connection(&client, probe_timeout)
+                .await
+                .map(|_| client),
             Err(e) => Err(e),
         };
 
         match result {
             Ok(client) => {
                 info!("Successfully connected using: {description}");
-                return Some(client);
+                return Ok(client);
             }
             Err(e) => {
                 warn!("Strategy '{description}' failed: {e}");
@@ -80,8 +94,10 @@ async fn execute_strategies(strategies: Vec<Strategy<'_>>) -> Option<Client> {
         }
     }
 
-    log_connection_failure(&failed_attempts, last_error);
-    None
+    log_connection_failure(&failed_attempts, last_error.as_ref());
+
+    Err(last_error
+        .unwrap_or_else(|| KubeClientError::connection_error("No connection strategies available")))
 }
 
 fn create_connection_strategies(config: &Config) -> Vec<Strategy<'_>> {
@@ -236,10 +252,8 @@ where
 /// Probes the API server under a deadline. A server that accepts the
 /// connection but never answers would otherwise hang every caller that waits
 /// on a client, including stop.
-async fn test_client_connection(client: &Client) -> KubeResult<()> {
-    const CONNECTION_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-    tokio::time::timeout(CONNECTION_TEST_TIMEOUT, client.apiserver_version())
+async fn test_client_connection(client: &Client, probe_timeout: Duration) -> KubeResult<()> {
+    tokio::time::timeout(probe_timeout, client.apiserver_version())
         .await
         .map_err(|_| {
             KubeClientError::connection_error(
@@ -300,7 +314,7 @@ where
     Ok(Client::new(service, config.default_namespace))
 }
 
-fn log_connection_failure(failed_attempts: &[String], last_error: Option<KubeClientError>) {
+fn log_connection_failure(failed_attempts: &[String], last_error: Option<&KubeClientError>) {
     if failed_attempts.is_empty() {
         error!("No connection strategies available");
         return;

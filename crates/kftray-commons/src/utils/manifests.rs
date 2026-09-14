@@ -91,6 +91,7 @@ const DEFAULT_EXPOSE_DEPLOYMENT: &str = r#"{
         }
       },
       "spec": {
+        "terminationGracePeriodSeconds": 10,
         "containers": [{
           "name": "kftray-server",
           "image": "ghcr.io/hcavarsan/kftray-server:latest",
@@ -234,7 +235,7 @@ pub fn default_pod_manifest() -> serde_json::Value {
 /// never bypassed.
 pub fn pod_manifest_is_customized() -> bool {
     let Ok(path) = get_pod_manifest_path() else {
-        return false;
+        return true;
     };
     manifest_is_customized(&path, &default_pod_manifest())
 }
@@ -245,7 +246,7 @@ pub fn pod_manifest_is_customized() -> bool {
 /// nothing about the Deployment actually being applied.
 pub fn deployment_manifest_is_customized() -> bool {
     let Ok(path) = get_proxy_deployment_manifest_path() else {
-        return false;
+        return true;
     };
     let Ok(default) = serde_json::from_str::<serde_json::Value>(DEFAULT_PROXY_DEPLOYMENT) else {
         return true;

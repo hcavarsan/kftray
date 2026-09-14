@@ -190,12 +190,17 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         }
         AppState::ShowErrorPopup => {
             if let Some(error_message) = &app.error_message {
-                // The popup takes a share of this area again, so on a short
-                // terminal the usual share leaves too few rows for a message
-                // and the hint that says how to close it. Give it the screen
-                // instead when the usual share would be that small.
+                // render_error_popup centers its own popup rect inside
+                // whatever area it is given, applying its own width/height
+                // percentages on top of this one. On a short terminal the
+                // usual 60/40 share leaves too few rows after that second
+                // reduction for a message and the hint that says how to
+                // close it, so give it nearly the whole screen instead,
+                // which still gets reduced once more inside
+                // render_error_popup.
+                const MIN_ERROR_POPUP_HEIGHT: u16 = 12;
                 let mut error_area = centered_rect(60, 40, size);
-                if error_area.height < 12 {
+                if error_area.height < MIN_ERROR_POPUP_HEIGHT {
                     error_area = centered_rect(95, 95, size);
                 }
                 render_background_overlay(f, size);

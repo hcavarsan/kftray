@@ -268,7 +268,7 @@ pub(super) async fn start_proxy_config(
         })?,
     };
     let client = shared_client.client.clone();
-    let destination = shared_client.cluster_url.to_string();
+    let destination = crate::kube::client::cluster_identity(&shared_client.cluster_url);
     // Recovery resolved the context once already and deleted the old relay on
     // that server; the replacement has to go to the same one.
     if let Some(expected) = expected_destination
@@ -358,21 +358,19 @@ pub(super) async fn start_proxy_config(
     }
 }
 
-fn relay_container_index(spec: &PodSpec) -> usize {
-    spec.containers
-        .iter()
-        .position(|container| {
-            container
-                .env
-                .as_ref()
-                .is_some_and(|env| env.iter().any(|variable| variable.name == "LOCAL_PORT"))
-        })
-        .unwrap_or(0)
+fn relay_container_index(spec: &PodSpec) -> Option<usize> {
+    spec.containers.iter().position(|container| {
+        container
+            .env
+            .as_ref()
+            .is_some_and(|env| env.iter().any(|variable| variable.name == "LOCAL_PORT"))
+    })
 }
 
 pub(crate) fn relay_container_name(spec: &PodSpec) -> Option<String> {
+    let index = relay_container_index(spec)?;
     spec.containers
-        .get(relay_container_index(spec))
+        .get(index)
         .map(|container| container.name.clone())
 }
 
@@ -384,7 +382,11 @@ pub(crate) fn relay_container_name(spec: &PodSpec) -> Option<String> {
 fn prepare_relay_startup(
     spec: &mut PodSpec, port: u16, customized: bool,
 ) -> Result<String, String> {
-    let index = relay_container_index(spec);
+    let index = relay_container_index(spec).ok_or_else(|| {
+        "Proxy manifest is customized and no container declares a LOCAL_PORT environment \
+         variable; add LOCAL_PORT to the relay container so kftray can attach its startup probe"
+            .to_string()
+    })?;
     let container = spec
         .containers
         .get_mut(index)

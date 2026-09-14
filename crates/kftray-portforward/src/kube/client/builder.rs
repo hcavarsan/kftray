@@ -1,8 +1,8 @@
 use std::env;
-use std::sync::Once;
 
 use anyhow::Result;
 use log::info;
+use tokio::sync::OnceCell;
 
 use super::KubeConnection;
 use super::config::{
@@ -12,45 +12,51 @@ use super::config::{
 };
 use super::connection::create_client_with_config;
 
-static PATH_INIT: Once = Once::new();
+static PATH_INIT: OnceCell<()> = OnceCell::const_new();
 
-fn init_path() {
-    PATH_INIT.call_once(|| {
-        unsafe {
-            env::remove_var("PYTHONHOME");
-            env::remove_var("PYTHONPATH");
-        }
-
-        // Windows GUI apps may not inherit PATH correctly from parent process.
-        // Re-setting forces std::process::Command to use current values.
-        #[cfg(windows)]
-        for var in ["PATH", "PATHEXT"] {
-            if let Ok(val) = env::var(var) {
-                unsafe { env::set_var(var, &val) };
+async fn init_path() {
+    PATH_INIT
+        .get_or_init(|| async {
+            unsafe {
+                env::remove_var("PYTHONHOME");
+                env::remove_var("PYTHONPATH");
             }
-        }
 
-        #[cfg(unix)]
-        {
-            let current = env::var("PATH").unwrap_or_default();
-            let resolved = match shell_path() {
-                Some(p) => {
-                    info!("init_path: using shell PATH");
-                    merge_paths(&p, &current)
+            // Windows GUI apps may not inherit PATH correctly from parent process.
+            // Re-setting forces std::process::Command to use current values.
+            #[cfg(windows)]
+            for var in ["PATH", "PATHEXT"] {
+                if let Ok(val) = env::var(var) {
+                    unsafe { env::set_var(var, &val) };
                 }
-                None => {
-                    info!("init_path: using fallback paths");
-                    with_fallback(&current)
-                }
-            };
-            unsafe { env::set_var("PATH", &resolved) };
-        }
-    });
+            }
+
+            #[cfg(unix)]
+            {
+                let current = env::var("PATH").unwrap_or_default();
+                let resolved = tokio::task::spawn_blocking({
+                    let current = current.clone();
+                    move || match shell_path() {
+                        Some(p) => {
+                            info!("init_path: using shell PATH");
+                            merge_paths(&p, &current)
+                        }
+                        None => {
+                            info!("init_path: using fallback paths");
+                            with_fallback(&current)
+                        }
+                    }
+                })
+                .await
+                .unwrap_or(current);
+                unsafe { env::set_var("PATH", &resolved) };
+            }
+        })
+        .await;
 }
 
 #[cfg(unix)]
 fn shell_path() -> Option<String> {
-    use std::collections::HashSet;
     use std::path::Path;
 
     use log::{
@@ -69,9 +75,6 @@ fn shell_path() -> Option<String> {
         Some("/bin/bash"),
     ];
 
-    let mut seen = HashSet::new();
-    let mut merged = Vec::new();
-
     for (index, candidate) in shells_to_try.iter().enumerate() {
         let Some(shell) = *candidate else {
             continue;
@@ -81,20 +84,12 @@ fn shell_path() -> Option<String> {
         }
         if let Some(path) = try_shell_path(shell, &home) {
             info!("shell_path: {} returned {} chars", shell, path.len());
-            for p in path.split(':') {
-                if !p.is_empty() && seen.insert(p.to_string()) {
-                    merged.push(p.to_string());
-                }
-            }
+            return Some(path);
         }
     }
 
-    if merged.is_empty() {
-        warn!("shell_path: no shell returned valid PATH");
-        return None;
-    }
-
-    Some(merged.join(":"))
+    warn!("shell_path: no shell returned valid PATH");
+    None
 }
 
 #[cfg(unix)]
@@ -258,22 +253,24 @@ fn env_debug_info() -> String {
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: &str,
 ) -> Result<KubeConnection> {
-    init_path();
+    init_path().await;
 
     let kubeconfig_paths = get_kubeconfig_paths_from_option(kubeconfig)?;
     let (merged_kubeconfig, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
 
     match create_config_with_context(&merged_kubeconfig, context_name).await {
         Ok(config) => match create_client_with_config(&config).await {
-            Some(client) => {
+            Ok(client) => {
                 info!("Created new client for context: {context_name}");
                 return Ok(KubeConnection {
                     client,
                     cluster_url: config.cluster_url,
                 });
             }
-            None => {
-                errors.push(format!("Connection failed for context '{context_name}'"));
+            Err(e) => {
+                errors.push(format!(
+                    "Connection failed for context '{context_name}': {e}"
+                ));
             }
         },
         Err(e) => {

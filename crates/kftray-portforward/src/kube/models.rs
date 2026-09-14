@@ -163,8 +163,8 @@ mod tests {
 
     use super::*;
 
-    fn create_test_pod(name: &str, with_ports: bool, ready: bool) -> Pod {
-        let mut pod = Pod {
+    fn create_test_pod(name: &str) -> Pod {
+        Pod {
             metadata: ObjectMeta {
                 name: Some(name.to_string()),
                 ..Default::default()
@@ -172,41 +172,31 @@ mod tests {
             spec: Some(PodSpec {
                 containers: vec![Container {
                     name: "test-container".to_string(),
-                    ports: if with_ports {
-                        Some(vec![
-                            ContainerPort {
-                                name: Some("http".to_string()),
-                                container_port: 8080,
-                                ..Default::default()
-                            },
-                            ContainerPort {
-                                name: Some("grpc".to_string()),
-                                container_port: 9090,
-                                ..Default::default()
-                            },
-                        ])
-                    } else {
-                        None
-                    },
+                    ports: Some(vec![
+                        ContainerPort {
+                            name: Some("http".to_string()),
+                            container_port: 8080,
+                            ..Default::default()
+                        },
+                        ContainerPort {
+                            name: Some("grpc".to_string()),
+                            container_port: 9090,
+                            ..Default::default()
+                        },
+                    ]),
                     ..Default::default()
                 }],
                 ..Default::default()
             }),
-            status: None,
-        };
-
-        if ready {
-            pod.status = Some(PodStatus {
+            status: Some(PodStatus {
                 conditions: Some(vec![PodCondition {
                     type_: "Ready".to_string(),
                     status: "True".to_string(),
                     ..Default::default()
                 }]),
                 ..Default::default()
-            });
+            }),
         }
-
-        pod
     }
 
     #[test]
@@ -276,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_target_find() {
-        let pod = create_test_pod("test-pod", true, true);
+        let pod = create_test_pod("test-pod");
 
         let target1 = Target::new(
             TargetSelector::PodLabel("app=web".to_string()),

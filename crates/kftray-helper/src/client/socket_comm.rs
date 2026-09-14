@@ -220,20 +220,20 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
             Ok(0) => {
                 debug!("End of stream reached (0 bytes read)");
                 if buffer.is_empty() {
-                    debug!("Socket closed without sending any data");
-                    std::thread::sleep(Duration::from_millis(500));
-                    continue;
-                } else {
-                    debug!("Socket closed after receiving data, breaking read loop");
-                    break;
+                    debug!("Helper closed the connection before sending any data");
+                    return Err(HelperError::Communication(
+                        "Helper closed the connection before sending a response".into(),
+                    ));
                 }
+                debug!("Socket closed after receiving data, breaking read loop");
+                break;
             }
             Ok(n) => {
                 debug!("Read {n} bytes from response");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
-                if n < tmp_buf.len() {
-                    debug!("Message appears complete (got less than buffer size)");
+                if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
+                    debug!("Response appears complete");
                     break;
                 }
             }
@@ -350,20 +350,20 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
             Ok(0) => {
                 debug!("End of pipe reached (0 bytes read)");
                 if buffer.is_empty() {
-                    debug!("Pipe closed without sending any data");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                } else {
-                    debug!("Pipe closed after receiving data, breaking read loop");
-                    break;
+                    debug!("Helper closed the connection before sending any data");
+                    return Err(HelperError::Communication(
+                        "Helper closed the connection before sending a response".into(),
+                    ));
                 }
+                debug!("Pipe closed after receiving data, breaking read loop");
+                break;
             }
             Ok(n) => {
                 debug!("Read {} bytes from pipe response", n);
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
-                if n < tmp_buf.len() {
-                    debug!("Message appears complete (got less than buffer size)");
+                if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
+                    debug!("Response appears complete");
                     break;
                 }
             }
@@ -433,5 +433,51 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
                 e
             )))
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::net::UnixListener;
+
+    use super::*;
+
+    #[test]
+    fn eof_before_any_response_fails_fast_instead_of_waiting_out_the_timeout() {
+        let socket_path = std::env::temp_dir().join(format!(
+            "kftray-helper-eof-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        // An already-installed helper that predates a request it cannot
+        // parse: it accepts the connection and closes it without writing
+        // anything back.
+        let server = std::thread::spawn(move || {
+            let (_conn, _) = listener.accept().unwrap();
+        });
+
+        let stream = UnixStream::connect(&socket_path).unwrap();
+        let start = Instant::now();
+        let result = read_unix_response(stream);
+        let elapsed = start.elapsed();
+
+        server.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(
+            result.is_err(),
+            "a connection closed before any response must be an error"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "an old helper that never responds must fail fast instead of waiting out the 30s \
+             response timeout, took {elapsed:?}"
+        );
     }
 }

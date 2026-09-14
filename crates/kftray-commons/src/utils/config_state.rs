@@ -124,27 +124,6 @@ pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<Confi
         })
 }
 
-pub async fn cleanup_current_process_config_states() -> Result<(), String> {
-    let current_process_id = std::process::id();
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
-    let affected_rows = sqlx::query(
-        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
-    )
-    .bind(current_process_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?
-    .rows_affected();
-
-    if affected_rows > 0 {
-        log::info!("Cleaned up {affected_rows} config states for process {current_process_id}");
-    }
-
-    Ok(())
-}
-
 /// Marks every configuration this process was running as stopped, except the
 /// ones in `still_owed`: a configuration whose cleanup did not complete keeps
 /// its running state, so the next run's stop-all enumerates and retries it.
@@ -153,23 +132,34 @@ pub async fn cleanup_current_process_config_states_with_mode(
 ) -> Result<(), String> {
     let current_process_id = std::process::id();
     let context = DatabaseManager::get_context(mode).await?;
-    let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
+    let mut tx = context.pool.begin().await.map_err(|e| e.to_string())?;
 
-    // The snapshots of the rows about to be marked stopped go with them.
+    // The snapshots of the rows about to be marked stopped go with them. Both
+    // statements run in one transaction: a failure between them must not
+    // leave a row marked running with its snapshot already gone, which would
+    // make a later stop fall back to a possibly-edited row.
     let stopping: Vec<i64> = sqlx::query("SELECT config_id FROM config_state WHERE process_id = ?")
         .bind(current_process_id)
-        .fetch_all(&mut *conn)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter_map(|row| row.try_get::<i64, _>("config_id").ok())
         .filter(|id| !still_owed.contains(id))
         .collect();
-    for id in &stopping {
-        let _ = sqlx::query("DELETE FROM settings WHERE key = ?")
-            .bind(running_snapshot_key(*id))
-            .execute(&mut *conn)
-            .await;
+
+    if !stopping.is_empty() {
+        let mut delete = sqlx::QueryBuilder::new("DELETE FROM settings WHERE key IN (");
+        let mut keys = delete.separated(", ");
+        for id in &stopping {
+            keys.push_bind(running_snapshot_key(*id, mode));
+        }
+        delete.push(")");
+        delete
+            .build()
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     let mut query = sqlx::QueryBuilder::new(
@@ -186,10 +176,12 @@ pub async fn cleanup_current_process_config_states_with_mode(
     }
     let affected_rows = query
         .build()
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?
         .rows_affected();
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     if affected_rows > 0 {
         log::info!(
@@ -206,8 +198,11 @@ pub async fn cleanup_current_process_config_states_with_mode(
 /// The row can be edited while the forward runs, so another process that
 /// needs to know which address and aliases this one holds cannot read the
 /// row for it: the snapshot is what the forward actually owns.
-pub fn running_snapshot_key(id: i64) -> String {
-    format!("running_snapshot:file:{id}")
+pub fn running_snapshot_key(id: i64, mode: DatabaseMode) -> String {
+    format!(
+        "running_snapshot:{}:{id}",
+        crate::utils::settings::mode_scope(mode)
+    )
 }
 
 /// Records what a forward that has just registered actually holds. Only the
@@ -221,9 +216,13 @@ pub async fn set_running_snapshot(
     }
     let serialized = serde_json::to_string(config)
         .map_err(|error| format!("Failed to describe the running config {id}: {error}"))?;
-    crate::utils::settings::set_setting_with_mode(&running_snapshot_key(id), &serialized, mode)
-        .await
-        .map_err(|error| format!("Failed to record the running config {id}: {error}"))
+    crate::utils::settings::set_setting_with_mode(
+        &running_snapshot_key(id, mode),
+        &serialized,
+        mode,
+    )
+    .await
+    .map_err(|error| format!("Failed to record the running config {id}: {error}"))
 }
 
 /// Forgets the snapshot once the forward has stopped.
@@ -232,7 +231,8 @@ pub async fn clear_running_snapshot(id: i64, mode: DatabaseMode) {
         return;
     }
     if let Err(error) =
-        crate::utils::settings::delete_setting_with_mode(&running_snapshot_key(id), mode).await
+        crate::utils::settings::delete_setting_with_mode(&running_snapshot_key(id, mode), mode)
+            .await
     {
         log::debug!("Failed to clear the running snapshot for config {id}: {error}");
     }
@@ -246,10 +246,11 @@ pub async fn running_snapshot(
     if mode != DatabaseMode::File {
         return None;
     }
-    let stored = crate::utils::settings::get_setting_with_mode(&running_snapshot_key(id), mode)
-        .await
-        .ok()
-        .flatten()?;
+    let stored =
+        crate::utils::settings::get_setting_with_mode(&running_snapshot_key(id, mode), mode)
+            .await
+            .ok()
+            .flatten()?;
     serde_json::from_str(&stored).ok()
 }
 
@@ -262,6 +263,9 @@ pub async fn running_snapshot(
 /// means a crash followed by pid reuse, and leaving it alone is the safe
 /// reading.
 pub fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     if pid == std::process::id() {
         return true;
     }
@@ -272,6 +276,8 @@ pub fn process_is_alive(pid: u32) -> bool {
         };
         // Signal 0 checks for existence without delivering anything. EPERM
         // means the process exists but belongs to another user.
+        // SAFETY: signal 0 delivers nothing; `pid` is a validated, non-zero
+        // process id.
         let result = unsafe { libc::kill(pid, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }

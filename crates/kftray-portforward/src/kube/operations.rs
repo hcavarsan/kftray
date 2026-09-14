@@ -116,6 +116,12 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
         if contexts.is_empty() && !errors.is_empty() {
             anyhow::bail!(errors.join("\n"));
         }
+        if !errors.is_empty() {
+            log::warn!(
+                "Some kubeconfig paths failed to load and were skipped: {}",
+                errors.join("; ")
+            );
+        }
         Ok(contexts)
     })
     .await
@@ -307,7 +313,12 @@ mod tests {
             .expect("malformed kubeconfig must fail")
             .to_string();
         assert!(
-            err.contains(kubeconfig_path.to_string_lossy().as_ref()),
+            err.contains(
+                kubeconfig_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("kubeconfig path must have a file name")
+            ),
             "{err}"
         );
     }

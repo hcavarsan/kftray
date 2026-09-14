@@ -111,7 +111,7 @@ impl WebSocketTunnelClient {
                     && let Some(ready) = ready.take()
                     && ready.send(Err(message.clone())).is_err()
                 {
-                    return Err("Expose startup was cancelled".to_owned());
+                    return Err(format!("Expose startup was cancelled: {message}"));
                 }
                 return Err(message);
             }

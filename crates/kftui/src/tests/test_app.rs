@@ -15,6 +15,11 @@ mod tests {
 
     use super::*;
 
+    // `handle_port_forwarding`'s dispatch loop and `App::drain_forwarding`
+    // both reach into process-wide registries owned by `kftray_portforward`,
+    // so tests exercising them must not run concurrently with each other.
+    static FORWARDING_GLOBALS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn create_test_config(id: i64) -> Config {
         Config {
             id: Some(id),
@@ -66,6 +71,21 @@ mod tests {
         }
 
         (configs, config_states)
+    }
+
+    async fn spawn_panicking_task(app: &mut App, config_id: i64) {
+        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
+        app.task_configs.insert(handle.id(), config_id);
+
+        // Yield until the task has actually finished: a fixed sleep would make
+        // this pass or fail on scheduling rather than on the behaviour.
+        for _ in 0..200 {
+            if handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(handle.is_finished(), "the task must have panicked by now");
     }
 
     #[test]
@@ -217,6 +237,81 @@ mod tests {
     }
 
     #[test]
+    fn test_app_new_invariants() {
+        let app = App::new(test_logger_state());
+
+        assert_eq!(
+            app.forwarding_slots.available_permits(),
+            crate::tui::input::FORWARD_DISPATCH_CONCURRENCY
+        );
+        assert_eq!(
+            app.stop_slots.available_permits(),
+            crate::tui::input::FORWARD_DISPATCH_CONCURRENCY
+        );
+        assert!(!app.forwarding_cancel.is_cancelled());
+        assert!(app.configs_being_processed.is_empty());
+        assert!(app.task_configs.is_empty());
+        assert_eq!(app.error_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn dispatching_an_already_pending_config_does_not_spawn_a_second_task() {
+        let mut app = App::new(test_logger_state());
+        app.stopped_configs = vec![create_test_config(1)];
+        app.selected_row_stopped = 0;
+        app.configs_being_processed.insert(
+            1,
+            std::sync::Arc::new(crate::tui::input::PendingForward::new(1)),
+        );
+
+        let tasks_before = app.forwarding_tasks.len();
+        let task_configs_before = app.task_configs.len();
+
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(app.forwarding_tasks.len(), tasks_before);
+        assert_eq!(app.task_configs.len(), task_configs_before);
+
+        let receiver = app.error_receiver.as_mut().unwrap();
+        let reported = receiver
+            .try_recv()
+            .expect("the busy filter must report the dropped key press");
+        assert!(
+            reported.contains("still starting"),
+            "the message must say the config is still starting: {reported}"
+        );
+    }
+
+    #[test]
+    fn update_configs_aggregates_channel_errors_and_appends_to_an_open_popup() {
+        let mut app = App::new(test_logger_state());
+        let sender = app.error_sender.clone().unwrap();
+        sender.send("first failure".to_string()).unwrap();
+        sender.send("second failure".to_string()).unwrap();
+
+        app.update_configs(&[], &[]);
+
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("first failure\nsecond failure")
+        );
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+
+        sender.send("third failure".to_string()).unwrap();
+        app.update_configs(&[], &[]);
+
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("first failure\nsecond failure\nthird failure")
+        );
+    }
+
+    #[test]
     fn pending_forward_stays_busy_until_completion() {
         let mut app = App::new(test_logger_state());
         let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new(1));
@@ -242,7 +337,11 @@ mod tests {
         );
         assert!(app.error_message.is_none());
 
-        queued.mark_running_at(std::time::Instant::now() - std::time::Duration::from_secs(31));
+        let now = std::time::Instant::now();
+        let stalled_at = now
+            .checked_sub(std::time::Duration::from_secs(31))
+            .unwrap_or(now);
+        queued.mark_running_at(stalled_at);
         app.update_configs(&[], &[]);
         assert!(
             app.configs_being_processed.contains_key(&1),
@@ -266,18 +365,7 @@ mod tests {
     #[tokio::test]
     async fn a_panicking_forward_task_reaches_the_error_popup() {
         let mut app = App::new(test_logger_state());
-        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
-        app.task_configs.insert(handle.id(), 410_081);
-
-        // Yield until the task has actually finished: a fixed sleep would make
-        // this pass or fail on scheduling rather than on the behaviour.
-        for _ in 0..200 {
-            if handle.is_finished() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert!(handle.is_finished(), "the task must have panicked by now");
+        spawn_panicking_task(&mut app, 410_081).await;
 
         app.update_configs(&[], &[]);
         let reported = app.error_message.clone().unwrap();
@@ -287,15 +375,7 @@ mod tests {
     #[tokio::test]
     async fn a_failure_during_a_modal_is_shown_once_the_modal_closes() {
         let mut app = App::new(test_logger_state());
-        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
-        app.task_configs.insert(handle.id(), 410_082);
-        for _ in 0..200 {
-            if handle.is_finished() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert!(handle.is_finished(), "the task must have panicked by now");
+        spawn_panicking_task(&mut app, 410_082).await;
 
         // The user is in the middle of confirming a delete when the task dies.
         app.state = AppState::ShowDeleteConfirmation;
@@ -318,6 +398,7 @@ mod tests {
     #[tokio::test]
     async fn finishing_cancels_queued_forwards_without_waiting_for_a_slot() {
         let mut app = App::new(test_logger_state());
+        let _guard = FORWARDING_GLOBALS.lock().await;
         let slots = app.forwarding_slots.available_permits() as u32;
         let _occupied = app
             .forwarding_slots
@@ -326,7 +407,7 @@ mod tests {
             .await
             .unwrap();
         app.stopped_configs = vec![create_test_config(1)];
-        app.table_state_stopped.select(Some(0));
+        app.selected_row_stopped = 0;
         crate::tui::input::handle_port_forwarding(
             &mut app,
             kftray_commons::utils::db_mode::DatabaseMode::Memory,
@@ -361,6 +442,7 @@ mod tests {
     #[tokio::test]
     async fn a_saturated_start_batch_does_not_block_stopping() {
         let mut app = App::new(test_logger_state());
+        let _guard = FORWARDING_GLOBALS.lock().await;
         let slots = app.forwarding_slots.available_permits() as u32;
         let _occupied = app
             .forwarding_slots
@@ -371,7 +453,7 @@ mod tests {
 
         app.active_table = crate::tui::input::ActiveTable::Running;
         app.running_configs = vec![create_test_config(410_061)];
-        app.table_state_running.select(Some(0));
+        app.selected_row_running = 0;
         crate::tui::input::handle_port_forwarding(
             &mut app,
             kftray_commons::utils::db_mode::DatabaseMode::Memory,
@@ -379,10 +461,17 @@ mod tests {
         .await
         .unwrap();
 
-        let receiver = app.error_receiver.as_mut().unwrap();
-        let reported = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+        tokio::time::timeout(std::time::Duration::from_secs(2), app.drain_forwarding())
             .await
             .expect("the stop must run while every start permit is held");
-        assert!(reported.is_some());
+
+        let pending = app
+            .configs_being_processed
+            .get(&410_061)
+            .expect("the stop must still be tracked as pending until it settles");
+        assert!(
+            !pending.is_active(),
+            "draining must wait for the stop to actually finish, not just start"
+        );
     }
 }

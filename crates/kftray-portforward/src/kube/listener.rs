@@ -20,6 +20,7 @@ use tracing::{
     info,
 };
 
+use crate::kube::client::cluster_identity;
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 use crate::kube::models::Target;
 use crate::kube::shared_client::{
@@ -112,7 +113,7 @@ impl PortForwarder {
         // can resolve it to another server, and forwarding there would look
         // for a relay that is not on it, or find another installation's.
         if let Some(expected) = expected_destination
-            && connection.cluster_url != expected
+            && cluster_identity(&connection.cluster_url) != expected
         {
             anyhow::bail!(
                 "Context resolves to {} but the forward was set up against {expected}",
@@ -677,10 +678,19 @@ impl PortForwarder {
     /// [`shutdown`](Self::shutdown) still has something to await before
     /// reporting the workers gone.
     pub fn abort_workers(&self) {
-        for tasks in [&self.background_tasks, &self.connection_tasks] {
-            for handle in Self::registry(tasks).iter() {
+        {
+            // Set under the same lock the accept loop's registration check
+            // takes, so a connection accepted concurrently either observes
+            // the flag and aborts itself, or is pushed here and aborted below.
+            let registry = Self::registry(&self.connection_tasks);
+            self.workers_closed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            for handle in registry.iter() {
                 handle.abort();
             }
+        }
+        for handle in Self::registry(&self.background_tasks).iter() {
+            handle.abort();
         }
     }
 

@@ -337,7 +337,6 @@ pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result
     Ok(())
 }
 
-/// Reads every setting whose key starts with `prefix`.
 /// Removes a setting from a specific database.
 pub async fn delete_setting_with_mode(
     key: &str, mode: DatabaseMode,
@@ -455,6 +454,32 @@ pub async fn set_setting_with_mode(
     let context = DatabaseManager::get_context(mode).await?;
     upsert_setting(&context.pool, key, value).await?;
     Ok(())
+}
+
+/// Atomically increments the integer value of a setting, creating it at `1`
+/// if it does not exist yet, and returns the new value.
+///
+/// The read, increment and write happen in a single statement, so concurrent
+/// callers each observe a distinct result instead of racing a separate get
+/// and set.
+pub async fn increment_setting_with_mode(
+    key: &str, mode: DatabaseMode,
+) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await?;
+    let row = sqlx::query(
+        "INSERT INTO settings (key, value, updated_at)
+         VALUES (?, '1', CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET
+         value = CAST(value AS INTEGER) + 1,
+         updated_at = CURRENT_TIMESTAMP
+         RETURNING value",
+    )
+    .bind(key)
+    .fetch_one(&mut *conn)
+    .await?;
+    let value: String = row.get("value");
+    Ok(value.parse()?)
 }
 
 pub async fn get_disconnect_timeout_with_mode(

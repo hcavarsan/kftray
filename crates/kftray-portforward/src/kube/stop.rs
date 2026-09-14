@@ -239,13 +239,18 @@ async fn confirm_uncertain_target(
     const CONFIRMATIONS_REQUIRED: u32 = 2;
 
     let key = confirmation_key(id, config, destination, mode);
-    let seen = kftray_commons::utils::settings::get_setting_with_mode(&key, mode)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(0)
-        + 1;
+    // Atomic: stop-all (buffer_unordered 16) and reconcile can both reach this
+    // target in the same pass, and a separate read-then-write here would let
+    // two callers both observe the same count and either never reach
+    // CONFIRMATIONS_REQUIRED or confirm after a single pass.
+    let seen = match kftray_commons::utils::settings::increment_setting_with_mode(&key, mode).await
+    {
+        Ok(seen) => seen,
+        Err(error) => {
+            warn!("Failed to record a cleanup confirmation for config {id}: {error}");
+            return false;
+        }
+    };
     if seen >= CONFIRMATIONS_REQUIRED {
         if let Err(error) =
             kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
@@ -253,11 +258,6 @@ async fn confirm_uncertain_target(
             log::debug!("Failed to clear the confirmation count for config {id}: {error}");
         }
         return true;
-    }
-    if let Err(error) =
-        kftray_commons::utils::settings::set_setting_with_mode(&key, &seen.to_string(), mode).await
-    {
-        warn!("Failed to record a cleanup confirmation for config {id}: {error}");
     }
 
     false
@@ -777,6 +777,12 @@ impl ReleaseInFlight {
         // A claim held by the configuration being released is this startup's
         // own: its rollback is exactly what should take the address back.
         if state.claims.iter().any(|claim| *claim != owner) || keep_for(address) {
+            drop(state);
+            // `or_default` above may have just created this entry empty; left
+            // behind, nothing else ever reclaims it.
+            RELEASING_ADDRESSES.remove_if_mut(address, |_, state| {
+                state.releases == 0 && state.claims.is_empty()
+            });
             return None;
         }
         state.releases += 1;
@@ -817,6 +823,12 @@ impl AddressClaim {
     pub(crate) fn take(address: &str, owner: Option<i64>) -> Option<Self> {
         let mut state = RELEASING_ADDRESSES.entry(address.to_owned()).or_default();
         if state.releases > 0 {
+            drop(state);
+            // `or_default` above may have just created this entry empty; left
+            // behind, nothing else ever reclaims it.
+            RELEASING_ADDRESSES.remove_if_mut(address, |_, state| {
+                state.releases == 0 && state.claims.is_empty()
+            });
             return None;
         }
         state.claims.push(owner);
@@ -837,6 +849,45 @@ impl Drop for AddressClaim {
     }
 }
 
+lazy_static::lazy_static! {
+    /// The token of the attempt that currently owns a config id's hosts
+    /// entries. Only ever overwritten by a newer claim; never removed by its
+    /// own holder except when that holder's own deferred cleanup runs.
+    static ref HOST_ENTRY_CLAIMS: dashmap::DashMap<i64, u64> = dashmap::DashMap::new();
+}
+
+static HOST_ENTRY_CLAIM_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Claims ownership of a config id's hosts entries for one startup attempt,
+/// mirroring [`AddressClaim`] for symmetry.
+///
+/// A retry for the same id registers in `CHILD_PROCESSES` only at the very
+/// end of its startup, so a deferred cleanup task from an earlier, abandoned
+/// attempt cannot use that alone to tell a retry's already-written lines from
+/// its own: taken before anything is written, a newer claim for the same id
+/// silently replaces the older one, and the token returned here lets an
+/// abandoned attempt's cleanup task recognize it has been superseded.
+pub(crate) fn claim_host_entries(id: i64) -> u64 {
+    let token = HOST_ENTRY_CLAIM_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    HOST_ENTRY_CLAIMS.insert(id, token);
+    token
+}
+
+/// Whether `token` is still the most recent claim for a config id's hosts
+/// entries. If so, clears it: the caller's deferred cleanup is about to run,
+/// and nothing else needs to know this attempt claimed these entries once it
+/// has. If a newer claim has since replaced it, the entry is left in place
+/// and this reports `false`, so the caller leaves the newer attempt's lines
+/// alone.
+pub(crate) fn take_host_entry_claim_if_current(id: i64, token: u64) -> bool {
+    let mut was_current = false;
+    HOST_ENTRY_CLAIMS.remove_if(&id, |_, current| {
+        was_current = *current == token;
+        was_current
+    });
+    was_current
+}
+
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
     RELEASING_ADDRESSES
@@ -849,10 +900,16 @@ pub(crate) fn address_release_in_flight(address: &str) -> bool {
 struct LocalCleanup {
     /// Cleanup that failed and can be retried by a later stop.
     failures: Vec<String>,
-    /// The loopback alias could not be removed, which on some platforms needs
-    /// the privileged helper. The forward itself is gone, so the stop is not
-    /// held back, but the target stays recorded so a later stop retries it.
+    /// The loopback alias could not be removed, but a transient helper or
+    /// platform failure may still succeed later. The forward itself is gone,
+    /// so the stop is not held back, but the target stays recorded so a
+    /// later stop retries it.
     deferred: Vec<String>,
+    /// The loopback alias could not be removed because that needs
+    /// privileges that are not available right now. Retrying automatically
+    /// will not help without user action, so the target is not kept
+    /// recorded for that reason; the message is surfaced once instead.
+    unsatisfiable: Vec<String>,
 }
 
 impl LocalCleanup {
@@ -868,7 +925,11 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
         && crate::network_utils::is_custom_loopback_address(address)
         && let Err(error) = release_address_with_fallback(address, Some(id), mode).await
     {
-        cleanup.deferred.push(error);
+        if error.is_unsatisfiable() {
+            cleanup.unsatisfiable.push(error.to_string());
+        } else {
+            cleanup.deferred.push(error.to_string());
+        }
     }
     // Hosts-file work is synchronous and serialized behind one lock, so it runs
     // on a blocking thread: several stops at once would otherwise queue up on
@@ -897,7 +958,10 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
 async fn delete_cluster_resources(
     id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
-    const CLUSTER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
+    // Comfortably above expose's own ROLLBACK_DELETION_TIMEOUT (45s): for an
+    // expose workload this wraps a wait for earlier resources to disappear,
+    // plus the delete and list requests around it.
+    const CLUSTER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(60);
 
     match timeout(
         CLUSTER_CLEANUP_TIMEOUT,
@@ -987,12 +1051,36 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
     }
 }
 
+/// Why a loopback address release did not complete.
+pub(crate) enum AddressReleaseError {
+    /// Retryable: a later stop may succeed where this one did not.
+    Failed(String),
+    /// Needs privileges that are not available right now (no elevated helper
+    /// session, user declined, ...). Retrying automatically will not help
+    /// without user action, so a caller must not keep this queued forever.
+    PrivilegeUnavailable(String),
+}
+
+impl AddressReleaseError {
+    pub(crate) fn is_unsatisfiable(&self) -> bool {
+        matches!(self, Self::PrivilegeUnavailable(_))
+    }
+}
+
+impl std::fmt::Display for AddressReleaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(message) | Self::PrivilegeUnavailable(message) => write!(f, "{message}"),
+        }
+    }
+}
+
 /// Release address with timeout. Skips osascript fallback to avoid blocking on
 /// user interaction. Address cleanup is not critical - addresses will be freed
 /// on system restart.
 pub(crate) async fn release_address_with_fallback(
     address: &str, owner: Option<i64>, mode: DatabaseMode,
-) -> Result<(), String> {
+) -> Result<(), AddressReleaseError> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
 
     // Another process sharing the file database can hold the same address:
@@ -1058,43 +1146,57 @@ pub(crate) async fn release_address_with_fallback(
     // interface alias, or one where cleanup happens on restart, reports success
     // here and the stop can complete. Only a platform release that actually
     // fails keeps the cleanup record for a later retry.
-    // Run on a blocking thread under the same deadline: the platform release
-    // shells out, and doing that inline would hold a runtime worker, and the
-    // lifecycle lock with it, for as long as the command takes.
-    let address_owned = address.to_string();
-    let platform = timeout(ADDRESS_RELEASE_TIMEOUT, {
-        let releasing = Arc::clone(&releasing);
-        spawn_blocking(move || {
-            let _releasing = releasing;
-            tokio::runtime::Handle::current().block_on(
-                crate::network_utils::remove_loopback_address(&address_owned),
-            )
-        })
-    })
+    // Under the same deadline as the helper release: the platform release
+    // already shells out its own blocking work, so awaiting it directly here
+    // does not hold a runtime worker for the duration of the command.
+    let platform = timeout(
+        ADDRESS_RELEASE_TIMEOUT,
+        crate::network_utils::remove_loopback_address(address),
+    )
     .await;
     match platform {
-        Ok(Ok(Ok(()))) => {
+        Ok(Ok(
+            crate::network_utils::LoopbackRelease::Released
+            | crate::network_utils::LoopbackRelease::AlreadyAbsent,
+        )) => {
             warn!(
                 "Released address {} without the helper ({}).",
                 address, helper_error
             );
             Ok(())
         }
-        Ok(Ok(Err(platform_error))) => {
+        Ok(Ok(crate::network_utils::LoopbackRelease::PrivilegeUnavailable(platform_error))) => {
+            warn!(
+                "Cannot release address {}: helper: {}; platform needs elevated privileges that \
+                 are not available right now: {}",
+                address, helper_error, platform_error
+            );
+            Err(AddressReleaseError::PrivilegeUnavailable(format!(
+                "Releasing address {address} needs elevated privileges that are not available \
+                 right now: {platform_error}"
+            )))
+        }
+        Ok(Ok(crate::network_utils::LoopbackRelease::Failed(platform_error))) => {
             warn!(
                 "Failed to release address {}: helper: {}; platform: {}",
                 address, helper_error, platform_error
             );
-            Err(format!(
+            Err(AddressReleaseError::Failed(format!(
                 "Failed to release address {address}: {helper_error}; {platform_error}"
-            ))
+            )))
         }
-        Ok(Err(join_error)) => Err(format!(
-            "Address release task failed for {address}: {helper_error}; {join_error}"
-        )),
-        Err(_) => Err(format!(
+        Ok(Err(platform_error)) => {
+            warn!(
+                "Failed to release address {}: helper: {}; platform: {}",
+                address, helper_error, platform_error
+            );
+            Err(AddressReleaseError::Failed(format!(
+                "Failed to release address {address}: {helper_error}; {platform_error}"
+            )))
+        }
+        Err(_) => Err(AddressReleaseError::Failed(format!(
             "Address release timed out for {address} after {ADDRESS_RELEASE_TIMEOUT:?}"
-        )),
+        ))),
     }
 }
 
@@ -1238,11 +1340,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     stop_all_port_forward_with_mode(DatabaseMode::File).await
 }
 
-/// Cancels every startup and recovery attempt without waiting for them.
-///
-/// Shutdown calls this before draining so in-flight startups observe
-/// cancellation cooperatively and run their own rollback, instead of being
-/// dropped mid-create by an abort deadline.
 /// Configurations that must not be deleted: their forward is running, starting,
 /// or still has resources waiting to be cleaned up.
 ///
@@ -1259,6 +1356,12 @@ where
     // start cannot register between the check and the row disappearing, and a
     // start already waiting on the lock re-reads the row afterwards.
     //
+    // Bounded by SHARED_LOCK_WAIT rather than awaited unboundedly: a start
+    // holding this lock through its whole startup would otherwise block a UI
+    // delete forever. `delete` itself must not re-enter a recovery lock or
+    // `lock_config` for any of these ids; every guard here is already held for
+    // the duration of its call.
+    //
     // Sorted and deduplicated first: these mutexes are not reentrant, so a
     // repeated id would wait on a lock this call already holds, and two batches
     // naming the same ids in different orders would deadlock each other.
@@ -1268,7 +1371,14 @@ where
     let mut guards = Vec::with_capacity(ordered.len());
     for id in &ordered {
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(*id).await;
-        guards.push(lock.lock_owned().await);
+        match timeout(SHARED_LOCK_WAIT, lock.lock_owned()).await {
+            Ok(guard) => guards.push(guard),
+            Err(_) => {
+                return Err(format!(
+                    "Configuration {id} is still starting or stopping; stop it before deleting"
+                ));
+            }
+        }
     }
     // Then the cross-process locks, in the same order: a start in another
     // process holds its row's lock from its existence check through its
@@ -1338,6 +1448,11 @@ where
     delete().await
 }
 
+/// Cancels every startup and recovery attempt without waiting for them.
+///
+/// Shutdown calls this before draining so in-flight startups observe
+/// cancellation cooperatively and run their own rollback, instead of being
+/// dropped mid-create by an abort deadline.
 pub fn cancel_all_startups() {
     for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
         entry.value().cancel();
@@ -1350,19 +1465,16 @@ pub fn cancel_all_startups() {
     }
 }
 
-/// Retries every cleanup target still recorded, until none remain or the
-/// deadline expires.
+/// Retries every cleanup target still recorded until none remain or the
+/// deadline expires, and returns the configurations whose cleanup did not
+/// complete.
 ///
 /// A create whose request was abandoned may only appear after the first
 /// deletion pass, and the registry lives in memory: leaving it unreconciled at
-/// exit leaves the resource running with nothing tracking it.
-/// Retries every recorded cleanup until the registry is empty or the deadline
-/// passes.
-///
-/// Returns the configurations whose cleanup did not complete. Their targets
-/// with cluster resources still owed are persisted before returning, so a
-/// later run restores and retries them: the registry that tracks them lives
-/// only in this process, and the caller is about to exit it.
+/// exit leaves the resource running with nothing tracking it. Targets with
+/// cluster resources still owed are persisted before returning, so a later
+/// run restores and retries them: the registry that tracks them lives only in
+/// this process, and the caller is about to exit it.
 pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -> Vec<i64> {
     const RETRY_DELAY: Duration = Duration::from_secs(2);
 
@@ -1497,22 +1609,53 @@ pub async fn stop_all_port_forward_with_mode(
     for entry in CHILD_PROCESSES.iter() {
         entry.value().cancel();
     }
+
+    // Ids contributed only by the recovery lock and pending-cleanup registries,
+    // not by a live local task: these can legitimately have nothing left, e.g.
+    // a recovery lock still held while the work it guarded already settled, or
+    // a registry entry that outlived the row it described. Cleared below for
+    // any id a persisted row also names, since those still owe a real report.
+    let mut registry_only: HashSet<i64> = HashSet::new();
     for entry in crate::kube::proxy_recovery::RECOVERY_LOCKS.iter() {
-        if Arc::strong_count(entry.value()) > 1 {
-            ids.insert(*entry.key());
+        if Arc::strong_count(entry.value()) > 1 && !ids.contains(entry.key()) {
+            registry_only.insert(*entry.key());
         }
     }
-    ids.extend(PENDING_CLEANUP.iter().map(|entry| *entry.key()));
+    for entry in PENDING_CLEANUP.iter() {
+        if !ids.contains(entry.key()) {
+            registry_only.insert(*entry.key());
+        }
+    }
+    ids.extend(registry_only.iter().copied());
 
     let configs_result = read_configs_with_mode(mode).await;
     let states_result = get_configs_state_with_mode(mode).await;
     if let Ok(states) = &states_result {
-        ids.extend(
-            states
-                .iter()
-                .filter(|state| state.is_running)
-                .map(|state| state.config_id),
-        );
+        let this_process = std::process::id();
+        for state in states {
+            if !state.is_running {
+                continue;
+            }
+            let owned_elsewhere = mode == DatabaseMode::File
+                && !CHILD_PROCESSES.contains_key(&state.config_id)
+                && state.process_id.is_some_and(|pid| {
+                    pid != this_process
+                        && kftray_commons::utils::config_state::process_is_alive(pid)
+                });
+            if owned_elsewhere {
+                // That process's row to stop and to report on: a forward it
+                // still owns is not this stop-all's failure to surface.
+                log::debug!(
+                    "Stop-all: skipping config {} forwarded by another live kftray process",
+                    state.config_id
+                );
+                registry_only.remove(&state.config_id);
+                ids.remove(&state.config_id);
+                continue;
+            }
+            registry_only.remove(&state.config_id);
+            ids.insert(state.config_id);
+        }
     }
     let configs: HashMap<_, _> = configs_result
         .as_ref()
@@ -1524,16 +1667,30 @@ pub async fn stop_all_port_forward_with_mode(
     let mut responses: Vec<CustomResponse> = stream::iter(ids)
         .map(|id| {
             let config = configs.get(&id).copied();
+            let suppress_missing = registry_only.contains(&id);
             async move {
                 match stop_config(id, config, mode).await {
-                    Ok(response) => response,
-                    Err(error) => stop_response(id, config, Some(error)),
+                    Ok(response) => Some(response),
+                    Err(error) => {
+                        if suppress_missing && error == nothing_forwarding_error(id) {
+                            log::debug!(
+                                "Stop-all: config {id} was only tracked by the recovery/cleanup \
+                                 registry and nothing remained to clean"
+                            );
+                            None
+                        } else {
+                            Some(stop_response(id, config, Some(error)))
+                        }
+                    }
                 }
             }
         })
         .buffer_unordered(16)
-        .collect()
-        .await;
+        .collect::<Vec<Option<CustomResponse>>>()
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     if let Err(error) = configs_result {
         warn!("Could not read configs while stopping every forward: {error}");
@@ -1548,6 +1705,13 @@ pub async fn stop_all_port_forward_with_mode(
         )));
     }
     Ok(responses)
+}
+
+/// The error `stop_config` reports when it found no local process, database
+/// row or pending-cleanup record to act on for an id. Shared so `stop-all`
+/// can recognize it exactly, rather than duplicating the wording.
+fn nothing_forwarding_error(id: i64) -> String {
+    format!("No port forwarding process found for config_id '{id}'")
 }
 
 /// Failure response that is not tied to a single config, used when stop-all
@@ -1616,7 +1780,15 @@ async fn stop_config(
         Err(_) => (lock.lock().await, true),
     };
     let _shared =
-        kftray_commons::utils::config_dir::lock_config(id, mode, SHARED_LOCK_WAIT).await?;
+        match kftray_commons::utils::config_dir::lock_config(id, mode, SHARED_LOCK_WAIT).await {
+            Ok(shared) => shared,
+            Err(error) => {
+                drop(guard);
+                drop(lock);
+                crate::kube::proxy_recovery::remove_recovery_lock(id);
+                return Err(error);
+            }
+        };
     if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
         startup.cancel();
     }
@@ -1842,6 +2014,10 @@ async fn stop_config(
                 ));
             }
             errors.extend(local.failures);
+            // Reported once, like a failure, but not kept recorded above: a
+            // privilege that is not available right now will not become
+            // available by retrying automatically.
+            errors.extend(local.unsatisfiable);
             // A loopback alias that needs the privileged helper is not a reason
             // to keep reporting the forward as running: it is already gone. The
             // record above keeps the alias retryable.
@@ -1876,13 +2052,17 @@ async fn stop_config(
                  still being reconciled; stop it again to complete the check"
             ));
         }
-        if errors.is_empty() {
-            let state = ConfigState::new(id, false);
-            if let Err(error) = update_config_state_with_mode(&state, mode).await {
-                errors.push(error);
-            } else {
-                kftray_commons::utils::config_state::clear_running_snapshot(id, mode).await;
-            }
+        // is_running tracks the local process, not the durable cleanup
+        // obligation: the process is already out of CHILD_PROCESSES, cancelled
+        // and aborted by this point, however the cluster/local cleanup above
+        // went. Clearing it here regardless of `errors` keeps the UI from
+        // showing a torn-down forward as running forever; the remaining
+        // obligation stays in PENDING_CLEANUP and is still reported below.
+        let state = ConfigState::new(id, false);
+        if let Err(error) = update_config_state_with_mode(&state, mode).await {
+            errors.push(error);
+        } else {
+            kftray_commons::utils::config_state::clear_running_snapshot(id, mode).await;
         }
         if errors.is_empty() {
             Ok(stop_response(id, Some(config), None))
@@ -1895,9 +2075,7 @@ async fn stop_config(
              cluster resources, loopback addresses and host entries were left in place"
         ))
     } else {
-        Err(format!(
-            "No port forwarding process found for config_id '{id}'"
-        ))
+        Err(nothing_forwarding_error(id))
     };
     drop(guard);
     drop(lock);
@@ -2057,7 +2235,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_cluster_cleanup_keeps_the_config_marked_running() {
+    async fn failed_cluster_cleanup_clears_running_but_keeps_pending_cleanup() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             namespace: "default".to_string(),
@@ -2089,9 +2267,17 @@ mod tests {
         assert!(
             states
                 .iter()
-                .any(|state| state.config_id == id && state.is_running),
-            "orphaned cluster resources must keep the config retryable"
+                .any(|state| state.config_id == id && !state.is_running),
+            "the local process is already torn down, so is_running must clear even though \
+             cluster cleanup failed"
         );
+        assert!(
+            !pending_cleanup_targets(id).is_empty(),
+            "the unmet cluster obligation must stay in the durable registry so a later stop-all \
+             retries it"
+        );
+
+        PENDING_CLEANUP.remove(&id);
     }
 
     #[tokio::test]

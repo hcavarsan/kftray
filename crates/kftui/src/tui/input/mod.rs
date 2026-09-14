@@ -291,7 +291,7 @@ pub struct App {
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
-    pub configs_being_processed: std::collections::HashMap<i64, Arc<PendingForward>>,
+    pub configs_being_processed: PendingForwards,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
     pub(crate) task_configs: std::collections::HashMap<tokio::task::Id, i64>,
     pub forwarding_slots: Arc<tokio::sync::Semaphore>,
@@ -1539,7 +1539,7 @@ pub fn toggle_row_selection(app: &mut App) {
     }
 }
 
-const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
+pub(crate) const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
 const FORWARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -1603,6 +1603,8 @@ impl PendingForward {
     }
 }
 
+pub type PendingForwards = std::collections::HashMap<i64, Arc<PendingForward>>;
+
 struct ProcessingFlag(Arc<PendingForward>);
 
 impl Drop for ProcessingFlag {
@@ -1641,15 +1643,25 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         selected_rows.insert(selected_row);
     }
 
+    let is_starting = app.active_table == ActiveTable::Stopped;
     let selected_configs: Vec<Config> = selected_rows
         .iter()
         .filter_map(|&row| configs.get(row).cloned())
         .filter(|config| {
-            !config.id.is_some_and(|id| {
-                app.configs_being_processed
-                    .get(&id)
-                    .is_some_and(|pending| pending.is_active())
-            })
+            let Some(id) = config.id else {
+                return true;
+            };
+            let busy = app
+                .configs_being_processed
+                .get(&id)
+                .is_some_and(|pending| pending.is_active());
+            if busy && let Some(sender) = &app.error_sender {
+                let verb = if is_starting { "starting" } else { "stopping" };
+                let _ = sender.send(format!(
+                    "Config {id} is still {verb}, waiting for it to finish"
+                ));
+            }
+            !busy
         })
         .collect();
 
@@ -1671,7 +1683,6 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     }
 
     let error_sender = app.error_sender.clone();
-    let is_starting = app.active_table == ActiveTable::Stopped;
     let slots = if is_starting {
         app.forwarding_slots.clone()
     } else {

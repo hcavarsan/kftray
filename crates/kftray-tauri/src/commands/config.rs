@@ -76,10 +76,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
 
 async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     use kftray_commons::utils::config_state::get_configs_state;
-    use kftray_portforward::kube::{
-        start_port_forward,
-        stop_port_forward,
-    };
+    use kftray_portforward::kube::stop_port_forward;
 
     info!("=== Starting SSL proxy restart process ===");
 
@@ -138,7 +135,11 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
 
     info!("Found {} SSL-enabled configs to restart", ssl_configs.len());
 
-    // Stop and restart each SSL-enabled config
+    // Stop and restart each SSL-enabled config through the same
+    // workload/protocol dispatch the global shortcuts use: a proxy or udp
+    // config restarted through a plain tcp port-forward would come back on
+    // the wrong forwarding path.
+    let mut failures: Vec<String> = Vec::new();
     for config in &ssl_configs {
         let config_id = config.id.unwrap().to_string();
         info!(
@@ -153,39 +154,41 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
                 "Failed to stop port forward for config {}: {}",
                 config_id, e
             );
+            failures.push(format!("config {config_id}: failed to stop: {e}"));
             continue;
         }
 
         // Small delay to ensure clean shutdown
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Restart with the same protocol (assuming TCP for SSL)
-        match start_port_forward(vec![config.clone()], "tcp").await {
+        match crate::commands::portforward::dispatch_start(config).await {
             Ok(responses) => {
-                let failures: Vec<&str> = responses
-                    .iter()
-                    .filter(|response| response.status != 0)
-                    .map(|response| response.stderr.as_str())
-                    .collect();
-                if failures.is_empty() {
-                    info!("Successfully restarted SSL proxy for config {}", config_id);
-                } else {
+                if let Err(e) = kftray_commons::models::response::batch_failure(&responses) {
                     warn!(
                         "Failed to restart port forward for config {}: {}",
-                        config_id,
-                        failures.join("; ")
+                        config_id, e
                     );
+                    failures.push(format!("config {config_id}: {e}"));
+                } else {
+                    info!("Successfully restarted SSL proxy for config {}", config_id);
                 }
             }
-            Err(e) => warn!(
-                "Failed to restart port forward for config {}: {}",
-                config_id, e
-            ),
+            Err(e) => {
+                warn!(
+                    "Failed to restart port forward for config {}: {}",
+                    config_id, e
+                );
+                failures.push(format!("config {config_id}: {e}"));
+            }
         }
     }
 
     info!("Completed SSL proxy restart process");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 async fn restart_ssl_proxies_with_retry() {
@@ -263,7 +266,27 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
-    let result = delete_all_configs().await;
+    // Same guard as delete_config_cmd/delete_configs_cmd: without it this
+    // deleted every row unconditionally, including ones for forwards that
+    // are running, starting or still being cleaned up.
+    let ids: Vec<i64> = get_configs()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|c| c.id)
+        .collect();
+    let targets = ids.clone();
+    let result = kftray_portforward::kube::delete_configs_if_idle(
+        &targets,
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+        || async move {
+            for id in &ids {
+                clear_stopped_by_timeout(*id);
+            }
+            delete_all_configs().await
+        },
+    )
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
@@ -451,6 +474,45 @@ mod tests {
         assert!(
             configs_after.is_empty(),
             "All configs should have been deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_configs_cmd_skips_running() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config::default();
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs[0].id.expect("Config should have an ID");
+
+        // `delete_all_configs_cmd` used to call `delete_all_configs()`
+        // directly, deleting every row regardless of what is registered
+        // here as a live forward.
+        let handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async { Ok(()) });
+        kftray_portforward::port_forward::CHILD_PROCESSES.insert(
+            id,
+            kftray_portforward::port_forward::PortForwardProcess::new(handle, id.to_string()),
+        );
+
+        let result = delete_all_configs_cmd().await;
+        kftray_portforward::port_forward::CHILD_PROCESSES.remove(&id);
+
+        assert!(
+            result.is_err(),
+            "Delete all configs should refuse to delete a config with a live forward"
+        );
+
+        let configs_after = get_configs_cmd()
+            .await
+            .expect("Failed to get configs after refused deletion");
+        assert!(
+            configs_after.iter().any(|c| c.id == Some(id)),
+            "Config with a live forward must not have been deleted"
         );
     }
 

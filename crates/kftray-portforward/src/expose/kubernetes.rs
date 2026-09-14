@@ -47,6 +47,24 @@ fn extract_subdomain(domain: &str) -> String {
     domain.split('.').next().unwrap_or(domain).to_string()
 }
 
+/// Name prefix shared by every expose resource this user creates.
+///
+/// The username is reduced to at most 16 ASCII alphanumeric characters,
+/// mirroring [`crate::kube::proxy::proxy_resource_prefix`]: the full name is
+/// also used as an `app` label value, which Kubernetes caps at 63 characters
+/// and restricts to ASCII, so a long or non-ASCII username would make every
+/// create request fail.
+pub fn expose_resource_prefix() -> String {
+    let username: String = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(16)
+        .collect();
+    format!("kftray-expose-{username}-")
+}
+
 pub async fn create_expose_resources(
     connection: &crate::kube::client::KubeConnection, config: &Config, mode: DatabaseMode,
 ) -> Result<ExposeResources, ExposeCreateError> {
@@ -69,8 +87,11 @@ pub async fn create_expose_resources(
     // Bounded as a whole: the client carries no per-request timeout, and a
     // stalled request here would otherwise hold the start, and the batch
     // collecting its result, until the user cancelled it. The cleanup record
-    // this attempt is responsible for is untouched by the deadline.
-    const PRE_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
+    // this attempt is responsible for is untouched by the deadline. Comfortably
+    // above `ROLLBACK_DELETION_TIMEOUT`: waiting for earlier resources to
+    // disappear is only part of this deadline, alongside the deletes and
+    // listings around it.
+    const PRE_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(60);
     tokio::time::timeout(
         PRE_START_CLEANUP_TIMEOUT,
         delete_expose_resources(
@@ -107,17 +128,11 @@ pub async fn create_expose_resources(
             .collect()
     };
 
-    let username = whoami::username()
-        .unwrap_or_else(|_| "unknown".to_string())
-        .to_lowercase();
-    let clean_username: String = username
-        .chars()
-        .filter(|c: &char| c.is_alphanumeric())
-        .collect();
-
     let deployment_name = format!(
-        "kftray-expose-{}-{}-{}",
-        clean_username, timestamp, random_string
+        "{}{}-{}",
+        expose_resource_prefix(),
+        timestamp,
+        random_string
     );
 
     // For public exposure, use the first part of the domain (before the first dot)
@@ -217,37 +232,13 @@ pub async fn create_expose_resources(
     }
     .await;
     if let Err(error) = result {
-        // Bounded as a whole: this runs with the lifecycle lock held and the
-        // client carries no per-request timeout, so a stalled DELETE would keep
-        // both this startup and the stop behind it waiting. Reported as not
-        // rolled back on timeout, which keeps the cleanup record armed.
-        const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-        let cleaned = tokio::time::timeout(
-            ROLLBACK_TIMEOUT,
-            delete_created_resources(&client, &config.namespace, &created),
-        )
-        .await;
-
-        return match cleaned {
-            Ok(Ok(())) => Err(ExposeCreateError {
-                rolled_back: true,
-                ..error
-            }),
-            Ok(Err(cleanup_error)) => Err(ExposeCreateError {
-                message: format!("{}; cleanup failed: {cleanup_error}", error.message),
-                ambiguous: error.ambiguous,
-                rolled_back: false,
-            }),
-            Err(_) => Err(ExposeCreateError {
-                message: format!(
-                    "{}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried",
-                    error.message
-                ),
-                ambiguous: error.ambiguous,
-                rolled_back: false,
-            }),
-        };
+        let (cleaned, message) =
+            rollback_created_resources(&client, &config.namespace, &created, error.message).await;
+        return Err(ExposeCreateError {
+            message,
+            ambiguous: error.ambiguous,
+            rolled_back: cleaned,
+        });
     }
     result
 }
@@ -322,7 +313,7 @@ impl From<&str> for ExposeCreateError {
 const CREATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn create_bounded<K>(
-    api: &Api<K>, what: &str, object: &K,
+    api: &Api<K>, kind: ResourceKind, object: &K,
 ) -> Result<CreatedResource, ExposeCreateError>
 where
     K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + serde::Serialize + kube::Resource,
@@ -334,15 +325,16 @@ where
     .await
     {
         Ok(Ok(created)) => Ok(CreatedResource {
-            kind: ResourceKind::of(what),
+            kind,
             name: created.meta().name.clone().unwrap_or_default(),
             uid: created.meta().uid.clone(),
         }),
-        Ok(Err(error)) => Err(classify_create_error(what, &error)),
+        Ok(Err(error)) => Err(classify_create_error(kind, &error)),
         Err(_) => Err(ExposeCreateError {
             message: format!(
-                "Timed out after {CREATE_REQUEST_TIMEOUT:?} creating the {what}; the server may \
-                 still be applying it"
+                "Timed out after {CREATE_REQUEST_TIMEOUT:?} creating the {}; the server may still \
+                 be applying it",
+                kind.label()
             ),
             ambiguous: true,
             rolled_back: false,
@@ -353,7 +345,7 @@ where
 /// Classifies a failed create. Only a definitive rejection proves the object
 /// was not created; a transport failure or a server-side timeout can be
 /// returned while the request is still being applied.
-fn classify_create_error(what: &str, error: &kube::Error) -> ExposeCreateError {
+fn classify_create_error(kind: ResourceKind, error: &kube::Error) -> ExposeCreateError {
     let ambiguous = match error {
         kube::Error::Api(response) => {
             matches!(response.code, 408 | 429 | 500 | 502 | 503 | 504)
@@ -361,7 +353,7 @@ fn classify_create_error(what: &str, error: &kube::Error) -> ExposeCreateError {
         _ => true,
     };
     ExposeCreateError {
-        message: format!("Failed to create {what}: {error}"),
+        message: format!("Failed to create {}: {error}", kind.label()),
         ambiguous,
         rolled_back: false,
     }
@@ -376,7 +368,7 @@ pub struct CreatedResource {
     uid: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ResourceKind {
     Deployment,
     Service,
@@ -384,11 +376,12 @@ pub enum ResourceKind {
 }
 
 impl ResourceKind {
-    fn of(what: &str) -> Self {
-        match what {
-            "deployment" => Self::Deployment,
-            "service" => Self::Service,
-            _ => Self::Ingress,
+    /// The lowercase noun used in log and error messages.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Deployment => "deployment",
+            Self::Service => "service",
+            Self::Ingress => "ingress",
         }
     }
 }
@@ -433,9 +426,24 @@ pub async fn delete_created_resources(
         {
             // A precondition conflict means the name now holds a different
             // object. Only the one this attempt created is its responsibility,
-            // so the check below decides whether anything is actually left.
+            // so the check below decides whether anything is actually left. A
+            // read failure is treated as "unknown, assume still present"
+            // rather than propagated: doing that here would discard every
+            // delete error this loop already collected.
             let conflict = matches!(&error, kube::Error::Api(response) if response.code == 409);
-            if !conflict || still_present(client, namespace, resource).await? {
+            let still_owned = !conflict
+                || match still_present(client, namespace, resource).await {
+                    Ok(present) => present,
+                    Err(read_error) => {
+                        errors.push(format!(
+                            "could not confirm whether {} still exists after a conflicting \
+                             delete: {read_error}",
+                            resource.name
+                        ));
+                        true
+                    }
+                };
+            if still_owned {
                 errors.push(error.to_string());
             }
         }
@@ -448,28 +456,79 @@ pub async fn delete_created_resources(
     // and its containers, running. Rollback is only complete once the recorded
     // objects are gone, or replaced by something this attempt does not own.
     let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
+    let mut read_errors: Vec<String> = Vec::new();
     loop {
         let mut remaining = Vec::new();
         for resource in created {
-            if still_present(client, namespace, resource).await? {
-                remaining.push(resource.name.clone());
+            match still_present(client, namespace, resource).await {
+                Ok(true) => remaining.push(resource.name.clone()),
+                Ok(false) => {}
+                Err(error) => {
+                    // Unknown: assume still present rather than declaring this
+                    // resource gone on a transient read failure, and keep
+                    // polling instead of aborting the rollback outright.
+                    remaining.push(resource.name.clone());
+                    read_errors.push(error);
+                }
             }
         }
         if remaining.is_empty() {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(format!(
+            let mut message = format!(
                 "Resources are still terminating after {ROLLBACK_DELETION_TIMEOUT:?}: {}",
                 remaining.join(", ")
-            ));
+            );
+            if !read_errors.is_empty() {
+                message.push_str(&format!(
+                    "; also failed to confirm: {}",
+                    read_errors.join("; ")
+                ));
+            }
+            return Err(message);
         }
         tokio::time::sleep(ROLLBACK_DELETION_POLL).await;
     }
 }
 
-const ROLLBACK_DELETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Longer than the default 30s terminationGracePeriodSeconds (the template
+/// itself also sets a short one): a relay that only exits on the deadline
+/// must not be routinely reported as still terminating.
+const ROLLBACK_DELETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 const ROLLBACK_DELETION_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Deletes exactly what one creation attempt made, under one deadline, and
+/// describes the outcome as one message built on `reason`.
+///
+/// Bounded as a whole: this runs while the lifecycle lock is held and the
+/// client carries no per-request timeout, so a stalled DELETE would block
+/// both this startup and the stop that follows it. Returns whether the
+/// created resources were fully deleted, so a caller decides only what that
+/// means for its own cleanup guard.
+pub(crate) async fn rollback_created_resources(
+    client: &Client, namespace: &str, created: &[CreatedResource], reason: String,
+) -> (bool, String) {
+    // Comfortably above `ROLLBACK_DELETION_TIMEOUT`: the wait for resources to
+    // disappear is only part of this deadline, alongside the delete requests
+    // that precede it.
+    const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    let cleaned = tokio::time::timeout(
+        ROLLBACK_TIMEOUT,
+        delete_created_resources(client, namespace, created),
+    )
+    .await;
+
+    match cleaned {
+        Ok(Ok(())) => (true, reason),
+        Ok(Err(cleanup_error)) => (false, format!("{reason}; cleanup failed: {cleanup_error}")),
+        Err(_) => (
+            false,
+            format!("{reason}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried"),
+        ),
+    }
+}
 
 /// Whether the exact object this attempt created still exists. A different UID
 /// under the same name belongs to someone else.
@@ -603,7 +662,7 @@ async fn create_deployment(
         }
     }
 
-    let created = create_bounded(&deployments, "deployment", &deployment).await?;
+    let created = create_bounded(&deployments, ResourceKind::Deployment, &deployment).await?;
 
     info!("Deployment created successfully");
     Ok(created)
@@ -733,7 +792,7 @@ async fn create_service(
         selector.extend(ownership.unwrap_or_default());
     }
 
-    let created = create_bounded(&services, "service", &service).await?;
+    let created = create_bounded(&services, ResourceKind::Service, &service).await?;
 
     info!("Service created successfully");
     Ok(created)
@@ -789,7 +848,7 @@ async fn create_ingress(
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
     remember_ingress_created(&config_id_str, location, mode).await?;
-    let created = create_bounded(&ingresses, "ingress", &ingress).await?;
+    let created = create_bounded(&ingresses, ResourceKind::Ingress, &ingress).await?;
 
     info!("Created ingress");
     Ok(created)
@@ -1362,6 +1421,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_attempts_all_resources_and_ignores_not_found() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = kube::Client::new(mock_service, "default");
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {

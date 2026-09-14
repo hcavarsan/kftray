@@ -16,6 +16,11 @@ use crate::kube::models::{
     TargetSelector,
 };
 
+/// Marker substring identifying the "no ready pods" resolution failure, so
+/// consumers (e.g. kftray-network-monitor) can classify it without pattern
+/// matching on the full formatted message.
+pub const NO_READY_PODS_ERROR: &str = "No ready pods available";
+
 pub async fn resolve_pod_selector(
     client: &kube::Client, namespace: &str, target: &Target,
 ) -> anyhow::Result<PodSelector> {
@@ -29,6 +34,9 @@ pub async fn resolve_pod_selector(
         TargetSelector::PodLabel(label_selector) => Ok(PodSelector::Labels {
             selector: label_selector.clone(),
         }),
+        TargetSelector::ServiceName(service_name) if service_name.trim().is_empty() => {
+            Err(anyhow::anyhow!("Pod configuration has no service name"))
+        }
         TargetSelector::ServiceName(service_name) => {
             let service_api: Api<Service> = Api::namespaced(client.clone(), namespace);
             let service = service_api
@@ -81,6 +89,7 @@ pub async fn resolve_target_port_for_pod(
             // the same deadline rather than failing the resolution, since a
             // replacement is usually ready by then. Any other error stands.
             let deadline = tokio::time::Instant::now() + timeout;
+            let mut attempt: u32 = 0;
             loop {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 let pod_name = forwarder
@@ -88,23 +97,35 @@ pub async fn resolve_target_port_for_pod(
                     .await
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "No ready pods available to resolve port name '{}'",
+                            "{NO_READY_PODS_ERROR} to resolve port name '{}'",
                             port_name
                         )
                     })?;
 
                 let pod = match pod_api.get(&pod_name).await {
                     Ok(pod) => pod,
-                    Err(kube::Error::Api(response))
-                        if response.code == 404 && tokio::time::Instant::now() < deadline =>
-                    {
+                    Err(kube::Error::Api(response)) if response.code == 404 => {
+                        let backoff = Duration::from_millis(200)
+                            .saturating_mul(attempt + 1)
+                            .min(Duration::from_secs(2));
+                        let time_left =
+                            deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if time_left <= backoff {
+                            return Err(anyhow::anyhow!(
+                                "Pod '{}' was retired before its port '{}' could be resolved \
+                                 and the deadline ran out while waiting for a replacement",
+                                pod_name,
+                                port_name
+                            ));
+                        }
                         log::debug!(
-                            "Pod '{pod_name}' went away before its port could be read; selecting \
-                             again"
+                            "Pod '{pod_name}' went away before its port could be read; \
+                             selecting again (attempt {attempt})"
                         );
+                        attempt += 1;
                         // Gives the watch a moment to notice the retirement,
                         // so a stale selection is not re-read in a tight loop.
-                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        tokio::time::sleep(backoff).await;
                         continue;
                     }
                     Err(e) => {
@@ -283,6 +304,137 @@ mod tests {
         assert!(
             result.is_err(),
             "an empty selector must not fall through to a namespace-wide PodSelector::Labels"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_pod_selector_errors_when_service_name_is_blank() {
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let target = Target::new(
+            TargetSelector::ServiceName("   ".to_string()),
+            8080,
+            "default",
+        );
+
+        let err = resolve_pod_selector(&client, "default", &target)
+            .await
+            .expect_err("a blank service name must not resolve a selector");
+        assert_eq!(err.to_string(), "Pod configuration has no service name");
+    }
+
+    fn ready_pod_json(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": name,
+                "uid": format!("{name}-uid"),
+                "resourceVersion": "1",
+            },
+            "status": {
+                "phase": "Running",
+                "conditions": [{"type": "Ready", "status": "True"}],
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_target_port_for_pod_reports_the_retired_pod_when_the_deadline_runs_out() {
+        let pod_name = "retired-pod";
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let driver = tokio::spawn({
+            let pod_name = pod_name.to_string();
+            async move {
+                let mut listed_once = false;
+                let mut held_watches = Vec::new();
+                while let Some((request, send)) = handle.next_request().await {
+                    let path = request.uri().path().to_string();
+                    if path.ends_with(&format!("/pods/{pod_name}")) {
+                        // The pod object itself is gone: every read 404s.
+                        let body = serde_json::json!({
+                            "kind": "Status",
+                            "apiVersion": "v1",
+                            "status": "Failure",
+                            "message": format!("pods \"{pod_name}\" not found"),
+                            "reason": "NotFound",
+                            "code": 404,
+                        });
+                        send.send_response(
+                            Response::builder()
+                                .status(404)
+                                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                                .unwrap(),
+                        );
+                    } else if !listed_once {
+                        // Initial list: report the pod ready so the selector
+                        // resolves once, before it is found retired.
+                        listed_once = true;
+                        let body = serde_json::json!({
+                            "apiVersion": "v1",
+                            "kind": "PodList",
+                            "metadata": { "resourceVersion": "1" },
+                            "items": [ready_pod_json(&pod_name)],
+                        });
+                        send.send_response(
+                            Response::builder()
+                                .status(200)
+                                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                                .unwrap(),
+                        );
+                    } else {
+                        // A follow-up watch on the collection: left open so the
+                        // reflector's cached ready pod is never invalidated.
+                        held_watches.push(send);
+                    }
+                }
+            }
+        });
+
+        let forwarder = kube_portforward::Forwarder::builder(
+            client.clone(),
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_string()))
+        .build()
+        .await
+        .expect("forwarder should build without contacting the apiserver");
+
+        let pod_api: Api<Pod> = Api::namespaced(client, "default");
+        let target = Target::new(
+            TargetSelector::PodLabel("app=web".to_string()),
+            "http",
+            "default",
+        );
+
+        let result =
+            resolve_target_port_for_pod(&forwarder, &pod_api, &target, Duration::from_millis(350))
+                .await;
+
+        driver.abort();
+        let _ = driver.await;
+
+        let err = result.expect_err("a pod that keeps 404ing must not resolve a port");
+        let message = err.to_string();
+        assert!(
+            message.contains(pod_name),
+            "error should name the retired pod: {message}"
+        );
+        assert!(
+            message.contains("deadline"),
+            "error should explain the retry deadline ran out: {message}"
+        );
+        assert!(
+            !message.contains("Failed to fetch pod"),
+            "must not fall through to the generic fetch-failure path when retiring near the \
+             deadline: {message}"
+        );
+        assert!(
+            !message.contains(NO_READY_PODS_ERROR),
+            "a pod found retired must report that, not the generic no-ready-pods error: {message}"
         );
     }
 }

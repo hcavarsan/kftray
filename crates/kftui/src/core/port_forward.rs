@@ -14,6 +14,7 @@ use kftray_commons::utils::config_state::cleanup_current_process_config_states_w
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::{
     deploy_and_forward_pod_with_mode,
+    reconcile_pending_cleanup,
     start_port_forward_with_mode as kube_start_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward_with_mode,
@@ -110,11 +111,7 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
 
     // A create abandoned on the way out can surface after that first pass, and
     // the registry that tracks it lives only in this process.
-    let still_owed = kftray_portforward::kube::reconcile_pending_cleanup(
-        mode,
-        crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
-    )
-    .await;
+    let (still_owed, cleanup_result) = reconcile_shutdown_cleanup(mode).await;
     if !still_owed.is_empty() {
         eprintln!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
@@ -123,7 +120,7 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
         failed = true;
     }
 
-    if let Err(e) = cleanup_current_process_config_states_with_mode(mode, &still_owed).await {
+    if let Err(e) = cleanup_result {
         log::error!("Failed to cleanup config states: {e}");
         eprintln!("Failed to clean up configuration states: {e}");
         failed = true;
@@ -132,6 +129,18 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     log::debug!("Exiting application...");
 
     std::process::exit(i32::from(failed));
+}
+
+/// Reconciles any create still abandoned on the way out, then clears this
+/// process's own `config_state` rows for whatever remains outstanding so
+/// they do not stay marked `is_running` behind a dead pid. Returns the
+/// config ids still owed alongside the cleanup outcome so each shutdown
+/// path can report and choose its own exit code independently.
+pub async fn reconcile_shutdown_cleanup(mode: DatabaseMode) -> (Vec<i64>, Result<(), String>) {
+    let still_owed =
+        reconcile_pending_cleanup(mode, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;
+    let cleanup_result = cleanup_current_process_config_states_with_mode(mode, &still_owed).await;
+    (still_owed, cleanup_result)
 }
 
 pub async fn start_port_forward(

@@ -152,6 +152,25 @@ pub fn remove_recovery_lock(config_id: i64) {
     RECOVERY_LOCKS.remove_if(&config_id, |_, lock| Arc::strong_count(lock) == 1);
 }
 
+/// Whether config_id's recovery manager is actively retrying right now.
+///
+/// `RECOVERY_LOCKS` is taken by start, stop, and delete as well as recovery,
+/// so its presence no longer means "recovery in progress". `RECOVERY_MANAGERS`
+/// holds an entry for a proxy forward's whole lifetime, most of which is
+/// spent `Idle` or `Monitoring`; only `Retrying` is an active recovery
+/// attempt that a caller such as the network monitor should not race.
+pub fn recovery_in_progress(config_id: i64) -> bool {
+    let Some(manager) = RECOVERY_MANAGERS.get(&config_id) else {
+        return false;
+    };
+    match manager.state.try_read() {
+        Ok(state) => matches!(*state, RecoveryState::Retrying { .. }),
+        // A concurrent state transition is itself part of an active
+        // recovery attempt, so treat contention as in-progress.
+        Err(_) => true,
+    }
+}
+
 // ============================================================================
 // T6: Proxy Recovery Manager
 // ============================================================================
@@ -438,7 +457,7 @@ impl ProxyRecoveryManager {
         // path refuses to clean up on a server other than the one the relay
         // was created on, and recovery would otherwise delete a matching
         // relay there and move the forward with the original still running.
-        let resolved = connection.cluster_url.to_string();
+        let resolved = crate::kube::client::cluster_identity(&connection.cluster_url);
         if resolved != self.destination {
             anyhow::bail!(
                 "Context {} now resolves to {resolved} rather than {}; not recovering config {} \

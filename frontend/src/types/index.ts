@@ -24,7 +24,7 @@ export interface Config {
   ingress_annotations?: string
 }
 
-export type PortForwardAction = 'starting' | 'stopping'
+export type PortForwardAction = 'starting' | 'stopping' | 'saving' | 'deleting'
 
 export interface PortForwardResponse {
   id: number | null
@@ -99,7 +99,7 @@ export interface PortForwardRowProps {
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
-  pendingConfigActions: Map<number, PortForwardAction>
+  pendingAction: PortForwardAction | null
   toggleConfigForward: (
     config: Config,
     action: PortForwardAction,

@@ -116,7 +116,9 @@ async fn build_tls_acceptor(
 /// this runs, so a stop can race the write; a task whose process is gone by
 /// the time the lines are on disk removes them again, since the stop that
 /// removed the process has already done its hosts cleanup.
-async fn update_hosts_with_ssl(config: &Config, mode: DatabaseMode) -> Result<(), String> {
+async fn update_hosts_with_ssl(
+    config: &Config, mode: DatabaseMode, hosts_claim: u64,
+) -> Result<(), String> {
     let alias = config
         .alias
         .clone()
@@ -145,10 +147,14 @@ async fn update_hosts_with_ssl(config: &Config, mode: DatabaseMode) -> Result<()
         // process was registered before the write started and may well be
         // running. Only a process that is gone, checked under the lifecycle
         // lock so a stop or a restart cannot be halfway through, leaves these
-        // lines orphaned.
+        // lines orphaned. A retry that has since claimed this id but not yet
+        // registered is caught by the claim, not by `CHILD_PROCESSES` alone:
+        // registration only happens at the very end of its startup.
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
         let _guard = lock.lock().await;
-        if !CHILD_PROCESSES.contains_key(&id) {
+        if !CHILD_PROCESSES.contains_key(&id)
+            && crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim)
+        {
             warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
             let in_use = crate::kube::stop::forwarding_configs(mode).await;
             let removed = tokio::task::spawn_blocking({
@@ -186,21 +192,14 @@ fn workload_type_description(workload_type: Option<&str>) -> &'static str {
 
 static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
-/// Runs address allocation on an owned task so its outcome is never abandoned.
-///
-/// The helper request runs on a blocking task that keeps going once a caller
-/// stops waiting, and the fallback path waits on a mutex. If the caller is
-/// cancelled or times out, the task still observes the result and releases an
-/// address that arrived too late, which would otherwise stay bound with nothing
-/// tracking it.
-/// Releases what a failed startup registered outside the process. Cleanup that
-/// does not finish keeps the configuration tracked, so a later stop retries it.
 /// Releases what a startup registered outside the process before it had a
-/// forwarder, and keeps the configuration recorded only if that did not finish.
+/// forwarder, and keeps the configuration recorded only if that did not
+/// finish.
 async fn rollback_local_resources(
     config: &Config, address: &str, reason: String, mode: DatabaseMode,
 ) -> String {
     let mut errors = Vec::new();
+    let mut unsatisfiable = Vec::new();
     // Routed through the ownership-safe release: the helper hands the same
     // address to two configurations of one service, and removing it directly
     // would take the alias from under a forward that is still using it.
@@ -208,7 +207,11 @@ async fn rollback_local_resources(
         && let Err(error) =
             crate::kube::stop::release_address_with_fallback(address, config.id, mode).await
     {
-        errors.push(error);
+        if error.is_unsatisfiable() {
+            unsatisfiable.push(error.to_string());
+        } else {
+            errors.push(error.to_string());
+        }
     }
     let id = config.id.unwrap_or_default();
     let snapshot = config.clone();
@@ -227,12 +230,20 @@ async fn rollback_local_resources(
         if let Some(id) = config.id {
             crate::kube::stop::settle_local_cleanup(id, config);
         }
-        reason
+        // Releasing the address needed privileges that are not available
+        // right now: reported once, but not by keeping this queued forever.
+        if unsatisfiable.is_empty() {
+            reason
+        } else {
+            format!("{reason}; {}", unsatisfiable.join("; "))
+        }
     } else {
         if let Some(id) = config.id {
             crate::kube::stop::record_local_cleanup(id, config.clone());
         }
-        format!("{reason}; cleanup incomplete: {}", errors.join("; "))
+        let mut incomplete = unsatisfiable;
+        incomplete.extend(errors);
+        format!("{reason}; cleanup incomplete: {}", incomplete.join("; "))
     }
 }
 
@@ -290,7 +301,7 @@ impl Drop for AllocationInFlight {
 /// line it just wrote and the address allocated before it, since nothing
 /// else will.
 async fn add_host_entry_owned(
-    id: i64, config: &Config, address: &str, entry: HostEntry, mode: DatabaseMode,
+    id: i64, config: &Config, address: &str, entry: HostEntry, mode: DatabaseMode, hosts_claim: u64,
 ) -> Result<(), String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let counted = AllocationInFlight::start();
@@ -313,11 +324,21 @@ async fn add_host_entry_owned(
             // back would tear the retry down. A retry in progress holds the
             // lock until it has registered its process, so once this task
             // has it, a registered process means the resources have an owner
-            // and nothing here is abandoned any more.
+            // and nothing here is abandoned any more. A retry that has since
+            // claimed this id but not yet registered is caught by the claim,
+            // not by `CHILD_PROCESSES` alone: registration only happens at
+            // the very end of its startup.
             let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
             let _guard = lock.lock().await;
             if CHILD_PROCESSES.contains_key(&id) {
                 debug!("Config {id} was restarted; leaving its local resources to the new owner");
+                return;
+            }
+            if !crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim) {
+                debug!(
+                    "Config {id} was claimed by a newer attempt; leaving its local resources to \
+                     the new owner"
+                );
                 return;
             }
             warn!(
@@ -431,10 +452,28 @@ async fn allocate_local_address_owned(
 async fn persist_allocated_address(
     id: i64, address: &str, mode: DatabaseMode,
 ) -> Result<(), String> {
-    if !kftray_commons::utils::config::set_allocated_local_address(id, address, mode).await? {
-        debug!("Config {id} no longer requests an allocated address; keeping its own");
+    use kftray_commons::utils::config::AllocatedAddressWrite;
+    match kftray_commons::utils::config::set_allocated_local_address(id, address, mode).await? {
+        AllocatedAddressWrite::Written => {}
+        AllocatedAddressWrite::NotRequested => {
+            debug!("Config {id} no longer requests an allocated address; keeping its own");
+        }
+        AllocatedAddressWrite::RowMissing => {
+            warn!("Config {id} was deleted before its allocated address {address} could be saved");
+        }
     }
     Ok(())
+}
+
+/// What an allocation attempt left behind.
+struct Allocated {
+    result: Result<String, String>,
+    claim: Option<crate::kube::stop::AddressClaim>,
+    /// The custom loopback address this attempt acquired, whether or not it
+    /// went on to succeed. A claim that could not be taken, a confirmation
+    /// that failed, or a sequence that never settled all leave an alias behind
+    /// that has to be tracked, and released, like any other.
+    acquired: Option<String>,
 }
 
 /// Allocates an address and returns it held by a claim that no release can
@@ -449,17 +488,6 @@ async fn persist_allocated_address(
 /// the reservation still stands, or makes a fresh one now that nothing can
 /// release it, and if it hands back a different address the claim moves to
 /// that one and the confirmation runs again.
-/// What an allocation attempt left behind.
-struct Allocated {
-    result: Result<String, String>,
-    claim: Option<crate::kube::stop::AddressClaim>,
-    /// The custom loopback address this attempt acquired, whether or not it
-    /// went on to succeed. A claim that could not be taken, a confirmation
-    /// that failed, or a sequence that never settled all leave an alias behind
-    /// that has to be tracked, and released, like any other.
-    acquired: Option<String>,
-}
-
 async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated {
     const ATTEMPTS: usize = 3;
 
@@ -558,7 +586,12 @@ async fn release_stray_alias(owned: &Config, address: &str, mode: DatabaseMode) 
     if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None, mode).await
     {
         warn!("Failed to release stray alias {address}: {error}");
-        if let Some(id) = owned.id {
+        // A privilege that is not available right now will not become
+        // available by retrying automatically; the warning above is the only
+        // report this gets.
+        if !error.is_unsatisfiable()
+            && let Some(id) = owned.id
+        {
             let mut stray = owned.clone();
             stray.local_address = Some(address.to_owned());
             crate::kube::stop::record_local_cleanup(id, stray);
@@ -856,6 +889,11 @@ pub(super) async fn start_config_cancellable(
         },
         (None, None) => None,
     };
+    // Claimed once for the whole startup, before any hosts entry is written,
+    // so a deferred cleanup task spawned by an earlier, abandoned attempt for
+    // this id can tell it has been superseded rather than deleting what this
+    // attempt writes.
+    let hosts_claim = crate::kube::stop::claim_host_entries(config_id);
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);
     }
@@ -933,6 +971,7 @@ pub(super) async fn start_config_cancellable(
             &final_local_address,
             host_entry,
             mode,
+            hosts_claim,
         )
         .await;
         if let Err(e) = written {
@@ -1077,7 +1116,7 @@ pub(super) async fn start_config_cancellable(
 
             if should_use_ssl
                 && protocol == "tcp"
-                && let Err(e) = update_hosts_with_ssl(&config, mode).await
+                && let Err(e) = update_hosts_with_ssl(&config, mode, hosts_claim).await
             {
                 warn!("Failed to update hosts file for SSL: {}", e);
             }

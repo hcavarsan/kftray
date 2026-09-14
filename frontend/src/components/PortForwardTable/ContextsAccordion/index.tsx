@@ -162,7 +162,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                     handleSelectionChange(config, isSelected)
                   }
                   setIsAlertOpen={setIsAlertOpen}
-                  pendingConfigActions={pendingConfigActions}
+                  pendingAction={pendingConfigActions.get(config.id) ?? null}
                   toggleConfigForward={toggleConfigForward}
                 />
               ))}

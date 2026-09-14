@@ -19,7 +19,6 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true }
-env_logger = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
@@ -57,10 +56,10 @@ tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
-tungstenite = { workspace = true }
 whoami = { workspace = true }
 
 [dev-dependencies]
+env_logger = { workspace = true }
 http = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

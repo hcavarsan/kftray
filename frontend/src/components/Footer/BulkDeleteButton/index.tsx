@@ -136,8 +136,8 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
     // the cluster with a configuration that no longer exists.
     const deleted = await deleteConfigs(state.configsToDelete)
 
-    setState(prev => ({ ...prev, isDialogOpen: false }))
     if (deleted) {
+      setState(prev => ({ ...prev, isDialogOpen: false }))
       setSelectedConfigs([])
     }
   }

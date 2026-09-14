@@ -118,13 +118,13 @@ fn validate_hostname(hostname: &str) -> Result<()> {
 ///
 /// Windows locks are mandatory and would block the holder's own write, so the
 /// lock covers one byte far past the end of the file instead of its content.
-fn with_hosts_lock<T>(path: &Path, work: impl FnOnce() -> Result<T>) -> Result<T> {
+fn with_hosts_lock<T>(path: &Path, recover: bool, work: impl FnOnce() -> Result<T>) -> Result<T> {
     use crate::utils::config_dir::{
         LockRegion,
         unlock,
     };
 
-    let file = open_locked(path)?;
+    let file = open_locked(path, recover)?;
     let result = work();
     unlock(&file, LockRegion::PendingByte);
     result
@@ -156,8 +156,31 @@ fn open_for_lock(path: &Path) -> Result<std::fs::File> {
     }
 }
 
+/// Retries `attempt` until it reports success, sleeping `delay` between
+/// failures, up to `max_attempts` times.
+///
+/// A rename racing the lock can keep losing indefinitely; without a bound
+/// that turns into a hang instead of a reported error.
 #[cfg(unix)]
-fn open_locked(path: &Path) -> Result<std::fs::File> {
+fn retry_bounded<T>(
+    what: &str, max_attempts: u32, delay: std::time::Duration,
+    mut attempt: impl FnMut() -> Result<Option<T>>,
+) -> Result<T> {
+    for remaining in (0..max_attempts).rev() {
+        if let Some(value) = attempt()? {
+            return Ok(value);
+        }
+        if remaining > 0 {
+            std::thread::sleep(delay);
+        }
+    }
+    Err(HostsFileError::Io(format!(
+        "Timed out waiting for a stable lock on {what} after {max_attempts} attempts"
+    )))
+}
+
+#[cfg(unix)]
+fn open_locked(path: &Path, _recover: bool) -> Result<std::fs::File> {
     use std::os::unix::fs::MetadataExt;
 
     use crate::utils::config_dir::{
@@ -167,7 +190,7 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     };
 
     let what = path.display().to_string();
-    loop {
+    retry_bounded(&what, 50, std::time::Duration::from_millis(20), || {
         let file = open_for_lock(path)?;
         wait_for_exclusive_lock(&file, LockRegion::PendingByte, &what)
             .map_err(HostsFileError::Io)?;
@@ -175,15 +198,18 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
         let locked = file.metadata()?;
         match std::fs::metadata(path) {
             Ok(current) if current.dev() == locked.dev() && current.ino() == locked.ino() => {
-                return Ok(file);
+                Ok(Some(file))
             }
-            Ok(_) => unlock(&file, LockRegion::PendingByte),
+            Ok(_) => {
+                unlock(&file, LockRegion::PendingByte);
+                Ok(None)
+            }
             Err(error) => {
                 unlock(&file, LockRegion::PendingByte);
-                return Err(error.into());
+                Err(error.into())
             }
         }
-    }
+    })
 }
 
 /// Where the content of an in-place rewrite is published before it is applied.
@@ -208,19 +234,28 @@ fn pending_path(path: &Path) -> PathBuf {
 /// that truncates the file is never done without something to complete it
 /// from.
 #[cfg(windows)]
-fn fallback_pending_path() -> Result<PathBuf> {
+fn fallback_pending_path(path: &Path) -> Result<PathBuf> {
+    use std::hash::{
+        Hash,
+        Hasher,
+    };
+
     let config_dir = crate::utils::config_dir::get_config_dir().map_err(HostsFileError::Io)?;
-    Ok(config_dir.join("hosts.kftray-pending"))
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    Ok(config_dir.join(format!("hosts-{:016x}.kftray-pending", hasher.finish())))
 }
 
 /// Opens the hosts file read-only and takes its lock.
 ///
 /// The writer rewrites the file in place on Windows, so the locked handle
-/// stays the current file and no identity check is needed. A rewrite that did
-/// not complete is completed here, under the lock, before anyone reads the
-/// file it left truncated.
+/// stays the current file and no identity check is needed. A rewrite that
+/// did not complete is completed here, under the lock, when `recover` is
+/// set: the edit path repairs it before writing again, while a read leaves
+/// it in place and reads the pending copy directly instead.
 #[cfg(windows)]
-fn open_locked(path: &Path) -> Result<std::fs::File> {
+fn open_locked(path: &Path, recover: bool) -> Result<std::fs::File> {
     use crate::utils::config_dir::{
         LockRegion,
         wait_for_exclusive_lock,
@@ -229,20 +264,22 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     let file = open_for_lock(path)?;
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
-    for pending in [pending_path(path), fallback_pending_path()?] {
-        if !pending.exists() {
-            continue;
+    if recover {
+        for pending in [pending_path(path), fallback_pending_path(path)?] {
+            if !pending.exists() {
+                continue;
+            }
+            log::warn!(
+                "Completing an interrupted rewrite of the hosts file from {}",
+                pending.display()
+            );
+            std::fs::copy(&pending, path)?;
+            // Durable before the copy it was restored from goes: a power loss
+            // after the removal would otherwise leave the file partial with
+            // nothing left to complete it from.
+            OpenOptions::new().write(true).open(path)?.sync_all()?;
+            std::fs::remove_file(&pending)?;
         }
-        log::warn!(
-            "Completing an interrupted rewrite of the hosts file from {}",
-            pending.display()
-        );
-        std::fs::copy(&pending, path)?;
-        // Durable before the copy it was restored from goes: a power loss
-        // after the removal would otherwise leave the file partial with
-        // nothing left to complete it from.
-        OpenOptions::new().write(true).open(path)?.sync_all()?;
-        std::fs::remove_file(&pending)?;
     }
     Ok(file)
 }
@@ -269,16 +306,55 @@ struct ParsedLine {
 
 impl HostsDocument {
     fn load(path: &Path) -> Result<Self> {
-        let contents = match std::fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(error.into()),
-        };
+        let contents = Self::read_intended_content(path)?;
         let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
         Ok(Self {
             original: lines.clone(),
             lines,
         })
+    }
+
+    #[cfg(not(windows))]
+    fn read_intended_content(path: &Path) -> Result<String> {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => Ok(contents),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The content a read should see: a pending rewrite for this exact path,
+    /// when one exists, or the file itself.
+    ///
+    /// A pending copy is the intended state of a write that was interrupted
+    /// before it completed; a read that ignored it would report an alias
+    /// gone that the interrupted write still committed to keep. It is only
+    /// ever read here, never applied: completing it is the edit path's job,
+    /// under its own lock, so a read never turns into a write and never
+    /// fails because one could not be made.
+    #[cfg(windows)]
+    fn read_intended_content(path: &Path) -> Result<String> {
+        for pending in [Some(pending_path(path)), fallback_pending_path(path).ok()]
+            .into_iter()
+            .flatten()
+        {
+            match std::fs::read_to_string(&pending) {
+                Ok(contents) => return Ok(contents),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    log::warn!(
+                        "Ignoring unreadable pending hosts rewrite at {}: {error}",
+                        pending.display()
+                    );
+                    continue;
+                }
+            }
+        }
+        match std::fs::read_to_string(path) {
+            Ok(contents) => Ok(contents),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Whether anything differs from what was read.
@@ -340,8 +416,46 @@ impl HostsDocument {
         }
     }
 
-    pub fn section_exists(&self, tag: &str) -> Result<bool> {
-        Ok(self.bounds(tag)?.is_some())
+    /// Every begin/end marker pair for `tag`, in file order.
+    ///
+    /// Unlike `bounds`, more than one pair is not an error: this is what a
+    /// destructive removal uses to clean up a file a hand edit left with the
+    /// tag duplicated, which an in-place mutation could not safely target.
+    fn all_bounds(&self, tag: &str) -> Result<Vec<(usize, usize)>> {
+        let begin_marker = Self::begin_marker(tag);
+        let end_marker = Self::end_marker(tag);
+        let begins: Vec<usize> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == begin_marker)
+            .map(|(index, _)| index)
+            .collect();
+        let ends: Vec<usize> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == end_marker)
+            .map(|(index, _)| index)
+            .collect();
+        if begins.len() != ends.len() {
+            return Err(HostsFileError::InvalidData(format!(
+                "Incomplete section markers for tag '{tag}'"
+            )));
+        }
+        begins
+            .into_iter()
+            .zip(ends)
+            .map(|(begin, end)| {
+                if begin < end {
+                    Ok((begin, end))
+                } else {
+                    Err(HostsFileError::InvalidData(format!(
+                        "Reversed section markers for tag '{tag}'"
+                    )))
+                }
+            })
+            .collect()
     }
 
     /// Parses one line of a section. Comments and blank lines yield nothing.
@@ -441,6 +555,12 @@ impl HostsDocument {
 
     /// Replaces `tag`'s section outright with one line per entry.
     pub fn replace_section(&mut self, tag: &str, entries: &[SectionEntry]) -> Result<()> {
+        for entry in entries {
+            validate_hostname(&entry.hostname)?;
+            if let Some(owner) = &entry.owner {
+                validate_owner(owner)?;
+            }
+        }
         let body = entries
             .iter()
             .map(|entry| {
@@ -456,7 +576,17 @@ impl HostsDocument {
 
     /// Removes `tag`'s section whole, whoever wrote its lines.
     pub fn clear_section(&mut self, tag: &str) -> Result<()> {
-        self.set_body(tag, Vec::new())
+        for (begin, end) in self.all_bounds(tag)?.into_iter().rev() {
+            self.lines.drain(begin..=end);
+            if begin > 0
+                && begin <= self.lines.len()
+                && self.lines[begin - 1].is_empty()
+                && self.lines.get(begin).is_none_or(String::is_empty)
+            {
+                self.lines.remove(begin - 1);
+            }
+        }
+        Ok(())
     }
 
     /// Replaces the lines owned by `owners` with `entries` and leaves every
@@ -567,7 +697,7 @@ pub fn edit_hosts_at<T>(
     path: &Path, edit: impl FnOnce(&mut HostsDocument) -> Result<T>,
 ) -> Result<T> {
     validate_hosts_path(path)?;
-    with_hosts_lock(path, || {
+    with_hosts_lock(path, true, || {
         let mut document = HostsDocument::load(path)?;
         let outcome = edit(&mut document)?;
         document.commit(path)?;
@@ -595,7 +725,7 @@ pub fn read_hosts_at<T>(path: &Path, read: impl FnOnce(&HostsDocument) -> Result
             original: Vec::new(),
         });
     }
-    with_hosts_lock(path, || read(&HostsDocument::load(path)?))
+    with_hosts_lock(path, false, || read(&HostsDocument::load(path)?))
 }
 
 /// A set of aliases to write as one tagged section.
@@ -665,11 +795,6 @@ impl HostsFile {
         self.entries.len()
     }
 
-    /// Entries staged for the next write.
-    pub fn staged(&self) -> &[SectionEntry] {
-        &self.entries
-    }
-
     /// Replaces this tag's section with the staged entries. No entries
     /// removes the section. Returns whether the file changed.
     pub fn write(&self) -> Result<bool> {
@@ -683,17 +808,6 @@ impl HostsFile {
         })
     }
 
-    /// Whether the hosts file currently carries a section with this tag.
-    pub fn section_exists(&self) -> Result<bool> {
-        read_hosts(|document| document.section_exists(&self.tag))
-    }
-
-    /// Reads the entries currently inside this tag's section, with the owner
-    /// recorded for each.
-    pub fn read_section(&self) -> Result<Vec<SectionEntry>> {
-        self.read_section_from(get_default_hosts_path()?)
-    }
-
     /// Reads a section from a specific file.
     pub fn read_section_from<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SectionEntry>> {
         read_hosts_at(path.as_ref(), |document| document.section(&self.tag))
@@ -702,11 +816,6 @@ impl HostsFile {
     /// Replaces the lines owned by `owners` with the staged entries and leaves
     /// every other line alone, as one locked read-modify-write. See
     /// [`HostsDocument::reconcile_owners`].
-    pub fn reconcile_owners(&self, owners: &[&str]) -> Result<HashSet<String>> {
-        self.reconcile_owners_in(get_default_hosts_path()?, owners)
-    }
-
-    /// [`reconcile_owners`](Self::reconcile_owners) against a specific file.
     pub fn reconcile_owners_in<P: AsRef<Path>>(
         &self, path: P, owners: &[&str],
     ) -> Result<HashSet<String>> {
@@ -720,11 +829,6 @@ impl HostsFile {
 
     /// Reads this tag's section, keeps the entries `keep` accepts, and writes
     /// the result back as one locked operation.
-    pub fn retain_section(&self, keep: impl Fn(&SectionEntry) -> bool) -> Result<bool> {
-        self.retain_section_in(get_default_hosts_path()?, keep)
-    }
-
-    /// [`retain_section`](Self::retain_section) against a specific file.
     pub fn retain_section_in<P: AsRef<Path>>(
         &self, path: P, keep: impl Fn(&SectionEntry) -> bool,
     ) -> Result<bool> {
@@ -767,8 +871,9 @@ impl<'a> AtomicFileWriter<'a> {
     /// file is truncated before it is rewritten, so the new content is first
     /// committed next to it, atomically, and the in-place write is repeated
     /// from that copy if it does not complete. Retiring the copy is part of
-    /// the write: while it exists the next open applies it again, so a
-    /// failure to remove it is reported rather than left to resurface later.
+    /// the write, but the write already succeeded and was fsynced by the
+    /// time it happens: a failure to remove it is only ever logged, not
+    /// reported as a failed write.
     #[cfg(windows)]
     fn write_content(&self, content: &[u8]) -> Result<()> {
         let mut pending = pending_path(self.target_path);
@@ -788,7 +893,7 @@ impl<'a> AtomicFileWriter<'a> {
         let mut staged = match open_staging(&staging) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                pending = fallback_pending_path()?;
+                pending = fallback_pending_path(self.target_path)?;
                 staging = staging_for(&pending);
                 open_staging(&staging)?
             }
@@ -803,7 +908,14 @@ impl<'a> AtomicFileWriter<'a> {
             .write(true)
             .open(self.target_path)?
             .sync_all()?;
-        std::fs::remove_file(&pending)?;
+        if let Err(error) = std::fs::remove_file(&pending) {
+            log::warn!(
+                "Hosts file write to {} succeeded, but the pending copy at {} could not be \
+                 removed: {error}",
+                self.target_path.display(),
+                pending.display()
+            );
+        }
         Ok(())
     }
 
@@ -927,6 +1039,64 @@ mod tests {
         assert!(
             error.to_string().contains("Duplicate section markers"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn clear_section_removes_every_duplicated_section() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        let mut file = HostsFile::new("test");
+        file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1")
+            .unwrap();
+        file.write_to(&temp_path).unwrap();
+        // A copy of the whole section pasted below it, as a hand edit could;
+        // `bounds` refuses this, but the destructive removal path must not.
+        let content = std::fs::read_to_string(&temp_path).unwrap();
+        std::fs::write(&temp_path, format!("{content}{content}")).unwrap();
+
+        edit_hosts_at(&temp_path, |document| document.clear_section("test")).unwrap();
+
+        let remaining = std::fs::read_to_string(&temp_path).unwrap();
+        assert!(
+            !remaining.contains("DO NOT EDIT test"),
+            "clear_section must remove every matching section, not just the first: {remaining}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_pending_rewrite_for_one_path_is_never_applied_to_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_a = dir.path().join("hosts_a");
+        let path_b = dir.path().join("hosts_b");
+        std::fs::write(&path_a, "a-original\n").unwrap();
+        std::fs::write(&path_b, "b-original\n").unwrap();
+
+        // As if a write to A using the fallback location was interrupted
+        // after the copy was committed but before it was applied.
+        std::fs::write(fallback_pending_path(&path_a).unwrap(), "a-pending\n").unwrap();
+
+        let a_lines: Vec<String> =
+            read_hosts_at(&path_a, |document| Ok(document.lines.clone())).unwrap();
+        let b_lines: Vec<String> =
+            read_hosts_at(&path_b, |document| Ok(document.lines.clone())).unwrap();
+
+        assert_eq!(
+            a_lines,
+            vec!["a-pending".to_owned()],
+            "a read sees the pending rewrite as the intended state"
+        );
+        assert_eq!(
+            b_lines,
+            vec!["b-original".to_owned()],
+            "a pending rewrite staged for a different path is never applied here"
+        );
+        // The read never writes: the file and the pending copy are both
+        // exactly as they were.
+        assert_eq!(std::fs::read_to_string(&path_a).unwrap(), "a-original\n");
+        assert_eq!(
+            std::fs::read_to_string(fallback_pending_path(&path_a).unwrap()).unwrap(),
+            "a-pending\n"
         );
     }
 
@@ -1305,5 +1475,20 @@ mod tests {
             "127.0.0.1 localhost\n",
             "add-and-remove cycles must not grow the file"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_bounded_retry_reports_a_timeout_instead_of_spinning_forever() {
+        let mut attempts = 0;
+        let result: Result<()> =
+            retry_bounded("test", 3, std::time::Duration::from_millis(0), || {
+                attempts += 1;
+                Ok(None)
+            });
+
+        assert_eq!(attempts, 3, "every attempt runs before giving up");
+        let error = result.expect_err("exhausting every attempt is a timeout, not success");
+        assert!(error.to_string().contains("Timed out"), "{error}");
     }
 }

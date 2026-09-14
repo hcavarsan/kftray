@@ -646,30 +646,32 @@ pub fn render_error_popup(
 
     lines.push("".into());
 
-    let parts: Vec<&str> = error_message.split(": ").collect();
+    for segment in error_message.split('\n') {
+        let parts: Vec<&str> = segment.split(": ").collect();
 
-    if parts.len() > 1 {
-        for (i, part) in parts.iter().enumerate() {
-            if part.starts_with("Failed to") {
-                continue;
-            }
+        if parts.len() > 1 {
+            for (i, part) in parts.iter().enumerate() {
+                if part.starts_with("Failed to") {
+                    continue;
+                }
 
-            if i == 0 {
-                let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(4));
-                for line in wrapped_lines {
-                    lines.push(Line::from(vec![format!("  {line}").red().bold()]));
-                }
-            } else {
-                let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(6));
-                for line in wrapped_lines {
-                    lines.push(Line::from(vec![format!("    {line}").fg(TEXT)]));
+                if i == 0 {
+                    let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(4));
+                    for line in wrapped_lines {
+                        lines.push(Line::from(vec![format!("  {line}").red().bold()]));
+                    }
+                } else {
+                    let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(6));
+                    for line in wrapped_lines {
+                        lines.push(Line::from(vec![format!("    {line}").fg(TEXT)]));
+                    }
                 }
             }
-        }
-    } else {
-        let wrapped_lines = wrap_text_simple(error_message, content_width.saturating_sub(4));
-        for line in wrapped_lines {
-            lines.push(Line::from(vec![format!("  {line}").fg(TEXT)]));
+        } else {
+            let wrapped_lines = wrap_text_simple(segment, content_width.saturating_sub(4));
+            for line in wrapped_lines {
+                lines.push(Line::from(vec![format!("  {line}").fg(TEXT)]));
+            }
         }
     }
 
@@ -686,14 +688,9 @@ pub fn render_error_popup(
     let inner_height = usize::from(popup_area.height.saturating_sub(2));
     let hint_width = content_width.saturating_sub(4);
     let hint_rows = |text: &str| wrap_text_simple(text, hint_width).len();
-    let widest_hint = hint_rows(&format!(
-        "{} more line(s) — <Up>/<Down> to scroll, <Enter> to close",
-        lines.len()
-    ))
-    .max(hint_rows(
-        "End of message — <Up> to scroll back, <Enter> to close",
-    ))
-    .max(hint_rows("Press <Enter> to close"));
+    let widest_hint = hint_rows(&hint_more_lines(lines.len()))
+        .max(hint_rows(HINT_END_OF_MESSAGE))
+        .max(hint_rows(HINT_CLOSE));
     let compact = inner_height < 2 + widest_hint;
     let (separator_rows, hint_budget) = if compact { (0, 1) } else { (1, widest_hint) };
     // A popup with a single interior row shows the hint alone: a content row
@@ -703,7 +700,14 @@ pub fn render_error_popup(
     } else {
         (inner_height - separator_rows - hint_budget).max(1)
     };
-    let hidden = lines.len().saturating_sub(visible);
+    // Nothing is shown when visible == 0, so there is nothing to scroll to
+    // either; reporting lines.len() as the max offset would let scroll keys
+    // change state that no render ever reflects.
+    let hidden = if visible == 0 {
+        0
+    } else {
+        lines.len().saturating_sub(visible)
+    };
     let offset = scroll.min(hidden);
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
 
@@ -712,16 +716,25 @@ pub fn render_error_popup(
     // and an unwrapped long hint would be clipped along with it.
     let hint = match (compact, remaining > 0, hidden > 0) {
         _ if hint_width < 10 => "<Enter>".to_string(),
-        (true, true, _) => format!("<Enter> closes, {remaining} more, <Up>/<Down>"),
-        (true, false, true) => "<Enter> closes, <Up> scrolls back".to_string(),
-        (true, false, false) => "<Enter> closes".to_string(),
-        (false, true, _) => {
-            format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
-        }
-        (false, false, true) => {
-            "End of message — <Up> to scroll back, <Enter> to close".to_string()
-        }
-        (false, false, false) => "Press <Enter> to close".to_string(),
+        (true, true, _) => pick_compact_hint(
+            hint_width,
+            &[
+                format!("<Enter> closes, {remaining} more, <Up>/<Down>"),
+                format!("<Enter> closes, {remaining} more"),
+                "<Enter> closes".to_string(),
+            ],
+        ),
+        (true, false, true) => pick_compact_hint(
+            hint_width,
+            &[
+                "<Enter> closes, <Up> scrolls back".to_string(),
+                "<Enter> closes".to_string(),
+            ],
+        ),
+        (true, false, false) => pick_compact_hint(hint_width, &["<Enter> closes".to_string()]),
+        (false, true, _) => hint_more_lines(remaining),
+        (false, false, true) => HINT_END_OF_MESSAGE.to_string(),
+        (false, false, false) => HINT_CLOSE.to_string(),
     };
     if !compact {
         lines.push("".into());
@@ -744,9 +757,32 @@ pub fn render_error_popup(
     hidden
 }
 
+const HINT_END_OF_MESSAGE: &str = "End of message — <Up> to scroll back, <Enter> to close";
+const HINT_CLOSE: &str = "Press <Enter> to close";
+
+fn hint_more_lines(remaining: usize) -> String {
+    format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
+}
+
+/// Picks the first candidate that renders on a single row at `hint_width`,
+/// so a one-row `hint_budget` never silently drops the part of the hint that
+/// says scrolling is possible. Falls back to the shortest candidate given.
+fn pick_compact_hint(hint_width: usize, candidates: &[String]) -> String {
+    candidates
+        .iter()
+        .find(|candidate| wrap_text_simple(candidate, hint_width).len() <= 1)
+        .or_else(|| candidates.last())
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {
-    if max_width < 10 {
+    if max_width == 0 {
         return vec![text.to_string()];
+    }
+
+    if max_width < 10 {
+        return hard_wrap(text, max_width);
     }
 
     let mut lines = Vec::new();
@@ -772,6 +808,20 @@ fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+/// Splits at the raw character width instead of bailing out to one unsplit
+/// line: below the word-wrapper's minimum width, a single clipped line could
+/// never be scrolled to.
+fn hard_wrap(text: &str, max_width: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(max_width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
 }
 
 fn create_close_button() -> Paragraph<'static> {

@@ -105,15 +105,15 @@ const KFTray = () => {
   >(new Map())
   const configRefreshVersion = useRef(0)
 
-  const markPending = (id: number, action: PortForwardAction) => {
+  const markPending = useCallback((id: number, action: PortForwardAction) => {
     pendingConfigActionsRef.current.set(id, action)
     setPendingConfigActions(new Map(pendingConfigActionsRef.current))
-  }
+  }, [])
 
-  const clearPending = (id: number) => {
+  const clearPending = useCallback((id: number) => {
     pendingConfigActionsRef.current.delete(id)
     setPendingConfigActions(new Map(pendingConfigActionsRef.current))
-  }
+  }, [])
 
   const fetchConfigsWithState = useCallback(async () => {
     try {
@@ -369,7 +369,7 @@ const KFTray = () => {
     }
   }
 
-  const handleEditConfig = async (id: number) => {
+  const handleEditConfig = useCallback(async (id: number) => {
     try {
       const configToEdit = await invoke<Config>('get_config_cmd', { id })
 
@@ -382,9 +382,9 @@ const KFTray = () => {
         error,
       )
     }
-  }
+  }, [])
 
-  const handleDuplicateConfig = async (id: number) => {
+  const handleDuplicateConfig = useCallback(async (id: number) => {
     try {
       const configToDuplicate = await invoke<Config>('get_config_cmd', { id })
 
@@ -402,7 +402,7 @@ const KFTray = () => {
         error,
       )
     }
-  }
+  }, [])
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -442,8 +442,10 @@ const KFTray = () => {
     // `update_config_cmd` does not share the backend lifecycle lock, so a start
     // accepted while it is in flight would use the pre-edit snapshot.
     if (isEdit) {
-      markPending(newConfig.id, wasRunning ? 'stopping' : 'starting')
+      markPending(newConfig.id, wasRunning ? 'stopping' : 'saving')
     }
+
+    let configSaved = false
 
     try {
       const updatedConfigToSave: Config = {
@@ -464,7 +466,7 @@ const KFTray = () => {
       } else {
         await invoke('insert_config_cmd', { config: updatedConfigToSave })
       }
-
+      configSaved = true
       if (wasRunning) {
         markPending(newConfig.id, 'starting')
         await startPortForwardingForConfig(newConfig)
@@ -477,12 +479,27 @@ const KFTray = () => {
       })
       closeModal()
     } catch (error) {
-      console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
-      toaster.error({
-        title: 'Error',
-        description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
-        duration: 1000,
-      })
+      const message = error instanceof Error ? error.message : 'Unknown error'
+
+      if (configSaved) {
+        console.error(
+          'Configuration saved, but restarting the port forward failed:',
+          error,
+        )
+        toaster.warning({
+          title: 'Warning',
+          description: `Configuration updated, but restarting the port forward failed: ${message}`,
+          duration: 2000,
+        })
+        closeModal()
+      } else {
+        console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
+        toaster.error({
+          title: 'Error',
+          description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
+          duration: 1000,
+        })
+      }
     } finally {
       if (isEdit) {
         clearPending(newConfig.id)
@@ -493,7 +510,7 @@ const KFTray = () => {
     }
   }
 
-  const stopPortForwardingForConfig = async (config: Config) => {
+  const stopPortForwardingForConfig = useCallback(async (config: Config) => {
     if (
       config.workload_type === 'expose' ||
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
@@ -525,9 +542,9 @@ const KFTray = () => {
         item.id === config.id ? { ...item, is_running: false } : item,
       ),
     )
-  }
+  }, [])
 
-  const startPortForwardingForConfig = async (config: Config) => {
+  const startPortForwardingForConfig = useCallback(async (config: Config) => {
     let responses: PortForwardResponse[]
 
     if (
@@ -535,17 +552,19 @@ const KFTray = () => {
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'tcp')
     ) {
-      responses = await invoke('start_port_forward_tcp_cmd', {
-        configs: [config],
-      })
+      responses = await invoke<PortForwardResponse[]>(
+        'start_port_forward_tcp_cmd',
+        { configs: [config] },
+      )
     } else if (
       config.workload_type.startsWith('proxy') ||
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'udp')
     ) {
-      responses = await invoke('deploy_and_forward_pod_cmd', {
-        configs: [config],
-      })
+      responses = await invoke<PortForwardResponse[]>(
+        'deploy_and_forward_pod_cmd',
+        { configs: [config] },
+      )
     } else {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
@@ -562,37 +581,44 @@ const KFTray = () => {
         item.id === config.id ? { ...item, is_running: true } : item,
       ),
     )
-  }
+  }, [])
 
-  const toggleConfigForward = async (
-    config: Config,
-    action: PortForwardAction,
-  ) => {
-    if (pendingConfigActionsRef.current.has(config.id)) {
-      return
-    }
-    markPending(config.id, action)
-    try {
-      if (action === 'starting') {
-        await startPortForwardingForConfig(config)
-      } else {
-        await stopPortForwardingForConfig(config)
+  const toggleConfigForward = useCallback(
+    async (config: Config, action: PortForwardAction) => {
+      if (pendingConfigActionsRef.current.has(config.id)) {
+        return
       }
-    } catch (error) {
-      await updateConfigsWithState()
-      toaster.error({
-        title:
-          action === 'starting'
-            ? 'Error starting port forwarding'
-            : 'Error stopping port forwarding',
-        description: error instanceof Error ? error.message : String(error),
-        duration: 1000,
-      })
-    } finally {
-      clearPending(config.id)
-      debouncedUpdateConfigs()
-    }
-  }
+      markPending(config.id, action)
+      try {
+        if (action === 'starting') {
+          await startPortForwardingForConfig(config)
+        } else {
+          await stopPortForwardingForConfig(config)
+        }
+      } catch (error) {
+        await updateConfigsWithState()
+        toaster.error({
+          title:
+            action === 'starting'
+              ? 'Error starting port forwarding'
+              : 'Error stopping port forwarding',
+          description: error instanceof Error ? error.message : String(error),
+          duration: 1000,
+        })
+      } finally {
+        clearPending(config.id)
+        debouncedUpdateConfigs()
+      }
+    },
+    [
+      markPending,
+      clearPending,
+      startPortForwardingForConfig,
+      stopPortForwardingForConfig,
+      updateConfigsWithState,
+      debouncedUpdateConfigs,
+    ],
+  )
 
   const abortStartOperation = useCallback(() => {
     if (startAbortControllerRef.current) {
@@ -618,151 +644,265 @@ const KFTray = () => {
     updateConfigsWithState()
   }, [updateConfigsWithState])
 
-  const runPortForwardBatch = async (
-    candidates: Config[],
-    action: PortForwardAction,
-    successMessage?: string,
-  ) => {
-    const controllerRef =
-      action === 'starting' ? startAbortControllerRef : stopAbortControllerRef
-    if (controllerRef.current) {
-      return
-    }
-    const targets = candidates.filter(
-      config => !pendingConfigActionsRef.current.has(config.id),
-    )
-    if (targets.length === 0) {
-      return
-    }
-    const controller = new AbortController()
-    controllerRef.current = controller
-    const setBusy = action === 'starting' ? setIsInitiating : setIsStopping
-    const queued = new Set(targets.map(config => config.id))
-    const unresolved = new Set(targets.map(config => config.id))
-    for (const config of targets) {
-      pendingConfigActionsRef.current.set(config.id, action)
-    }
-    setPendingConfigActions(new Map(pendingConfigActionsRef.current))
-    setBusy(true)
+  const runPortForwardBatch = useCallback(
+    async (
+      candidates: Config[],
+      action: PortForwardAction,
+      successMessage?: string,
+    ) => {
+      const controllerRef =
+        action === 'starting' ? startAbortControllerRef : stopAbortControllerRef
 
-    const cancelQueued = () => {
-      for (const id of queued) {
-        pendingConfigActionsRef.current.delete(id)
-        // Released here, so the deadline message counts only the invocations
-        // that are genuinely still running.
-        unresolved.delete(id)
-      }
-      queued.clear()
-      setPendingConfigActions(new Map(pendingConfigActionsRef.current))
-    }
-    controller.signal.addEventListener('abort', cancelQueued, { once: true })
-    // The batch is bounded so one hung invoke cannot hold the controller guard
-    // forever and reject every later batch of the same action. Configurations
-    // that never resolved keep their reservation: they are still in flight.
-    let timedOut = false
+      if (controllerRef.current) {
+        toaster.info({
+          title: 'Busy',
+          description: `A ${action === 'starting' ? 'start' : 'stop'} batch is already running. Try again once it finishes.`,
+          duration: 2000,
+        })
 
-    // Collected as workers settle, so a failure that happened before the
-    // deadline is still reported when the deadline wins the race.
-    const failures: { id: number; error: unknown }[] = []
-    const reportFailures = (reporting = failures) => {
-      if (!reporting.length) {
         return
       }
-      const first = reporting[0]
-      const message =
-        first.error instanceof Error ? first.error.message : String(first.error)
+      const targets = candidates.filter(
+        config => !pendingConfigActionsRef.current.has(config.id),
+      )
 
-      toaster.error({
-        title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
-        description:
-          reporting.length === 1
-            ? `Config ${first.id}: ${message}`
-            : `${reporting.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
-        duration: 3000,
-      })
-    }
+      if (targets.length === 0) {
+        toaster.info({
+          title: 'Nothing to do',
+          description: 'The selected configuration(s) are already busy.',
+          duration: 2000,
+        })
 
-    try {
-      const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
-        if (controller.signal.aborted) {
+        return
+      }
+      const controller = new AbortController()
+
+      controllerRef.current = controller
+      const setBusy = action === 'starting' ? setIsInitiating : setIsStopping
+      const queued = new Set(targets.map(config => config.id))
+      const unresolved = new Set(targets.map(config => config.id))
+
+      for (const config of targets) {
+        pendingConfigActionsRef.current.set(config.id, action)
+      }
+      setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+      setBusy(true)
+
+      const cancelQueued = () => {
+        for (const id of queued) {
+          pendingConfigActionsRef.current.delete(id)
+          // Released here, so the deadline message counts only the invocations
+          // that are genuinely still running.
+          unresolved.delete(id)
+        }
+        queued.clear()
+        setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+      }
+
+      controller.signal.addEventListener('abort', cancelQueued, { once: true })
+      // The batch is bounded so one hung invoke cannot hold the controller guard
+      // forever and reject every later batch of the same action.
+      let timedOut = false
+
+      // Collected as workers settle, so a failure that happened before the
+      // deadline is still reported when the deadline wins the race.
+      const failures: { id: number; error: unknown }[] = []
+      const reportFailures = (reporting = failures) => {
+        if (!reporting.length) {
           return
         }
-        queued.delete(config.id)
-        try {
-          if (action === 'starting') {
-            await startPortForwardingForConfig(config)
-          } else {
-            await stopPortForwardingForConfig(config)
-          }
-        } catch (error) {
-          const failure = { id: config.id, error }
+        const first = reporting[0]
+        const message =
+          first.error instanceof Error
+            ? first.error.message
+            : String(first.error)
 
-          failures.push(failure)
-          // After the deadline nobody is aggregating any more, so each failure
-          // reports itself instead of waiting for unrelated invocations.
-          if (timedOut) {
-            reportFailures([failure])
-          }
-        } finally {
-          unresolved.delete(config.id)
-          clearPending(config.id)
-          debouncedUpdateConfigs()
-        }
-      })
-      // The handle is kept so the loser of the race can be cancelled: an
-      // uncleared timeout keeps the timer, and everything it closes over,
-      // alive for the full deadline after a batch that finished immediately.
-      let deadline: NodeJS.Timeout | undefined
-      const settled = await Promise.race([
-        batch.then(() => true),
-        new Promise<false>(resolve => {
-          deadline = setTimeout(() => resolve(false), BATCH_DEADLINE_MS)
-        }),
-      ]).finally(() => clearTimeout(deadline))
-
-      if (!settled) {
-        timedOut = true
-        // Aborted while `cancelQueued` is still registered: configurations that
-        // never started release their reservation, and nothing new dispatches.
-        // Genuinely in-flight invocations keep theirs until they finish.
-        controller.abort()
-        reportFailures()
         toaster.error({
           title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
-          description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,
+          description:
+            reporting.length === 1
+              ? `Config ${first.id}: ${message}`
+              : `${reporting.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
           duration: 3000,
         })
+      }
 
-        return
-      }
-      if (failures.length) {
-        reportFailures()
-      } else if (successMessage && !controller.signal.aborted) {
-        toaster.success({
-          title: 'Success',
-          description: successMessage,
-          duration: 1000,
+      try {
+        const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
+          if (controller.signal.aborted) {
+            return
+          }
+          queued.delete(config.id)
+          try {
+            if (action === 'starting') {
+              await startPortForwardingForConfig(config)
+            } else {
+              await stopPortForwardingForConfig(config)
+            }
+          } catch (error) {
+            const failure = { id: config.id, error }
+
+            failures.push(failure)
+            // After the deadline nobody is aggregating any more, so each failure
+            // reports itself instead of waiting for unrelated invocations.
+            if (timedOut) {
+              reportFailures([failure])
+            }
+          } finally {
+            unresolved.delete(config.id)
+            clearPending(config.id)
+            debouncedUpdateConfigs()
+          }
         })
-      }
-    } finally {
-      controller.signal.removeEventListener('abort', cancelQueued)
-      if (controllerRef.current === controller) {
-        controllerRef.current = null
-        setBusy(false)
-      }
-      if (!timedOut) {
+        // The handle is kept so the loser of the race can be cancelled: an
+        // uncleared timeout keeps the timer, and everything it closes over,
+        // alive for the full deadline after a batch that finished immediately.
+        let deadline: NodeJS.Timeout | undefined
+        const settled = await Promise.race([
+          batch.then(() => true),
+          new Promise<false>(resolve => {
+            deadline = setTimeout(() => resolve(false), BATCH_DEADLINE_MS)
+          }),
+        ]).finally(() => clearTimeout(deadline))
+
+        if (!settled) {
+          timedOut = true
+          // Aborted while `cancelQueued` is still registered: configurations
+          // that never started release their reservation immediately.
+          controller.abort()
+          // The remaining ids are genuinely in flight: an invoke() that never
+          // settles must not hold its reservation forever, so it is released
+          // here too and `updateConfigsWithState()` in the finally block below
+          // re-establishes the authoritative state.
+          const stillUnresolved = unresolved.size
+
+          for (const id of unresolved) {
+            pendingConfigActionsRef.current.delete(id)
+          }
+          unresolved.clear()
+          setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+          reportFailures()
+          toaster.error({
+            title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+            description: `${stillUnresolved} configuration(s) did not finish within the timeout. Their status will refresh shortly.`,
+            duration: 3000,
+          })
+
+          return
+        }
+        if (failures.length) {
+          reportFailures()
+        } else if (successMessage && !controller.signal.aborted) {
+          toaster.success({
+            title: 'Success',
+            description: successMessage,
+            duration: 1000,
+          })
+        }
+      } catch (error) {
+        console.error(`Failed to run ${action} batch:`, error)
+        toaster.error({
+          title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+          description: error instanceof Error ? error.message : String(error),
+          duration: 3000,
+        })
+      } finally {
+        controller.signal.removeEventListener('abort', cancelQueued)
+        if (controllerRef.current === controller) {
+          controllerRef.current = null
+          setBusy(false)
+        }
         await updateConfigsWithState()
       }
-    }
-  }
+    },
+    [
+      clearPending,
+      debouncedUpdateConfigs,
+      updateConfigsWithState,
+      startPortForwardingForConfig,
+      stopPortForwardingForConfig,
+    ],
+  )
 
-  const handleDeleteConfig = async (id: number) => {
+  const handleDeleteConfig = useCallback(async (id: number) => {
     setConfigToDelete(id)
 
     setIsAlertOpen(true)
-  }
+  }, [])
 
-  const confirmDeleteConfig = async () => {
+  const deleteConfigs = useCallback(
+    async (ids: number[]): Promise<boolean> => {
+      const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
+
+      if (busy.length) {
+        toaster.error({
+          title: 'Error',
+          description: `${busy.length} selected configuration(s) are busy. Try again once they settle.`,
+          duration: 2000,
+        })
+
+        return false
+      }
+
+      for (const id of ids) {
+        markPending(id, 'deleting')
+      }
+      try {
+        // Revalidated while reserved: a selected start can settle between the
+        // dialog opening and its confirmation, and deleting only removes the
+        // database row, leaving the tunnel running with no way to stop it.
+        const current = await fetchConfigsWithState()
+        const running = current.filter(
+          config => ids.includes(config.id) && config.is_running,
+        )
+
+        if (running.length) {
+          toaster.error({
+            title: 'Error',
+            description: `${running.length} selected configuration(s) are running. Stop them before deleting.`,
+            duration: 2000,
+          })
+          // Through the version-guarded refresh: another operation can have
+          // settled while this snapshot was being fetched, and writing it
+          // directly would resurrect what that operation just changed.
+          await updateConfigsWithState()
+
+          return false
+        }
+        await invoke('delete_configs_cmd', { ids })
+        dropConfigs(ids)
+        toaster.success({
+          title: 'Success',
+          description: 'Configurations deleted successfully.',
+          duration: 1000,
+        })
+
+        return true
+      } catch (error) {
+        console.error('Failed to delete configurations:', error)
+        toaster.error({
+          title: 'Error',
+          description: 'Failed to delete configurations.',
+          duration: 1000,
+        })
+
+        return false
+      } finally {
+        for (const id of ids) {
+          clearPending(id)
+        }
+      }
+    },
+    [
+      markPending,
+      clearPending,
+      fetchConfigsWithState,
+      updateConfigsWithState,
+      dropConfigs,
+    ],
+  )
+
+  const confirmDeleteConfig = useCallback(async () => {
     if (typeof configToDelete !== 'number') {
       toaster.error({
         title: 'Error',
@@ -776,70 +916,7 @@ const KFTray = () => {
     // The same reservation, revalidation and refresh as a bulk delete.
     await deleteConfigs([configToDelete])
     setIsAlertOpen(false)
-  }
-
-  const deleteConfigs = async (ids: number[]): Promise<boolean> => {
-    const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
-
-    if (busy.length) {
-      toaster.error({
-        title: 'Error',
-        description: `${busy.length} selected configuration(s) are busy. Try again once they settle.`,
-        duration: 2000,
-      })
-
-      return false
-    }
-
-    for (const id of ids) {
-      markPending(id, 'stopping')
-    }
-    try {
-      // Revalidated while reserved: a selected start can settle between the
-      // dialog opening and its confirmation, and deleting only removes the
-      // database row, leaving the tunnel running with no way to stop it.
-      const current = await fetchConfigsWithState()
-      const running = current.filter(
-        config => ids.includes(config.id) && config.is_running,
-      )
-
-      if (running.length) {
-        toaster.error({
-          title: 'Error',
-          description: `${running.length} selected configuration(s) are running. Stop them before deleting.`,
-          duration: 2000,
-        })
-        // Through the version-guarded refresh: another operation can have
-        // settled while this snapshot was being fetched, and writing it
-        // directly would resurrect what that operation just changed.
-        await updateConfigsWithState()
-
-        return false
-      }
-      await invoke('delete_configs_cmd', { ids })
-      dropConfigs(ids)
-      toaster.success({
-        title: 'Success',
-        description: 'Configurations deleted successfully.',
-        duration: 1000,
-      })
-
-      return true
-    } catch (error) {
-      console.error('Failed to delete configurations:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to delete configurations.',
-        duration: 1000,
-      })
-
-      return false
-    } finally {
-      for (const id of ids) {
-        clearPending(id)
-      }
-    }
-  }
+  }, [configToDelete, deleteConfigs])
 
   const startSelectedPortForwarding = async () => {
     const configsToStart = selectedConfigs

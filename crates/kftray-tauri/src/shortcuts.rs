@@ -27,8 +27,6 @@ use crate::commands::{
     config::get_configs_cmd,
     config_state::get_config_states,
     portforward::{
-        deploy_and_forward_pod_cmd,
-        start_port_forward_tcp_cmd,
         stop_all_port_forward_cmd,
         stop_port_forward_cmd,
         stop_proxy_forward_cmd,
@@ -74,29 +72,21 @@ impl StartOutcome {
     }
 }
 
-/// Starts one configuration through the command its kind uses, the same
-/// dispatch the desktop UI performs.
-async fn start_one(app_handle: &tauri::AppHandle, config: &Config) -> Result<(), String> {
-    let kind = config.workload_type.as_deref();
-    let result = if kind == Some("expose")
-        || (matches!(kind, Some("service" | "pod")) && config.protocol == "tcp")
-    {
-        start_port_forward_tcp_cmd(vec![config.clone()], app_handle.clone()).await
-    } else {
-        deploy_and_forward_pod_cmd(vec![config.clone()], app_handle.clone()).await
-    };
-    start_error(result)
+/// Starts one configuration through the same workload/protocol dispatch the
+/// SSL certificate restart path uses.
+async fn start_one(config: &Config) -> Result<(), String> {
+    start_error(crate::commands::portforward::dispatch_start(config).await)
 }
 
 /// Starts each configuration in turn and counts what actually started: a
 /// batch where every start failed used to be announced as a success.
-async fn start_each(app_handle: &tauri::AppHandle, configs: Vec<Config>) -> StartOutcome {
+async fn start_each(configs: Vec<Config>) -> StartOutcome {
     let mut outcome = StartOutcome {
         started: 0,
         failures: Vec::new(),
     };
     for config in configs {
-        match start_one(app_handle, &config).await {
+        match start_one(&config).await {
             Ok(()) => outcome.started += 1,
             Err(e) => {
                 error!(
@@ -296,7 +286,7 @@ impl ActionHandler for StartAllPortForwardAction {
             return Ok(());
         }
 
-        let outcome = start_each(&self.app_handle, configs_to_start).await;
+        let outcome = start_each(configs_to_start).await;
 
         let _ = self
             .app_handle
@@ -340,40 +330,53 @@ impl ActionHandler for StopAllPortForwardAction {
     async fn execute(&self, _context: &ActionContext) -> kftray_shortcuts::ShortcutResult<()> {
         info!("Executing stop all port forward action");
 
-        let stopped = stop_all_port_forward_cmd(self.app_handle.clone())
+        // Partial counts, the same shape `StartOutcome` reports for starts:
+        // a row owned by another live process is skipped rather than
+        // reported, so what is left over here is this process's own rows
+        // that failed to stop, not a signal that the whole batch failed.
+        let outcome = match stop_all_port_forward_cmd(self.app_handle.clone())
             .await
             .map_err(|error| error.to_string())
-            .and_then(|responses| kftray_commons::models::response::batch_failure(&responses));
-        match stopped {
-            Ok(()) => {
-                info!("Successfully stopped all port forwards");
-
-                let _ = self
-                    .app_handle
-                    .notification()
-                    .builder()
-                    .title("Port Forward")
-                    .body("Stopped all port forwards")
-                    .show();
-
-                let _ = self.app_handle.emit("port-forward-status-changed", ());
-                Ok(())
+        {
+            Ok(responses) => {
+                let started = responses.iter().filter(|r| r.status == 0).count();
+                let failures = match kftray_commons::models::response::batch_failure(&responses) {
+                    Ok(()) => Vec::new(),
+                    Err(joined) => joined.split("; ").map(str::to_owned).collect(),
+                };
+                StartOutcome { started, failures }
             }
-            Err(e) => {
-                error!("Failed to stop all port forwards: {}", e);
-                let _ = self
-                    .app_handle
-                    .notification()
-                    .builder()
-                    .title("Port Forward")
-                    .body(format!("Failed to stop every port forward: {e}"))
-                    .show();
-                let _ = self.app_handle.emit("port-forward-status-changed", ());
-                Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to stop all port forwards: {}", e),
-                ))
-            }
+            Err(e) => StartOutcome {
+                started: 0,
+                failures: vec![e],
+            },
+        };
+
+        if outcome.failures.is_empty() {
+            info!("Successfully stopped all port forwards");
+        } else {
+            error!(
+                "Failed to stop every port forward: {}",
+                outcome.failures.join("; ")
+            );
         }
+
+        let _ = self
+            .app_handle
+            .notification()
+            .builder()
+            .title("Port Forward")
+            .body(format!(
+                "Stopped {} port forward{}{}",
+                outcome.started,
+                if outcome.started == 1 { "" } else { "s" },
+                outcome.failed_suffix()
+            ))
+            .show();
+
+        let _ = self.app_handle.emit("port-forward-status-changed", ());
+
+        outcome.into_result_as("stop")
     }
 
     fn action_type(&self) -> &str {
@@ -469,7 +472,7 @@ impl ActionHandler for StartPortForwardAction {
             return Ok(());
         }
 
-        let outcome = start_each(&self.app_handle, configs_to_start).await;
+        let outcome = start_each(configs_to_start).await;
 
         let _ = self
             .app_handle
@@ -646,6 +649,30 @@ impl ActionHandler for StopPortForwardAction {
     }
 }
 
+/// Notification text for a toggle batch. Pulled out of `execute` so a bug in
+/// which count gets which wording is a plain unit test rather than one that
+/// needs a running Tauri action handler.
+fn toggle_message(started: usize, stopped: usize, failed_suffix: &str) -> String {
+    match (started, stopped) {
+        (0, stopped) => format!(
+            "Stopped {} port forward{}{}",
+            stopped,
+            if stopped == 1 { "" } else { "s" },
+            failed_suffix
+        ),
+        (started, 0) => format!(
+            "Started {} port forward{}{}",
+            started,
+            if started == 1 { "" } else { "s" },
+            failed_suffix
+        ),
+        (started, stopped) => format!(
+            "Started {}, stopped {} port forwards{}",
+            started, stopped, failed_suffix
+        ),
+    }
+}
+
 struct TogglePortForwardAction {
     app_handle: AppHandle,
 }
@@ -775,7 +802,7 @@ impl ActionHandler for TogglePortForwardAction {
                     stopped_count += 1;
                 }
             } else {
-                match start_one(&self.app_handle, &config).await {
+                match start_one(&config).await {
                     Ok(()) => started_count += 1,
                     Err(e) => {
                         error!(
@@ -796,25 +823,7 @@ impl ActionHandler for TogglePortForwardAction {
                 started: started_count,
                 failures,
             };
-            let message = match (started_count, stopped_count) {
-                (0, stopped) if outcome.failures.is_empty() => format!(
-                    "Stopped {} port forward{}",
-                    stopped,
-                    if stopped == 1 { "" } else { "s" }
-                ),
-                (started, 0) => format!(
-                    "Started {} port forward{}{}",
-                    started,
-                    if started == 1 { "" } else { "s" },
-                    outcome.failed_suffix()
-                ),
-                (started, stopped) => format!(
-                    "Started {}, stopped {} port forwards{}",
-                    started,
-                    stopped,
-                    outcome.failed_suffix()
-                ),
-            };
+            let message = toggle_message(started_count, stopped_count, &outcome.failed_suffix());
             let _ = self
                 .app_handle
                 .notification()
@@ -839,5 +848,32 @@ impl ActionHandler for TogglePortForwardAction {
 
     fn description(&self) -> &str {
         "Toggle specific port forwards"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::toggle_message;
+
+    #[test]
+    fn stopped_only_with_failures_reports_stopped_not_started() {
+        // Regression: a guard on this arm used to require `failures` to be
+        // empty, so this case fell through to the "Started X, stopped Y"
+        // arm and reported "Started 0" for a batch that never started
+        // anything.
+        let message = toggle_message(0, 3, ", 2 failed");
+        assert_eq!(message, "Stopped 3 port forwards, 2 failed");
+    }
+
+    #[test]
+    fn stopped_only_without_failures() {
+        let message = toggle_message(0, 1, "");
+        assert_eq!(message, "Stopped 1 port forward");
+    }
+
+    #[test]
+    fn started_and_stopped_mixed() {
+        let message = toggle_message(2, 1, ", 1 failed");
+        assert_eq!(message, "Started 2, stopped 1 port forwards, 1 failed");
     }
 }

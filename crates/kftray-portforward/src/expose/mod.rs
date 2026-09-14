@@ -44,27 +44,15 @@ async fn roll_back_exposure<T>(
     client: &kube::Client, config: &Config, resources: &models::ExposeResources,
     guard: crate::kube::stop::ClusterResourceGuard, reason: String,
 ) -> Result<T, String> {
-    // Bounded as a whole: this runs while the lifecycle lock is held, and the
-    // client carries no per-request timeout, so a stalled DELETE would block
-    // both this startup and the stop that follows it. The guard stays armed on
-    // timeout, which is what keeps the cleanup retryable.
-    const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-    let deleted = tokio::time::timeout(
-        ROLLBACK_TIMEOUT,
-        kubernetes::delete_created_resources(client, &config.namespace, &resources.owned),
-    )
-    .await;
-    match deleted {
-        Ok(Ok(())) => {
-            guard.disarm().await;
-            Err(reason)
-        }
-        Ok(Err(cleanup_error)) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
-        Err(_) => Err(format!(
-            "{reason}; cleanup timed out after {ROLLBACK_TIMEOUT:?} and will be retried"
-        )),
+    let (cleaned, message) =
+        kubernetes::rollback_created_resources(client, &config.namespace, &resources.owned, reason)
+            .await;
+    // The guard stays armed unless cleanup fully completed, which is what
+    // keeps it retryable.
+    if cleaned {
+        guard.disarm().await;
     }
+    Err(message)
 }
 
 pub(crate) async fn start_single_expose(
@@ -281,8 +269,6 @@ pub(crate) async fn start_single_expose(
     })
 }
 
-pub async fn stop_expose(
-    config_id: i64, _namespace: &str, mode: DatabaseMode,
-) -> Result<CustomResponse, String> {
+pub async fn stop_expose(config_id: i64, mode: DatabaseMode) -> Result<CustomResponse, String> {
     crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
 }

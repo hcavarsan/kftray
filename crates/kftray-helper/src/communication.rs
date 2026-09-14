@@ -493,37 +493,58 @@ async fn handle_connection(
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| HelperError::Communication(format!("Failed to set socket timeout: {e}")))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| {
+            warn!("Failed to set write timeout: {e}");
+            HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
+        })?;
 
     let mut buffer = Vec::new();
     let mut tmp_buf = [0u8; 4096];
+    let mut waited_for_first_byte = false;
 
-    loop {
+    // Completeness is judged by whether the buffer parses, not by the size
+    // of a single read: a message can arrive in reads of any size, and a
+    // large batch legitimately spans more than one.
+    let request = loop {
         match stream.read(&mut tmp_buf) {
             Ok(0) => {
-                info!("Client closed connection (0 bytes read)");
-                break;
+                if buffer.is_empty() {
+                    info!("Client closed connection (0 bytes read)");
+                    return Ok(());
+                }
+                debug!(
+                    "Client closed connection after sending {} bytes",
+                    buffer.len()
+                );
+                return respond_with_parse_error(&mut stream, &buffer);
             }
             Ok(n) => {
                 debug!("Read {n} bytes from client");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
-                if n < tmp_buf.len() {
-                    debug!("Read less than buffer size, assuming message is complete");
-                    break;
+                if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
+                    debug!("Request parsed successfully");
+                    break req;
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 debug!("Socket would block, waiting briefly");
                 std::thread::sleep(Duration::from_millis(50));
-                continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                 debug!("Socket read interrupted, continuing");
-                continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                if buffer.is_empty() && !waited_for_first_byte {
+                    waited_for_first_byte = true;
+                    debug!("No data yet, waiting briefly for a slow client");
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
                 debug!("Socket read timed out, ending read loop");
-                break;
+                return respond_with_parse_error(&mut stream, &buffer);
             }
             Err(e) => {
                 error!("Error reading from client: {e}");
@@ -532,52 +553,13 @@ async fn handle_connection(
                 )));
             }
         }
-    }
-
-    if buffer.is_empty() {
-        debug!("Empty request received, will wait for more data");
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        match stream.read(&mut tmp_buf) {
-            Ok(0) => {
-                info!("Client still sent 0 bytes, closing connection");
-                return Ok(());
-            }
-            Ok(n) => {
-                debug!("Read {n} bytes from client after wait");
-                buffer.extend_from_slice(&tmp_buf[..n]);
-            }
-            Err(e) => {
-                warn!("Error reading more data: {e}");
-                return Ok(());
-            }
-        }
-
-        if buffer.is_empty() {
-            warn!("Request is still empty after retry, cannot process");
-            return Ok(());
-        }
-    }
-
-    let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
-        Ok(req) => {
-            debug!("Request parsed successfully");
-
-            if let Err(e) = validate_request(&req) {
-                error!("Request validation failed: {e}");
-                return Err(e);
-            }
-            debug!("Request validation passed");
-
-            req
-        }
-        Err(e) => {
-            error!("Failed to parse request: {e}");
-            return Err(HelperError::Communication(format!(
-                "Failed to parse request: {e}"
-            )));
-        }
     };
+
+    if let Err(e) = validate_request(&request) {
+        error!("Request validation failed: {e}");
+        return Err(e);
+    }
+    debug!("Request validation passed");
 
     debug!("Processing request...");
     let response =
@@ -600,13 +582,6 @@ async fn handle_connection(
             )));
         }
     };
-
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| {
-            warn!("Failed to set write timeout: {e}");
-            HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
-        })?;
 
     debug!(
         "Writing response directly to client socket ({} bytes)",
@@ -644,6 +619,29 @@ async fn handle_connection(
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     info!("Connection handled successfully");
+    Ok(())
+}
+
+/// Writes an error response for a request that could not be parsed, so an
+/// old or misbehaving client fails fast instead of waiting out its timeout.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<(), HelperError> {
+    let message = match serde_json::from_slice::<HelperRequest>(buffer) {
+        Ok(_) => "Incomplete request".to_string(),
+        Err(e) => format!("Failed to parse request: {e}"),
+    };
+    error!("{message}");
+
+    match serde_json::to_vec(&HelperResponse::error(String::new(), message)) {
+        Ok(bytes) => {
+            if let Err(e) = stream.write_all(&bytes) {
+                warn!("Failed to write parse-error response: {e}");
+            } else if let Err(e) = stream.flush() {
+                warn!("Failed to flush parse-error response: {e}");
+            }
+        }
+        Err(e) => warn!("Failed to serialize parse-error response: {e}"),
+    }
     Ok(())
 }
 
@@ -750,125 +748,83 @@ async fn handle_windows_connection(
 
     let mut buffer = Vec::new();
     let mut tmp_buf = [0u8; 4096];
+    let mut waited_for_first_byte = false;
 
-    let mut total_read = 0;
     let timeout = Duration::from_secs(30);
     let start_time = std::time::Instant::now();
 
-    loop {
+    // Completeness is judged by whether the buffer parses, not by the size
+    // of a single read: a message can arrive in reads of any size, and a
+    // large batch legitimately spans more than one.
+    let request = loop {
         if start_time.elapsed() > timeout {
             warn!(
                 "Read operation timed out after {} seconds",
                 timeout.as_secs()
             );
-            break;
+            return respond_with_parse_error(&mut pipe, &buffer).await;
         }
 
         match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
             Ok(read_result) => match read_result {
                 Ok(0) => {
-                    info!("Client closed connection (0 bytes read)");
-                    break;
+                    if buffer.is_empty() {
+                        info!("Client closed connection (0 bytes read)");
+                        return Ok(());
+                    }
+                    debug!(
+                        "Client closed connection after sending {} bytes",
+                        buffer.len()
+                    );
+                    return respond_with_parse_error(&mut pipe, &buffer).await;
                 }
                 Ok(n) => {
                     debug!("Read {} bytes from client", n);
                     buffer.extend_from_slice(&tmp_buf[..n]);
-                    total_read += n;
 
-                    if n < tmp_buf.len() {
-                        debug!("Read less than buffer size, assuming message is complete");
-                        break;
+                    if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
+                        debug!("Request parsed successfully");
+                        break req;
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     debug!("Pipe would block, waiting briefly");
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                     debug!("Pipe read interrupted, continuing");
-                    continue;
                 }
                 Err(e) => {
                     error!("Error reading from client: {}", e);
-                    if total_read > 0 {
-                        debug!(
-                            "Have partial data ({} bytes), continuing with processing",
-                            total_read
-                        );
-                        break;
+                    if buffer.is_empty() {
+                        return Err(HelperError::Communication(format!(
+                            "Failed to read from pipe: {}",
+                            e
+                        )));
                     }
-                    return Err(HelperError::Communication(format!(
-                        "Failed to read from pipe: {}",
-                        e
-                    )));
+                    return respond_with_parse_error(&mut pipe, &buffer).await;
                 }
             },
             Err(_) => {
                 debug!("Read operation timed out");
-                if total_read > 0 {
-                    debug!(
-                        "Have partial data ({} bytes), continuing with processing",
-                        total_read
-                    );
-                    break;
+                if buffer.is_empty() {
+                    if !waited_for_first_byte {
+                        waited_for_first_byte = true;
+                        debug!("No data yet, waiting briefly for a slow client");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    continue;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                return respond_with_parse_error(&mut pipe, &buffer).await;
             }
-        }
-    }
-
-    if buffer.is_empty() {
-        debug!("Empty request received, will wait for more data");
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
-            Ok(result) => match result {
-                Ok(0) => {
-                    info!("Client still sent 0 bytes, closing connection");
-                    return Ok(());
-                }
-                Ok(n) => {
-                    debug!("Read {} bytes from client after wait", n);
-                    buffer.extend_from_slice(&tmp_buf[..n]);
-                }
-                Err(e) => {
-                    warn!("Error reading more data: {}", e);
-                    return Ok(());
-                }
-            },
-            Err(_) => {
-                info!("Additional read timed out, closing connection");
-                return Ok(());
-            }
-        }
-
-        if buffer.is_empty() {
-            warn!("Request is still empty after retry, cannot process");
-            return Ok(());
-        }
-    }
-
-    let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
-        Ok(req) => {
-            debug!("Request parsed successfully");
-
-            if let Err(e) = validate_request(&req) {
-                error!("Request validation failed: {}", e);
-                return Err(e);
-            }
-            debug!("Request validation passed");
-
-            req
-        }
-        Err(e) => {
-            error!("Failed to parse request: {}", e);
-            return Err(HelperError::Communication(format!(
-                "Failed to parse request: {}",
-                e
-            )));
         }
     };
+
+    if let Err(e) = validate_request(&request) {
+        error!("Request validation failed: {}", e);
+        return Err(e);
+    }
+    debug!("Request validation passed");
 
     debug!("Processing request...");
     let response =
@@ -932,6 +888,33 @@ async fn handle_windows_connection(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     info!("Connection handled successfully");
+    Ok(())
+}
+
+/// Writes an error response for a request that could not be parsed, so an
+/// old or misbehaving client fails fast instead of waiting out its timeout.
+#[cfg(target_os = "windows")]
+async fn respond_with_parse_error(
+    pipe: &mut NamedPipeServer, buffer: &[u8],
+) -> Result<(), HelperError> {
+    use tokio::io::AsyncWriteExt;
+
+    let message = match serde_json::from_slice::<HelperRequest>(buffer) {
+        Ok(_) => "Incomplete request".to_string(),
+        Err(e) => format!("Failed to parse request: {}", e),
+    };
+    error!("{}", message);
+
+    match serde_json::to_vec(&HelperResponse::error(String::new(), message)) {
+        Ok(bytes) => {
+            if let Err(e) = pipe.write_all(&bytes).await {
+                warn!("Failed to write parse-error response: {}", e);
+            } else if let Err(e) = pipe.flush().await {
+                warn!("Failed to flush parse-error response: {}", e);
+            }
+        }
+        Err(e) => warn!("Failed to serialize parse-error response: {}", e),
+    }
     Ok(())
 }
 
@@ -1144,15 +1127,46 @@ async fn process_request(
         // other request the helper is serving.
         RequestCommand::Host(cmd) => {
             let hostfile_manager = Arc::clone(&hostfile_manager);
-            tokio::task::spawn_blocking(move || {
+            let host_request_id = request_id.clone();
+            match tokio::task::spawn_blocking(move || {
                 handle_host_command(cmd, &hostfile_manager, request_id)
             })
             .await
-            .map_err(|error| HelperError::Communication(format!("Hosts task failed: {error}")))?
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    error!("Hosts task failed: {error}");
+                    Ok(HelperResponse::error(
+                        host_request_id,
+                        format!("Hosts task failed: {error}"),
+                    ))
+                }
+            }
         }
         RequestCommand::Ping => {
             debug!("Processing Ping request");
             Ok(HelperResponse::string_success(request_id, "pong".into()))
+        }
+    }
+}
+
+/// Turns a hosts-manager result into a logged response: success or error,
+/// never a bare `Err` that would leave the caller without a reply.
+fn reply<T, E: std::fmt::Display>(
+    request_id: &str, what: &str, result: Result<T, E>,
+    on_success: impl FnOnce(String, T) -> HelperResponse,
+) -> Result<HelperResponse, HelperError> {
+    match result {
+        Ok(value) => {
+            info!("Host {what} request successful");
+            Ok(on_success(request_id.to_string(), value))
+        }
+        Err(e) => {
+            error!("Host {what} request failed: {e}");
+            Ok(HelperResponse::error(
+                request_id.to_string(),
+                format!("Error: {e}"),
+            ))
         }
     }
 }
@@ -1163,87 +1177,63 @@ fn handle_host_command(
     match cmd {
         HostCommand::Add { id, entry } => {
             debug!("Processing Host Add request for ID: {id}");
-            match hostfile_manager.add_entry(id, entry) {
-                Ok(_) => {
-                    info!("Host Add request successful");
-                    Ok(HelperResponse::success(request_id))
-                }
-                Err(e) => {
-                    error!("Host Add request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "Add",
+                hostfile_manager.add_entry(id, entry),
+                |rid, _| HelperResponse::success(rid),
+            )
         }
         HostCommand::Remove { id } => {
             debug!("Processing Host Remove request for ID: {id}");
-            match hostfile_manager.remove_entry(&id) {
-                Ok(_) => {
-                    info!("Host Remove request successful");
-                    Ok(HelperResponse::success(request_id))
-                }
-                Err(e) => {
-                    error!("Host Remove request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "Remove",
+                hostfile_manager.remove_entry(&id),
+                |rid, _| HelperResponse::success(rid),
+            )
         }
         HostCommand::RemoveUnowned { entries } => {
             debug!(
                 "Processing Host RemoveUnowned request for {} entries",
                 entries.len()
             );
-            match hostfile_manager.remove_unowned_matching(&entries) {
-                Ok(_) => {
-                    info!("Host RemoveUnowned request successful");
-                    Ok(HelperResponse::success(request_id))
-                }
-                Err(e) => {
-                    error!("Host RemoveUnowned request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "RemoveUnowned",
+                hostfile_manager.remove_unowned_matching(&entries),
+                |rid, _| HelperResponse::success(rid),
+            )
         }
         HostCommand::RemoveDirectOwned { ids, legacy } => {
             debug!("Processing Host RemoveDirectOwned request for {ids:?}");
-            match hostfile_manager.remove_direct_owned(&ids, &legacy) {
-                Ok(_) => {
-                    info!("Host RemoveDirectOwned request successful");
-                    Ok(HelperResponse::success(request_id))
-                }
-                Err(e) => {
-                    error!("Host RemoveDirectOwned request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "RemoveDirectOwned",
+                hostfile_manager.remove_direct_owned(&ids, &legacy),
+                |rid, _| HelperResponse::success(rid),
+            )
         }
         HostCommand::RemoveAll => {
             debug!("Processing Host RemoveAll request");
-            match hostfile_manager.remove_all_entries() {
-                Ok(_) => {
-                    info!("Host RemoveAll request successful");
-                    Ok(HelperResponse::success(request_id))
-                }
-                Err(e) => {
-                    error!("Host RemoveAll request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "RemoveAll",
+                hostfile_manager.remove_all_entries(),
+                |rid, _| HelperResponse::success(rid),
+            )
         }
         HostCommand::List => {
             debug!("Processing Host List request");
-            match hostfile_manager.list_entries() {
-                Ok(entries) => {
-                    info!(
-                        "Host List request successful, found {} entries",
-                        entries.len()
-                    );
-                    Ok(HelperResponse::host_entries_success(request_id, entries))
-                }
-                Err(e) => {
-                    error!("Host List request failed: {e}");
-                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                }
-            }
+            reply(
+                &request_id,
+                "List",
+                hostfile_manager.list_entries(),
+                |rid, entries| {
+                    debug!("Host List request found {} entries", entries.len());
+                    HelperResponse::host_entries_success(rid, entries)
+                },
+            )
         }
     }
 }
