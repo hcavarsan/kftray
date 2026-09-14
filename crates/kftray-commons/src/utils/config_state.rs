@@ -145,21 +145,34 @@ pub async fn cleanup_current_process_config_states() -> Result<(), String> {
     Ok(())
 }
 
+/// Marks every configuration this process was running as stopped, except the
+/// ones in `still_owed`: a configuration whose cleanup did not complete keeps
+/// its running state, so the next run's stop-all enumerates and retries it.
 pub async fn cleanup_current_process_config_states_with_mode(
-    mode: DatabaseMode,
+    mode: DatabaseMode, still_owed: &[i64],
 ) -> Result<(), String> {
     let current_process_id = std::process::id();
     let context = DatabaseManager::get_context(mode).await?;
     let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
 
-    let affected_rows = sqlx::query(
-        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
-    )
-    .bind(current_process_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?
-    .rows_affected();
+    let mut query = sqlx::QueryBuilder::new(
+        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ",
+    );
+    query.push_bind(current_process_id);
+    if !still_owed.is_empty() {
+        query.push(" AND config_id NOT IN (");
+        let mut ids = query.separated(", ");
+        for id in still_owed {
+            ids.push_bind(id);
+        }
+        query.push(")");
+    }
+    let affected_rows = query
+        .build()
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
 
     if affected_rows > 0 {
         log::info!(

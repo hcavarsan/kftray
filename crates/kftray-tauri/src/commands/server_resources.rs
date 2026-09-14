@@ -494,6 +494,25 @@ fn calculate_age(creation_timestamp: &Time) -> String {
     }
 }
 
+/// The ownership label on a resource, or `None` when it carries none or no
+/// longer exists.
+async fn owner_label<K>(api: Api<K>, name: &str) -> Result<Option<String>, String>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
+{
+    match api.get_opt(name).await {
+        Ok(object) => Ok(object.and_then(|object| {
+            object
+                .meta()
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(kftray_portforward::kube::INSTALLATION_LABEL))
+                .cloned()
+        })),
+        Err(e) => Err(format!("Failed to read {name}: {e}")),
+    }
+}
+
 #[tauri::command]
 pub async fn delete_kftray_resource(
     context_name: &str, namespace: &str, resource_type: &str, resource_name: &str,
@@ -504,53 +523,89 @@ pub async fn delete_kftray_resource(
         resource_type, resource_name, namespace, config_id
     );
 
-    if let Some(ref config_id_str) = config_id
-        && let Ok(id) = config_id_str.parse::<i64>()
-    {
-        let config_result = kftray_commons::config::get_config(id).await;
-
-        if let Ok(config) = config_result {
-            info!("Config found, stopping port-forward before deleting resource");
-
-            let workload_type = config.workload_type.as_deref().unwrap_or("");
-
-            match workload_type {
-                "proxy" => {
-                    let _ = kftray_portforward::stop_proxy_forward(
-                        id,
-                        namespace,
-                        resource_name.to_string(),
-                    )
-                    .await;
-                }
-                "expose" => {
-                    let _ =
-                        kftray_portforward::stop_expose(id, namespace, DatabaseMode::File).await;
-                }
-                _ => {
-                    let _ = kftray_portforward::stop_port_forward_with_mode(
-                        config_id_str.clone(),
-                        DatabaseMode::File,
-                    )
-                    .await;
-                }
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
-    }
-
     let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client = connection.client;
+    let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
+
+    // The configuration id on the object only names a row in the database
+    // that created it. Only a resource labelled with this installation's file
+    // identity was created from the file database this command stops
+    // through; a memory-mode session's relay with the same id, or a legacy
+    // resource with no label, is deleted without touching a local forward
+    // that merely shares the number.
+    let owner = match resource_type {
+        "pod" => {
+            owner_label(
+                Api::<Pod>::namespaced(client.clone(), namespace),
+                resource_name,
+            )
+            .await
+        }
+        "deployment" => {
+            owner_label(
+                Api::<Deployment>::namespaced(client.clone(), namespace),
+                resource_name,
+            )
+            .await
+        }
+        "service" => {
+            owner_label(
+                Api::<Service>::namespaced(client.clone(), namespace),
+                resource_name,
+            )
+            .await
+        }
+        "ingress" => {
+            owner_label(
+                Api::<Ingress>::namespaced(client.clone(), namespace),
+                resource_name,
+            )
+            .await
+        }
+        _ => return Err(format!("Unsupported resource type: {}", resource_type)),
+    }?;
+    let created_from_file_database = owner.as_deref() == Some(installation_id);
+
+    if created_from_file_database
+        && let Some(ref config_id_str) = config_id
+        && let Ok(id) = config_id_str.parse::<i64>()
+        && let Ok(config) = kftray_commons::config::get_config(id).await
+    {
+        info!("Config found, stopping port-forward before deleting resource");
+
+        let workload_type = config.workload_type.as_deref().unwrap_or("");
+
+        match workload_type {
+            "proxy" => {
+                let _ = kftray_portforward::stop_proxy_forward(
+                    id,
+                    namespace,
+                    resource_name.to_string(),
+                )
+                .await;
+            }
+            "expose" => {
+                let _ = kftray_portforward::stop_expose(id, namespace, DatabaseMode::File).await;
+            }
+            _ => {
+                let _ = kftray_portforward::stop_port_forward_with_mode(
+                    config_id_str.clone(),
+                    DatabaseMode::File,
+                )
+                .await;
+            }
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
 
     let delete_params = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
-    let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
     // Checked on the object itself, not on what the screen listed: the name
     // alone reaches another installation's resource, and deleting one by

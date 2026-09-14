@@ -93,6 +93,7 @@ pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
 /// `deploy_and_forward_pod`.
 pub fn spawn_recovery_manager(
     config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+    destination: String,
 ) {
     let Some(config_id) = config.id else {
         return;
@@ -105,6 +106,7 @@ pub fn spawn_recovery_manager(
             proxy_type,
             mode,
             ssl_override,
+            destination,
         ));
         let rx = manager.recovery_signal_tx.subscribe();
         let manager_for_task = Arc::clone(&manager);
@@ -174,6 +176,11 @@ pub struct ProxyRecoveryManager {
     recovery_signal_tx: tokio::sync::broadcast::Sender<RecoverySignal>,
     mode: DatabaseMode,
     ssl_override: bool,
+    /// The API server the relay was created on. The context named by the
+    /// configuration can come to mean another server while the forward runs;
+    /// recovery must not delete and redeploy there and leave this one's relay
+    /// behind.
+    destination: String,
 }
 
 impl ProxyRecoveryManager {
@@ -184,6 +191,7 @@ impl ProxyRecoveryManager {
     /// * `proxy_type` - Whether this is a bare pod or deployment proxy
     pub fn new(
         config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+        destination: String,
     ) -> Self {
         let config_id = config.id.unwrap_or(0);
         let (recovery_signal_tx, _) = tokio::sync::broadcast::channel::<RecoverySignal>(16);
@@ -196,6 +204,7 @@ impl ProxyRecoveryManager {
             recovery_signal_tx,
             mode,
             ssl_override,
+            destination,
         }
     }
 
@@ -392,11 +401,25 @@ impl ProxyRecoveryManager {
             self.config.context.clone(),
             self.config.kubeconfig.clone(),
         );
-        let client = crate::kube::shared_client::SHARED_CLIENT_MANAGER
+        let connection = crate::kube::shared_client::SHARED_CLIENT_MANAGER
             .get_connection(client_key)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {}", e))?;
-        let client = client.client.clone();
+        // Checked before anything is listed, deleted or redeployed: the stop
+        // path refuses to clean up on a server other than the one the relay
+        // was created on, and recovery would otherwise delete a matching
+        // relay there and move the forward with the original still running.
+        let resolved = connection.cluster_url.to_string();
+        if resolved != self.destination {
+            anyhow::bail!(
+                "Context {} now resolves to {resolved} rather than {}; not recovering config {} \
+                 against a different server",
+                self.config.context.as_deref().unwrap_or_default(),
+                self.destination,
+                self.config_id
+            );
+        }
+        let client = connection.client.clone();
 
         match self.proxy_type {
             ProxyType::BarePod => {
@@ -626,6 +649,7 @@ mod tests {
             ProxyType::BarePod,
             DatabaseMode::Memory,
             false,
+            "http://127.0.0.1:1/".to_string(),
         ));
         let manager_clone = Arc::clone(&manager);
 
@@ -669,6 +693,7 @@ mod tests {
             ProxyType::BarePod,
             DatabaseMode::Memory,
             false,
+            "http://127.0.0.1:1/".to_string(),
         ));
         let manager_clone = Arc::clone(&manager);
         let handle = tokio::spawn(async move {
@@ -733,6 +758,7 @@ mod tests {
             ProxyType::Deployment,
             DatabaseMode::Memory,
             false,
+            "http://127.0.0.1:1/".to_string(),
         ));
         let manager_clone = Arc::clone(&manager);
 

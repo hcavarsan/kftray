@@ -110,13 +110,20 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
 
     // A create abandoned on the way out can surface after that first pass, and
     // the registry that tracks it lives only in this process.
-    kftray_portforward::kube::reconcile_pending_cleanup(
+    let still_owed = kftray_portforward::kube::reconcile_pending_cleanup(
         mode,
         crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
     )
     .await;
+    if !still_owed.is_empty() {
+        eprintln!(
+            "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
+             running and are retried on the next stop"
+        );
+        failed = true;
+    }
 
-    if let Err(e) = cleanup_current_process_config_states_with_mode(mode).await {
+    if let Err(e) = cleanup_current_process_config_states_with_mode(mode, &still_owed).await {
         log::error!("Failed to cleanup config states: {e}");
         eprintln!("Failed to clean up configuration states: {e}");
         failed = true;

@@ -128,26 +128,41 @@ impl HostfileManager {
         // reach them. They are attributed the same way they were detected, by
         // the aliases the configuration says are its own, and the upgraded
         // helper removes exactly those.
-        if !stranded.is_empty()
-            && let Some(helper) = self.helper()
-        {
+        if !stranded.is_empty() {
             let legacy: Vec<HostEntry> = handed
                 .iter()
                 .filter(|(id, _)| stranded.contains(&id.as_str()))
                 .map(|(_, entry)| entry.clone())
                 .collect();
-            match helper.remove_unowned_host_entries(legacy) {
+            let removed = match self.helper() {
+                Some(helper) => helper
+                    .remove_unowned_host_entries(legacy)
+                    .map_err(|e| e.to_string()),
+                // Without a helper the same attributed lines are pruned here,
+                // if this process can write the file: an installation that
+                // only ever wrote directly has them from before ownership.
+                None => {
+                    let mappings: Vec<(std::net::IpAddr, String)> = legacy
+                        .into_iter()
+                        .map(|entry| (entry.ip, entry.hostname))
+                        .collect();
+                    self.direct_manager
+                        .prune_legacy_entries(&mappings)
+                        .map_err(|e| e.to_string())
+                }
+            };
+            match removed {
                 Ok(()) => {
                     let section = DirectHostfileManager::helper_section()?;
                     stranded =
                         DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
                 }
-                Err(e) => warn!("Helper could not remove unmarked host entries: {e}"),
+                Err(e) => warn!("Could not remove unmarked host entries: {e}"),
             }
         }
         if !stranded.is_empty() {
             return Err(std::io::Error::other(format!(
-                "Host entries for {} are still on disk and only the helper can remove them",
+                "Host entries for {} are still on disk and could not be removed",
                 stranded.join(", ")
             )));
         }

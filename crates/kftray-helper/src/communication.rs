@@ -1139,82 +1139,98 @@ async fn process_request(
                 Ok(HelperResponse::success(request_id))
             }
         },
-        RequestCommand::Host(cmd) => match cmd {
-            HostCommand::Add { id, entry } => {
-                debug!("Processing Host Add request for ID: {id}");
-                match hostfile_manager.add_entry(id, entry) {
-                    Ok(_) => {
-                        info!("Host Add request successful");
-                        Ok(HelperResponse::success(request_id))
-                    }
-                    Err(e) => {
-                        error!("Host Add request failed: {e}");
-                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                    }
-                }
-            }
-            HostCommand::Remove { id } => {
-                debug!("Processing Host Remove request for ID: {id}");
-                match hostfile_manager.remove_entry(&id) {
-                    Ok(_) => {
-                        info!("Host Remove request successful");
-                        Ok(HelperResponse::success(request_id))
-                    }
-                    Err(e) => {
-                        error!("Host Remove request failed: {e}");
-                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                    }
-                }
-            }
-            HostCommand::RemoveUnowned { entries } => {
-                debug!(
-                    "Processing Host RemoveUnowned request for {} entries",
-                    entries.len()
-                );
-                match hostfile_manager.remove_unowned_matching(&entries) {
-                    Ok(_) => {
-                        info!("Host RemoveUnowned request successful");
-                        Ok(HelperResponse::success(request_id))
-                    }
-                    Err(e) => {
-                        error!("Host RemoveUnowned request failed: {e}");
-                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                    }
-                }
-            }
-            HostCommand::RemoveAll => {
-                debug!("Processing Host RemoveAll request");
-                match hostfile_manager.remove_all_entries() {
-                    Ok(_) => {
-                        info!("Host RemoveAll request successful");
-                        Ok(HelperResponse::success(request_id))
-                    }
-                    Err(e) => {
-                        error!("Host RemoveAll request failed: {e}");
-                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                    }
-                }
-            }
-            HostCommand::List => {
-                debug!("Processing Host List request");
-                match hostfile_manager.list_entries() {
-                    Ok(entries) => {
-                        info!(
-                            "Host List request successful, found {} entries",
-                            entries.len()
-                        );
-                        Ok(HelperResponse::host_entries_success(request_id, entries))
-                    }
-                    Err(e) => {
-                        error!("Host List request failed: {e}");
-                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
-                    }
-                }
-            }
-        },
+        // Off the runtime: a hosts transaction waits on the cross-process
+        // lock, up to its timeout, and a worker parked on it would delay every
+        // other request the helper is serving.
+        RequestCommand::Host(cmd) => {
+            let hostfile_manager = Arc::clone(&hostfile_manager);
+            tokio::task::spawn_blocking(move || {
+                handle_host_command(cmd, &hostfile_manager, request_id)
+            })
+            .await
+            .map_err(|error| HelperError::Communication(format!("Hosts task failed: {error}")))?
+        }
         RequestCommand::Ping => {
             debug!("Processing Ping request");
             Ok(HelperResponse::string_success(request_id, "pong".into()))
+        }
+    }
+}
+
+fn handle_host_command(
+    cmd: HostCommand, hostfile_manager: &HostfileManager, request_id: String,
+) -> Result<HelperResponse, HelperError> {
+    match cmd {
+        HostCommand::Add { id, entry } => {
+            debug!("Processing Host Add request for ID: {id}");
+            match hostfile_manager.add_entry(id, entry) {
+                Ok(_) => {
+                    info!("Host Add request successful");
+                    Ok(HelperResponse::success(request_id))
+                }
+                Err(e) => {
+                    error!("Host Add request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
+        }
+        HostCommand::Remove { id } => {
+            debug!("Processing Host Remove request for ID: {id}");
+            match hostfile_manager.remove_entry(&id) {
+                Ok(_) => {
+                    info!("Host Remove request successful");
+                    Ok(HelperResponse::success(request_id))
+                }
+                Err(e) => {
+                    error!("Host Remove request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
+        }
+        HostCommand::RemoveUnowned { entries } => {
+            debug!(
+                "Processing Host RemoveUnowned request for {} entries",
+                entries.len()
+            );
+            match hostfile_manager.remove_unowned_matching(&entries) {
+                Ok(_) => {
+                    info!("Host RemoveUnowned request successful");
+                    Ok(HelperResponse::success(request_id))
+                }
+                Err(e) => {
+                    error!("Host RemoveUnowned request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
+        }
+        HostCommand::RemoveAll => {
+            debug!("Processing Host RemoveAll request");
+            match hostfile_manager.remove_all_entries() {
+                Ok(_) => {
+                    info!("Host RemoveAll request successful");
+                    Ok(HelperResponse::success(request_id))
+                }
+                Err(e) => {
+                    error!("Host RemoveAll request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
+        }
+        HostCommand::List => {
+            debug!("Processing Host List request");
+            match hostfile_manager.list_entries() {
+                Ok(entries) => {
+                    info!(
+                        "Host List request successful, found {} entries",
+                        entries.len()
+                    );
+                    Ok(HelperResponse::host_entries_success(request_id, entries))
+                }
+                Err(e) => {
+                    error!("Host List request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
         }
     }
 }

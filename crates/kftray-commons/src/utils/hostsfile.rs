@@ -11,10 +11,6 @@ use std::{
         Path,
         PathBuf,
     },
-    time::{
-        SystemTime,
-        UNIX_EPOCH,
-    },
 };
 
 pub type Result<T, E = HostsFileError> = std::result::Result<T, E>;
@@ -170,20 +166,26 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     }
 }
 
-/// Where the previous content is kept while the file is rewritten in place.
+/// Where the content of an in-place rewrite is published before it is applied.
+///
+/// The rewrite truncates the hosts file, so the new content is committed to
+/// this file first: a rewrite interrupted at any point is completed from it
+/// the next time the file is opened, rather than leaving the file truncated.
+/// It exists only while a rewrite is outstanding; an incomplete one is never
+/// visible because it is written to a temporary name and renamed into place.
 #[cfg(windows)]
-fn backup_path(path: &Path) -> PathBuf {
-    let mut backup = path.as_os_str().to_owned();
-    backup.push(".kftray-backup");
-    PathBuf::from(backup)
+fn pending_path(path: &Path) -> PathBuf {
+    let mut pending = path.as_os_str().to_owned();
+    pending.push(".kftray-pending");
+    PathBuf::from(pending)
 }
 
 /// Opens the hosts file read-only and takes its lock.
 ///
 /// The writer rewrites the file in place on Windows, so the locked handle
-/// stays the current file and no identity check is needed. A backup left by
-/// a rewrite that did not complete is restored here, under the lock, before
-/// anyone reads the truncated file.
+/// stays the current file and no identity check is needed. A rewrite that did
+/// not complete is completed here, under the lock, before anyone reads the
+/// file it left truncated.
 #[cfg(windows)]
 fn open_locked(path: &Path) -> Result<std::fs::File> {
     use crate::utils::config_dir::{
@@ -194,14 +196,14 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     let file = open_for_lock(path)?;
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
-    let backup = backup_path(path);
-    if backup.exists() {
+    let pending = pending_path(path);
+    if pending.exists() {
         log::warn!(
-            "Restoring the hosts file from {}: an earlier rewrite did not complete",
-            backup.display()
+            "Completing an interrupted rewrite of the hosts file from {}",
+            pending.display()
         );
-        std::fs::copy(&backup, path)?;
-        let _ = std::fs::remove_file(&backup);
+        std::fs::copy(&pending, path)?;
+        std::fs::remove_file(&pending)?;
     }
     Ok(file)
 }
@@ -696,36 +698,30 @@ impl<'a> AtomicFileWriter<'a> {
         }
     }
 
-    /// Written in place on Windows, behind a backup.
+    /// Written in place on Windows, after the content is committed.
     ///
     /// The lock lives on an open handle, and a handle opened by the standard
     /// library shares deletion, so a rename over the file would succeed and
     /// leave the lock on a retired file while the next writer locks the
     /// replacement. In place, the locked handle stays the current file. The
-    /// file is truncated before it is rewritten, so the previous content is
-    /// copied aside first and restored if the write does not complete; a copy
-    /// left behind by a crash is restored the next time the file is opened.
+    /// file is truncated before it is rewritten, so the new content is first
+    /// committed next to it, atomically, and the in-place write is repeated
+    /// from that copy if it does not complete. Retiring the copy is part of
+    /// the write: while it exists the next open applies it again, so a
+    /// failure to remove it is reported rather than left to resurface later.
     #[cfg(windows)]
     fn write_content(&self, content: &[u8]) -> Result<()> {
-        let backup = backup_path(self.target_path);
-        std::fs::copy(self.target_path, &backup)?;
-        match self.write_directly(content) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&backup);
-                Ok(())
-            }
-            Err(error) => {
-                if let Err(restore) = std::fs::copy(&backup, self.target_path) {
-                    log::error!(
-                        "Failed to restore the hosts file from {}: {restore}",
-                        backup.display()
-                    );
-                } else {
-                    let _ = std::fs::remove_file(&backup);
-                }
-                Err(error)
-            }
-        }
+        let pending = pending_path(self.target_path);
+        let staging = {
+            let mut staging = pending.as_os_str().to_owned();
+            staging.push(".tmp");
+            PathBuf::from(staging)
+        };
+        self.write_file(&staging, content)?;
+        std::fs::rename(&staging, &pending)?;
+        self.write_directly(content)?;
+        std::fs::remove_file(&pending)?;
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -749,8 +745,8 @@ impl<'a> AtomicFileWriter<'a> {
             HostsFileError::InvalidPath("Path has no parent directory".to_string())
         })?;
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
             .expect("System time is before Unix epoch")
             .as_millis();
 
@@ -773,12 +769,16 @@ impl<'a> AtomicFileWriter<'a> {
     }
 
     fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
-        OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(path)?
-            .write_all(content)?;
+            .open(path)?;
+        file.write_all(content)?;
+        // Durable before it is renamed into place or relied on for recovery:
+        // a copy that is published before its bytes reach the disk is what a
+        // crash would restore from.
+        file.sync_all()?;
         Ok(())
     }
 }

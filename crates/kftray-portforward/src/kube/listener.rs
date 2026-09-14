@@ -1038,6 +1038,7 @@ mod tests {
             crate::kube::proxy_recovery::ProxyType::Deployment,
             kftray_commons::utils::db_mode::DatabaseMode::Memory,
             false,
+            "http://127.0.0.1:1/".to_string(),
         ));
         let receiver = manager.subscribe_recovery_signals();
         crate::kube::proxy_recovery::RECOVERY_MANAGERS.insert(config_id, manager);

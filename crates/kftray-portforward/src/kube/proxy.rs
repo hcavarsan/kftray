@@ -514,6 +514,7 @@ async fn process_deployment_proxy(
             crate::kube::proxy_recovery::ProxyType::Deployment,
             options.mode,
             options.ssl_override,
+            options.destination.to_owned(),
         );
         Ok(response)
     }
@@ -687,6 +688,7 @@ async fn process_pod_proxy(
             crate::kube::proxy_recovery::ProxyType::BarePod,
             options.mode,
             options.ssl_override,
+            options.destination.to_owned(),
         );
         Ok(response)
     }

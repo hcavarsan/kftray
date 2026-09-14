@@ -775,24 +775,59 @@ pub async fn establish_expose_history_baseline(
     pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let baseline = expose_history_baseline_key(mode);
+    // One write transaction from the check to the marker: two processes
+    // sharing the file database can both initialise it, and a baseline taken
+    // by the second after the first finished would mark rows inserted in
+    // between, which do have a history, as ones that never had one. An
+    // immediate transaction takes the write lock up front, so the second
+    // initialiser sees the marker the first wrote.
     let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+    let outcome = take_expose_history_baseline(&mut conn, &baseline, mode).await;
+    let finish = if outcome.is_ok() {
+        "COMMIT"
+    } else {
+        "ROLLBACK"
+    };
+    sqlx::query(finish).execute(&mut *conn).await?;
+    outcome
+}
+
+async fn take_expose_history_baseline(
+    conn: &mut sqlx::SqliteConnection, baseline: &str, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    const UPSERT: &str = "INSERT INTO settings (key, value, updated_at) VALUES (?, '1', \
+                          CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = \
+                          excluded.value, updated_at = CURRENT_TIMESTAMP";
+
     let taken = sqlx::query("SELECT value FROM settings WHERE key = ?")
-        .bind(&baseline)
+        .bind(baseline)
         .fetch_optional(&mut *conn)
         .await?;
     if taken.is_some() {
         return Ok(());
     }
-    drop(conn);
-    let configs = crate::utils::config::read_configs_with_pool(pool).await?;
-    for config in configs {
+    let rows = sqlx::query("SELECT id, data FROM configs")
+        .fetch_all(&mut *conn)
+        .await?;
+    for row in rows {
+        let id: i64 = row.try_get("id")?;
+        let data: String = row.try_get("data")?;
+        let Ok(config) = serde_json::from_str::<crate::models::config_model::Config>(&data) else {
+            continue;
+        };
         if config.workload_type.as_deref() != Some("expose") {
             continue;
         }
-        let Some(id) = config.id else { continue };
-        upsert_setting(pool, &expose_legacy_key(&id.to_string(), mode), "1").await?;
+        sqlx::query(UPSERT)
+            .bind(expose_legacy_key(&id.to_string(), mode))
+            .execute(&mut *conn)
+            .await?;
     }
-    upsert_setting(pool, &baseline, "1").await?;
+    sqlx::query(UPSERT)
+        .bind(baseline)
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 

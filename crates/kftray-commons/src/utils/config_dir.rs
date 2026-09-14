@@ -91,8 +91,13 @@ pub async fn owner_identity(mode: crate::utils::db_mode::DatabaseMode) -> Result
     Ok(match mode {
         crate::utils::db_mode::DatabaseMode::File => installation.to_owned(),
         crate::utils::db_mode::DatabaseMode::Memory => {
+            // The identity is a label value, so the whole derived form has to
+            // fit the 63-character limit; a long persisted id is shortened
+            // here only, leaving file-mode ownership as it was.
+            const SUFFIX_LEN: usize = "-m".len() + 6;
+            let base = &installation[..installation.len().min(63 - SUFFIX_LEN)];
             format!(
-                "{installation}-m{}",
+                "{base}-m{}",
                 MEMORY_DATABASE_IDENTITY
                     .get_or_init(|| uuid::Uuid::new_v4().simple().to_string()[..6].to_owned())
             )

@@ -238,15 +238,22 @@ impl PortForwardRunner {
         // stop left outstanding has to be retried before it exits. Both
         // interactive exits do this; without it a transient delete failure on
         // Ctrl+C leaks a relay Deployment with nothing left to remove it.
-        kftray_portforward::kube::reconcile_pending_cleanup(
+        let still_owed = kftray_portforward::kube::reconcile_pending_cleanup(
             mode,
             crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
         )
         .await;
+        if !still_owed.is_empty() {
+            eprintln!(
+                "Warning: cleanup for configuration(s) {still_owed:?} did not complete; they stay \
+                 marked running and are retried on the next stop"
+            );
+        }
 
         if let Err(error) =
             kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode(
                 mode,
+                &still_owed,
             )
             .await
         {

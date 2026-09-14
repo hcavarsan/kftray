@@ -91,6 +91,19 @@ impl DirectHostfileManager {
         .map_err(std::io::Error::other)
     }
 
+    /// Takes unmarked copies of `mappings` out of the shared section, when
+    /// this process can write the hosts file.
+    ///
+    /// An installation that never had the helper still has the aliases an
+    /// earlier version wrote into the shared section, with no owner to remove
+    /// them by. They are attributed the same way the verification attributes
+    /// them, by the aliases the configuration says are its own.
+    pub fn prune_legacy_entries(
+        &self, mappings: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
+        edit_hosts(|document| prune_legacy(document, mappings)).map_err(std::io::Error::other)
+    }
+
     /// The privileged helper's section, as it is on disk.
     ///
     /// This manager cannot write there, so a caller that needs verified

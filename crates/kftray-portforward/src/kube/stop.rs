@@ -361,7 +361,7 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
         if PENDING_CLEANUP.get(&id).is_some_and(|entries| {
             entries
                 .iter()
-                .any(|entry| same_resources(&entry.config, &config))
+                .any(|entry| entry.describes(&config, destination.as_deref()))
         }) {
             continue;
         }
@@ -1132,7 +1132,14 @@ pub fn cancel_all_startups() {
 /// A create whose request was abandoned may only appear after the first
 /// deletion pass, and the registry lives in memory: leaving it unreconciled at
 /// exit leaves the resource running with nothing tracking it.
-pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
+/// Retries every recorded cleanup until the registry is empty or the deadline
+/// passes.
+///
+/// Returns the configurations whose cleanup did not complete. Their targets
+/// with cluster resources still owed are persisted before returning, so a
+/// later run restores and retries them: the registry that tracks them lives
+/// only in this process, and the caller is about to exit it.
+pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -> Vec<i64> {
     const RETRY_DELAY: Duration = Duration::from_secs(2);
 
     // Creates abandoned by an earlier run are picked up here: nothing else in
@@ -1157,7 +1164,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
             if crate::kube::start::OUTSTANDING_ALLOCATIONS.load(std::sync::atomic::Ordering::SeqCst)
                 == 0
             {
-                return;
+                return Vec::new();
             }
             // One clock read for both the deadline test and the sleep: with two
             // reads the deadline can pass in between, and the subtraction that
@@ -1165,7 +1172,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
                 warn!("Giving up on address allocations that never finished");
 
-                return;
+                return unresolved_cleanup(mode).await;
             };
             tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
             continue;
@@ -1175,7 +1182,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
                 "Giving up on cleanup for {} configuration(s) that never settled: {ids:?}",
                 ids.len()
             );
-            return;
+            return unresolved_cleanup(mode).await;
         };
         tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
         for id in ids {
@@ -1184,18 +1191,62 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
             // has to hold for the whole pass, not just between passes. A
             // dropped attempt keeps its target recorded.
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
-                return;
+                return unresolved_cleanup(mode).await;
             };
             match tokio::time::timeout(remaining, stop_config(id, None, mode)).await {
                 Ok(Err(error)) => warn!("Cleanup for config {id} is still incomplete: {error}"),
                 Err(_) => {
                     warn!("Cleanup for config {id} did not finish within the shutdown budget");
-                    return;
+                    return unresolved_cleanup(mode).await;
                 }
                 Ok(Ok(_)) => {}
             }
         }
     }
+}
+
+/// What reconciliation is leaving behind, persisted so the next run can pick
+/// it up. A registered process counts too: its resources were never visited.
+async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
+    let mut ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+    ids.extend(
+        CHILD_PROCESSES
+            .iter()
+            .map(|entry| *entry.key())
+            .filter(|id| !PENDING_CLEANUP.contains_key(id)),
+    );
+    for entry in CHILD_PROCESSES.iter() {
+        if let Some(config) = entry.value().config() {
+            record_target(
+                *entry.key(),
+                config.clone(),
+                None,
+                true,
+                true,
+                entry.value().destination(),
+            );
+        }
+    }
+    for entry in PENDING_CLEANUP.iter() {
+        for target in entry.value().iter().filter(|target| target.cluster) {
+            if let Err(error) = persist_uncertain_target(
+                *entry.key(),
+                &target.config,
+                target.destination.as_deref(),
+                mode,
+            )
+            .await
+            {
+                warn!(
+                    "Failed to persist the outstanding cleanup for config {}: {error}",
+                    entry.key()
+                );
+            }
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 pub async fn stop_all_port_forward_with_mode(
@@ -1406,10 +1457,14 @@ async fn stop_config(
                 .and_then(|target| target.destination.clone())
                 .or(retained_destination),
         }];
+        // Every other record for this id is a target of its own, including
+        // one for the same rows on another server: a configuration started
+        // against one server, left with a failed cleanup, and redirected to
+        // another owes both.
         targets.extend(
             pending
                 .iter()
-                .filter(|target| !target.describes(config, None))
+                .filter(|target| !recorded.is_some_and(|primary| std::ptr::eq(primary, *target)))
                 .cloned(),
         );
 
@@ -1866,6 +1921,69 @@ mod tests {
 
         drop(first);
         assert!(!address_release_in_flight(address));
+    }
+
+    #[tokio::test]
+    async fn the_same_rows_on_two_servers_are_two_cleanup_targets() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            id: Some(730_411),
+            namespace: "shared".to_string(),
+            service: Some("relay".to_string()),
+            context: Some("missing-context".to_string()),
+            kubeconfig: Some("/nonexistent/kubeconfig".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+        let id = config.id.unwrap();
+        PENDING_CLEANUP.remove(&id);
+
+        // The same configuration created resources on server A, whose cleanup
+        // failed, and then, after its context was redirected, on server B.
+        record_target(
+            id,
+            config.clone(),
+            None,
+            true,
+            false,
+            Some("https://a".into()),
+        );
+        record_target(
+            id,
+            config.clone(),
+            None,
+            true,
+            false,
+            Some("https://b".into()),
+        );
+        assert_eq!(pending_cleanup_targets(id).len(), 2);
+
+        // A stop whose running process was built against B must still visit A.
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(config.clone());
+        CHILD_PROCESSES.insert(id, process);
+        let error = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .expect_err("an unreachable cluster must fail the stop");
+        assert_eq!(
+            error.matches("Failed to create Kubernetes client").count(),
+            2,
+            "one pass must attempt both servers: {error}"
+        );
+
+        let mut destinations: Vec<Option<String>> = pending_cleanup_targets(id)
+            .into_iter()
+            .map(|target| target.destination)
+            .collect();
+        destinations.sort();
+        assert_eq!(
+            destinations,
+            vec![Some("https://a".to_string()), Some("https://b".to_string())],
+            "both servers stay owed after a failed pass"
+        );
+        PENDING_CLEANUP.remove(&id);
     }
 
     #[tokio::test]

@@ -408,6 +408,10 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
         warn!("Address {address} was reassigned while it was being claimed; moving to {confirmed}");
         drop(claim);
         address = confirmed;
+        // The alias the helper just handed out is bound whether or not another
+        // attempt follows; an exhausted sequence must release this one, not
+        // the one it replaced.
+        acquired = Some(address.clone());
     }
     Allocated {
         result: Err(format!(
