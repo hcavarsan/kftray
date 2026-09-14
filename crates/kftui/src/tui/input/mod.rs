@@ -438,9 +438,17 @@ impl App {
         }
     }
 
-    /// Everything queued for the error popup that was never shown.
+    /// Everything queued for the error popup that was never shown, and the
+    /// popup that was open when the loop ended: Ctrl+C works while it shows,
+    /// so a failure the user was still reading, or had not scrolled to, would
+    /// otherwise vanish with the alternate screen.
     pub fn take_shutdown_reports(&mut self) -> Vec<String> {
         let mut reports = Vec::new();
+        if self.state == AppState::ShowErrorPopup
+            && let Some(shown) = self.error_message.take()
+        {
+            reports.push(shown);
+        }
         if let Some(receiver) = &mut self.error_receiver {
             while let Ok(report) = receiver.try_recv() {
                 reports.push(report);

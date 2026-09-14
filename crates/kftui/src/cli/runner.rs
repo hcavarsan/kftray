@@ -140,7 +140,7 @@ impl PortForwardRunner {
         }
 
         Self::print_active_configurations(&started_configs);
-        Self::wait_for_shutdown_signal(&started_configs, mode).await;
+        Self::wait_for_shutdown_signal(&started_configs, mode).await?;
         Ok(())
     }
 
@@ -189,18 +189,24 @@ impl PortForwardRunner {
         println!("Keeping port forwards active");
     }
 
-    async fn wait_for_shutdown_signal(configs: &[Config], mode: DatabaseMode) {
+    /// Fails when teardown left something behind, so a script running this
+    /// mode can tell an incomplete shutdown from a clean one by the exit code.
+    async fn wait_for_shutdown_signal(
+        configs: &[Config], mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let ctrl_c = signal::ctrl_c();
 
         tokio::select! {
             _ = ctrl_c => {
                 println!("\nStopping port forwards");
-                Self::stop_all_port_forwards(configs, mode).await;
+                Self::stop_all_port_forwards(configs, mode).await
             }
         }
     }
 
-    async fn stop_all_port_forwards(configs: &[Config], mode: DatabaseMode) {
+    async fn stop_all_port_forwards(
+        configs: &[Config], mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut tasks = stream::iter(
             configs
                 .iter()
@@ -225,13 +231,15 @@ impl PortForwardRunner {
 
         println!("Stopped {stopped_count} port forward(s)");
 
+        let mut failures: Vec<String> = Vec::new();
         if stop_errors.is_empty() {
             println!("Port forwards stopped");
         } else {
             eprintln!("Warning: Some port forwards failed to stop properly");
-            for error in stop_errors {
+            for error in &stop_errors {
                 eprintln!("  {error}");
             }
+            failures.extend(stop_errors);
         }
 
         // The cleanup registry lives only in this process, so anything a failed
@@ -244,10 +252,12 @@ impl PortForwardRunner {
         )
         .await;
         if !still_owed.is_empty() {
-            eprintln!(
-                "Warning: cleanup for configuration(s) {still_owed:?} did not complete; they stay \
-                 marked running and are retried on the next stop"
+            let message = format!(
+                "cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
+                 running and are retried on the next stop"
             );
+            eprintln!("Warning: {message}");
+            failures.push(message);
         }
 
         if let Err(error) =
@@ -258,6 +268,13 @@ impl PortForwardRunner {
             .await
         {
             eprintln!("Warning: failed to clean up configuration states: {error}");
+            failures.push(format!("failed to clean up configuration states: {error}"));
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("shutdown left work outstanding: {}", failures.join("; ")).into())
         }
     }
 

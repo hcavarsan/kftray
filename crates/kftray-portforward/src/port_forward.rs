@@ -240,7 +240,8 @@ impl PortForward {
         if let Some(addr) = &self.local_address
             && crate::network_utils::is_custom_loopback_address(addr)
             && let Err(error) =
-                crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id)).await
+                crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id), mode)
+                    .await
         {
             errors.push(error);
         }

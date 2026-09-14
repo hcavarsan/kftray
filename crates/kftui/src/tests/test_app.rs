@@ -344,6 +344,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_error_still_on_screen_reaches_the_shutdown_report() {
+        let mut app = App::new(test_logger_state());
+        // The failure has already moved from the channel into the popup.
+        app.error_message = Some("Config 4: the relay never became ready".to_string());
+        app.state = AppState::ShowErrorPopup;
+
+        let reports = app.take_shutdown_reports();
+
+        assert_eq!(
+            reports,
+            vec!["Config 4: the relay never became ready".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn a_saturated_start_batch_does_not_block_stopping() {
         let mut app = App::new(test_logger_state());
         let slots = app.forwarding_slots.available_permits() as u32;

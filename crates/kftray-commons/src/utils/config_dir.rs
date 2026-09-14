@@ -228,6 +228,71 @@ pub fn with_file_lock<T>(
     result
 }
 
+/// A lock on one configuration, shared by every process that uses the file
+/// database.
+///
+/// Starting, stopping and deleting a configuration each hold it for the
+/// whole operation, so a delete in one process cannot slip between another
+/// process's existence check and its registration, and two processes cannot
+/// tear down or set up the same row at once. The in-memory database belongs
+/// to one process, whose own lifecycle lock is enough; no file lock is taken
+/// for it. Released when dropped, and by the kernel if the process dies.
+pub struct ConfigLock {
+    file: fs::File,
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        unlock(&self.file, LockRegion::Whole);
+    }
+}
+
+/// Takes the cross-process lock for `id`, waiting up to `budget` for another
+/// process to finish with it.
+///
+/// The wait runs on a blocking thread: it can sleep for the whole budget, and
+/// a runtime worker parked on it would stall unrelated forwards.
+pub async fn lock_config(
+    id: i64, mode: crate::utils::db_mode::DatabaseMode, budget: std::time::Duration,
+) -> Result<Option<ConfigLock>, String> {
+    if mode != crate::utils::db_mode::DatabaseMode::File {
+        return Ok(None);
+    }
+    let lock_path = get_config_dir()?
+        .join("locks")
+        .join(format!("config-{id}.lock"));
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Failed to create the lock directory at {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| {
+                format!(
+                    "Failed to open the lock at {}: {error}",
+                    lock_path.display()
+                )
+            })?;
+        wait_for_exclusive_lock_within(
+            &file,
+            LockRegion::Whole,
+            &format!("config {id} (another kftray process may be working on it)"),
+            budget,
+        )?;
+        Ok(Some(ConfigLock { file }))
+    })
+    .await
+    .map_err(|error| format!("Lock task failed: {error}"))?
+}
+
 /// Which bytes of a file an exclusive lock covers.
 ///
 /// Advisory `flock` locks cover the whole file whatever the region. Windows
@@ -247,10 +312,16 @@ pub(crate) enum LockRegion {
 pub(crate) fn wait_for_exclusive_lock(
     file: &fs::File, region: LockRegion, what: &str,
 ) -> Result<(), String> {
-    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+    wait_for_exclusive_lock_within(file, region, what, std::time::Duration::from_secs(15))
+}
+
+/// Waits for an exclusive lock on `file`, up to `budget`.
+pub(crate) fn wait_for_exclusive_lock_within(
+    file: &fs::File, region: LockRegion, what: &str, budget: std::time::Duration,
+) -> Result<(), String> {
     const POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
-    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    let deadline = std::time::Instant::now() + budget;
     loop {
         match try_lock_exclusive(file, region) {
             Ok(true) => return Ok(()),

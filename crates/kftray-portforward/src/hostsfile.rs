@@ -87,13 +87,37 @@ impl HostfileManager {
             }
         }
 
+        // What the direct section says these ids map to, read before anything
+        // removes it: it is the only on-disk record of an alias the row no
+        // longer names (edited, then restarted), and the unmarked copy of
+        // that alias in the helper's section can only be found through it.
+        let mut recorded: Vec<(String, HostEntry)> = DirectHostfileManager::direct_section()?
+            .into_iter()
+            .filter_map(|entry| {
+                let owner = entry.owner?;
+                if !ids.contains(&owner.as_str()) {
+                    return None;
+                }
+                Some((
+                    owner,
+                    HostEntry {
+                        ip: entry.ip,
+                        hostname: entry.hostname,
+                    },
+                ))
+            })
+            .collect();
+        recorded.extend(expected.iter().cloned());
+        let expected = recorded;
+
         // The helper only writes its own section, so an alias that fell back
         // to the direct manager earlier is still in the direct one. Removed
         // synchronously with its failure reported: nothing else records it.
         // An application that wrote there and has since lost write access
         // (the helper installed after the fact, permissions tightened) asks
         // the helper to take its owned lines out, and then verifies they are
-        // gone, since the helper does not prune legacy copies for it.
+        // gone, since the helper does not prune legacy copies for it: those
+        // are attributed below through the mappings read above.
         match self.direct_manager.remove_host_entries(ids, protected) {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -142,7 +166,7 @@ impl HostfileManager {
                 .handed_to_helper
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()),
-            expected,
+            &expected,
             protected,
         );
         // A helper from before this change answers before it writes: it queues

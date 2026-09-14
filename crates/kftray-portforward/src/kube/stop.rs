@@ -114,6 +114,11 @@ lazy_static::lazy_static! {
     static ref PENDING_CLEANUP: dashmap::DashMap<i64, Vec<PendingTarget>> = dashmap::DashMap::new();
 }
 
+/// How long a lifecycle operation waits for another process to finish with
+/// the same configuration before giving up. A start elsewhere can hold it
+/// through relay readiness, so this is generous without being unbounded.
+pub(crate) const SHARED_LOCK_WAIT: Duration = Duration::from_secs(30);
+
 /// How long an abandoned create is assumed to still be in flight.
 ///
 /// Tied to the create deadline: once the client has stopped waiting, the API
@@ -589,12 +594,28 @@ impl ClusterResourceGuard {
         // Expired or not: an expired window is not a settled create, it is
         // one whose confirmation passes have not run yet, and this attempt's
         // outcome does not stand in for them.
-        let inherited_until = PENDING_CLEANUP.get(&id).and_then(|entries| {
+        let mut inherited_until = PENDING_CLEANUP.get(&id).and_then(|entries| {
             entries
                 .iter()
                 .find(|entry| entry.is_exactly(&config, destination.as_deref()))
                 .and_then(|entry| entry.uncertain_until)
         });
+        // The record may exist only on disk: a process that abandoned this
+        // create and exited left it there, and this one has not restored it
+        // yet. It is inherited the way a restore would take it, with a fresh
+        // window, so a rejected retry cannot delete it as its own.
+        if inherited_until.is_none()
+            && kftray_commons::utils::settings::get_setting_with_mode(
+                &uncertain_create_key(id, &config, destination.as_deref(), mode),
+                mode,
+            )
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            inherited_until = Some(Instant::now() + UNCERTAIN_CREATE_WINDOW);
+        }
         record_target(
             id,
             config.clone(),
@@ -822,7 +843,7 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
     let mut cleanup = LocalCleanup::default();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
-        && let Err(error) = release_address_with_fallback(address, Some(id)).await
+        && let Err(error) = release_address_with_fallback(address, Some(id), mode).await
     {
         cleanup.deferred.push(error);
     }
@@ -947,9 +968,26 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
 /// user interaction. Address cleanup is not critical - addresses will be freed
 /// on system restart.
 pub(crate) async fn release_address_with_fallback(
-    address: &str, owner: Option<i64>,
+    address: &str, owner: Option<i64>, mode: DatabaseMode,
 ) -> Result<(), String> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
+
+    // Another process sharing the file database can hold the same address:
+    // the helper hands one address to every configuration of a service,
+    // whichever process asks, and a release removes the alias and the pool
+    // reservation for all of them. Its persisted state is the only signal
+    // this process has, read before the release is marked. A process that
+    // starts between this read and the release can still lose the address;
+    // closing that window needs the helper to count owners itself.
+    if mode == DatabaseMode::File
+        && forwarding_configs(mode)
+            .await
+            .iter()
+            .any(|config| config.id != owner && config.local_address.as_deref() == Some(address))
+    {
+        log::debug!("Skipping the release of {address}: a forward elsewhere is using it");
+        return Ok(());
+    }
 
     // Marked for as long as a release may still be executing, and owned by the
     // work itself rather than by this future: timing out the wait does not stop
@@ -1208,6 +1246,15 @@ where
     for id in &ordered {
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(*id).await;
         guards.push(lock.lock_owned().await);
+    }
+    // Then the cross-process locks, in the same order: a start in another
+    // process holds its row's lock from its existence check through its
+    // registration, so a delete cannot slip in between.
+    let mut shared = Vec::with_capacity(ordered.len());
+    for id in &ordered {
+        shared.push(
+            kftray_commons::utils::config_dir::lock_config(*id, mode, SHARED_LOCK_WAIT).await?,
+        );
     }
 
     // Creates persisted by an earlier run are only in the database until a
@@ -1545,6 +1592,8 @@ async fn stop_config(
         Ok(guard) => (guard, false),
         Err(_) => (lock.lock().await, true),
     };
+    let _shared =
+        kftray_commons::utils::config_dir::lock_config(id, mode, SHARED_LOCK_WAIT).await?;
     if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
         startup.cancel();
     }
@@ -1555,8 +1604,10 @@ async fn stop_config(
     // its listener cannot be reached from here, and deleting its relay and
     // releasing its address would break a forward that keeps running with
     // nothing in the database saying so.
+    // A pending record is not ownership either: a durable record of a
+    // running exposure is restored into this process's registry by a stop
+    // here, while the tunnel it describes runs in the other process.
     if !CHILD_PROCESSES.contains_key(&id)
-        && !PENDING_CLEANUP.contains_key(&id)
         && let Some(owner) = running_in_another_process(id, mode).await
     {
         return Err(format!(
@@ -2154,6 +2205,56 @@ mod tests {
                 .any(|target| target.cluster && target.is_uncertain(Instant::now())),
             "confirming the retry must not clear inherited uncertainty: {targets:?}"
         );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_retry_after_a_restart_keeps_the_persisted_unanswered_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            id: Some(730_413),
+            namespace: "shared".to_string(),
+            service: Some("relay".to_string()),
+            workload_type: Some("expose".to_string()),
+            ..Config::default()
+        };
+        let id = config.id.unwrap();
+        let destination = Some("https://a".to_string());
+        PENDING_CLEANUP.remove(&id);
+
+        // An earlier run abandoned the create and exited: only the durable
+        // record remains.
+        persist_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let key = uncertain_create_key(id, &config, destination.as_deref(), DatabaseMode::Memory);
+
+        ClusterResourceGuard::arm(
+            id,
+            config.clone(),
+            destination.clone(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap()
+        .disarm()
+        .await;
+
+        let stored =
+            kftray_commons::utils::settings::get_setting_with_mode(&key, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        assert!(
+            stored.is_some(),
+            "the retry's rejection must not erase the earlier run's unanswered create"
+        );
+        assert!(
+            pending_cleanup_targets(id)
+                .iter()
+                .any(|target| target.cluster && target.uncertain_until.is_some()),
+            "the obligation is tracked in memory as unanswered"
+        );
+        forget_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory).await;
         PENDING_CLEANUP.remove(&id);
     }
 

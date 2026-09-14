@@ -207,15 +207,25 @@ pub fn process_is_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Foundation::{
+            CloseHandle,
+            STILL_ACTIVE,
+        };
         use windows::Win32::System::Threading::{
+            GetExitCodeProcess,
             OpenProcess,
             PROCESS_QUERY_LIMITED_INFORMATION,
         };
         match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
             Ok(handle) => {
+                // Opening succeeds for a process that has exited while some
+                // other handle to it is still held; only its exit code says
+                // whether it is running.
+                let mut code = 0u32;
+                let running = unsafe { GetExitCodeProcess(handle, &mut code) }.is_ok()
+                    && code == STILL_ACTIVE.0 as u32;
                 let _ = unsafe { CloseHandle(handle) };
-                true
+                running
             }
             // Access denied still means the process exists.
             Err(error) => error.code() == windows::Win32::Foundation::E_ACCESSDENIED,

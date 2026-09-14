@@ -206,7 +206,7 @@ async fn rollback_local_resources(
     // would take the alias from under a forward that is still using it.
     if crate::network_utils::is_custom_loopback_address(address)
         && let Err(error) =
-            crate::kube::stop::release_address_with_fallback(address, config.id).await
+            crate::kube::stop::release_address_with_fallback(address, config.id, mode).await
     {
         errors.push(error);
     }
@@ -395,7 +395,7 @@ async fn allocate_local_address_owned(
             // why no owner is exempted: a retry of this same configuration is
             // not what this task is rolling back.
             warn!("Releasing address {address} allocated after startup was abandoned");
-            match crate::kube::stop::release_address_with_fallback(address, None).await {
+            match crate::kube::stop::release_address_with_fallback(address, None, mode).await {
                 Ok(()) => {
                     if let Some(id) = held.id {
                         crate::kube::stop::settle_local_cleanup(id, &held);
@@ -506,7 +506,7 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
             // claim, and the fallback's fresh alias is not wanted.
             Ok((other, _)) => {
                 if other != address {
-                    release_stray_alias(owned, &other).await;
+                    release_stray_alias(owned, &other, mode).await;
                 }
                 owned.local_address = Some(address.clone());
                 return Allocated {
@@ -554,8 +554,9 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
 /// A release that fails leaves the alias bound with nothing else naming it,
 /// so it is recorded as this configuration's local obligation and a later
 /// stop retries it.
-async fn release_stray_alias(owned: &Config, address: &str) {
-    if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None).await {
+async fn release_stray_alias(owned: &Config, address: &str, mode: DatabaseMode) {
+    if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None, mode).await
+    {
         warn!("Failed to release stray alias {address}: {error}");
         if let Some(id) = owned.id {
             let mut stray = owned.clone();
@@ -1147,7 +1148,18 @@ pub(super) async fn start_config_locked(
         match guard {
             None => Err(format!("Startup cancelled for config {id}")),
             Some(guard) => {
-                let result = if cancellation.is_some_and(CancellationToken::is_cancelled) {
+                // Held through registration and the state write, so a delete
+                // or stop in another process sees either the row untouched or
+                // the forward fully registered, never the gap between.
+                let shared = kftray_commons::utils::config_dir::lock_config(
+                    id,
+                    mode,
+                    crate::kube::stop::SHARED_LOCK_WAIT,
+                )
+                .await;
+                let result = if let Err(error) = &shared {
+                    Err(error.clone())
+                } else if cancellation.is_some_and(CancellationToken::is_cancelled) {
                     Err(format!("Startup cancelled for config {id}"))
                 } else if CHILD_PROCESSES.contains_key(&id) {
                     Err(format!(
@@ -1174,6 +1186,7 @@ pub(super) async fn start_config_locked(
                     )
                     .await
                 };
+                drop(shared);
                 drop(guard);
                 result
             }

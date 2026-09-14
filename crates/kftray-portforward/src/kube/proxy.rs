@@ -216,7 +216,15 @@ async fn process_single_proxy_config(
         }
         guard = lock.lock() => guard,
     };
-    let result = if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
+    let shared = kftray_commons::utils::config_dir::lock_config(
+        id,
+        mode,
+        crate::kube::stop::SHARED_LOCK_WAIT,
+    )
+    .await;
+    let result = if let Err(error) = &shared {
+        Err(error.clone())
+    } else if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
         Err(format!(
             "Port forwarding is already running for config {id}"
         ))
@@ -231,6 +239,7 @@ async fn process_single_proxy_config(
     } else {
         start_proxy_config(config, mode, ssl_override, &startup.cancellation, None).await
     };
+    drop(shared);
     drop(guard);
     drop(lock);
     result
