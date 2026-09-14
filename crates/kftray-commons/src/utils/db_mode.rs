@@ -57,6 +57,9 @@ impl DatabaseManager {
                 crate::utils::migration::migrate_configs(Some(&pool))
                     .await
                     .map_err(|e| e.to_string())?;
+                crate::utils::settings::establish_expose_history_baseline(&pool, mode)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 {
                     let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();

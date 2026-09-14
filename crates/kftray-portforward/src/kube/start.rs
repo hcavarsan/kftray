@@ -334,6 +334,14 @@ async fn allocate_and_claim(
                 None,
             );
         };
+        // Only the helper's reservation can be taken away by a sibling's
+        // release, and only the helper answers the same address for the same
+        // service. The fallback allocator has no reservation to confirm and
+        // would create a fresh alias on every call, so an address it produced
+        // is claimed and kept as it is.
+        if !helper_available() {
+            return (Ok(address), Some(claim));
+        }
         let confirmed = match allocate_local_address_for_config(owned, mode).await {
             Ok(confirmed) => confirmed,
             Err(error) => return (Err(error), None),
@@ -429,6 +437,13 @@ async fn allocate_local_address_for_config(
             }
         }
     }
+}
+
+/// Whether the privileged helper can be reached right now.
+fn helper_available() -> bool {
+    kftray_helper::communication::get_default_socket_path()
+        .map(|socket_path| kftray_helper::client::socket_comm::is_socket_available(&socket_path))
+        .unwrap_or(false)
 }
 
 fn try_allocate_address(service_name: &str) -> Result<String, String> {

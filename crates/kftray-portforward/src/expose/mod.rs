@@ -100,8 +100,13 @@ pub(crate) async fn start_single_expose(
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
-    let mut guard =
-        crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone(), mode).await?;
+    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(
+        config_id,
+        config.clone(),
+        Some(connection.cluster_url.to_string()),
+        mode,
+    )
+    .await?;
     let created = match cancellation {
         Some(token) => tokio::select! {
             biased;

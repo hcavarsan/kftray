@@ -23,7 +23,14 @@ pub struct HostfileManager {
 
 impl HostfileManager {
     pub fn new() -> Self {
-        let helper_client = HostfileHelperClient::new().ok();
+        // Unit tests never talk to an installed helper: its state is shared
+        // with every other test and with the machine, so a test's outcome
+        // would depend on what happens to be in the system hosts file.
+        let helper_client = if cfg!(test) {
+            None
+        } else {
+            HostfileHelperClient::new().ok()
+        };
         Self {
             helper_client,
             direct_manager: DirectHostfileManager::new(),
@@ -184,10 +191,13 @@ pub fn config_host_entries(
         return Vec::new();
     };
     let mut entries = Vec::new();
+    let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    // The same default creation uses: a configuration with no address gets
+    // its domain alias on 127.0.0.1, so that is the line to look for.
     if let Some(ip) = config
         .local_address
         .as_deref()
-        .and_then(|address| address.parse().ok())
+        .map_or(Some(loopback), |address| address.parse().ok())
     {
         entries.push((
             id.to_string(),
@@ -197,7 +207,6 @@ pub fn config_host_entries(
             },
         ));
     }
-    let loopback = "127.0.0.1".parse().unwrap();
     entries.push((
         format!("{id}-https"),
         HostEntry {
@@ -313,10 +322,13 @@ mod tests {
     }
 
     #[test]
-    fn test_manager_creation() {
+    fn unit_tests_never_reach_an_installed_helper() {
         init();
         let manager = HostfileManager::new();
 
-        assert!(manager.helper_client.is_some() || manager.helper_client.is_none());
+        assert!(
+            manager.helper_client.is_none(),
+            "a test outcome must not depend on the machine's helper or hosts file"
+        );
     }
 }

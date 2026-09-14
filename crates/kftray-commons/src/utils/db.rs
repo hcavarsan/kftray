@@ -19,6 +19,7 @@ use crate::config_dir::{
     get_db_file_path,
     get_pod_manifest_path,
 };
+use crate::utils::db_mode::DatabaseMode;
 use crate::utils::manifests::{
     create_expose_deployment_manifest,
     create_expose_ingress_manifest,
@@ -65,6 +66,9 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     create_db_table(&pool).await?;
+    crate::utils::settings::establish_expose_history_baseline(&pool, DatabaseMode::File)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }

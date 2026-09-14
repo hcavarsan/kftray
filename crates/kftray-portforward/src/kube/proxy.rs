@@ -151,6 +151,8 @@ struct ProxyStartOptions<'a> {
     mode: DatabaseMode,
     ssl_override: bool,
     cancellation: &'a CancellationToken,
+    /// The API server the client resolved to, kept with the cleanup record.
+    destination: &'a str,
 }
 
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
@@ -252,6 +254,7 @@ pub(super) async fn start_proxy_config(
         })?,
     };
     let client = shared_client.client.clone();
+    let destination = shared_client.cluster_url.to_string();
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -305,6 +308,7 @@ pub(super) async fn start_proxy_config(
         mode,
         ssl_override,
         cancellation,
+        destination: &destination,
     };
 
     if use_deployment {
@@ -466,6 +470,7 @@ async fn process_deployment_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
+        Some(options.destination.to_owned()),
         options.mode,
     )
     .await?;
@@ -657,6 +662,7 @@ async fn process_pod_proxy(
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
+        Some(options.destination.to_owned()),
         options.mode,
     )
     .await?;

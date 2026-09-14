@@ -882,84 +882,77 @@ async fn forget_ingress_history(config_id: &str, location: &ExposeLocation, mode
 /// Key under which a configuration is marked as possibly having exposed
 /// itself publicly before ingress history was recorded.
 fn legacy_exposure_key(config_id: &str, mode: DatabaseMode) -> String {
-    format!("expose_legacy_possible:{}:{config_id}", mode_scope(mode))
+    kftray_commons::utils::settings::expose_legacy_key(config_id, mode)
 }
 
 fn mode_scope(mode: DatabaseMode) -> &'static str {
-    match mode {
-        DatabaseMode::File => "file",
-        DatabaseMode::Memory => "memory",
-    }
+    kftray_commons::utils::settings::mode_scope(mode)
 }
 
-const EXPOSE_HISTORY_BASELINE: &str = "expose_history_baseline";
-
-/// Marks every exposure that predates ingress history as one whose past
-/// cannot be reconstructed, once.
-///
-/// History is recorded before an ingress is created, so a configuration
-/// exposed publicly after this baseline always has a record. The ones from
-/// before it are the only ones for which a missing record proves nothing,
-/// and they are marked so that cleanup cannot infer absence for them from a
-/// refusal to list ingresses. The mark goes once a listing has verified that
-/// none exists.
+/// The baseline is taken when a database is initialised, before anything can
+/// be inserted into it. This is the fallback for a database opened by a path
+/// that skipped that, and it is a no-op everywhere else.
 async fn ensure_expose_history_baseline(mode: DatabaseMode) -> Result<(), String> {
-    use kftray_commons::utils::settings::{
-        get_setting_with_mode,
-        set_setting_with_mode,
-    };
+    let context = kftray_commons::utils::db_mode::DatabaseManager::get_context(mode).await?;
+    kftray_commons::utils::settings::establish_expose_history_baseline(&context.pool, mode)
+        .await
+        .map_err(|error| error.to_string())
+}
 
-    let baseline = format!("{EXPOSE_HISTORY_BASELINE}:{}", mode_scope(mode));
-    if get_setting_with_mode(&baseline, mode)
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some()
-    {
-        return Ok(());
-    }
-    let configs = kftray_commons::utils::config::get_configs_with_mode(mode).await?;
-    for config in configs {
-        if config.workload_type.as_deref() != Some("expose") {
-            continue;
-        }
-        let Some(id) = config.id else { continue };
-        set_setting_with_mode(&legacy_exposure_key(&id.to_string(), mode), "1", mode)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    set_setting_with_mode(&baseline, "1", mode)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(())
+/// Key under which a destination is recorded as verified free of any ingress
+/// a pre-history exposure could have left.
+fn legacy_verified_key(config_id: &str, location: &ExposeLocation, mode: DatabaseMode) -> String {
+    let scope = crate::kube::stop::stable_digest(&[
+        Some(location.cluster.as_str()),
+        Some(location.namespace.as_str()),
+    ]);
+    format!(
+        "expose_legacy_verified:{}:{config_id}:{scope:016x}",
+        mode_scope(mode)
+    )
 }
 
 /// Whether an exposure from before ingress history may still have an ingress
-/// nobody recorded. Unreadable state counts as possible.
-async fn legacy_exposure_possible(config_id: &str, mode: DatabaseMode) -> bool {
-    match kftray_commons::utils::settings::get_setting_with_mode(
-        &legacy_exposure_key(config_id, mode),
-        mode,
-    )
-    .await
-    {
+/// nobody recorded at this destination. Unreadable state counts as possible.
+///
+/// The doubt is about the configuration, the verification is about one
+/// destination: an exposure moved to another namespace clears nothing about
+/// the one it left, so each is verified on its own.
+async fn legacy_exposure_possible(
+    config_id: &str, location: &ExposeLocation, mode: DatabaseMode,
+) -> bool {
+    use kftray_commons::utils::settings::get_setting_with_mode;
+
+    let marked = match get_setting_with_mode(&legacy_exposure_key(config_id, mode), mode).await {
         Ok(value) => value.is_some(),
         Err(error) => {
             log::warn!("Could not read the exposure baseline for config {config_id}: {error}");
+            return true;
+        }
+    };
+    if !marked {
+        return false;
+    }
+    match get_setting_with_mode(&legacy_verified_key(config_id, location, mode), mode).await {
+        Ok(value) => value.is_none(),
+        Err(error) => {
+            log::warn!("Could not read the exposure verification for config {config_id}: {error}");
             true
         }
     }
 }
 
-/// A listing verified that no ingress is left, so the pre-history doubt about
-/// this configuration is settled for good.
-async fn forget_legacy_exposure(config_id: &str, mode: DatabaseMode) {
-    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
-        &legacy_exposure_key(config_id, mode),
+/// A listing verified that no ingress is left at this destination, so the
+/// pre-history doubt is settled there for good.
+async fn record_legacy_verified(config_id: &str, location: &ExposeLocation, mode: DatabaseMode) {
+    if let Err(error) = kftray_commons::utils::settings::set_setting_with_mode(
+        &legacy_verified_key(config_id, location, mode),
+        "1",
         mode,
     )
     .await
     {
-        log::debug!("Failed to clear the exposure baseline for config {config_id}: {error}");
+        log::debug!("Failed to record the exposure verification for config {config_id}: {error}");
     }
 }
 
@@ -990,7 +983,7 @@ pub async fn delete_expose_resources(
     ensure_expose_history_baseline(mode).await?;
     let ingress_possible = ingress_possible
         || ingress_was_created(config_id_label, location, mode).await
-        || legacy_exposure_possible(config_id_label, mode).await;
+        || legacy_exposure_possible(config_id_label, location, mode).await;
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
@@ -1068,7 +1061,7 @@ pub async fn delete_expose_resources(
     // Nothing is left, so the history that forced the ingress checks above has
     // served its purpose, and so has the doubt about what came before it.
     forget_ingress_history(config_id_label, location, mode).await;
-    forget_legacy_exposure(config_id_label, mode).await;
+    record_legacy_verified(config_id_label, location, mode).await;
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label
@@ -1478,11 +1471,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let _ = kftray_commons::utils::settings::delete_setting_with_mode(
-            &format!("{EXPOSE_HISTORY_BASELINE}:{}", mode_scope(mode)),
+        // The test database took its baseline when it was created, so this row
+        // is marked the way an upgrade marks a pre-existing exposure.
+        kftray_commons::utils::settings::set_setting_with_mode(
+            &legacy_exposure_key(&legacy.to_string(), mode),
+            "1",
             mode,
         )
-        .await;
+        .await
+        .unwrap();
 
         let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = kube::Client::new(mock_service, "default");
@@ -1503,6 +1500,70 @@ mod tests {
         .unwrap()
         .expect_err("a refusal to list ingresses cannot be read as absence for this exposure");
         assert!(error.contains("Cannot verify"), "{error}");
+
+        // Verified at one destination, the doubt is settled there and nowhere
+        // else: the same refusal passes in that namespace and still fails in
+        // another the exposure may have used before it moved.
+        let (allowing, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let allowing = kube::Client::new(allowing, "default");
+        let _permissive = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let mut handle = handle;
+            while let Some((_, send)) = handle.next_request().await {
+                send.send_response(
+                    Response::builder()
+                        .status(200)
+                        .body(Body::from(
+                            serde_json::to_vec(&serde_json::json!({"items":[]})).unwrap(),
+                        ))
+                        .unwrap(),
+                );
+            }
+        }));
+        let verified_ns =
+            ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "verified");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            delete_expose_resources(
+                allowing,
+                "verified",
+                &legacy.to_string(),
+                false,
+                &verified_ns,
+                mode,
+            ),
+        )
+        .await
+        .unwrap()
+        .expect("a successful listing verifies this destination");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            delete_expose_resources(
+                client.clone(),
+                "verified",
+                &legacy.to_string(),
+                false,
+                &verified_ns,
+                mode,
+            ),
+        )
+        .await
+        .unwrap()
+        .expect("a verified destination tolerates the refusal from then on");
+        let other_ns = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "other");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            delete_expose_resources(
+                client.clone(),
+                "other",
+                &legacy.to_string(),
+                false,
+                &other_ns,
+                mode,
+            ),
+        )
+        .await
+        .unwrap()
+        .expect_err("verification in one namespace says nothing about another");
 
         // A configuration created after the baseline has a record for every
         // ingress it ever made, so the same refusal is fine for it.

@@ -52,12 +52,18 @@ impl HostfileManager {
         // its own.
         let owned = SectionEntry {
             ip: entry.ip,
-            hostname: entry.hostname,
+            hostname: entry.hostname.clone(),
             owner: Some(id.clone()),
         };
         edit_hosts(|document| {
             document.reconcile_owners(KFTRAY_HOSTS_TAG, &[id.as_str()], &[owned])?;
-            Ok(())
+            // A copy of the same alias written by a version of this helper that
+            // did not mark its lines would stay behind when the owned line is
+            // removed, and keep resolving. It is migrated into the owned line
+            // now, in the same write.
+            document.retain(KFTRAY_HOSTS_TAG, |line| {
+                line.owner.is_some() || line.ip != entry.ip || line.hostname != entry.hostname
+            })
         })?;
         Ok(())
     }

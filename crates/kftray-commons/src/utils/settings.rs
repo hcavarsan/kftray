@@ -742,6 +742,60 @@ pub async fn get_app_settings_with_mode(
     Ok(AppSettings::from_settings_manager(&settings_map))
 }
 
+/// Scope prefix of a database mode inside a setting key.
+pub fn mode_scope(mode: DatabaseMode) -> &'static str {
+    match mode {
+        DatabaseMode::File => "file",
+        DatabaseMode::Memory => "memory",
+    }
+}
+
+/// Key under which an exposure is marked as one whose ingress history was
+/// never recorded, because it predates the recording.
+pub fn expose_legacy_key(config_id: &str, mode: DatabaseMode) -> String {
+    format!("expose_legacy_possible:{}:{config_id}", mode_scope(mode))
+}
+
+/// Key under which a database records that its baseline has been taken.
+pub fn expose_history_baseline_key(mode: DatabaseMode) -> String {
+    format!("expose_history_baseline:{}", mode_scope(mode))
+}
+
+/// Marks every exposure that predates ingress history as one whose past cannot
+/// be reconstructed, once per database.
+///
+/// History is recorded before an ingress is created, so a configuration
+/// exposed publicly after this baseline always has a record. The ones from
+/// before it are the only ones for which a missing record proves nothing, and
+/// they are marked so cleanup cannot infer absence for them from a refusal to
+/// list ingresses. Taken at database initialisation, before any configuration
+/// can be inserted, so a row created afterwards is never mistaken for one
+/// from before.
+pub async fn establish_expose_history_baseline(
+    pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let baseline = expose_history_baseline_key(mode);
+    let mut conn = pool.acquire().await?;
+    let taken = sqlx::query("SELECT value FROM settings WHERE key = ?")
+        .bind(&baseline)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if taken.is_some() {
+        return Ok(());
+    }
+    drop(conn);
+    let configs = crate::utils::config::read_configs_with_pool(pool).await?;
+    for config in configs {
+        if config.workload_type.as_deref() != Some("expose") {
+            continue;
+        }
+        let Some(id) = config.id else { continue };
+        upsert_setting(pool, &expose_legacy_key(&id.to_string(), mode), "1").await?;
+    }
+    upsert_setting(pool, &baseline, "1").await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;

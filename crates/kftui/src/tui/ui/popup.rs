@@ -708,7 +708,10 @@ pub fn render_error_popup(
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
 
     let remaining = hidden - offset;
+    // Below the width the wrapper handles, only the dismissal keyword fits,
+    // and an unwrapped long hint would be clipped along with it.
     let hint = match (compact, remaining > 0, hidden > 0) {
+        _ if hint_width < 10 => "<Enter>".to_string(),
         (true, true, _) => format!("<Enter> closes, {remaining} more, <Up>/<Down>"),
         (true, false, true) => "<Enter> closes, <Up> scrolls back".to_string(),
         (true, false, false) => "<Enter> closes".to_string(),

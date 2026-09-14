@@ -353,17 +353,12 @@ async fn list_services_in_namespace(
             }
             let config_id = service.labels().get("config_id").map(|s| s.to_string());
 
-            if let Some(ref id) = config_id {
-                if !deployment_config_ids.contains(id) {
-                    return None;
-                }
-            } else {
-                return None;
-            }
-
+            // A service whose deployment is gone is exactly what a partial
+            // cleanup leaves behind, and what a start then refuses to run next
+            // to. It is listed as orphaned so it can be removed from here.
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id))
+                .map(|id| !config_ids.contains(id) || !deployment_config_ids.contains(id))
                 .unwrap_or(true);
 
             let age = service
@@ -414,17 +409,12 @@ async fn list_ingresses_in_namespace(
             }
             let config_id = ingress.labels().get("config_id").map(|s| s.to_string());
 
-            if let Some(ref id) = config_id {
-                if !deployment_config_ids.contains(id) {
-                    return None;
-                }
-            } else {
-                return None;
-            }
-
+            // An ingress without its deployment is the most important leftover
+            // of all: it still routes a public hostname. Listed as orphaned so
+            // it can be removed from here.
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id))
+                .map(|id| !config_ids.contains(id) || !deployment_config_ids.contains(id))
                 .unwrap_or(true);
 
             let age = ingress

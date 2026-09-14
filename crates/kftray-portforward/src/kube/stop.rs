@@ -67,6 +67,11 @@ struct PendingTarget {
     cluster: bool,
     /// Loopback address and hosts entries still to release.
     local: bool,
+    /// The API server the resources were created on, as resolved at the time.
+    /// The row names a context and a kubeconfig, and both can come to mean
+    /// another server before cleanup runs; cleanup must not delete on that one
+    /// and call the obligation settled.
+    destination: Option<String>,
 }
 
 impl PendingTarget {
@@ -112,6 +117,11 @@ fn same_resources(left: &Config, right: &Config) -> bool {
         // A public exposure owns an Ingress that a private one never creates,
         // and cleanup treats a missing ingress permission differently for each.
         && left.exposure_type == right.exposure_type
+        // The alias names the hosts entries cleanup has to verify gone. Two
+        // snapshots that differ only there describe different lines, and
+        // merging them would let a restart under the new alias discard the
+        // record of the old one while it still resolves.
+        && left.alias == right.alias
 }
 
 /// Digest that survives compiler and platform changes.
@@ -154,12 +164,22 @@ const UNCERTAIN_CREATE_PREFIX: &str = "uncertain_create:";
 /// abandoned on its deadline can still be admitted, and a cleanup pass that
 /// listed nothing would forget a relay that appears seconds later. The record
 /// survives a restart, which is when nothing else does.
+/// What a durable cleanup record holds.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedTarget {
+    config: Config,
+    #[serde(default)]
+    destination: Option<String>,
+}
+
 async fn persist_uncertain_target(
-    id: i64, config: &Config, mode: DatabaseMode,
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
-    let serialized = serde_json::to_string(config).map_err(|error| {
-        format!("Failed to describe the cleanup metadata for config {id}: {error}")
-    })?;
+    let serialized = serde_json::to_string(&PersistedTarget {
+        config: config.clone(),
+        destination: destination.map(ToOwned::to_owned),
+    })
+    .map_err(|error| format!("Failed to describe the cleanup metadata for config {id}: {error}"))?;
     let key = uncertain_create_key(id, config, mode);
     // A fresh attempt starts its confirmation sequence from scratch: a count
     // left by an earlier attempt at the same destination would let this one be
@@ -257,6 +277,7 @@ fn uncertain_create_key(id: i64, config: &Config, mode: DatabaseMode) -> String 
         config.service.as_deref(),
         config.local_address.as_deref(),
         config.domain_enabled.map(|on| if on { "1" } else { "0" }),
+        config.alias.as_deref(),
         config.exposure_type.as_deref(),
     ]);
 
@@ -300,8 +321,14 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
         else {
             continue;
         };
-        let Ok(config) = serde_json::from_str::<Config>(&value) else {
-            continue;
+        // Records from before the destination was kept hold a bare
+        // configuration; they are read as one with no destination.
+        let (config, destination) = match serde_json::from_str::<PersistedTarget>(&value) {
+            Ok(persisted) => (persisted.config, persisted.destination),
+            Err(_) => match serde_json::from_str::<Config>(&value) {
+                Ok(config) => (config, None),
+                Err(_) => continue,
+            },
         };
         // Restored with a fresh window: a process can restart seconds after
         // abandoning a create, and elapsed wall time is no more proof here than
@@ -320,6 +347,7 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
             Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
             true,
             false,
+            destination,
         );
     }
 }
@@ -328,11 +356,12 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
 /// finish, so stop-all still reaches them. Dropping a startup future (the
 /// terminal's shutdown drain, an aborted task) skips its own rollback.
 pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
-    record_target(id, config, None, true, true);
+    record_target(id, config, None, true, true, None);
 }
 
 fn record_target(
     id: i64, config: Config, uncertain_until: Option<Instant>, cluster: bool, local: bool,
+    destination: Option<String>,
 ) {
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
     if let Some(existing) = entries
@@ -345,6 +374,9 @@ fn record_target(
         };
         existing.cluster |= cluster;
         existing.local |= local;
+        if existing.destination.is_none() {
+            existing.destination = destination;
+        }
         return;
     }
     entries.push(PendingTarget {
@@ -352,6 +384,7 @@ fn record_target(
         uncertain_until,
         cluster,
         local,
+        destination,
     });
 }
 
@@ -394,6 +427,7 @@ fn set_target_obligations(
         uncertain_until,
         cluster,
         local,
+        destination: None,
     });
 }
 
@@ -417,6 +451,7 @@ pub(crate) struct ClusterResourceGuard {
     /// Database the configuration id belongs to. Ids are only meaningful within
     /// one, so the durable record is scoped by it.
     mode: DatabaseMode,
+    destination: Option<String>,
 }
 
 impl ClusterResourceGuard {
@@ -425,21 +460,25 @@ impl ClusterResourceGuard {
     ///
     /// A failed write is an error rather than a warning: the caller would
     /// otherwise create a resource that a restart could never find.
-    pub(crate) async fn arm(id: i64, config: Config, mode: DatabaseMode) -> Result<Self, String> {
+    pub(crate) async fn arm(
+        id: i64, config: Config, destination: Option<String>, mode: DatabaseMode,
+    ) -> Result<Self, String> {
         record_target(
             id,
             config.clone(),
             Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
             true,
             false,
+            destination.clone(),
         );
-        persist_uncertain_target(id, &config, mode).await?;
+        persist_uncertain_target(id, &config, destination.as_deref(), mode).await?;
 
         Ok(Self {
             id,
             config: Some(config),
             confirmed: false,
             mode,
+            destination,
         })
     }
 
@@ -490,7 +529,14 @@ impl Drop for ClusterResourceGuard {
             // it was abandoned. A confirmed outcome stays settled.
             let uncertain_until =
                 (!self.confirmed).then(|| Instant::now() + UNCERTAIN_CREATE_WINDOW);
-            record_target(self.id, config, uncertain_until, true, false);
+            record_target(
+                self.id,
+                config,
+                uncertain_until,
+                true,
+                false,
+                self.destination.take(),
+            );
         }
     }
 }
@@ -655,13 +701,13 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
 /// per-request timeout, so a server that accepts a request and never answers
 /// would hold the lifecycle lock for as long as an interactive stop waits.
 async fn delete_cluster_resources(
-    id: i64, config: &Config, mode: DatabaseMode,
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
     const CLUSTER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(45);
 
     match timeout(
         CLUSTER_CLEANUP_TIMEOUT,
-        delete_cluster_resources_inner(id, config, mode),
+        delete_cluster_resources_inner(id, config, destination, mode),
     )
     .await
     {
@@ -674,7 +720,7 @@ async fn delete_cluster_resources(
 }
 
 async fn delete_cluster_resources_inner(
-    id: i64, config: &Config, mode: DatabaseMode,
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
     if config.workload_type.as_deref() != Some("expose")
         && config.workload_type.as_deref() != Some("proxy")
@@ -687,6 +733,20 @@ async fn delete_cluster_resources_inner(
         .get_connection(key)
         .await
         .map_err(|error| error.to_string())?;
+    // The context and kubeconfig can resolve to another server than the one
+    // the resources were created on: a kubeconfig rewritten in place, or a
+    // current-context that moved. Deleting there finds nothing and would
+    // settle an obligation whose resources still run elsewhere.
+    if let Some(recorded) = destination
+        && recorded != connection.cluster_url
+    {
+        return Err(format!(
+            "The resources for config {id} were created on {recorded}, but the context now \
+             resolves to {}; restore that kubeconfig or remove them from the server resources \
+             screen",
+            connection.cluster_url
+        ));
+    }
     if config.workload_type.as_deref() == Some("expose") {
         crate::expose::kubernetes::delete_expose_resources(
             connection.client.clone(),
@@ -1305,6 +1365,7 @@ async fn stop_config(
             // configuration is still forwarding and owes both.
             cluster: recorded.is_none_or(|target| target.cluster),
             local: recorded.is_none_or(|target| target.local),
+            destination: recorded.and_then(|target| target.destination.clone()),
         }];
         targets.extend(
             pending
@@ -1324,6 +1385,7 @@ async fn stop_config(
                 target.uncertain_until,
                 target.cluster,
                 target.local,
+                target.destination.clone(),
             );
         }
 
@@ -1339,7 +1401,8 @@ async fn stop_config(
         let now = Instant::now();
         for target in &targets {
             let cluster = if target.cluster {
-                delete_cluster_resources(id, &target.config, mode).await
+                delete_cluster_resources(id, &target.config, target.destination.as_deref(), mode)
+                    .await
             } else {
                 Ok(())
             };
@@ -1677,7 +1740,7 @@ mod tests {
         // A failed startup owes a loopback release.
         record_pending_cleanup(id, config.clone());
         // The same resources are then armed and deleted as a cluster target.
-        ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
+        ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
             .await
             .unwrap()
             .disarm()
@@ -1821,7 +1884,7 @@ mod tests {
         // What a stop leaves behind when releasing the loopback alias needs a
         // privileged helper this machine does not have: the forward is gone,
         // only the local cleanup is still owed.
-        record_target(id, config, None, false, true);
+        record_target(id, config, None, false, true, None);
 
         let deleted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let marker = std::sync::Arc::clone(&deleted);
@@ -1882,7 +1945,7 @@ mod tests {
             workload_type: Some("service".to_string()),
             ..Config::default()
         };
-        let guard = ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
+        let guard = ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
             .await
             .unwrap();
         // Dropped without `confirm`: the create request was abandoned, so the
@@ -1899,7 +1962,7 @@ mod tests {
         );
 
         // Once the create's outcome is observed, the same pass settles it.
-        let mut guard = ClusterResourceGuard::arm(id, config.clone(), DatabaseMode::Memory)
+        let mut guard = ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
             .await
             .unwrap();
         guard.confirm();

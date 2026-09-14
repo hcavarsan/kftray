@@ -166,6 +166,27 @@ mod tests {
     }
 
     #[test]
+    fn a_narrow_popup_keeps_the_dismissal_key_visible() {
+        // Sixteen columns leave an interior the wrapper gives up on.
+        let backend = TestBackend::new(16, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 16, 8);
+                let _ = render_error_popup(frame, "boom", area, 0, 0);
+            })
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("<Enter>"), "{screen}");
+    }
+
+    #[test]
     fn a_popup_with_one_interior_row_shows_only_the_way_out() {
         // A three-row area leaves one row inside the borders.
         let backend = TestBackend::new(60, 3);

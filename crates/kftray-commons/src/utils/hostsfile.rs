@@ -172,8 +172,8 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
 
 /// Opens the hosts file read-only and takes its lock.
 ///
-/// A file with an open handle cannot be renamed over on Windows, so the
-/// writer rewrites it in place and the locked handle stays the current file.
+/// The writer rewrites the file in place on Windows, so the locked handle
+/// stays the current file and no identity check is needed.
 #[cfg(windows)]
 fn open_locked(path: &Path) -> Result<std::fs::File> {
     use crate::utils::config_dir::{
@@ -664,6 +664,16 @@ impl<'a> AtomicFileWriter<'a> {
     }
 
     fn write_content(&self, content: &[u8]) -> Result<()> {
+        // Written in place on Windows. The lock lives on an open handle, and a
+        // handle opened by the standard library shares deletion, so a rename
+        // over the file would succeed and leave the lock on a retired file
+        // while the next writer locks the replacement. In place, the locked
+        // handle stays the current file.
+        #[cfg(windows)]
+        {
+            return self.write_directly(content);
+        }
+        #[cfg(not(windows))]
         match self.try_atomic_write(content) {
             Ok(()) => {
                 log::debug!("Successfully wrote hosts file using atomic write");
