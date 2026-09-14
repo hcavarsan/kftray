@@ -25,6 +25,7 @@ pub use listener::{
 pub use proxy::{
     deploy_and_forward_pod,
     deploy_and_forward_pod_with_mode,
+    proxy_resource_prefix,
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };

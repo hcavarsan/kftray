@@ -569,13 +569,18 @@ pub(super) async fn start_config_cancellable(
             }
         };
         if cancelled() {
-            if let Some(address) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(address)
-            {
-                let _ = crate::kube::stop::release_address_with_fallback(address, config.id).await;
-            }
-
-            return Err(format!("Startup cancelled for config {config_id}"));
+            // Routed through the same rollback as every other exit: the
+            // allocation task recorded a cleanup obligation for this address,
+            // and releasing it here without withdrawing that record leaves a
+            // pending target every later stop re-releases and never settles.
+            let reason = format!("Startup cancelled for config {config_id}");
+            return Err(match &config.local_address {
+                Some(address) => {
+                    let address = address.clone();
+                    rollback_local_resources(&config, &address, reason).await
+                }
+                None => reason,
+            });
         }
     }
     // Checked for the address actually chosen, whichever path chose it: a

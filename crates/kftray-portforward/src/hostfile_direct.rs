@@ -202,14 +202,13 @@ impl DirectHostfileManager {
             .map_err(std::io::Error::other)
     }
 
-    /// Whether the managed section holds lines no writer claimed.
+    /// The privileged helper's section, as it is on disk.
     ///
-    /// They belong to the privileged helper, so this manager cannot take them
-    /// off disk and a caller that needs verified cleanup has to know.
-    pub fn has_unowned_entries() -> std::io::Result<bool> {
+    /// This manager cannot write there, so a caller that needs verified
+    /// cleanup has to look at what is actually left.
+    pub fn helper_section() -> std::io::Result<Vec<kftray_commons::hostsfile::SectionEntry>> {
         HostsFile::new(KFTRAY_HOSTS_TAG)
             .read_section()
-            .map(|entries| !entries.is_empty())
             .map_err(std::io::Error::other)
     }
 

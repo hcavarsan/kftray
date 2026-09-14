@@ -207,7 +207,8 @@ async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) 
         }
         return true;
     }
-    if let Err(error) = kftray_commons::utils::settings::set_setting(&key, &seen.to_string()).await
+    if let Err(error) =
+        kftray_commons::utils::settings::set_setting_with_mode(&key, &seen.to_string(), mode).await
     {
         warn!("Failed to record a cleanup confirmation for config {id}: {error}");
     }
@@ -276,16 +277,18 @@ fn uncertain_create_key(id: i64, config: &Config, mode: DatabaseMode) -> String 
 
 /// Reloads creates persisted by an earlier run into the cleanup registry.
 async fn restore_uncertain_targets(mode: DatabaseMode) {
-    let stored =
-        match kftray_commons::utils::settings::get_settings_with_prefix(UNCERTAIN_CREATE_PREFIX)
-            .await
-        {
-            Ok(stored) => stored,
-            Err(error) => {
-                warn!("Failed to read unsettled creates: {error}");
-                return;
-            }
-        };
+    let stored = match kftray_commons::utils::settings::get_settings_with_prefix_and_mode(
+        UNCERTAIN_CREATE_PREFIX,
+        mode,
+    )
+    .await
+    {
+        Ok(stored) => stored,
+        Err(error) => {
+            warn!("Failed to read unsettled creates: {error}");
+            return;
+        }
+    };
     let scope = match mode {
         DatabaseMode::File => "file:",
         DatabaseMode::Memory => "memory:",
@@ -1010,13 +1013,21 @@ where
         guards.push(lock.lock_owned().await);
     }
 
+    // A pending record alone is not evidence the forward is live. Local
+    // cleanup that needs the privileged helper can be permanently unsatisfiable
+    // on this machine, and its record would then block deleting a row that is
+    // already stopped, with no action the user could take to clear it. Only a
+    // cluster obligation blocks: those name resources the deleted row is the
+    // last description of.
     let active: Vec<i64> = ordered
         .iter()
         .copied()
         .filter(|id| {
             CHILD_PROCESSES.contains_key(id)
                 || crate::kube::proxy::STARTING_PROXIES.contains_key(id)
-                || PENDING_CLEANUP.contains_key(id)
+                || PENDING_CLEANUP
+                    .get(id)
+                    .is_some_and(|entries| entries.iter().any(|entry| entry.cluster))
         })
         .collect();
     if !active.is_empty() {
@@ -1358,8 +1369,14 @@ async fn stop_config(
             // confirmations complete, whatever the local cleanup did: the list
             // that came back empty is not proof, and dropping the obligation
             // here would stop any later pass from looking again.
+            // Charged only by a pass that actually completed a listing after
+            // the window expired: one whose delete failed, or that ran while
+            // the outcome could still change, observed nothing and must not
+            // count towards the evidence that nothing was created.
             let unconfirmed = unanswered.contains(&target.config)
-                && !confirm_uncertain_target(id, &target.config, mode).await;
+                && (cluster.is_err()
+                    || uncertain
+                    || !confirm_uncertain_target(id, &target.config, mode).await);
             set_target_obligations(
                 id,
                 &target.config,
@@ -1763,6 +1780,39 @@ mod tests {
             responses.iter().any(|response| response.id == Some(id)),
             "stop-all must retry a configuration whose cleanup never finished"
         );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn an_unremovable_alias_does_not_block_deleting_a_stopped_config() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_131;
+        let config = Config {
+            id: Some(id),
+            namespace: "default".to_string(),
+            local_address: Some("127.0.0.99".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            ..Config::default()
+        };
+        // What a stop leaves behind when releasing the loopback alias needs a
+        // privileged helper this machine does not have: the forward is gone,
+        // only the local cleanup is still owed.
+        record_target(id, config, None, false, true);
+
+        let deleted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = std::sync::Arc::clone(&deleted);
+        delete_configs_if_idle(&[id], || async move {
+            marker.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        })
+        .await
+        .expect("a stopped configuration must be deletable");
+        assert!(
+            deleted.load(std::sync::atomic::Ordering::Relaxed),
+            "deletion must run: nothing about this configuration is still forwarding"
+        );
+
         PENDING_CLEANUP.remove(&id);
     }
 

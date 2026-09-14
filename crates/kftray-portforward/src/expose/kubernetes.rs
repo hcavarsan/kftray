@@ -5,7 +5,7 @@ use std::time::{
     UNIX_EPOCH,
 };
 
-use futures::TryStreamExt;
+use futures::StreamExt;
 use k8s_openapi::api::{
     apps::v1::Deployment,
     core::v1::{
@@ -602,18 +602,26 @@ async fn wait_for_pod_ready(
     client: &Client, namespace: &str, config_id: &str,
 ) -> Result<String, String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    // Backed off and retried rather than propagated: every `watcher::Error` is
+    // recoverable and leaves the stream usable, so an idle connection reset or
+    // a resource-version expiry would otherwise fail a startup the watch
+    // recovers from on its own. The timeout below stays the only way out.
     let watcher = kube_runtime::watcher(
         pods,
         kube_runtime::watcher::Config::default().labels(&expose_owner_selector(config_id).await?),
     )
+    .default_backoff()
     .applied_objects();
     futures::pin_mut!(watcher);
     tokio::time::timeout(Duration::from_secs(120), async {
-        while let Some(pod) = watcher
-            .try_next()
-            .await
-            .map_err(|error| error.to_string())?
-        {
+        while let Some(event) = watcher.next().await {
+            let pod = match event {
+                Ok(pod) => pod,
+                Err(error) => {
+                    debug!("Retrying the relay pod watch: {error}");
+                    continue;
+                }
+            };
             if pod.metadata.deletion_timestamp.is_none()
                 && pod.status.as_ref().is_some_and(|status| {
                     status.phase.as_deref() == Some("Running")
@@ -977,9 +985,11 @@ pub async fn delete_expose_resources(
     }
     match ingresses.list(&unlabelled).await {
         Ok(list) => leftovers.extend(named_items(&list, "ingress")),
-        // A private exposure never creates an ingress and its role may not
-        // allow listing them, so a refusal is not evidence of leftovers.
-        Err(kube::Error::Api(response)) if response.code == 403 && !ingress_possible => {}
+        // A private exposure never creates an ingress, its role may not allow
+        // listing them, and a cluster may not serve the API at all, so neither
+        // refusal is evidence of leftovers.
+        Err(kube::Error::Api(response))
+            if matches!(response.code, 403 | 404) && !ingress_possible => {}
         Err(error) => errors.push(format!(
             "Failed to list earlier exposure ingresses: {error}"
         )),

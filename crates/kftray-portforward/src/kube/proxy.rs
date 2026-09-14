@@ -108,7 +108,7 @@ impl Drop for PendingStart {
 /// full name is also used as an `app` label value, which Kubernetes caps at 63
 /// characters and restricts to ASCII, so a long or non-ASCII username would
 /// make every create request fail.
-pub(crate) fn proxy_resource_prefix() -> String {
+pub fn proxy_resource_prefix() -> String {
     let username: String = whoami::username()
         .unwrap_or_else(|_| "unknown".to_string())
         .to_lowercase()

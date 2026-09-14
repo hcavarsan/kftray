@@ -215,7 +215,11 @@ impl HostfileManager {
 
         for (id, entry) in &entries_snapshot {
             debug!("Adding entry for ID {id} to hosts file: {entry:?}");
-            hosts_file.add_entry(entry.ip, &entry.hostname);
+            // Marked with the configuration it belongs to: an unattributable
+            // line cannot be told apart from another writer's, so a caller
+            // verifying one removal would have to treat every line as possibly
+            // its own.
+            hosts_file.add_owned_entry(entry.ip, &entry.hostname, id);
         }
 
         match hosts_file.write() {

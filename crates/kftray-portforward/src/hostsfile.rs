@@ -14,6 +14,10 @@ static HOSTFILE_MANAGER: LazyLock<HostfileManager> = LazyLock::new(HostfileManag
 pub struct HostfileManager {
     helper_client: Option<HostfileHelperClient>,
     direct_manager: DirectHostfileManager,
+    /// Mappings handed to the privileged helper in this run, by configuration
+    /// id. The helper marks the lines it writes, but a line left by a version
+    /// that did not is only attributable through what was asked for.
+    handed_to_helper: std::sync::Mutex<std::collections::HashMap<String, HostEntry>>,
 }
 
 impl HostfileManager {
@@ -22,6 +26,7 @@ impl HostfileManager {
         Self {
             helper_client,
             direct_manager: DirectHostfileManager::new(),
+            handed_to_helper: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -32,6 +37,10 @@ impl HostfileManager {
             match helper.add_host_entry(id.clone(), entry.clone()) {
                 Ok(_) => {
                     debug!("Successfully added host entry via helper for ID: {id}");
+                    self.handed_to_helper
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(id, entry);
                     return Ok(());
                 }
                 Err(e) => {
@@ -97,11 +106,38 @@ impl HostfileManager {
         if let Some(error) = helper_error {
             return Err(std::io::Error::other(error));
         }
-        if self.helper_client.is_some() && DirectHostfileManager::has_unowned_entries()? {
+        if self.helper_client.is_none() {
+            return Ok(());
+        }
+        // Scoped to the ids in hand. A line belonging to some other
+        // configuration says nothing about these, and treating the section as
+        // one indivisible thing would fail every stop for as long as any alias
+        // the helper cannot currently remove sits there.
+        let handed = self
+            .handed_to_helper
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stranded: Vec<&str> = unresolved
+            .iter()
+            .copied()
+            .filter(|id| {
+                DirectHostfileManager::helper_section()
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|entry| match &entry.owner {
+                        Some(owner) => owner == id,
+                        // Written by a version that did not mark its lines: it
+                        // is this id's only if that is what was asked for.
+                        None => handed.get(*id).is_some_and(|handed| {
+                            handed.ip == entry.ip && handed.hostname == entry.hostname
+                        }),
+                    })
+            })
+            .collect();
+        if !stranded.is_empty() {
             return Err(std::io::Error::other(format!(
-                "Host entries for {} may still be on disk: they carry no owner and the helper is \
-                 unavailable",
-                unresolved.join(", ")
+                "Host entries for {} are still on disk and only the helper can remove them",
+                stranded.join(", ")
             )));
         }
 

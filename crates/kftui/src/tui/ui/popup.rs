@@ -676,15 +676,28 @@ pub fn render_error_popup(
     // A batch reports one message per failed configuration, so the content can
     // be taller than the popup. Without scrolling the later failures are
     // clipped, and dismissing the popup would discard them unseen.
-    let visible = usize::from(popup_area.height).saturating_sub(4).max(1);
+    //
+    // The hint is measured before the content is budgeted: the popup does not
+    // wrap, so a hint that needs two rows would otherwise push itself past the
+    // bottom border and lose the part saying how to dismiss it.
+    let hint_width = content_width.saturating_sub(4);
+    let hint_rows = |text: &str| wrap_text_simple(text, hint_width).len();
+    let widest_hint = hint_rows(&format!(
+        "{} more line(s) — <Up>/<Down> to scroll, <Enter> to close",
+        lines.len()
+    ))
+    .max(hint_rows(
+        "End of message — <Up> to scroll back, <Enter> to close",
+    ))
+    .max(hint_rows("Press <Enter> to close"));
+    let visible = usize::from(popup_area.height)
+        .saturating_sub(3 + widest_hint)
+        .max(1);
     let hidden = lines.len().saturating_sub(visible);
     let offset = scroll.min(hidden);
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
 
     lines.push("".into());
-    // Wrapped like the content above: the popup has no wrapping of its own, so
-    // a hint wider than the inner area is cut off, and the part that gets cut
-    // is the one saying how to dismiss it.
     let remaining = hidden - offset;
     let hint = if remaining > 0 {
         format!("{remaining} more line(s) — <Up>/<Down> to scroll, <Enter> to close")
@@ -693,7 +706,7 @@ pub fn render_error_popup(
     } else {
         "Press <Enter> to close".to_string()
     };
-    for line in wrap_text_simple(&hint, content_width.saturating_sub(4)) {
+    for line in wrap_text_simple(&hint, hint_width) {
         lines.push(Line::from(vec![format!("  {line}").fg(SUBTEXT0).italic()]));
     }
 

@@ -233,6 +233,25 @@ impl PortForwardRunner {
                 eprintln!("  {error}");
             }
         }
+
+        // The cleanup registry lives only in this process, so anything a failed
+        // stop left outstanding has to be retried before it exits. Both
+        // interactive exits do this; without it a transient delete failure on
+        // Ctrl+C leaks a relay Deployment with nothing left to remove it.
+        kftray_portforward::kube::reconcile_pending_cleanup(
+            mode,
+            crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
+        )
+        .await;
+
+        if let Err(error) =
+            kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode(
+                mode,
+            )
+            .await
+        {
+            eprintln!("Warning: failed to clean up configuration states: {error}");
+        }
     }
 
     async fn stop_single_port_forward(

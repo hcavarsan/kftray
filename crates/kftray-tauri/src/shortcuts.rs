@@ -224,7 +224,10 @@ impl ActionHandler for StartAllPortForwardAction {
             return Ok(());
         }
 
-        let configs_count = configs_to_start.len();
+        // Counted from what actually started, not from what was attempted: a
+        // batch where every config failed used to be announced as a success.
+        let mut started = 0usize;
+        let mut failures: Vec<String> = Vec::new();
 
         for config in configs_to_start {
             let result = if config.workload_type.as_deref() == Some("service")
@@ -239,12 +242,16 @@ impl ActionHandler for StartAllPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = start_error(result) {
-                error!(
-                    "Failed to start port forward for config {}: {}",
-                    config.id.unwrap_or(0),
-                    e
-                );
+            match start_error(result) {
+                Ok(()) => started += 1,
+                Err(e) => {
+                    error!(
+                        "Failed to start port forward for config {}: {}",
+                        config.id.unwrap_or(0),
+                        e
+                    );
+                    failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
+                }
             }
         }
 
@@ -254,15 +261,26 @@ impl ActionHandler for StartAllPortForwardAction {
             .builder()
             .title("Port Forward")
             .body(format!(
-                "Started {} port forward{}",
-                configs_count,
-                if configs_count == 1 { "" } else { "s" }
+                "Started {} port forward{}{}",
+                started,
+                if started == 1 { "" } else { "s" },
+                if failures.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} failed", failures.len())
+                }
             ))
             .show();
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
+                format!("Failed to start: {}", failures.join("; ")),
+            ))
+        }
     }
 
     fn action_type(&self) -> &str {
@@ -418,7 +436,10 @@ impl ActionHandler for StartPortForwardAction {
             return Ok(());
         }
 
-        let configs_count = configs_to_start.len();
+        // Counted from what actually started, not from what was attempted: a
+        // batch where every config failed used to be announced as a success.
+        let mut started = 0usize;
+        let mut failures: Vec<String> = Vec::new();
 
         for config in configs_to_start {
             let result = if config.workload_type.as_deref() == Some("service")
@@ -433,12 +454,16 @@ impl ActionHandler for StartPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = start_error(result) {
-                error!(
-                    "Failed to start port forward for config {}: {}",
-                    config.id.unwrap_or(0),
-                    e
-                );
+            match start_error(result) {
+                Ok(()) => started += 1,
+                Err(e) => {
+                    error!(
+                        "Failed to start port forward for config {}: {}",
+                        config.id.unwrap_or(0),
+                        e
+                    );
+                    failures.push(format!("{}: {e}", config.id.unwrap_or(0)));
+                }
             }
         }
 
@@ -448,15 +473,26 @@ impl ActionHandler for StartPortForwardAction {
             .builder()
             .title("Port Forward")
             .body(format!(
-                "Started {} selected port forward{}",
-                configs_count,
-                if configs_count == 1 { "" } else { "s" }
+                "Started {} selected port forward{}{}",
+                started,
+                if started == 1 { "" } else { "s" },
+                if failures.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} failed", failures.len())
+                }
             ))
             .show();
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
+                format!("Failed to start: {}", failures.join("; ")),
+            ))
+        }
     }
 
     fn action_type(&self) -> &str {

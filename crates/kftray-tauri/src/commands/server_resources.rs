@@ -172,7 +172,10 @@ async fn list_pods_in_namespace(
         .await
         .map_err(|e| format!("Failed to list pods: {e}"))?;
 
-    let user_prefix_forward = format!("kftray-forward-{}", username);
+    // Taken from the function that builds the names, not rebuilt here: the
+    // proxy prefix truncates and drops non-ASCII to keep the value valid as a
+    // label, so a second copy of the rule silently stops matching.
+    let user_prefix_forward = kftray_portforward::kube::proxy_resource_prefix();
     let user_prefix_expose = format!("kftray-expose-{}", username);
 
     Ok(pods
@@ -225,19 +228,25 @@ async fn list_deployments_in_namespace(
     client: &Client, namespace: &str, username: &str, config_ids: &[String],
 ) -> Result<Vec<ServerResource>, String> {
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
-    let lp = ListParams::default().labels("app=kftray-expose");
 
+    // Unfiltered by label: a relay Deployment carries its own hashed name as
+    // `app`, not a shared value, so listing only `app=kftray-expose` hid every
+    // proxy relay from the screen that exists to remove them by hand.
     let deployments = deployments_api
-        .list(&lp)
+        .list(&ListParams::default())
         .await
         .map_err(|e| format!("Failed to list deployments: {e}"))?;
 
-    let user_prefix = format!("kftray-expose-{}-", username);
+    let expose_prefix = format!("kftray-expose-{}-", username);
+    let forward_prefix = kftray_portforward::kube::proxy_resource_prefix();
 
     Ok(deployments
         .items
         .into_iter()
-        .filter(|deployment| deployment.name_any().starts_with(&user_prefix))
+        .filter(|deployment| {
+            let name = deployment.name_any();
+            name.starts_with(&expose_prefix) || name.starts_with(&forward_prefix)
+        })
         .map(|deployment| {
             let config_id = deployment.labels().get("config_id").map(|s| s.to_string());
 
