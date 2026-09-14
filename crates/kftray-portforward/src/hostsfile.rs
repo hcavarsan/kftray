@@ -124,8 +124,16 @@ impl HostfileManager {
                 let Some(helper) = self.helper() else {
                     return Err(error);
                 };
+                // The direct lines and the legacy copies they attribute go in
+                // one request: the lines are the only record of those copies,
+                // and a failure between two requests would lose it.
+                let legacy: Vec<HostEntry> = expected
+                    .iter()
+                    .filter(|(_, entry)| !protected.contains(entry))
+                    .map(|(_, entry)| entry.clone())
+                    .collect();
                 helper
-                    .remove_direct_owned_entries(ids)
+                    .remove_direct_owned_entries(ids, legacy)
                     .map_err(|helper_error| {
                         std::io::Error::other(format!(
                             "{error}; the helper could not remove them either: {helper_error}"

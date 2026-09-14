@@ -228,6 +228,10 @@ async fn process_single_proxy_config(
         Err(format!(
             "Port forwarding is already running for config {id}"
         ))
+    } else if let Some(owner) = crate::kube::stop::running_in_another_process(id, mode).await {
+        Err(format!(
+            "Config {id} is being forwarded by another kftray process ({owner})"
+        ))
     } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
         .await
         .is_err()

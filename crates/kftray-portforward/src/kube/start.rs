@@ -1046,9 +1046,19 @@ pub(super) async fn start_config_cancellable(
                 .await);
             }
 
+            // The snapshot goes first: what this forward holds is written
+            // before anything says it is running, so another process never
+            // reads a running row with no record of its resources.
+            let recorded =
+                kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode)
+                    .await;
             let config_state = ConfigState::new(config_id, true);
-            if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
+            if let Err(error) = match recorded {
+                Ok(()) => update_config_state_with_mode(&config_state, mode).await,
+                Err(error) => Err(error),
+            } {
                 handle.cleanup_and_abort().await;
+                kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
                 return Err(rollback_startup(&port_forward, config, error, mode).await);
             }
 
@@ -1164,6 +1174,15 @@ pub(super) async fn start_config_locked(
                 } else if CHILD_PROCESSES.contains_key(&id) {
                     Err(format!(
                         "Port forwarding is already running for config {id}"
+                    ))
+                } else if let Some(owner) =
+                    crate::kube::stop::running_in_another_process(id, mode).await
+                {
+                    // Checked under the shared lock: a second process starting
+                    // the same row would otherwise overwrite the recorded owner
+                    // while the first listener keeps running.
+                    Err(format!(
+                        "Config {id} is being forwarded by another kftray process ({owner})"
                     ))
                 } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
                     .await

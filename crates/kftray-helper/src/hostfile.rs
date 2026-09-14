@@ -105,13 +105,17 @@ impl HostfileManager {
 
     /// Removes the given owners' lines from the application's direct section,
     /// leaving every other owner's line where it is.
-    pub fn remove_direct_owned(&self, ids: &[String]) -> Result<(), HostfileError> {
+    pub fn remove_direct_owned(
+        &self, ids: &[String], legacy: &[HostEntry],
+    ) -> Result<(), HostfileError> {
         debug!("Removing direct host entries for IDs {ids:?}");
 
         let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
         edit_hosts(|document| {
             document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &ids, &[])?;
-            Ok(())
+            document.retain(KFTRAY_HOSTS_TAG, |line| {
+                survives_legacy_removal(line, legacy)
+            })
         })?;
         Ok(())
     }

@@ -155,6 +155,23 @@ pub async fn cleanup_current_process_config_states_with_mode(
     let context = DatabaseManager::get_context(mode).await?;
     let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
 
+    // The snapshots of the rows about to be marked stopped go with them.
+    let stopping: Vec<i64> = sqlx::query("SELECT config_id FROM config_state WHERE process_id = ?")
+        .bind(current_process_id)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter_map(|row| row.try_get::<i64, _>("config_id").ok())
+        .filter(|id| !still_owed.contains(id))
+        .collect();
+    for id in &stopping {
+        let _ = sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(running_snapshot_key(*id))
+            .execute(&mut *conn)
+            .await;
+    }
+
     let mut query = sqlx::QueryBuilder::new(
         "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ",
     );
@@ -181,6 +198,59 @@ pub async fn cleanup_current_process_config_states_with_mode(
     }
 
     Ok(())
+}
+
+/// Key under which the configuration a running forward was started with is
+/// kept, next to its running state.
+///
+/// The row can be edited while the forward runs, so another process that
+/// needs to know which address and aliases this one holds cannot read the
+/// row for it: the snapshot is what the forward actually owns.
+pub fn running_snapshot_key(id: i64) -> String {
+    format!("running_snapshot:file:{id}")
+}
+
+/// Records what a forward that has just registered actually holds. Only the
+/// file database is shared between processes; nothing is written for the
+/// in-memory one.
+pub async fn set_running_snapshot(
+    id: i64, config: &crate::models::config_model::Config, mode: DatabaseMode,
+) -> Result<(), String> {
+    if mode != DatabaseMode::File {
+        return Ok(());
+    }
+    let serialized = serde_json::to_string(config)
+        .map_err(|error| format!("Failed to describe the running config {id}: {error}"))?;
+    crate::utils::settings::set_setting_with_mode(&running_snapshot_key(id), &serialized, mode)
+        .await
+        .map_err(|error| format!("Failed to record the running config {id}: {error}"))
+}
+
+/// Forgets the snapshot once the forward has stopped.
+pub async fn clear_running_snapshot(id: i64, mode: DatabaseMode) {
+    if mode != DatabaseMode::File {
+        return;
+    }
+    if let Err(error) =
+        crate::utils::settings::delete_setting_with_mode(&running_snapshot_key(id), mode).await
+    {
+        log::debug!("Failed to clear the running snapshot for config {id}: {error}");
+    }
+}
+
+/// The configuration a running forward was started with, when a snapshot was
+/// recorded for it.
+pub async fn running_snapshot(
+    id: i64, mode: DatabaseMode,
+) -> Option<crate::models::config_model::Config> {
+    if mode != DatabaseMode::File {
+        return None;
+    }
+    let stored = crate::utils::settings::get_setting_with_mode(&running_snapshot_key(id), mode)
+        .await
+        .ok()
+        .flatten()?;
+    serde_json::from_str(&stored).ok()
 }
 
 /// Whether a process that recorded itself as running a forward still exists.

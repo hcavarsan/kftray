@@ -381,17 +381,6 @@ pub async fn get_settings_with_prefix_and_mode(
         .collect())
 }
 
-/// Removes a setting, if it is present.
-pub async fn delete_setting(key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let pool = get_db_pool().await?;
-    let mut conn = pool.acquire().await?;
-    sqlx::query("DELETE FROM settings WHERE key = ?")
-        .bind(key)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
 pub async fn get_setting(
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

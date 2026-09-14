@@ -1203,9 +1203,9 @@ fn handle_host_command(
                 }
             }
         }
-        HostCommand::RemoveDirectOwned { ids } => {
+        HostCommand::RemoveDirectOwned { ids, legacy } => {
             debug!("Processing Host RemoveDirectOwned request for {ids:?}");
-            match hostfile_manager.remove_direct_owned(&ids) {
+            match hostfile_manager.remove_direct_owned(&ids, &legacy) {
                 Ok(_) => {
                     info!("Host RemoveDirectOwned request successful");
                     Ok(HelperResponse::success(request_id))

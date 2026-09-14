@@ -494,7 +494,15 @@ impl UdpForwarder {
                     }
                 }
             }
-            let _ = writer.shutdown().await;
+            // The session is over before the tunnel is closed down: the
+            // receiver goes so the listener stops queueing datagrams into a
+            // task that no longer forwards them, and the closing time is
+            // recorded so the cooldown counts from here, not from whenever a
+            // stalled shutdown finally returns. The shutdown itself is bounded
+            // for the same reason.
+            drop(queue);
+            drop(_closed_marker);
+            let _ = tokio::time::timeout(Duration::from_secs(2), writer.shutdown()).await;
         });
 
         let queue = packets.clone();
@@ -874,6 +882,105 @@ pub(crate) mod tests {
             session.is_working(now),
             "a frame that just came back through the tunnel is progress"
         );
+    }
+
+    /// A tunnel whose read side is closed but whose shutdown never completes:
+    /// the shape of a transport that stopped answering mid-close.
+    struct HangingShutdown(DuplexStream);
+
+    impl AsyncRead for HangingShutdown {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for HangingShutdown {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::pin::Pin::new(&mut self.0).poll_write(cx, buf)
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.0).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[derive(Default)]
+    struct HangingCloseUpstream {
+        connects: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl UdpUpstream for HangingCloseUpstream {
+        type Stream = HangingShutdown;
+
+        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+            self.connects
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (ours, theirs) = duplex(64);
+            drop(theirs);
+            Ok(HangingShutdown(ours))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_session_whose_shutdown_hangs_is_still_replaced() {
+        let upstream = Arc::new(HangingCloseUpstream::default());
+        let connects = Arc::clone(&upstream.connects);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            Arc::clone(&upstream),
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        let probe_connects = connects.load(std::sync::atomic::Ordering::Relaxed);
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        client.send(b"ping").await.unwrap();
+        for _ in 0..50 {
+            if connects.load(std::sync::atomic::Ordering::Relaxed) > probe_connects {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let after_first = connects.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(after_first, probe_connects + 1);
+
+        // The tunnel failed at once, and its shutdown is hanging. Once the
+        // cooldown is over the next datagram must get a fresh tunnel rather
+        // than being queued into the task that is stuck closing.
+        tokio::time::sleep(TUNNEL_RETRY_COOLDOWN + Duration::from_millis(300)).await;
+        client.send(b"ping").await.unwrap();
+        for _ in 0..50 {
+            if connects.load(std::sync::atomic::Ordering::Relaxed) > after_first {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            connects.load(std::sync::atomic::Ordering::Relaxed),
+            after_first + 1,
+            "a session stuck in shutdown must not keep accepting datagrams"
+        );
+
+        cancellation_token.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), owner).await;
     }
 
     #[tokio::test]

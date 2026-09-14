@@ -81,6 +81,12 @@ pub enum HostCommand {
     /// and later lost write access has no other way to take its lines out.
     RemoveDirectOwned {
         ids: Vec<String>,
+        /// Unmarked copies of these aliases in the helper's own section go in
+        /// the same write: the owned lines being removed are the only record
+        /// tying those copies to the configuration, so the two cannot be
+        /// separate requests with a failure possible between them.
+        #[serde(default)]
+        legacy: Vec<HostEntry>,
     },
     RemoveAll,
     List,

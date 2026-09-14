@@ -397,6 +397,35 @@ impl ProxyRecoveryManager {
     /// - [`ProxyType::BarePod`] → full re-deployment via [`recover_bare_pod()`]
     /// - [`ProxyType::Deployment`] → stream reconnection via [`recover_deployment()`]
     async fn do_recovery_attempt(&self) -> anyhow::Result<()> {
+        // Under the same cross-process lock as a start, stop or delete, and
+        // against the row as it is now: another instance can have stopped or
+        // deleted this configuration since the last attempt, and recovering
+        // it would recreate a relay nothing tracks.
+        let _shared = kftray_commons::utils::config_dir::lock_config(
+            self.config_id,
+            self.mode,
+            crate::kube::stop::SHARED_LOCK_WAIT,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        if kftray_commons::utils::config::get_config_with_mode(self.config_id, self.mode)
+            .await
+            .is_err()
+        {
+            anyhow::bail!(
+                "Config {} no longer exists; not recovering it",
+                self.config_id
+            );
+        }
+        if let Some(owner) =
+            crate::kube::stop::running_in_another_process(self.config_id, self.mode).await
+        {
+            anyhow::bail!(
+                "Config {} is being forwarded by another kftray process ({owner}); not recovering \
+                 it here",
+                self.config_id
+            );
+        }
         let client_key = crate::kube::shared_client::ServiceClientKey::new(
             self.config.context.clone(),
             self.config.kubeconfig.clone(),

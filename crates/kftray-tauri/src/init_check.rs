@@ -38,6 +38,8 @@ pub trait PortOperations: Send + Sync {
         &self, configs: Vec<Config>, protocol: &str,
     ) -> Result<Vec<String>, String>;
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
+    /// Whether a forward for the configuration is registered in this process.
+    async fn is_forward_registered(&self, id: i64) -> bool;
 }
 
 pub struct RealPortOperations;
@@ -72,6 +74,10 @@ impl PortOperations for RealPortOperations {
         deploy_and_forward_pod(configs)
             .await
             .and_then(describe_start_responses)
+    }
+
+    async fn is_forward_registered(&self, id: i64) -> bool {
+        kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
     }
 }
 
@@ -239,6 +245,14 @@ async fn start_port_forwarding(
             let error_msg = format!("Failed to start port forwarding for '{config_alias}': {e}");
             error!("{error_msg}");
 
+            // A start that lost to a concurrent one (a shortcut, a click) fails
+            // with the forward live and its state written by the backend;
+            // marking the row stopped here would erase that forward's
+            // ownership and let another process treat it as idle.
+            if port_ops.is_forward_registered(config_id).await {
+                debug!("Config {config_id} is forwarding already; leaving its state as it is");
+                return Ok(());
+            }
             let config_state = ConfigState::new_without_process(config_id, false);
             port_ops.update_config_state(&config_state).await?;
 
@@ -517,6 +531,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_start_that_lost_to_a_live_forward_leaves_its_state_alone() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _| Err("Port forwarding is already running for config 1".to_string()));
+        mock.expect_is_forward_registered()
+            .with(eq(1))
+            .times(1)
+            .returning(|_| true);
+        mock.expect_update_config_state().times(0);
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_start_port_forwarding_failure() {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", None);
@@ -524,6 +556,9 @@ mod tests {
         mock.expect_start_port_forward()
             .times(1)
             .returning(|_, _| Err("Port forwarding failed".to_string()));
+        mock.expect_is_forward_registered()
+            .times(1)
+            .returning(|_| false);
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {

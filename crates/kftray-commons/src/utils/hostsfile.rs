@@ -200,6 +200,19 @@ fn pending_path(path: &Path) -> PathBuf {
     PathBuf::from(pending)
 }
 
+/// Where the copy goes when the hosts directory is not writable.
+///
+/// The documented setup grants write access to the hosts file alone, not to
+/// its directory. The application's own configuration directory is always
+/// writable by it, so the copy goes there instead of being skipped: a rewrite
+/// that truncates the file is never done without something to complete it
+/// from.
+#[cfg(windows)]
+fn fallback_pending_path() -> Result<PathBuf> {
+    let config_dir = crate::utils::config_dir::get_config_dir().map_err(HostsFileError::Io)?;
+    Ok(config_dir.join("hosts.kftray-pending"))
+}
+
 /// Opens the hosts file read-only and takes its lock.
 ///
 /// The writer rewrites the file in place on Windows, so the locked handle
@@ -216,8 +229,10 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     let file = open_for_lock(path)?;
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
-    let pending = pending_path(path);
-    if pending.exists() {
+    for pending in [pending_path(path), fallback_pending_path()?] {
+        if !pending.exists() {
+            continue;
+        }
         log::warn!(
             "Completing an interrupted rewrite of the hosts file from {}",
             pending.display()
@@ -756,28 +771,26 @@ impl<'a> AtomicFileWriter<'a> {
     /// failure to remove it is reported rather than left to resurface later.
     #[cfg(windows)]
     fn write_content(&self, content: &[u8]) -> Result<()> {
-        let pending = pending_path(self.target_path);
-        let staging = {
+        let mut pending = pending_path(self.target_path);
+        let staging_for = |pending: &Path| {
             let mut staging = pending.as_os_str().to_owned();
             staging.push(".tmp");
             PathBuf::from(staging)
         };
-        // The documented setup grants write access to the hosts file alone,
-        // not to its directory. A caller that cannot create the copy still
-        // gets its write, without the recovery the copy would have given it.
-        let staged = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&staging);
-        let mut staged = match staged {
+        let mut staging = staging_for(&pending);
+        let open_staging = |staging: &Path| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(staging)
+        };
+        let mut staged = match open_staging(&staging) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                log::warn!(
-                    "Cannot create {}: rewriting the hosts file in place without a recovery copy",
-                    staging.display()
-                );
-                return self.write_directly(content);
+                pending = fallback_pending_path()?;
+                staging = staging_for(&pending);
+                open_staging(&staging)?
             }
             Err(error) => return Err(error.into()),
         };

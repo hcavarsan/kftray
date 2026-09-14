@@ -267,19 +267,24 @@ async fn confirm_uncertain_target(
 ///
 /// Awaited like the write it undoes: two detached tasks have no ordering, and a
 /// late delete would erase a newer attempt's record.
+/// A record that could not be deleted is reported: a caller that dropped
+/// its in-memory obligation on the strength of a swallowed failure would see
+/// the next stop restore the record with a fresh window and a cluster
+/// obligation for resources already gone.
 async fn forget_uncertain_target(
     id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
-) {
+) -> Result<(), String> {
     for key in [
         uncertain_create_key(id, config, destination, mode),
         confirmation_key(id, config, destination, mode),
     ] {
-        if let Err(error) =
-            kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
-        {
-            log::debug!("Failed to clear the unsettled create for config {id}: {error}");
-        }
+        kftray_commons::utils::settings::delete_setting_with_mode(&key, mode)
+            .await
+            .map_err(|error| {
+                format!("Failed to clear the durable cleanup record for config {id}: {error}")
+            })?;
     }
+    Ok(())
 }
 
 /// Key under which a target's confirmation count is kept.
@@ -397,7 +402,7 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
 /// The process id another live kftray process recorded for this row, when
 /// it is forwarding it. Only the file database is shared between processes;
 /// a row whose recorded process no longer exists is left to be cleaned up.
-async fn running_in_another_process(id: i64, mode: DatabaseMode) -> Option<u32> {
+pub(crate) async fn running_in_another_process(id: i64, mode: DatabaseMode) -> Option<u32> {
     if mode != DatabaseMode::File {
         return None;
     }
@@ -440,8 +445,19 @@ pub(crate) async fn forwarding_configs(mode: DatabaseMode) -> Vec<Config> {
                 pid != this_process && kftray_commons::utils::config_state::process_is_alive(pid)
             })
     }) {
-        if let Ok(config) = get_config_with_mode(state.config_id, mode).await {
-            configs.push(config);
+        // The snapshot it started with, not the row: the row can be edited
+        // while the forward runs, and the address and aliases it actually
+        // holds are the ones recorded when it registered. A row without one
+        // was started by a version that kept none, and is the best there is.
+        let snapshot =
+            kftray_commons::utils::config_state::running_snapshot(state.config_id, mode).await;
+        match snapshot {
+            Some(config) => configs.push(config),
+            None => {
+                if let Ok(config) = get_config_with_mode(state.config_id, mode).await {
+                    configs.push(config);
+                }
+            }
         }
     }
     configs
@@ -674,7 +690,14 @@ impl ClusterResourceGuard {
         }
         // Definitively rejected, so nothing was created and the persisted
         // record has nothing left to describe.
-        forget_uncertain_target(self.id, &config, destination.as_deref(), self.mode).await;
+        if let Err(error) =
+            forget_uncertain_target(self.id, &config, destination.as_deref(), self.mode).await
+        {
+            // The in-memory obligation stays with the record on disk: a stop
+            // retries the deletion, and until then a restart would find it.
+            warn!("{error}");
+            return;
+        }
         if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
             for entry in entries
                 .iter_mut()
@@ -1775,10 +1798,18 @@ async fn stop_config(
             // so a settled cluster obligation clears its durable record
             // whatever the local cleanup did: left behind, a restart would
             // resurrect a cluster obligation for a relay already removed.
-            let cluster_settled = target.cluster && !cluster_owed;
-            if cluster_settled {
-                forget_uncertain_target(id, &target.config, target.destination.as_deref(), mode)
-                    .await;
+            let mut cluster_owed = cluster_owed;
+            let mut cluster_settled = target.cluster && !cluster_owed;
+            if cluster_settled
+                && let Err(error) =
+                    forget_uncertain_target(id, &target.config, target.destination.as_deref(), mode)
+                        .await
+            {
+                // Not settled until the record is gone: kept, and reported,
+                // so a later stop tries the deletion again.
+                cluster_owed = true;
+                cluster_settled = false;
+                errors.push(error);
             }
             set_target_obligations(
                 id,
@@ -1826,8 +1857,13 @@ async fn stop_config(
             let destination = target.destination.as_deref();
             let answered = !is_unanswered(&target);
             if answered || confirm_uncertain_target(id, &target.config, destination, mode).await {
-                forget_uncertain_target(id, &target.config, destination, mode).await;
-                forget_pending_cleanup(id, &target.config, destination);
+                match forget_uncertain_target(id, &target.config, destination, mode).await {
+                    Ok(()) => forget_pending_cleanup(id, &target.config, destination),
+                    Err(error) => {
+                        set_target_obligations(id, &target, None, true, false);
+                        errors.push(error);
+                    }
+                }
                 continue;
             }
             // Still unconfirmed: the obligation stays so the next pass looks
@@ -1844,6 +1880,8 @@ async fn stop_config(
             let state = ConfigState::new(id, false);
             if let Err(error) = update_config_state_with_mode(&state, mode).await {
                 errors.push(error);
+            } else {
+                kftray_commons::utils::config_state::clear_running_snapshot(id, mode).await;
             }
         }
         if errors.is_empty() {
@@ -2254,7 +2292,9 @@ mod tests {
                 .any(|target| target.cluster && target.uncertain_until.is_some()),
             "the obligation is tracked in memory as unanswered"
         );
-        forget_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory).await;
+        forget_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory)
+            .await
+            .unwrap();
         PENDING_CLEANUP.remove(&id);
     }
 
@@ -2482,7 +2522,9 @@ mod tests {
         // Once nothing unanswered is left, a create whose outcome was observed
         // is settled by the same pass.
         PENDING_CLEANUP.remove(&id);
-        forget_uncertain_target(id, &config, None, DatabaseMode::Memory).await;
+        forget_uncertain_target(id, &config, None, DatabaseMode::Memory)
+            .await
+            .unwrap();
         let mut guard = ClusterResourceGuard::arm(id, config.clone(), None, DatabaseMode::Memory)
             .await
             .unwrap();

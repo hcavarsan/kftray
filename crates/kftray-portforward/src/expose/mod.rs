@@ -246,8 +246,14 @@ pub(crate) async fn start_single_expose(
         retry_count: None,
         last_error: None,
     };
-    if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
+    let recorded =
+        kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode).await;
+    if let Err(error) = match recorded {
+        Ok(()) => update_config_state_with_mode(&config_state, mode).await,
+        Err(error) => Err(error),
+    } {
         pf_process.cleanup_and_abort().await;
+        kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
         return roll_back_exposure(&client, &config, &resources, guard, error).await;
     }
     pf_process.set_config(config.clone());
