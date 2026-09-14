@@ -106,38 +106,64 @@ fn with_hosts_lock<T>(path: &Path, work: impl FnOnce() -> Result<T>) -> Result<T
     use crate::utils::config_dir::{
         LockRegion,
         unlock,
+    };
+
+    let file = open_locked(path)?;
+    let result = work();
+    unlock(&file, LockRegion::PendingByte);
+    result
+}
+
+/// Opens the hosts file read-only and takes its lock.
+///
+/// On Unix the lock is retaken until the locked descriptor and the path name
+/// the same inode, which is what excludes a holder whose lock is on a file a
+/// rename just retired.
+#[cfg(unix)]
+fn open_locked(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+
+    use crate::utils::config_dir::{
+        LockRegion,
+        unlock,
         wait_for_exclusive_lock,
     };
 
-    const REGION: LockRegion = LockRegion::PendingByte;
     let what = path.display().to_string();
-
     loop {
         let file = OpenOptions::new().read(true).open(path)?;
-        wait_for_exclusive_lock(&file, REGION, &what).map_err(HostsFileError::Io)?;
+        wait_for_exclusive_lock(&file, LockRegion::PendingByte, &what)
+            .map_err(HostsFileError::Io)?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-
-            let locked = file.metadata()?;
-            match std::fs::metadata(path) {
-                Ok(current) if current.dev() == locked.dev() && current.ino() == locked.ino() => {}
-                Ok(_) => {
-                    unlock(&file, REGION);
-                    continue;
-                }
-                Err(error) => {
-                    unlock(&file, REGION);
-                    return Err(error.into());
-                }
+        let locked = file.metadata()?;
+        match std::fs::metadata(path) {
+            Ok(current) if current.dev() == locked.dev() && current.ino() == locked.ino() => {
+                return Ok(file);
+            }
+            Ok(_) => unlock(&file, LockRegion::PendingByte),
+            Err(error) => {
+                unlock(&file, LockRegion::PendingByte);
+                return Err(error.into());
             }
         }
-
-        let result = work();
-        unlock(&file, REGION);
-        return result;
     }
+}
+
+/// Opens the hosts file read-only and takes its lock.
+///
+/// A file with an open handle cannot be renamed over on Windows, so the
+/// writer rewrites it in place and the locked handle stays the current file.
+#[cfg(windows)]
+fn open_locked(path: &Path) -> Result<std::fs::File> {
+    use crate::utils::config_dir::{
+        LockRegion,
+        wait_for_exclusive_lock,
+    };
+
+    let file = OpenOptions::new().read(true).open(path)?;
+    wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
+        .map_err(HostsFileError::Io)?;
+    Ok(file)
 }
 
 /// The hosts file as raw lines, edited under one lock and written once.
