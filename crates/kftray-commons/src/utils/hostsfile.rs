@@ -18,6 +18,10 @@ pub type Result<T, E = HostsFileError> = std::result::Result<T, E>;
 #[derive(Debug, Clone)]
 pub enum HostsFileError {
     Io(String),
+    /// The caller may not write the file. Kept apart from other I/O errors
+    /// because a caller with a privileged writer at hand can route the same
+    /// edit through it.
+    PermissionDenied(String),
     InvalidPath(String),
     InvalidData(String),
     UnsupportedPlatform,
@@ -27,6 +31,7 @@ impl fmt::Display for HostsFileError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Io(msg) => write!(f, "IO error: {}", msg),
+            Self::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
             Self::InvalidPath(msg) => write!(f, "Invalid path: {}", msg),
             Self::InvalidData(msg) => write!(f, "Invalid data: {}", msg),
             Self::UnsupportedPlatform => write!(f, "Unsupported platform"),
@@ -38,7 +43,22 @@ impl std::error::Error for HostsFileError {}
 
 impl From<io::Error> for HostsFileError {
     fn from(err: io::Error) -> Self {
-        Self::Io(err.to_string())
+        if err.kind() == io::ErrorKind::PermissionDenied {
+            Self::PermissionDenied(err.to_string())
+        } else {
+            Self::Io(err.to_string())
+        }
+    }
+}
+
+impl From<HostsFileError> for io::Error {
+    fn from(err: HostsFileError) -> Self {
+        match err {
+            HostsFileError::PermissionDenied(msg) => {
+                io::Error::new(io::ErrorKind::PermissionDenied, msg)
+            }
+            other => io::Error::other(other),
+        }
     }
 }
 

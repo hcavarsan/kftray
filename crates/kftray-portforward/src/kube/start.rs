@@ -137,8 +137,18 @@ async fn update_hosts_with_ssl(config: &Config, mode: DatabaseMode) -> Result<()
                     result.map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"))
                 });
         let succeeded = written.is_ok();
-        let abandoned = sender.send(written).is_err();
-        if succeeded && (abandoned || !CHILD_PROCESSES.contains_key(&id)) {
+        let _ = sender.send(written);
+        if !succeeded {
+            return;
+        }
+        // Whether the waiter is still there says nothing about ownership: the
+        // process was registered before the write started and may well be
+        // running. Only a process that is gone, checked under the lifecycle
+        // lock so a stop or a restart cannot be halfway through, leaves these
+        // lines orphaned.
+        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+        let _guard = lock.lock().await;
+        if !CHILD_PROCESSES.contains_key(&id) {
             warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
             let in_use = crate::kube::stop::forwarding_configs(mode).await;
             let removed = tokio::task::spawn_blocking({

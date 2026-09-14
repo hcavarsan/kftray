@@ -54,7 +54,7 @@ impl DirectHostfileManager {
             document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &[id.as_str()], &[owned])?;
             Ok(())
         })
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::from)
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
@@ -88,7 +88,7 @@ impl DirectHostfileManager {
             prune_legacy(document, &dropping)?;
             Ok(!present.is_empty())
         })
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::from)
     }
 
     /// Takes unmarked copies of `mappings` out of the shared section, when
@@ -101,7 +101,13 @@ impl DirectHostfileManager {
     pub fn prune_legacy_entries(
         &self, mappings: &[(std::net::IpAddr, String)],
     ) -> std::io::Result<()> {
-        edit_hosts(|document| prune_legacy(document, mappings)).map_err(std::io::Error::other)
+        edit_hosts(|document| prune_legacy(document, mappings)).map_err(std::io::Error::from)
+    }
+
+    /// This manager's own section, as it is on disk.
+    pub fn direct_section() -> std::io::Result<Vec<SectionEntry>> {
+        read_hosts(|document| document.section(KFTRAY_DIRECT_HOSTS_TAG))
+            .map_err(std::io::Error::from)
     }
 
     /// The privileged helper's section, as it is on disk.
@@ -109,7 +115,7 @@ impl DirectHostfileManager {
     /// This manager cannot write there, so a caller that needs verified
     /// cleanup has to look at what is actually left.
     pub fn helper_section() -> std::io::Result<Vec<SectionEntry>> {
-        read_hosts(|document| document.section(KFTRAY_HOSTS_TAG)).map_err(std::io::Error::other)
+        read_hosts(|document| document.section(KFTRAY_HOSTS_TAG)).map_err(std::io::Error::from)
     }
 
     /// Removes both sections whole, unowned lines included.
@@ -124,14 +130,14 @@ impl DirectHostfileManager {
             document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
             document.clear_section(KFTRAY_HOSTS_TAG)
         })
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::from)
     }
 
     /// Every owned alias in this manager's section.
     pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
         Ok(
             read_hosts(|document| document.section(KFTRAY_DIRECT_HOSTS_TAG))
-                .map_err(std::io::Error::other)?
+                .map_err(std::io::Error::from)?
                 .into_iter()
                 .filter_map(|entry| {
                     entry.owner.map(|owner| {

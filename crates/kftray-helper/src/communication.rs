@@ -1203,6 +1203,19 @@ fn handle_host_command(
                 }
             }
         }
+        HostCommand::RemoveDirectOwned { ids } => {
+            debug!("Processing Host RemoveDirectOwned request for {ids:?}");
+            match hostfile_manager.remove_direct_owned(&ids) {
+                Ok(_) => {
+                    info!("Host RemoveDirectOwned request successful");
+                    Ok(HelperResponse::success(request_id))
+                }
+                Err(e) => {
+                    error!("Host RemoveDirectOwned request failed: {e}");
+                    Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                }
+            }
+        }
         HostCommand::RemoveAll => {
             debug!("Processing Host RemoveAll request");
             match hostfile_manager.remove_all_entries() {

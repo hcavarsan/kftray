@@ -76,6 +76,12 @@ pub enum HostCommand {
     RemoveUnowned {
         entries: Vec<HostEntry>,
     },
+    /// Removes the given owners' lines from the application's own section,
+    /// the one it writes without the helper. An application that wrote there
+    /// and later lost write access has no other way to take its lines out.
+    RemoveDirectOwned {
+        ids: Vec<String>,
+    },
     RemoveAll,
     List,
 }

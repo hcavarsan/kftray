@@ -90,7 +90,42 @@ impl HostfileManager {
         // The helper only writes its own section, so an alias that fell back
         // to the direct manager earlier is still in the direct one. Removed
         // synchronously with its failure reported: nothing else records it.
-        self.direct_manager.remove_host_entries(ids, protected)?;
+        // An application that wrote there and has since lost write access
+        // (the helper installed after the fact, permissions tightened) asks
+        // the helper to take its owned lines out, and then verifies they are
+        // gone, since the helper does not prune legacy copies for it.
+        match self.direct_manager.remove_host_entries(ids, protected) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                let Some(helper) = self.helper() else {
+                    return Err(error);
+                };
+                helper
+                    .remove_direct_owned_entries(ids)
+                    .map_err(|helper_error| {
+                        std::io::Error::other(format!(
+                            "{error}; the helper could not remove them either: {helper_error}"
+                        ))
+                    })?;
+                let section = DirectHostfileManager::direct_section()?;
+                let left: Vec<&str> = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        section
+                            .iter()
+                            .any(|entry| entry.owner.as_deref() == Some(*id))
+                    })
+                    .collect();
+                if !left.is_empty() {
+                    return Err(std::io::Error::other(format!(
+                        "Host entries for {} are still on disk after the helper removed them",
+                        left.join(", ")
+                    )));
+                }
+            }
+            Err(error) => return Err(error),
+        }
 
         // Read rather than inferred. Coverage in the direct section proves
         // nothing about the helper's copy: an id can be added through the

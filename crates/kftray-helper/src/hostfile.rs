@@ -11,6 +11,8 @@ use log::{
 use thiserror::Error;
 
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
+/// Section the application writes when it does not go through this helper.
+const KFTRAY_DIRECT_HOSTS_TAG: &str = "kftray-hosts-direct";
 
 #[derive(Error, Debug)]
 pub enum HostfileError {
@@ -97,6 +99,19 @@ impl HostfileManager {
             document.retain(KFTRAY_HOSTS_TAG, |line| {
                 survives_legacy_removal(line, entries)
             })
+        })?;
+        Ok(())
+    }
+
+    /// Removes the given owners' lines from the application's direct section,
+    /// leaving every other owner's line where it is.
+    pub fn remove_direct_owned(&self, ids: &[String]) -> Result<(), HostfileError> {
+        debug!("Removing direct host entries for IDs {ids:?}");
+
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        edit_hosts(|document| {
+            document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &ids, &[])?;
+            Ok(())
         })?;
         Ok(())
     }

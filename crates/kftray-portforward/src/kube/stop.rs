@@ -389,6 +389,24 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
     }
 }
 
+/// The process id another live kftray process recorded for this row, when
+/// it is forwarding it. Only the file database is shared between processes;
+/// a row whose recorded process no longer exists is left to be cleaned up.
+async fn running_in_another_process(id: i64, mode: DatabaseMode) -> Option<u32> {
+    if mode != DatabaseMode::File {
+        return None;
+    }
+    let states = get_configs_state_with_mode(mode).await.ok()?;
+    states
+        .into_iter()
+        .find(|state| state.config_id == id && state.is_running)
+        .and_then(|state| state.process_id)
+        .filter(|pid| {
+            *pid != std::process::id()
+                && kftray_commons::utils::config_state::process_is_alive(*pid)
+        })
+}
+
 /// The configurations still forwarding, as they were when they started: the
 /// ones in this process, and, for the file database, the ones another
 /// process sharing it reports as running. What they own must not be removed
@@ -411,10 +429,12 @@ pub(crate) async fn forwarding_configs(mode: DatabaseMode) -> Vec<Config> {
                 return configs;
             }
         };
-    for state in elsewhere
-        .into_iter()
-        .filter(|state| state.is_running && state.process_id != Some(this_process))
-    {
+    for state in elsewhere.into_iter().filter(|state| {
+        state.is_running
+            && state.process_id.is_some_and(|pid| {
+                pid != this_process && kftray_commons::utils::config_state::process_is_alive(pid)
+            })
+    }) {
         if let Ok(config) = get_config_with_mode(state.config_id, mode).await {
             configs.push(config);
         }
@@ -1199,13 +1219,22 @@ where
     // neither sees the other's registries. Its persisted state is the only
     // signal, and it stays authoritative until that process clears it.
     let this_process = std::process::id();
-    let running_elsewhere: HashSet<i64> =
+    let running_elsewhere: HashSet<i64> = if mode == DatabaseMode::File {
         kftray_commons::utils::config_state::get_configs_state_with_mode(mode)
             .await?
             .into_iter()
-            .filter(|state| state.is_running && state.process_id != Some(this_process))
+            .filter(|state| {
+                state.is_running
+                    && state.process_id.is_some_and(|pid| {
+                        pid != this_process
+                            && kftray_commons::utils::config_state::process_is_alive(pid)
+                    })
+            })
             .map(|state| state.config_id)
-            .collect();
+            .collect()
+    } else {
+        HashSet::new()
+    };
 
     // A pending record alone is not evidence the forward is live. Local
     // cleanup that needs the privileged helper can be permanently unsatisfiable
@@ -1521,6 +1550,18 @@ async fn stop_config(
     }
     if let Some((_, manager)) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&id) {
         manager.cancel();
+    }
+    // A row another live process is forwarding is that process's to stop:
+    // its listener cannot be reached from here, and deleting its relay and
+    // releasing its address would break a forward that keeps running with
+    // nothing in the database saying so.
+    if !CHILD_PROCESSES.contains_key(&id)
+        && !PENDING_CLEANUP.contains_key(&id)
+        && let Some(owner) = running_in_another_process(id, mode).await
+    {
+        return Err(format!(
+            "Config {id} is being forwarded by another kftray process ({owner}); stop it there"
+        ));
     }
     let process = CHILD_PROCESSES.remove(&id);
     let existed = process.is_some();

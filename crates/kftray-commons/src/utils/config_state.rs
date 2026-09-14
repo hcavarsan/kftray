@@ -183,6 +183,46 @@ pub async fn cleanup_current_process_config_states_with_mode(
     Ok(())
 }
 
+/// Whether a process that recorded itself as running a forward still exists.
+///
+/// A row whose process is gone is this process's to clean up; one whose
+/// process is alive belongs to it, and its listener cannot be stopped from
+/// here. Only existence is checked: a reused pid is possible but a process
+/// that exited cleanly clears its rows first, so a stale row with a live pid
+/// means a crash followed by pid reuse, and leaving it alone is the safe
+/// reading.
+pub fn process_is_alive(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // Signal 0 checks for existence without delivering anything. EPERM
+        // means the process exists but belongs to another user.
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            OpenProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(handle) => {
+                let _ = unsafe { CloseHandle(handle) };
+                true
+            }
+            // Access denied still means the process exists.
+            Err(error) => error.code() == windows::Win32::Foundation::E_ACCESSDENIED,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;

@@ -153,6 +153,10 @@ pub(crate) async fn start_single_expose(
         namespace: NameSpace(Some(config.namespace.clone())),
     };
 
+    // Pinned to the server the relay was created on: the forwarder resolves
+    // the context again, and a cached client that expired during creation or
+    // readiness could resolve it to another cluster with a relay under the
+    // same labels.
     let port_forward = PortForward::new(
         target,
         Some(0),
@@ -161,7 +165,8 @@ pub(crate) async fn start_single_expose(
         config.kubeconfig.clone(),
         config_id,
         "expose".to_string(),
-    );
+    )
+    .expecting_destination(Some(connection.cluster_url.to_string()));
 
     let started = match cancellation {
         Some(token) => tokio::select! {
