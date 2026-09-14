@@ -125,23 +125,23 @@ pub const INSTALLATION_LABEL: &str = "installation_id";
 /// Selector that matches only this installation's resources for `config_id`.
 /// Two machines can hold the same local config id under the same username, so
 /// `config_id` alone is not an ownership test.
-pub(crate) async fn proxy_owner_selector(config_id: &str) -> Result<String, String> {
+pub(crate) async fn proxy_owner_selector(
+    config_id: &str, mode: DatabaseMode,
+) -> Result<String, String> {
     Ok(format!(
         "config_id={config_id},{INSTALLATION_LABEL}={}",
-        kftray_commons::utils::config_dir::installation_id().await?
+        kftray_commons::utils::config_dir::owner_identity(mode).await?
     ))
 }
 
 pub(crate) async fn tag_installation(
-    labels: &mut Option<std::collections::BTreeMap<String, String>>,
+    labels: &mut Option<std::collections::BTreeMap<String, String>>, mode: DatabaseMode,
 ) -> Result<(), String> {
     labels
         .get_or_insert_with(std::collections::BTreeMap::new)
         .insert(
             INSTALLATION_LABEL.to_owned(),
-            kftray_commons::utils::config_dir::installation_id()
-                .await?
-                .to_owned(),
+            kftray_commons::utils::config_dir::owner_identity(mode).await?,
         );
     Ok(())
 }
@@ -430,18 +430,14 @@ async fn process_deployment_proxy(
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
         serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut deployment.metadata.labels).await?;
+    tag_installation(&mut deployment.metadata.labels, options.mode).await?;
     if let Some(spec) = deployment.spec.as_mut() {
-        spec.selector
-            .match_labels
-            .get_or_insert_with(std::collections::BTreeMap::new)
-            .insert(
-                INSTALLATION_LABEL.to_owned(),
-                kftray_commons::utils::config_dir::installation_id()
-                    .await?
-                    .to_owned(),
-            );
-        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels).await?;
+        tag_installation(&mut spec.selector.match_labels, options.mode).await?;
+        tag_installation(
+            &mut spec.template.metadata.get_or_insert_default().labels,
+            options.mode,
+        )
+        .await?;
     }
     let spec = deployment
         .spec
@@ -494,7 +490,7 @@ async fn process_deployment_proxy(
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!(
             "app={hashed_name},{}",
-            proxy_owner_selector(config_id_str).await?
+            proxy_owner_selector(config_id_str, options.mode).await?
         );
         wait_for_relay_pod(
             &pods,
@@ -638,7 +634,7 @@ async fn process_pod_proxy(
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut pod.metadata.labels).await?;
+    tag_installation(&mut pod.metadata.labels, options.mode).await?;
     let spec = pod
         .spec
         .as_mut()

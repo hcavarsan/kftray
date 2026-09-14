@@ -170,10 +170,20 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     }
 }
 
+/// Where the previous content is kept while the file is rewritten in place.
+#[cfg(windows)]
+fn backup_path(path: &Path) -> PathBuf {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".kftray-backup");
+    PathBuf::from(backup)
+}
+
 /// Opens the hosts file read-only and takes its lock.
 ///
 /// The writer rewrites the file in place on Windows, so the locked handle
-/// stays the current file and no identity check is needed.
+/// stays the current file and no identity check is needed. A backup left by
+/// a rewrite that did not complete is restored here, under the lock, before
+/// anyone reads the truncated file.
 #[cfg(windows)]
 fn open_locked(path: &Path) -> Result<std::fs::File> {
     use crate::utils::config_dir::{
@@ -184,6 +194,15 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
     let file = open_for_lock(path)?;
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
+    let backup = backup_path(path);
+    if backup.exists() {
+        log::warn!(
+            "Restoring the hosts file from {}: an earlier rewrite did not complete",
+            backup.display()
+        );
+        std::fs::copy(&backup, path)?;
+        let _ = std::fs::remove_file(&backup);
+    }
     Ok(file)
 }
 
@@ -663,17 +682,8 @@ impl<'a> AtomicFileWriter<'a> {
         Self { target_path: path }
     }
 
+    #[cfg(not(windows))]
     fn write_content(&self, content: &[u8]) -> Result<()> {
-        // Written in place on Windows. The lock lives on an open handle, and a
-        // handle opened by the standard library shares deletion, so a rename
-        // over the file would succeed and leave the lock on a retired file
-        // while the next writer locks the replacement. In place, the locked
-        // handle stays the current file.
-        #[cfg(windows)]
-        {
-            return self.write_directly(content);
-        }
-        #[cfg(not(windows))]
         match self.try_atomic_write(content) {
             Ok(()) => {
                 log::debug!("Successfully wrote hosts file using atomic write");
@@ -686,6 +696,39 @@ impl<'a> AtomicFileWriter<'a> {
         }
     }
 
+    /// Written in place on Windows, behind a backup.
+    ///
+    /// The lock lives on an open handle, and a handle opened by the standard
+    /// library shares deletion, so a rename over the file would succeed and
+    /// leave the lock on a retired file while the next writer locks the
+    /// replacement. In place, the locked handle stays the current file. The
+    /// file is truncated before it is rewritten, so the previous content is
+    /// copied aside first and restored if the write does not complete; a copy
+    /// left behind by a crash is restored the next time the file is opened.
+    #[cfg(windows)]
+    fn write_content(&self, content: &[u8]) -> Result<()> {
+        let backup = backup_path(self.target_path);
+        std::fs::copy(self.target_path, &backup)?;
+        match self.write_directly(content) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&backup);
+                Ok(())
+            }
+            Err(error) => {
+                if let Err(restore) = std::fs::copy(&backup, self.target_path) {
+                    log::error!(
+                        "Failed to restore the hosts file from {}: {restore}",
+                        backup.display()
+                    );
+                } else {
+                    let _ = std::fs::remove_file(&backup);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
     fn try_atomic_write(&self, content: &[u8]) -> Result<()> {
         let temp_path = self.create_temp_path()?;
 
@@ -700,6 +743,7 @@ impl<'a> AtomicFileWriter<'a> {
         Ok(())
     }
 
+    #[cfg(not(windows))]
     fn create_temp_path(&self) -> Result<PathBuf> {
         let parent = self.target_path.parent().ok_or_else(|| {
             HostsFileError::InvalidPath("Path has no parent directory".to_string())

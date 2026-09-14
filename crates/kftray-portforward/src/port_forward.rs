@@ -72,6 +72,14 @@ impl PortForwardProcess {
         self.config.as_ref()
     }
 
+    /// The API server the forward was established against, when it is known
+    /// to this process.
+    pub fn destination(&self) -> Option<String> {
+        self.direct_forwarder
+            .as_ref()
+            .map(|forwarder| forwarder.cluster_url().to_string())
+    }
+
     /// Cleanup and abort the port forward process.
     /// Uses timeouts to prevent blocking on shutdown operations.
     pub async fn cleanup_and_abort(&mut self) {

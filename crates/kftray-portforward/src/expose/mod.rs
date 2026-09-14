@@ -146,7 +146,7 @@ pub(crate) async fn start_single_expose(
 
     // Installation-scoped: the tunnel must reach this installation's relay, not
     // another one that happens to share the locally assigned configuration id.
-    let label_selector = kubernetes::expose_owner_selector(&config_id.to_string()).await?;
+    let label_selector = kubernetes::expose_owner_selector(&config_id.to_string(), mode).await?;
     let target = Target {
         selector: TargetSelector::PodLabel(label_selector),
         port: Port::Number(9999),

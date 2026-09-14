@@ -162,11 +162,12 @@ pub async fn create_expose_resources(
                 &deployment_name,
                 &config_id_str,
                 config,
+                mode,
             )
             .await?,
         );
 
-        let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str).await?;
+        let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str, mode).await?;
 
         let pod_ip = get_pod_ip(&client, &config.namespace, &pod_name).await?;
 
@@ -178,6 +179,7 @@ pub async fn create_expose_resources(
                 &service_name,
                 &config_id_str,
                 local_port,
+                mode,
             )
             .await?,
         );
@@ -254,15 +256,14 @@ pub async fn create_expose_resources(
 /// programmatically so a customized template cannot omit them.
 async fn tag_expose_ownership(
     labels: &mut Option<std::collections::BTreeMap<String, String>>, config_id: &str,
+    mode: DatabaseMode,
 ) -> Result<(), String> {
     let labels = labels.get_or_insert_with(std::collections::BTreeMap::new);
     labels.insert("app".to_owned(), "kftray-expose".to_owned());
     labels.insert("config_id".to_owned(), config_id.to_owned());
     labels.insert(
         crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
-        kftray_commons::utils::config_dir::installation_id()
-            .await?
-            .to_owned(),
+        kftray_commons::utils::config_dir::owner_identity(mode).await?,
     );
     Ok(())
 }
@@ -276,11 +277,11 @@ fn is_ownership_label(key: &str) -> bool {
 ///
 /// Configuration ids come from a local database, so `config_id` alone also
 /// matches another installation's exposure in the same namespace.
-pub async fn expose_owner_selector(config_id: &str) -> Result<String, String> {
+pub async fn expose_owner_selector(config_id: &str, mode: DatabaseMode) -> Result<String, String> {
     Ok(format!(
         "app=kftray-expose,config_id={config_id},{}={}",
         crate::kube::proxy::INSTALLATION_LABEL,
-        kftray_commons::utils::config_dir::installation_id().await?
+        kftray_commons::utils::config_dir::owner_identity(mode).await?
     ))
 }
 
@@ -506,6 +507,7 @@ async fn still_present(
 
 async fn create_deployment(
     client: &Client, namespace: &str, deployment_name: &str, config_id: &str, config: &Config,
+    mode: DatabaseMode,
 ) -> Result<CreatedResource, ExposeCreateError> {
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
@@ -524,11 +526,12 @@ async fn create_deployment(
         .map_err(|e| format!("Failed to parse deployment: {}", e))?;
     // Tagged so cleanup can tell this installation's exposure apart from
     // another one using the same, locally assigned, configuration id.
-    tag_expose_ownership(&mut deployment.metadata.labels, config_id).await?;
+    tag_expose_ownership(&mut deployment.metadata.labels, config_id, mode).await?;
     if let Some(spec) = deployment.spec.as_mut() {
         tag_expose_ownership(
             &mut spec.template.metadata.get_or_insert_default().labels,
             config_id,
+            mode,
         )
         .await?;
         // Every injected label goes into the selector, not just the
@@ -634,7 +637,7 @@ fn container_env_port(container: &Container, name: &str, default: i32) -> Option
 }
 
 async fn wait_for_pod_ready(
-    client: &Client, namespace: &str, config_id: &str,
+    client: &Client, namespace: &str, config_id: &str, mode: DatabaseMode,
 ) -> Result<String, String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     // Backed off and retried rather than propagated: every `watcher::Error` is
@@ -643,7 +646,8 @@ async fn wait_for_pod_ready(
     // recovers from on its own. The timeout below stays the only way out.
     let watcher = kube_runtime::watcher(
         pods,
-        kube_runtime::watcher::Config::default().labels(&expose_owner_selector(config_id).await?),
+        kube_runtime::watcher::Config::default()
+            .labels(&expose_owner_selector(config_id, mode).await?),
     )
     .default_backoff()
     .applied_objects();
@@ -693,6 +697,7 @@ async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<
 
 async fn create_service(
     client: &Client, namespace: &str, service_name: &str, config_id: &str, local_port: u16,
+    mode: DatabaseMode,
 ) -> Result<CreatedResource, ExposeCreateError> {
     let services: Api<Service> = Api::namespaced(client.clone(), namespace);
 
@@ -707,7 +712,7 @@ async fn create_service(
 
     let mut service: Service =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse service: {}", e))?;
-    tag_expose_ownership(&mut service.metadata.labels, config_id).await?;
+    tag_expose_ownership(&mut service.metadata.labels, config_id, mode).await?;
     // Without this the Service would also select another installation's relay
     // pods and send its HTTP traffic to the wrong local service.
     // Only an existing selector is narrowed. Giving a selectorless Service one
@@ -724,7 +729,7 @@ async fn create_service(
         // overwritten there, and a Service still selecting the old one would
         // route to no pods at all.
         let mut ownership = None;
-        tag_expose_ownership(&mut ownership, config_id).await?;
+        tag_expose_ownership(&mut ownership, config_id, mode).await?;
         selector.extend(ownership.unwrap_or_default());
     }
 
@@ -777,7 +782,7 @@ async fn create_ingress(
 
     let mut ingress: Ingress =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse ingress: {}", e))?;
-    tag_expose_ownership(&mut ingress.metadata.labels, &config_id_str).await?;
+    tag_expose_ownership(&mut ingress.metadata.labels, &config_id_str, mode).await?;
 
     // Recorded before the request: an ingress can be created without this
     // client seeing the response, and cleanup for a configuration later
@@ -984,7 +989,7 @@ pub async fn delete_expose_resources(
     let ingress_possible = ingress_possible
         || ingress_was_created(config_id_label, location, mode).await
         || legacy_exposure_possible(config_id_label, location, mode).await;
-    let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
+    let lp = ListParams::default().labels(&expose_owner_selector(config_id_label, mode).await?);
 
     info!(
         "Deleting expose resources for config_id label '{}'",

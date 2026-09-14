@@ -170,7 +170,7 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
 
     if errors.is_empty() {
         if let Some(id) = config.id {
-            crate::kube::stop::forget_pending_cleanup(id, config);
+            crate::kube::stop::forget_pending_cleanup(id, config, None);
         }
         reason
     } else {
@@ -185,7 +185,7 @@ async fn rollback_startup(port_forward: &PortForward, config: Config, reason: St
     match port_forward.cleanup_resources(Some(&config)).await {
         Ok(()) => {
             if let Some(id) = config.id {
-                crate::kube::stop::forget_pending_cleanup(id, &config);
+                crate::kube::stop::forget_pending_cleanup(id, &config, None);
             }
             reason
         }
@@ -230,24 +230,38 @@ async fn allocate_local_address_owned(
     OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move {
         let _counted = AllocationInFlight;
-        let (result, claim) = allocate_and_claim(&mut owned, mode).await;
-        let allocated = result.is_ok()
-            && owned
-                .local_address
-                .as_deref()
-                .is_some_and(crate::network_utils::is_custom_loopback_address);
-        // Recorded before the handoff: a successful send does not prove the
-        // startup consumed it, and an address nobody recorded is an address
-        // stop-all and reconciliation cannot find.
-        if allocated && let Some(id) = owned.id {
-            crate::kube::stop::record_pending_cleanup(id, owned.clone());
-        }
-        if let Err((_, owned, claim)) = sender.send((result, owned, claim))
-            && allocated
-            && let Some(address) = owned.local_address.as_deref()
+        let Allocated {
+            result,
+            claim,
+            acquired,
+        } = allocate_and_claim(&mut owned, mode).await;
+        // Recorded before the handoff, and whether or not the attempt went on
+        // to succeed: a successful send does not prove the startup consumed
+        // it, a failed claim or confirmation still leaves the alias bound, and
+        // an address nobody recorded is an address stop-all and reconciliation
+        // cannot find.
+        let mut held = owned.clone();
+        held.local_address = acquired.clone();
+        if acquired.is_some()
+            && let Some(id) = held.id
         {
-            // Our own claim must not block our own release.
-            drop(claim);
+            crate::kube::stop::record_pending_cleanup(id, held.clone());
+        }
+        let failed = result.is_err();
+        let handed_over = match sender.send((result, owned, claim)) {
+            Ok(()) => true,
+            Err((_, _, claim)) => {
+                // Our own claim must not block our own release.
+                drop(claim);
+                false
+            }
+        };
+        // An alias acquired by an attempt that then failed has no startup to
+        // roll it back: the startup only ever sees the error. One handed to a
+        // startup that is no longer waiting has nobody either.
+        if let Some(address) = acquired.as_deref()
+            && (failed || !handed_over)
+        {
             // Released through the same path a stop uses: the helper keeps a
             // pool reservation next to the alias, and removing only the alias
             // would leave that reservation consumed by every abandoned startup.
@@ -258,8 +272,8 @@ async fn allocate_local_address_owned(
             warn!("Releasing address {address} allocated after startup was abandoned");
             match crate::kube::stop::release_address_with_fallback(address, None).await {
                 Ok(()) => {
-                    if let Some(id) = owned.id {
-                        crate::kube::stop::forget_pending_cleanup(id, &owned);
+                    if let Some(id) = held.id {
+                        crate::kube::stop::forget_pending_cleanup(id, &held, None);
                     }
                 }
                 Err(error) => {
@@ -310,61 +324,127 @@ async fn persist_allocated_address(
 /// the reservation still stands, or makes a fresh one now that nothing can
 /// release it, and if it hands back a different address the claim moves to
 /// that one and the confirmation runs again.
-async fn allocate_and_claim(
-    owned: &mut Config, mode: DatabaseMode,
-) -> (
-    Result<String, String>,
-    Option<crate::kube::stop::AddressClaim>,
-) {
+/// What an allocation attempt left behind.
+struct Allocated {
+    result: Result<String, String>,
+    claim: Option<crate::kube::stop::AddressClaim>,
+    /// The custom loopback address this attempt acquired, whether or not it
+    /// went on to succeed. A claim that could not be taken, a confirmation
+    /// that failed, or a sequence that never settled all leave an alias behind
+    /// that has to be tracked, and released, like any other.
+    acquired: Option<String>,
+}
+
+async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated {
     const ATTEMPTS: usize = 3;
 
-    let mut address = match allocate_local_address_for_config(owned, mode).await {
-        Ok(address) => address,
-        Err(error) => return (Err(error), None),
+    let mut acquired = None;
+    let (mut address, provenance) = match allocate_local_address_for_config(owned, mode).await {
+        Ok(allocation) => allocation,
+        Err(error) => {
+            return Allocated {
+                result: Err(error),
+                claim: None,
+                acquired,
+            };
+        }
     };
     for _ in 0..ATTEMPTS {
         if !crate::network_utils::is_custom_loopback_address(&address) {
-            return (Ok(address), None);
+            return Allocated {
+                result: Ok(address),
+                claim: None,
+                acquired,
+            };
         }
+        acquired = Some(address.clone());
         let Some(claim) = crate::kube::stop::AddressClaim::take(&address, owned.id) else {
-            return (
-                Err(format!(
+            return Allocated {
+                result: Err(format!(
                     "Local address {address} is still being released by an earlier stop"
                 )),
-                None,
-            );
+                claim: None,
+                acquired,
+            };
         };
-        // Only the helper's reservation can be taken away by a sibling's
-        // release, and only the helper answers the same address for the same
-        // service. The fallback allocator has no reservation to confirm and
-        // would create a fresh alias on every call, so an address it produced
-        // is claimed and kept as it is.
-        if !helper_available() {
-            return (Ok(address), Some(claim));
+        if provenance != Allocation::Helper {
+            return Allocated {
+                result: Ok(address),
+                claim: Some(claim),
+                acquired,
+            };
         }
         let confirmed = match allocate_local_address_for_config(owned, mode).await {
-            Ok(confirmed) => confirmed,
-            Err(error) => return (Err(error), None),
+            Ok((confirmed, Allocation::Helper)) => confirmed,
+            // The helper stopped answering between the two calls; the address
+            // it gave first is still the one this startup holds under its
+            // claim, and the fallback's fresh alias is not wanted.
+            Ok((other, _)) => {
+                if other != address {
+                    release_stray_alias(&other).await;
+                }
+                owned.local_address = Some(address.clone());
+                return Allocated {
+                    result: Ok(address),
+                    claim: Some(claim),
+                    acquired,
+                };
+            }
+            Err(error) => {
+                return Allocated {
+                    result: Err(error),
+                    claim: None,
+                    acquired,
+                };
+            }
         };
         if confirmed == address {
-            return (Ok(address), Some(claim));
+            return Allocated {
+                result: Ok(address),
+                claim: Some(claim),
+                acquired,
+            };
         }
         warn!("Address {address} was reassigned while it was being claimed; moving to {confirmed}");
         drop(claim);
         address = confirmed;
     }
-    (
-        Err(format!(
+    Allocated {
+        result: Err(format!(
             "Could not settle on a local address for config {}: it kept changing under the claim",
             owned.id.unwrap_or_default()
         )),
-        None,
-    )
+        claim: None,
+        acquired,
+    }
+}
+
+/// Removes an alias the fallback allocator created while the helper's address
+/// was being confirmed; nothing will ever forward on it.
+async fn release_stray_alias(address: &str) {
+    if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None).await {
+        warn!("Failed to release stray alias {address}: {error}");
+    }
+}
+
+/// Where an allocated address came from.
+///
+/// Only a helper allocation is backed by a reservation a sibling's release
+/// can take away, and only the helper answers the same address for the same
+/// service. The fallback creates a fresh alias on every call, so an address
+/// it produced is never re-requested for confirmation: doing so would strand
+/// the previous alias each time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Allocation {
+    Helper,
+    Fallback,
+    /// The configuration's own address, or the default; nothing was reserved.
+    Static,
 }
 
 async fn allocate_local_address_for_config(
     config: &mut Config, mode: DatabaseMode,
-) -> Result<String, String> {
+) -> Result<(String, Allocation), String> {
     if !config.auto_loopback_address {
         let address = config
             .local_address
@@ -384,7 +464,7 @@ async fn allocate_local_address_for_config(
             }
         }
 
-        return Ok(address);
+        return Ok((address, Allocation::Static));
     }
 
     let service_name = config
@@ -407,7 +487,7 @@ async fn allocate_local_address_for_config(
                 allocated_address,
                 config.id.unwrap_or_default()
             );
-            Ok(allocated_address)
+            Ok((allocated_address, Allocation::Helper))
         }
         Err(e) => {
             warn!(
@@ -419,7 +499,7 @@ async fn allocate_local_address_for_config(
                     info!(
                         "Fallback-allocated address {allocated_address} for service {service_name}"
                     );
-                    Ok(allocated_address)
+                    Ok((allocated_address, Allocation::Fallback))
                 }
                 Err(fallback_err) => {
                     if fallback_err.contains("cancelled") || fallback_err.contains("canceled") {
@@ -432,18 +512,11 @@ async fn allocate_local_address_for_config(
                     );
                     let default_address = "127.0.0.1".to_string();
                     config.local_address = Some(default_address.clone());
-                    Ok(default_address)
+                    Ok((default_address, Allocation::Static))
                 }
             }
         }
     }
-}
-
-/// Whether the privileged helper can be reached right now.
-fn helper_available() -> bool {
-    kftray_helper::communication::get_default_socket_path()
-        .map(|socket_path| kftray_helper::client::socket_comm::is_socket_available(&socket_path))
-        .unwrap_or(false)
 }
 
 fn try_allocate_address(service_name: &str) -> Result<String, String> {
@@ -722,7 +795,13 @@ pub(super) async fn start_config_cancellable(
             ip: ip_addr,
             hostname: config.alias.clone().unwrap_or_default(),
         };
-        if let Err(e) = add_host_entry(entry_id, host_entry) {
+        // Off the runtime: the write waits on the cross-process hosts lock,
+        // and a worker parked on it would stall unrelated forwards.
+        let written = tokio::task::spawn_blocking(move || add_host_entry(entry_id, host_entry))
+            .await
+            .map_err(|error| format!("Hosts write task failed: {error}"))
+            .and_then(|result| result.map_err(|error| error.to_string()));
+        if let Err(e) = written {
             let error_message = format!(
                 "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
                  requires hostfile access."
@@ -837,7 +916,7 @@ pub(super) async fn start_config_cancellable(
             CHILD_PROCESSES.insert(config_id, handle);
             // The process now owns the local resources, so the record taken
             // when the address was allocated is no longer needed.
-            crate::kube::stop::forget_pending_cleanup(config_id, &config);
+            crate::kube::stop::forget_pending_cleanup(config_id, &config, None);
             let timeout_callback = create_static_timeout_callback(mode);
 
             if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
@@ -1234,10 +1313,12 @@ mod tests {
         config.auto_loopback_address = false;
         config.local_address = Some("192.168.1.1".to_string());
 
-        let result = allocate_local_address_for_config(&mut config, DatabaseMode::Memory)
-            .await
-            .unwrap();
+        let (result, provenance) =
+            allocate_local_address_for_config(&mut config, DatabaseMode::Memory)
+                .await
+                .unwrap();
         assert_eq!(result, "192.168.1.1");
+        assert_eq!(provenance, Allocation::Static);
         assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
     }
 

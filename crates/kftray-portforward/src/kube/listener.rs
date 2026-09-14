@@ -84,6 +84,9 @@ pub struct PortForwarder {
     /// a rollout replaces the pod, so it is re-resolved for the pod actually
     /// selected rather than pinned at startup.
     named_port: Option<NamedPort>,
+    /// The API server the forward was built against. Retained so cleanup can
+    /// tell whether the context still means the same server.
+    cluster_url: http::Uri,
     http_log_watcher: HttpLogStateWatcher,
     background_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     connection_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -93,6 +96,11 @@ pub struct PortForwarder {
 }
 
 impl PortForwarder {
+    /// The API server this forward reaches.
+    pub fn cluster_url(&self) -> &http::Uri {
+        &self.cluster_url
+    }
+
     pub async fn new(
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
         pod_readiness: kube_portforward::PodReadiness,
@@ -184,6 +192,7 @@ impl PortForwarder {
             forwarder,
             target_port,
             named_port,
+            cluster_url: connection.cluster_url.clone(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -929,6 +938,7 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             named_port: None,
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -982,6 +992,7 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             named_port: None,
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -1164,6 +1175,7 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             named_port: None,
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -1219,6 +1231,7 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             named_port: None,
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),

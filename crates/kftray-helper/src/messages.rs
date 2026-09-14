@@ -63,8 +63,19 @@ pub enum ServiceCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostCommand {
-    Add { id: String, entry: HostEntry },
-    Remove { id: String },
+    Add {
+        id: String,
+        entry: HostEntry,
+    },
+    Remove {
+        id: String,
+    },
+    /// Removes unmarked copies of the given aliases. Lines written by a helper
+    /// that did not mark its lines can only be tied to a configuration by what
+    /// that configuration says its aliases are, and only those are removed.
+    RemoveUnowned {
+        entries: Vec<HostEntry>,
+    },
     RemoveAll,
     List,
 }

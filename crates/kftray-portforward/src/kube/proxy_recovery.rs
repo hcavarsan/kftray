@@ -481,7 +481,7 @@ pub async fn recover_bare_pod(
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id)
+    crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id, mode)
         .await
         .map_err(anyhow::Error::msg)?;
     cleanup_child_processes_for_config(config_id).await;
@@ -542,7 +542,7 @@ pub async fn recover_deployment(
         .or_else(|| config.service.clone())
         .filter(|name| name.starts_with(&prefix))
         .ok_or_else(|| anyhow::anyhow!("Config {config_id} records no proxy deployment name"))?;
-    let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
+    let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string(), mode)
         .await
         .map_err(|error| anyhow::anyhow!(error))?;
     let deployment = deployments
@@ -896,9 +896,10 @@ mod tests {
             .collect();
         let expected = owned.clone();
         let prefix_for_server = prefix.clone();
-        let installation_id = kftray_commons::utils::config_dir::installation_id()
-            .await
-            .expect("installation id");
+        let installation_id =
+            kftray_commons::utils::config_dir::owner_identity(DatabaseMode::Memory)
+                .await
+                .expect("owner identity");
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             let prefix = prefix_for_server;
             for name in expected {
@@ -913,7 +914,7 @@ mod tests {
                     query.contains("labelSelector=")
                         && query.contains("config_id")
                         && query.contains("420051")
-                        && query.contains(installation_id),
+                        && query.contains(installation_id.as_str()),
                     "recovery must not select another installation's deployment: {query}"
                 );
                 let relay = serde_json::json!({
@@ -943,7 +944,7 @@ mod tests {
                         && query.contains(&name)
                         && query.contains("config_id")
                         && query.contains("420051")
-                        && query.contains(installation_id),
+                        && query.contains(installation_id.as_str()),
                     "{query}"
                 );
                 send.send_response(

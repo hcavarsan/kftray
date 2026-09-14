@@ -76,6 +76,32 @@ pub async fn installation_id() -> Result<&'static str, String> {
 
 static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// The identity that owns cluster resources created from one database.
+///
+/// The file database is one per installation, so its identity is the
+/// installation's. An in-memory database exists only in one process and is
+/// independent of every other, including the file database of the same
+/// installation, and the two allocate the same configuration ids; without a
+/// distinct identity a memory-mode run would find, and clean up, the file
+/// database's resources for the same id. The memory identity extends the
+/// installation's with a process-scoped suffix, so the resources screen can
+/// still recognise both as this installation's.
+pub async fn owner_identity(mode: crate::utils::db_mode::DatabaseMode) -> Result<String, String> {
+    let installation = installation_id().await?;
+    Ok(match mode {
+        crate::utils::db_mode::DatabaseMode::File => installation.to_owned(),
+        crate::utils::db_mode::DatabaseMode::Memory => {
+            format!(
+                "{installation}-m{}",
+                MEMORY_DATABASE_IDENTITY
+                    .get_or_init(|| uuid::Uuid::new_v4().simple().to_string()[..6].to_owned())
+            )
+        }
+    })
+}
+
+static MEMORY_DATABASE_IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn load_or_create_installation_id() -> Result<String, String> {
     let config_dir = get_config_dir()?;
     let path = config_dir.join("installation_id");

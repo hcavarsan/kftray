@@ -1166,6 +1166,22 @@ async fn process_request(
                     }
                 }
             }
+            HostCommand::RemoveUnowned { entries } => {
+                debug!(
+                    "Processing Host RemoveUnowned request for {} entries",
+                    entries.len()
+                );
+                match hostfile_manager.remove_unowned_matching(&entries) {
+                    Ok(_) => {
+                        info!("Host RemoveUnowned request successful");
+                        Ok(HelperResponse::success(request_id))
+                    }
+                    Err(e) => {
+                        error!("Host RemoveUnowned request failed: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                    }
+                }
+            }
             HostCommand::RemoveAll => {
                 debug!("Processing Host RemoveAll request");
                 match hostfile_manager.remove_all_entries() {

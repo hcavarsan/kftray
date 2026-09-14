@@ -38,6 +38,18 @@ impl From<kftray_commons::utils::hostsfile::HostsFileError> for HostfileError {
 #[derive(Default)]
 pub struct HostfileManager;
 
+/// Whether a line stays when unmarked copies of `entries` are removed.
+///
+/// A line the helper marked is some configuration's, however similar its
+/// alias, and only an unmarked line that matches one of the given aliases can
+/// be tied to the configuration asking for the removal.
+fn survives_legacy_removal(line: &SectionEntry, entries: &[HostEntry]) -> bool {
+    line.owner.is_some()
+        || !entries
+            .iter()
+            .any(|entry| entry.ip == line.ip && entry.hostname == line.hostname)
+}
+
 impl HostfileManager {
     pub fn new() -> Self {
         Self
@@ -78,6 +90,19 @@ impl HostfileManager {
         Ok(())
     }
 
+    /// Removes unmarked lines matching `entries`, leaving every owned line and
+    /// every other unmarked alias where it is.
+    pub fn remove_unowned_matching(&self, entries: &[HostEntry]) -> Result<(), HostfileError> {
+        debug!("Removing {} unmarked legacy host entries", entries.len());
+
+        edit_hosts(|document| {
+            document.retain(KFTRAY_HOSTS_TAG, |line| {
+                survives_legacy_removal(line, entries)
+            })
+        })?;
+        Ok(())
+    }
+
     /// Removes the whole section, unmarked lines included.
     pub fn remove_all_entries(&self) -> Result<(), HostfileError> {
         info!("Removing all host entries");
@@ -102,5 +127,36 @@ impl HostfileManager {
                 })
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(hostname: &str) -> HostEntry {
+        HostEntry {
+            ip: [127, 0, 0, 1].into(),
+            hostname: hostname.to_owned(),
+        }
+    }
+
+    fn line(hostname: &str, owner: Option<&str>) -> SectionEntry {
+        SectionEntry {
+            ip: [127, 0, 0, 1].into(),
+            hostname: hostname.to_owned(),
+            owner: owner.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn legacy_removal_takes_only_unmarked_copies_of_the_named_aliases() {
+        let asked = [entry("svc.local")];
+        assert!(!survives_legacy_removal(&line("svc.local", None), &asked));
+        assert!(survives_legacy_removal(
+            &line("svc.local", Some("7")),
+            &asked
+        ));
+        assert!(survives_legacy_removal(&line("other.local", None), &asked));
     }
 }

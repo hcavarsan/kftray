@@ -198,7 +198,37 @@ fn belongs_here(
 ) -> bool {
     labels
         .get(kftray_portforward::kube::INSTALLATION_LABEL)
-        .is_none_or(|owner| owner == installation_id)
+        .is_none_or(|owner| owned_by(owner, installation_id))
+}
+
+/// Whether an ownership label names this installation. A memory-mode run
+/// extends the identity with a process suffix; its resources are still this
+/// installation's to manage.
+fn owned_by(owner: &str, installation_id: &str) -> bool {
+    owner == installation_id
+        || owner
+            .strip_prefix(installation_id)
+            .is_some_and(|rest| rest.starts_with("-m"))
+}
+
+/// Whether a resource is this installation's to show, by label or, for
+/// resources that predate the label, by name.
+///
+/// The label is the positive evidence: a customized manifest can carry any
+/// name, and the username the prefix was derived from can change, and the
+/// label still says the resource is ours. Name matching only covers what was
+/// created before the label existed.
+fn is_ours(
+    name: &str, labels: &std::collections::BTreeMap<String, String>, username: &str,
+    installation_id: &str,
+) -> bool {
+    match labels.get(kftray_portforward::kube::INSTALLATION_LABEL) {
+        Some(owner) => owned_by(owner, installation_id),
+        None => {
+            is_forward_name(name, username)
+                || name.starts_with(&format!("kftray-expose-{username}"))
+        }
+    }
 }
 
 /// Whether `name` is a relay this application could have created for the
@@ -222,17 +252,13 @@ async fn list_pods_in_namespace(
         .await
         .map_err(|e| format!("Failed to list pods: {e}"))?;
 
-    let user_prefix_expose = format!("kftray-expose-{}", username);
-
     Ok(pods
         .items
         .into_iter()
         .filter_map(|pod| {
             let pod_name = pod.name_any();
 
-            if !is_forward_name(&pod_name, username) && !pod_name.starts_with(&user_prefix_expose)
-                || !belongs_here(pod.labels(), installation_id)
-            {
+            if !is_ours(&pod_name, pod.labels(), username, installation_id) {
                 return None;
             }
 
@@ -283,15 +309,12 @@ async fn list_deployments_in_namespace(
         .await
         .map_err(|e| format!("Failed to list deployments: {e}"))?;
 
-    let expose_prefix = format!("kftray-expose-{}-", username);
-
     Ok(deployments
         .items
         .into_iter()
         .filter(|deployment| {
             let name = deployment.name_any();
-            (name.starts_with(&expose_prefix) || is_forward_name(&name, username))
-                && belongs_here(deployment.labels(), installation_id)
+            is_ours(&name, deployment.labels(), username, installation_id)
         })
         .map(|deployment| {
             let config_id = deployment.labels().get("config_id").map(|s| s.to_string());
@@ -538,10 +561,13 @@ pub async fn delete_kftray_resource(
     where
         K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
     {
-        let object = api
-            .get(name)
-            .await
-            .map_err(|e| format!("Failed to read {kind}: {e}"))?;
+        // Already gone is the outcome this command wants: the stop that ran
+        // just before can have deleted it, and so can a concurrent cleanup.
+        let object = match api.get_opt(name).await {
+            Ok(Some(object)) => object,
+            Ok(None) => return Ok(()),
+            Err(e) => return Err(format!("Failed to read {kind}: {e}")),
+        };
         if !belongs_here(
             object.meta().labels.as_ref().unwrap_or(&Default::default()),
             installation_id,
@@ -562,6 +588,7 @@ pub async fn delete_kftray_resource(
         };
         match api.delete(name, &params).await {
             Ok(_) => Ok(()),
+            Err(kube::Error::Api(response)) if response.code == 404 => Ok(()),
             Err(kube::Error::Api(response)) if response.code == 409 => Err(format!(
                 "{kind} {name} changed while it was being checked and was left alone; refresh and \
                  try again"

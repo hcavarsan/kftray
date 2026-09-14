@@ -123,6 +123,28 @@ impl HostfileManager {
                 std::thread::sleep(HELPER_SETTLE);
             }
         }
+        // What is left after the owned removal are lines a helper from before
+        // ownership wrote: it never marked them, so the per-id removal cannot
+        // reach them. They are attributed the same way they were detected, by
+        // the aliases the configuration says are its own, and the upgraded
+        // helper removes exactly those.
+        if !stranded.is_empty()
+            && let Some(helper) = self.helper()
+        {
+            let legacy: Vec<HostEntry> = handed
+                .iter()
+                .filter(|(id, _)| stranded.contains(&id.as_str()))
+                .map(|(_, entry)| entry.clone())
+                .collect();
+            match helper.remove_unowned_host_entries(legacy) {
+                Ok(()) => {
+                    let section = DirectHostfileManager::helper_section()?;
+                    stranded =
+                        DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
+                }
+                Err(e) => warn!("Helper could not remove unmarked host entries: {e}"),
+            }
+        }
         if !stranded.is_empty() {
             return Err(std::io::Error::other(format!(
                 "Host entries for {} are still on disk and only the helper can remove them",

@@ -78,6 +78,21 @@ impl PendingTarget {
     fn is_uncertain(&self, now: Instant) -> bool {
         self.uncertain_until.is_some_and(|until| now < until)
     }
+
+    /// Whether this record describes the given resources.
+    ///
+    /// The destination is part of the identity: a configuration names a
+    /// context and a kubeconfig, and both can come to mean another server
+    /// between two attempts, so resources created on each are different
+    /// obligations. A side that never resolved its destination matches any:
+    /// it describes the same rows and cannot say which server they reached.
+    fn describes(&self, config: &Config, destination: Option<&str>) -> bool {
+        same_resources(&self.config, config)
+            && match (self.destination.as_deref(), destination) {
+                (Some(left), Some(right)) => left == right,
+                _ => true,
+            }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -180,12 +195,12 @@ async fn persist_uncertain_target(
         destination: destination.map(ToOwned::to_owned),
     })
     .map_err(|error| format!("Failed to describe the cleanup metadata for config {id}: {error}"))?;
-    let key = uncertain_create_key(id, config, mode);
+    let key = uncertain_create_key(id, config, destination, mode);
     // A fresh attempt starts its confirmation sequence from scratch: a count
     // left by an earlier attempt at the same destination would let this one be
     // forgotten after a single pass.
     if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
-        &confirmation_key(id, config, mode),
+        &confirmation_key(id, config, destination, mode),
         mode,
     )
     .await
@@ -204,10 +219,12 @@ async fn persist_uncertain_target(
 /// A create whose outcome was never answered is not settled by elapsed client
 /// time: the server can still admit it. The budget bounds how long this keeps
 /// costing a list, without turning one empty result into proof.
-async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) -> bool {
+async fn confirm_uncertain_target(
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
+) -> bool {
     const CONFIRMATIONS_REQUIRED: u32 = 2;
 
-    let key = confirmation_key(id, config, mode);
+    let key = confirmation_key(id, config, destination, mode);
     let seen = kftray_commons::utils::settings::get_setting_with_mode(&key, mode)
         .await
         .ok()
@@ -236,10 +253,12 @@ async fn confirm_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) 
 ///
 /// Awaited like the write it undoes: two detached tasks have no ordering, and a
 /// late delete would erase a newer attempt's record.
-async fn forget_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) {
+async fn forget_uncertain_target(
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
+) {
     for key in [
-        uncertain_create_key(id, config, mode),
-        confirmation_key(id, config, mode),
+        uncertain_create_key(id, config, destination, mode),
+        confirmation_key(id, config, destination, mode),
     ] {
         if let Err(error) =
             kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
@@ -253,10 +272,12 @@ async fn forget_uncertain_target(id: i64, config: &Config, mode: DatabaseMode) {
 ///
 /// Deliberately a different prefix: the restore scan reads every key under the
 /// create prefix as a target, and a counter is not one.
-fn confirmation_key(id: i64, config: &Config, mode: DatabaseMode) -> String {
+fn confirmation_key(
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
+) -> String {
     format!(
         "uncertain_confirmations:{}",
-        uncertain_create_key(id, config, mode)
+        uncertain_create_key(id, config, destination, mode)
             .strip_prefix(UNCERTAIN_CREATE_PREFIX)
             .unwrap_or_default()
     )
@@ -264,11 +285,14 @@ fn confirmation_key(id: i64, config: &Config, mode: DatabaseMode) -> String {
 
 /// Identifies one configuration's resources, so two different targets for the
 /// same id do not overwrite each other.
-fn uncertain_create_key(id: i64, config: &Config, mode: DatabaseMode) -> String {
-    // The identity matches `same_resources` field for field: targets the
-    // registry tracks separately must not share a key, or settling one would
-    // delete another's restart metadata.
-    let destination = stable_digest(&[
+fn uncertain_create_key(
+    id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
+) -> String {
+    // The identity matches `PendingTarget::describes` field for field: targets
+    // the registry tracks separately must not share a key, or settling one
+    // would delete another's restart metadata.
+    let digest = stable_digest(&[
+        destination,
         Some(config.namespace.as_str()),
         config.context.as_deref(),
         config.kubeconfig.as_deref(),
@@ -289,7 +313,7 @@ fn uncertain_create_key(id: i64, config: &Config, mode: DatabaseMode) -> String 
         DatabaseMode::Memory => "memory",
     };
 
-    format!("{UNCERTAIN_CREATE_PREFIX}{scope}:{id}:{destination:016x}")
+    format!("{UNCERTAIN_CREATE_PREFIX}{scope}:{id}:{digest:016x}")
 }
 
 /// Reloads creates persisted by an earlier run into the cleanup registry.
@@ -366,7 +390,7 @@ fn record_target(
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
     if let Some(existing) = entries
         .iter_mut()
-        .find(|entry| same_resources(&entry.config, &config))
+        .find(|entry| entry.describes(&config, destination.as_deref()))
     {
         existing.uncertain_until = match (existing.uncertain_until, uncertain_until) {
             (Some(left), Some(right)) => Some(left.max(right)),
@@ -389,9 +413,9 @@ fn record_target(
 }
 
 /// Drops one recorded target, leaving any other resources for this id tracked.
-pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
+pub(crate) fn forget_pending_cleanup(id: i64, config: &Config, destination: Option<&str>) {
     if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
-        entries.retain(|entry| !same_resources(&entry.config, config));
+        entries.retain(|entry| !entry.describes(config, destination));
     }
     // Removed only while still empty: allocation tasks record targets outside
     // the lifecycle lock, so one can arrive between the retain above and this
@@ -406,16 +430,16 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
 /// obligation but wrong here: cleanup that succeeded would be demanded again on
 /// every later stop.
 fn set_target_obligations(
-    id: i64, config: &Config, uncertain_until: Option<Instant>, cluster: bool, local: bool,
+    id: i64, target: &PendingTarget, uncertain_until: Option<Instant>, cluster: bool, local: bool,
 ) {
     if !cluster && !local {
-        forget_pending_cleanup(id, config);
+        forget_pending_cleanup(id, &target.config, target.destination.as_deref());
         return;
     }
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
     if let Some(existing) = entries
         .iter_mut()
-        .find(|entry| same_resources(&entry.config, config))
+        .find(|entry| entry.describes(&target.config, target.destination.as_deref()))
     {
         existing.uncertain_until = uncertain_until;
         existing.cluster = cluster;
@@ -423,11 +447,11 @@ fn set_target_obligations(
         return;
     }
     entries.push(PendingTarget {
-        config: config.clone(),
+        config: target.config.clone(),
         uncertain_until,
         cluster,
         local,
-        destination: None,
+        destination: target.destination.clone(),
     });
 }
 
@@ -491,7 +515,7 @@ impl ClusterResourceGuard {
             && let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id)
             && let Some(entry) = entries
                 .iter_mut()
-                .find(|entry| same_resources(&entry.config, config))
+                .find(|entry| entry.describes(config, self.destination.as_deref()))
         {
             entry.uncertain_until = None;
         }
@@ -505,11 +529,12 @@ impl ClusterResourceGuard {
         };
         // Definitively rejected, so nothing was created and the persisted
         // record has nothing left to describe.
-        forget_uncertain_target(self.id, &config, self.mode).await;
+        let destination = self.destination.take();
+        forget_uncertain_target(self.id, &config, destination.as_deref(), self.mode).await;
         if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
             for entry in entries
                 .iter_mut()
-                .filter(|entry| same_resources(&entry.config, &config))
+                .filter(|entry| entry.describes(&config, destination.as_deref()))
             {
                 entry.cluster = false;
                 entry.uncertain_until = None;
@@ -761,7 +786,7 @@ async fn delete_cluster_resources_inner(
         )
         .await
     } else {
-        delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id).await
+        delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id, mode).await
     }
 }
 
@@ -888,11 +913,11 @@ pub(crate) async fn release_address_with_fallback(
 }
 
 pub(crate) async fn delete_proxy_cluster_resources(
-    client: Client, namespace: &str, config_id: i64,
+    client: Client, namespace: &str, config_id: i64, mode: DatabaseMode,
 ) -> Result<(), String> {
     let prefix = crate::kube::proxy::proxy_resource_prefix();
     let owned = ListParams::default()
-        .labels(&crate::kube::proxy::proxy_owner_selector(&config_id.to_string()).await?);
+        .labels(&crate::kube::proxy::proxy_owner_selector(&config_id.to_string(), mode).await?);
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
@@ -1320,13 +1345,25 @@ async fn stop_config(
     let process = CHILD_PROCESSES.remove(&id);
     let existed = process.is_some();
     let mut retained = None;
+    let mut retained_destination = None;
     if let Some((_, mut process)) = process {
         retained = process.config().cloned();
+        retained_destination = process.destination();
         // Recorded before the first await: the process is already out of
         // CHILD_PROCESSES, so aborting this stop, as the terminal's shutdown
         // drain does, would otherwise drop the only snapshot of its resources.
+        // The destination goes with it: the row's context can come to mean
+        // another server while the forward runs, and cleanup on that one must
+        // not count as settling this.
         if let Some(config) = &retained {
-            record_pending_cleanup(id, config.clone());
+            record_target(
+                id,
+                config.clone(),
+                None,
+                true,
+                true,
+                retained_destination.clone(),
+            );
         }
         process.cleanup_and_abort().await;
     }
@@ -1355,7 +1392,7 @@ async fn stop_config(
         // the resources an earlier failed cleanup left behind.
         let recorded = pending
             .iter()
-            .find(|target| same_resources(&target.config, config));
+            .find(|target| target.describes(config, retained_destination.as_deref()));
         let mut targets = vec![PendingTarget {
             config: config.clone(),
             uncertain_until: recorded.and_then(|target| target.uncertain_until),
@@ -1365,12 +1402,14 @@ async fn stop_config(
             // configuration is still forwarding and owes both.
             cluster: recorded.is_none_or(|target| target.cluster),
             local: recorded.is_none_or(|target| target.local),
-            destination: recorded.and_then(|target| target.destination.clone()),
+            destination: recorded
+                .and_then(|target| target.destination.clone())
+                .or(retained_destination),
         }];
         targets.extend(
             pending
                 .iter()
-                .filter(|target| !same_resources(&target.config, config))
+                .filter(|target| !target.describes(config, None))
                 .cloned(),
         );
 
@@ -1390,14 +1429,19 @@ async fn stop_config(
         }
 
         let mut errors: Vec<String> = Vec::new();
-        let mut settled: Vec<Config> = Vec::new();
+        let mut settled: Vec<PendingTarget> = Vec::new();
         // Targets whose create was never answered, so an empty list is not
         // proof that nothing was created.
-        let unanswered: Vec<Config> = targets
+        let unanswered: Vec<PendingTarget> = targets
             .iter()
             .filter(|target| target.uncertain_until.is_some())
-            .map(|target| target.config.clone())
+            .cloned()
             .collect();
+        let is_unanswered = |target: &PendingTarget| {
+            unanswered
+                .iter()
+                .any(|entry| entry.describes(&target.config, target.destination.as_deref()))
+        };
         let now = Instant::now();
         for target in &targets {
             let cluster = if target.cluster {
@@ -1415,7 +1459,7 @@ async fn stop_config(
             };
             let uncertain = target.is_uncertain(now);
             if cluster.is_ok() && local.settled() && !uncertain {
-                settled.push(target.config.clone());
+                settled.push(target.clone());
                 continue;
             }
 
@@ -1429,10 +1473,16 @@ async fn stop_config(
             // the window expired: one whose delete failed, or that ran while
             // the outcome could still change, observed nothing and must not
             // count towards the evidence that nothing was created.
-            let unconfirmed = unanswered.contains(&target.config)
+            let unconfirmed = is_unanswered(target)
                 && (cluster.is_err()
                     || uncertain
-                    || !confirm_uncertain_target(id, &target.config, mode).await);
+                    || !confirm_uncertain_target(
+                        id,
+                        &target.config,
+                        target.destination.as_deref(),
+                        mode,
+                    )
+                    .await);
             let cluster_owed = target.cluster && (cluster.is_err() || uncertain || unconfirmed);
             // A cluster obligation that is confirmed complete clears its
             // durable record now, whatever the local cleanup did. Left in
@@ -1446,12 +1496,13 @@ async fn stop_config(
             // unanswered again, restart a counter that no longer exists and
             // recreate a cluster obligation already proven settled.
             let cluster_settled = target.cluster && !cluster_owed;
-            if cluster_settled && unanswered.contains(&target.config) {
-                forget_uncertain_target(id, &target.config, mode).await;
+            if cluster_settled && is_unanswered(target) {
+                forget_uncertain_target(id, &target.config, target.destination.as_deref(), mode)
+                    .await;
             }
             set_target_obligations(
                 id,
-                &target.config,
+                target,
                 if cluster_settled {
                     None
                 } else {
@@ -1492,10 +1543,11 @@ async fn stop_config(
             // that was never answered is not: the server can still admit it, so
             // its record outlives a single empty list and goes only once a
             // later pass has confirmed it again.
-            let answered = !unanswered.contains(&target);
-            if answered || confirm_uncertain_target(id, &target, mode).await {
-                forget_uncertain_target(id, &target, mode).await;
-                forget_pending_cleanup(id, &target);
+            let destination = target.destination.as_deref();
+            let answered = !is_unanswered(&target);
+            if answered || confirm_uncertain_target(id, &target.config, destination, mode).await {
+                forget_uncertain_target(id, &target.config, destination, mode).await;
+                forget_pending_cleanup(id, &target.config, destination);
                 continue;
             }
             // Still unconfirmed: the obligation stays so the next pass looks

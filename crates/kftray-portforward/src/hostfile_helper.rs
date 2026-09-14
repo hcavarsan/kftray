@@ -121,6 +121,46 @@ impl HostfileHelperClient {
         }
     }
 
+    /// Asks the helper to remove unmarked copies of `entries` from its section.
+    ///
+    /// A helper from before this command answers with an error it does not
+    /// recognise the request; the caller reports the lines as still on disk.
+    pub fn remove_unowned_host_entries(
+        &self, entries: Vec<HostEntry>,
+    ) -> Result<(), HostfileHelperError> {
+        debug!(
+            "Removing {} unmarked host entries via helper",
+            entries.len()
+        );
+
+        if !self.is_available() {
+            return Err(HostfileHelperError::Communication(
+                "Helper service is not available".to_string(),
+            ));
+        }
+
+        let command = kftray_helper::messages::RequestCommand::Host(
+            kftray_helper::messages::HostCommand::RemoveUnowned { entries },
+        );
+
+        match kftray_helper::client::socket_comm::send_request(
+            &self.socket_path,
+            &self.app_id,
+            command,
+        ) {
+            Ok(response) => match response.result {
+                kftray_helper::messages::RequestResult::Success => Ok(()),
+                kftray_helper::messages::RequestResult::Error(err) => {
+                    Err(HostfileHelperError::Communication(err))
+                }
+                _ => Err(HostfileHelperError::InvalidResponse(
+                    "Expected Success or Error response".to_string(),
+                )),
+            },
+            Err(e) => Err(HostfileHelperError::Helper(e)),
+        }
+    }
+
     pub fn remove_all_host_entries(&self) -> Result<(), HostfileHelperError> {
         debug!("Removing all host entries via helper");
 
