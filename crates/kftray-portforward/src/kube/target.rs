@@ -84,25 +84,50 @@ pub async fn resolve_target_port_for_pod(
             _ => Err(anyhow::anyhow!("Port number {} is out of range", port)),
         },
         Port::Name(port_name) => {
-            let pod_name = forwarder.wait_for_ready_pod(timeout).await.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No ready pods available to resolve port name '{}'",
-                    port_name
-                )
-            })?;
+            // A pod can go between being selected as ready and being read: a
+            // rollout retires it in that window. Selection is repeated within
+            // the same deadline rather than failing the resolution, since a
+            // replacement is usually ready by then. Any other error stands.
+            let deadline = tokio::time::Instant::now() + timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                let pod_name = forwarder
+                    .wait_for_ready_pod(remaining)
+                    .await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No ready pods available to resolve port name '{}'",
+                            port_name
+                        )
+                    })?;
 
-            let pod = pod_api
-                .get(&pod_name)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to fetch pod '{}': {}", pod_name, e))?;
+                let pod = match pod_api.get(&pod_name).await {
+                    Ok(pod) => pod,
+                    Err(kube::Error::Api(response))
+                        if response.code == 404 && tokio::time::Instant::now() < deadline =>
+                    {
+                        log::debug!(
+                            "Pod '{pod_name}' went away before its port could be read; selecting \
+                             again"
+                        );
+                        // Gives the watch a moment to notice the retirement,
+                        // so a stale selection is not re-read in a tight loop.
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to fetch pod '{}': {}", pod_name, e));
+                    }
+                };
 
-            // The UID comes from the pod the number was read from, so a
-            // replacement reusing the name is still a different identity.
-            let identity = kube_portforward::ReadyPod::new(pod_name, pod.metadata.uid.clone());
+                // The UID comes from the pod the number was read from, so a
+                // replacement reusing the name is still a different identity.
+                let identity = kube_portforward::ReadyPod::new(pod_name, pod.metadata.uid.clone());
 
-            target
-                .find(&pod, None)
-                .map(|target_pod| (target_pod.port_number, Some(identity)))
+                return target
+                    .find(&pod, None)
+                    .map(|target_pod| (target_pod.port_number, Some(identity)));
+            }
         }
     }
 }

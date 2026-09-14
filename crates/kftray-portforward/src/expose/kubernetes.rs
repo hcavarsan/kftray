@@ -312,6 +312,43 @@ impl From<&str> for ExposeCreateError {
     }
 }
 
+/// How long one create request may take before it is treated as unanswered.
+///
+/// The client carries no per-request timeout, so without this a server that
+/// accepts a POST and never answers holds the start, and the batch waiting on
+/// it, until the user cancels. A request that timed out may still have been
+/// applied, so it is ambiguous, never a proven rejection.
+const CREATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn create_bounded<K>(
+    api: &Api<K>, what: &str, object: &K,
+) -> Result<CreatedResource, ExposeCreateError>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + serde::Serialize + kube::Resource,
+{
+    match tokio::time::timeout(
+        CREATE_REQUEST_TIMEOUT,
+        api.create(&PostParams::default(), object),
+    )
+    .await
+    {
+        Ok(Ok(created)) => Ok(CreatedResource {
+            kind: ResourceKind::of(what),
+            name: created.meta().name.clone().unwrap_or_default(),
+            uid: created.meta().uid.clone(),
+        }),
+        Ok(Err(error)) => Err(classify_create_error(what, &error)),
+        Err(_) => Err(ExposeCreateError {
+            message: format!(
+                "Timed out after {CREATE_REQUEST_TIMEOUT:?} creating the {what}; the server may \
+                 still be applying it"
+            ),
+            ambiguous: true,
+            rolled_back: false,
+        }),
+    }
+}
+
 /// Classifies a failed create. Only a definitive rejection proves the object
 /// was not created; a transport failure or a server-side timeout can be
 /// returned while the request is still being applied.
@@ -345,11 +382,13 @@ pub enum ResourceKind {
     Ingress,
 }
 
-fn created_from<K: kube::Resource>(kind: ResourceKind, created: &K) -> CreatedResource {
-    CreatedResource {
-        kind,
-        name: created.meta().name.clone().unwrap_or_default(),
-        uid: created.meta().uid.clone(),
+impl ResourceKind {
+    fn of(what: &str) -> Self {
+        match what {
+            "deployment" => Self::Deployment,
+            "service" => Self::Service,
+            _ => Self::Ingress,
+        }
     }
 }
 
@@ -561,11 +600,7 @@ async fn create_deployment(
         }
     }
 
-    let created = deployments
-        .create(&PostParams::default(), &deployment)
-        .await
-        .map_err(|e| classify_create_error("deployment", &e))?;
-    let created = created_from(ResourceKind::Deployment, &created);
+    let created = create_bounded(&deployments, "deployment", &deployment).await?;
 
     info!("Deployment created successfully");
     Ok(created)
@@ -646,9 +681,9 @@ async fn wait_for_pod_ready(
 
 async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<String, String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    let pod = pods
-        .get(pod_name)
+    let pod = tokio::time::timeout(CREATE_REQUEST_TIMEOUT, pods.get(pod_name))
         .await
+        .map_err(|_| format!("Timed out after {CREATE_REQUEST_TIMEOUT:?} reading the relay pod"))?
         .map_err(|e| format!("Failed to get pod: {}", e))?;
 
     let pod_ip = pod.status.and_then(|s| s.pod_ip).ok_or("Pod has no IP")?;
@@ -693,11 +728,7 @@ async fn create_service(
         selector.extend(ownership.unwrap_or_default());
     }
 
-    let created = services
-        .create(&PostParams::default(), &service)
-        .await
-        .map_err(|e| classify_create_error("service", &e))?;
-    let created = created_from(ResourceKind::Service, &created);
+    let created = create_bounded(&services, "service", &service).await?;
 
     info!("Service created successfully");
     Ok(created)
@@ -753,11 +784,7 @@ async fn create_ingress(
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
     remember_ingress_created(&config_id_str, location, mode).await?;
-    let created = ingresses
-        .create(&PostParams::default(), &ingress)
-        .await
-        .map_err(|e| classify_create_error("ingress", &e))?;
-    let created = created_from(ResourceKind::Ingress, &created);
+    let created = create_bounded(&ingresses, "ingress", &ingress).await?;
 
     info!("Created ingress");
     Ok(created)
@@ -852,6 +879,90 @@ async fn forget_ingress_history(config_id: &str, location: &ExposeLocation, mode
     }
 }
 
+/// Key under which a configuration is marked as possibly having exposed
+/// itself publicly before ingress history was recorded.
+fn legacy_exposure_key(config_id: &str, mode: DatabaseMode) -> String {
+    format!("expose_legacy_possible:{}:{config_id}", mode_scope(mode))
+}
+
+fn mode_scope(mode: DatabaseMode) -> &'static str {
+    match mode {
+        DatabaseMode::File => "file",
+        DatabaseMode::Memory => "memory",
+    }
+}
+
+const EXPOSE_HISTORY_BASELINE: &str = "expose_history_baseline";
+
+/// Marks every exposure that predates ingress history as one whose past
+/// cannot be reconstructed, once.
+///
+/// History is recorded before an ingress is created, so a configuration
+/// exposed publicly after this baseline always has a record. The ones from
+/// before it are the only ones for which a missing record proves nothing,
+/// and they are marked so that cleanup cannot infer absence for them from a
+/// refusal to list ingresses. The mark goes once a listing has verified that
+/// none exists.
+async fn ensure_expose_history_baseline(mode: DatabaseMode) -> Result<(), String> {
+    use kftray_commons::utils::settings::{
+        get_setting_with_mode,
+        set_setting_with_mode,
+    };
+
+    let baseline = format!("{EXPOSE_HISTORY_BASELINE}:{}", mode_scope(mode));
+    if get_setting_with_mode(&baseline, mode)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let configs = kftray_commons::utils::config::get_configs_with_mode(mode).await?;
+    for config in configs {
+        if config.workload_type.as_deref() != Some("expose") {
+            continue;
+        }
+        let Some(id) = config.id else { continue };
+        set_setting_with_mode(&legacy_exposure_key(&id.to_string(), mode), "1", mode)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    set_setting_with_mode(&baseline, "1", mode)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Whether an exposure from before ingress history may still have an ingress
+/// nobody recorded. Unreadable state counts as possible.
+async fn legacy_exposure_possible(config_id: &str, mode: DatabaseMode) -> bool {
+    match kftray_commons::utils::settings::get_setting_with_mode(
+        &legacy_exposure_key(config_id, mode),
+        mode,
+    )
+    .await
+    {
+        Ok(value) => value.is_some(),
+        Err(error) => {
+            log::warn!("Could not read the exposure baseline for config {config_id}: {error}");
+            true
+        }
+    }
+}
+
+/// A listing verified that no ingress is left, so the pre-history doubt about
+/// this configuration is settled for good.
+async fn forget_legacy_exposure(config_id: &str, mode: DatabaseMode) {
+    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
+        &legacy_exposure_key(config_id, mode),
+        mode,
+    )
+    .await
+    {
+        log::debug!("Failed to clear the exposure baseline for config {config_id}: {error}");
+    }
+}
+
 /// Names the items of a list, prefixed with their kind.
 fn named_items<T: kube::Resource + Clone>(
     list: &kube::core::ObjectList<T>, kind: &str,
@@ -871,8 +982,15 @@ pub async fn delete_expose_resources(
     // created, and its role may not allow listing ingresses. Inferring absence
     // from the new type would leave that ingress serving the new tunnel
     // publicly, so history decides here, not the current configuration.
-    let ingress_possible =
-        ingress_possible || ingress_was_created(config_id_label, location, mode).await;
+    // An exposure from before history was kept is treated the same way: for it
+    // a missing record proves nothing, so a refusal to list ingresses cannot
+    // be read as absence. That fails a private start on a role that cannot
+    // list ingresses, and says so, rather than reconnecting a public ingress
+    // that a partial cleanup left behind to the new tunnel.
+    ensure_expose_history_baseline(mode).await?;
+    let ingress_possible = ingress_possible
+        || ingress_was_created(config_id_label, location, mode).await
+        || legacy_exposure_possible(config_id_label, mode).await;
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
@@ -948,8 +1066,9 @@ pub async fn delete_expose_resources(
     }
 
     // Nothing is left, so the history that forced the ingress checks above has
-    // served its purpose.
+    // served its purpose, and so has the doubt about what came before it.
     forget_ingress_history(config_id_label, location, mode).await;
+    forget_legacy_exposure(config_id_label, mode).await;
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label
@@ -988,6 +1107,14 @@ async fn delete_ingresses(
         {
             debug!("Skipping ingress cleanup: {}", response.message);
             return Ok(());
+        }
+        Err(kube::Error::Api(response)) if response.code == 403 => {
+            return Err(format!(
+                "Cannot verify that no public ingress is left for this configuration: listing \
+                 ingresses is not allowed ({}). Grant list access on ingresses once, or remove \
+                 any ingress this configuration created from the server resources screen",
+                response.message
+            ));
         }
         Err(e) => {
             return Err(format!("Failed to list expose ingresses: {e}"));
@@ -1301,6 +1428,113 @@ mod tests {
             assert!(error.contains(&format!("{kind}-broken")), "{error}");
             assert!(!error.contains(&format!("{kind}-missing")), "{error}");
             assert!(!error.contains(&format!("{kind}-ok")), "{error}");
+        }
+    }
+
+    /// Answers every list with an empty page, except ingresses, which are
+    /// refused, until `stop` closes the channel.
+    fn deny_ingress_listing(
+        mut handle: mock::Handle<Request<Body>, Response<Body>>,
+    ) -> tokio_util::task::AbortOnDropHandle<()> {
+        tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            while let Some((request, send)) = handle.next_request().await {
+                assert_eq!(request.method(), Method::GET);
+                let (status, body) = if request.uri().path().contains("/ingresses") {
+                    (
+                        403,
+                        serde_json::json!({
+                            "apiVersion":"v1","kind":"Status","status":"Failure",
+                            "reason":"Forbidden","message":"ingresses is forbidden","code":403
+                        }),
+                    )
+                } else {
+                    (200, serde_json::json!({"items":[]}))
+                };
+                send.send_response(
+                    Response::builder()
+                        .status(status)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                );
+            }
+        }))
+    }
+
+    #[tokio::test]
+    async fn a_pre_history_exposure_cannot_start_privately_without_verifying_its_ingress() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        // An exposure that existed before ingress history was recorded: it
+        // could have left a public ingress that a partial cleanup missed.
+        let legacy = kftray_commons::utils::config::insert_config_with_mode(
+            Config {
+                workload_type: Some("expose".to_owned()),
+                exposure_type: Some("private".to_owned()),
+                alias: Some("myapp".to_owned()),
+                namespace: "default".to_owned(),
+                ..Config::default()
+            },
+            mode,
+        )
+        .await
+        .unwrap();
+        let _ = kftray_commons::utils::settings::delete_setting_with_mode(
+            &format!("{EXPOSE_HISTORY_BASELINE}:{}", mode_scope(mode)),
+            mode,
+        )
+        .await;
+
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let _server = deny_ingress_listing(handle);
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            delete_expose_resources(
+                client.clone(),
+                "default",
+                &legacy.to_string(),
+                false,
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap()
+        .expect_err("a refusal to list ingresses cannot be read as absence for this exposure");
+        assert!(error.contains("Cannot verify"), "{error}");
+
+        // A configuration created after the baseline has a record for every
+        // ingress it ever made, so the same refusal is fine for it.
+        let fresh = kftray_commons::utils::config::insert_config_with_mode(
+            Config {
+                workload_type: Some("expose".to_owned()),
+                exposure_type: Some("private".to_owned()),
+                alias: Some("other".to_owned()),
+                namespace: "default".to_owned(),
+                ..Config::default()
+            },
+            mode,
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            delete_expose_resources(
+                client,
+                "default",
+                &fresh.to_string(),
+                false,
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap()
+        .expect("a private exposure with a complete history tolerates the refusal");
+
+        for id in [legacy, fresh] {
+            let _ = kftray_commons::utils::config::delete_config_with_mode(id, mode).await;
         }
     }
 }

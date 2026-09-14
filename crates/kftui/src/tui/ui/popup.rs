@@ -696,9 +696,13 @@ pub fn render_error_popup(
     .max(hint_rows("Press <Enter> to close"));
     let compact = inner_height < 2 + widest_hint;
     let (separator_rows, hint_budget) = if compact { (0, 1) } else { (1, widest_hint) };
-    let visible = inner_height
-        .saturating_sub(separator_rows + hint_budget)
-        .max(1);
+    // A popup with a single interior row shows the hint alone: a content row
+    // forced in would push the only way out of the popup past the border.
+    let visible = if inner_height <= hint_budget {
+        0
+    } else {
+        (inner_height - separator_rows - hint_budget).max(1)
+    };
     let hidden = lines.len().saturating_sub(visible);
     let offset = scroll.min(hidden);
     let mut lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();

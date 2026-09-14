@@ -211,7 +211,12 @@ impl PortForward {
     /// Releases everything `start_config` registered outside the process: the
     /// custom loopback address and the domain alias in the hosts file.
     #[instrument(skip(self), fields(config_id = self.config_id))]
-    pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
+    /// Releases what a startup acquired locally. `config` is the row the
+    /// startup ran with: it names the aliases the hosts-file cleanup has to
+    /// verify gone.
+    pub async fn cleanup_resources(
+        &self, config: Option<&kftray_commons::models::config_model::Config>,
+    ) -> anyhow::Result<()> {
         let mut errors: Vec<String> = Vec::new();
         // Routed through the ownership-safe release: two configurations of one
         // service can share an address, and removing it directly would take the
@@ -228,16 +233,14 @@ impl PortForward {
         // tracked for retry when cleanup did not finish. Run on a blocking
         // thread because the hosts file is written synchronously behind a lock.
         let config_id = self.config_id;
-        match tokio::task::spawn_blocking(move || {
-            let mut errors = Vec::new();
-            if let Err(error) = crate::hostsfile::remove_host_entry(&config_id.to_string()) {
-                errors.push(error.to_string());
-            }
-            if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&config_id.to_string()) {
-                errors.push(error.to_string());
-            }
-            errors
-        })
+        let snapshot = config.cloned();
+        match tokio::task::spawn_blocking(
+            move || match crate::hostsfile::remove_config_host_entries(config_id, snapshot.as_ref())
+            {
+                Ok(()) => Vec::new(),
+                Err(error) => vec![error.to_string()],
+            },
+        )
         .await
         {
             Ok(hosts_errors) => errors.extend(hosts_errors),

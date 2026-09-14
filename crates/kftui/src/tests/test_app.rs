@@ -334,10 +334,13 @@ mod tests {
         .await
         .unwrap();
 
-        tokio::time::timeout(std::time::Duration::from_secs(1), app.finish_forwarding())
+        // Drained without the printing step, so the reports are still here to
+        // inspect: an intentional shutdown cancellation must not become one.
+        tokio::time::timeout(std::time::Duration::from_secs(1), app.drain_forwarding())
             .await
             .unwrap();
-        assert!(app.error_receiver.as_mut().unwrap().try_recv().is_err());
+        let reports = app.take_shutdown_reports();
+        assert!(reports.is_empty(), "{reports:?}");
     }
 
     #[tokio::test]

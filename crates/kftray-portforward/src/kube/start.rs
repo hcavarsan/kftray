@@ -157,19 +157,14 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
         errors.push(error);
     }
     let id = config.id.unwrap_or_default();
+    let snapshot = config.clone();
     let hosts = tokio::task::spawn_blocking(move || {
-        let mut errors = Vec::new();
-        if let Err(error) = crate::hostsfile::remove_host_entry(&id.to_string()) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&id.to_string()) {
-            errors.push(error.to_string());
-        }
-        errors
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot))
     })
     .await;
     match hosts {
-        Ok(hosts_errors) => errors.extend(hosts_errors),
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => errors.push(error.to_string()),
         Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
     }
 
@@ -187,7 +182,7 @@ async fn rollback_local_resources(config: &Config, address: &str, reason: String
 }
 
 async fn rollback_startup(port_forward: &PortForward, config: Config, reason: String) -> String {
-    match port_forward.cleanup_resources().await {
+    match port_forward.cleanup_resources(Some(&config)).await {
         Ok(()) => {
             if let Some(id) = config.id {
                 crate::kube::stop::forget_pending_cleanup(id, &config);
@@ -235,7 +230,7 @@ async fn allocate_local_address_owned(
     OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move {
         let _counted = AllocationInFlight;
-        let result = allocate_local_address_for_config(&mut owned, mode).await;
+        let (result, claim) = allocate_and_claim(&mut owned, mode).await;
         let allocated = result.is_ok()
             && owned
                 .local_address
@@ -247,28 +242,6 @@ async fn allocate_local_address_owned(
         if allocated && let Some(id) = owned.id {
             crate::kube::stop::record_pending_cleanup(id, owned.clone());
         }
-        // Claimed here, under the release registry's entry lock, so that no
-        // moment exists in which the address is allocated and unclaimed. A
-        // release already running wins: the address is not usable yet.
-        let claim = match (allocated, owned.local_address.as_deref()) {
-            (true, Some(address)) => {
-                match crate::kube::stop::AddressClaim::take(address, owned.id) {
-                    Some(claim) => Some(claim),
-                    None => {
-                        let _ = sender.send((
-                            Err(format!(
-                                "Local address {address} is still being released by an earlier \
-                                 stop"
-                            )),
-                            owned,
-                            None,
-                        ));
-                        return;
-                    }
-                }
-            }
-            _ => None,
-        };
         if let Err((_, owned, claim)) = sender.send((result, owned, claim))
             && allocated
             && let Some(address) = owned.local_address.as_deref()
@@ -323,6 +296,62 @@ async fn persist_allocated_address(
         debug!("Config {id} no longer requests an allocated address; keeping its own");
     }
     Ok(())
+}
+
+/// Allocates an address and returns it held by a claim that no release can
+/// get past.
+///
+/// The claim can only be taken once the address is known, and the helper
+/// hands the same address to every configuration of one service, so between
+/// the allocation and the claim a stop of a sibling configuration can complete
+/// a release of exactly this address, alias and pool reservation included.
+/// A check for a running release does not see one that already finished.
+/// So the allocation is repeated under the claim: the helper either confirms
+/// the reservation still stands, or makes a fresh one now that nothing can
+/// release it, and if it hands back a different address the claim moves to
+/// that one and the confirmation runs again.
+async fn allocate_and_claim(
+    owned: &mut Config, mode: DatabaseMode,
+) -> (
+    Result<String, String>,
+    Option<crate::kube::stop::AddressClaim>,
+) {
+    const ATTEMPTS: usize = 3;
+
+    let mut address = match allocate_local_address_for_config(owned, mode).await {
+        Ok(address) => address,
+        Err(error) => return (Err(error), None),
+    };
+    for _ in 0..ATTEMPTS {
+        if !crate::network_utils::is_custom_loopback_address(&address) {
+            return (Ok(address), None);
+        }
+        let Some(claim) = crate::kube::stop::AddressClaim::take(&address, owned.id) else {
+            return (
+                Err(format!(
+                    "Local address {address} is still being released by an earlier stop"
+                )),
+                None,
+            );
+        };
+        let confirmed = match allocate_local_address_for_config(owned, mode).await {
+            Ok(confirmed) => confirmed,
+            Err(error) => return (Err(error), None),
+        };
+        if confirmed == address {
+            return (Ok(address), Some(claim));
+        }
+        warn!("Address {address} was reassigned while it was being claimed; moving to {confirmed}");
+        drop(claim);
+        address = confirmed;
+    }
+    (
+        Err(format!(
+            "Could not settle on a local address for config {}: it kept changing under the claim",
+            owned.id.unwrap_or_default()
+        )),
+        None,
+    )
 }
 
 async fn allocate_local_address_for_config(

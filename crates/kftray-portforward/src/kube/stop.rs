@@ -44,10 +44,6 @@ use tracing::{
     warn,
 };
 
-use crate::hostsfile::{
-    remove_host_entry,
-    remove_ssl_host_entry,
-};
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
     ServiceClientKey,
@@ -639,20 +635,13 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     // Hosts-file work is synchronous and serialized behind one lock, so it runs
     // on a blocking thread: several stops at once would otherwise queue up on
     // runtime workers and stall unrelated forwards.
-    let domain_enabled = config.domain_enabled.unwrap_or_default();
-    let hosts = spawn_blocking(move || {
-        let mut errors = Vec::new();
-        if domain_enabled && let Err(error) = remove_host_entry(&id.to_string()) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
-            errors.push(error.to_string());
-        }
-        errors
-    })
-    .await;
+    let snapshot = config.clone();
+    let hosts =
+        spawn_blocking(move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot)))
+            .await;
     match hosts {
-        Ok(errors) => cleanup.failures.extend(errors),
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => cleanup.failures.push(error.to_string()),
         Err(error) => cleanup
             .failures
             .push(format!("Hosts cleanup task failed: {error}")),
@@ -1233,6 +1222,11 @@ pub async fn stop_port_forward_with_mode(
     if let Some(process) = CHILD_PROCESSES.get(&id) {
         process.cancel();
     }
+    // The durable records are loaded before the cleanup snapshot is chosen.
+    // After a crash the in-memory registry is empty, and a configuration
+    // edited to another namespace since would otherwise have only its new
+    // row to go by, leaving the exposure the old row described running.
+    restore_uncertain_targets(mode).await;
     let config = get_config_with_mode(id, mode).await;
     let response = stop_config(id, config.as_ref().ok(), mode).await;
     match (config, response) {
@@ -1409,12 +1403,17 @@ async fn stop_config(
                     target.config.kubeconfig.clone(),
                 ));
                 errors.push(error);
-            } else if uncertain {
+            } else if uncertain || unconfirmed {
                 // An abandoned create may still be persisting, so one empty
-                // list is not proof.
+                // list is not proof, and the confirmation that follows the
+                // window is not complete until every pass it needs has run.
+                // Reported so the configuration is not marked stopped while a
+                // cleanup obligation remains: the desktop application has no
+                // reconciliation pass of its own, and a stop that reports
+                // success here leaves a row that cannot be deleted.
                 errors.push(format!(
                     "A create request for config {id} was never answered, so its cluster resources \
-                     are still being reconciled"
+                     are still being reconciled; stop it again to complete the check"
                 ));
             }
             errors.extend(local.failures);
@@ -1438,8 +1437,13 @@ async fn stop_config(
             }
             // Still unconfirmed: the obligation stays so the next pass looks
             // again, rather than leaving the durable record with nothing in
-            // this process to act on it.
+            // this process to act on it, and the stop reports it for the same
+            // reason as above.
             set_target_obligations(id, &target, None, true, false);
+            errors.push(format!(
+                "A create request for config {id} was never answered, so its cluster resources are \
+                 still being reconciled; stop it again to complete the check"
+            ));
         }
         if errors.is_empty() {
             let state = ConfigState::new(id, false);

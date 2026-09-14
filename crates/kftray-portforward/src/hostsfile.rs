@@ -57,10 +57,6 @@ impl HostfileManager {
         self.direct_manager.add_host_entry(id, entry)
     }
 
-    pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        self.remove_host_entries(std::slice::from_ref(&id))
-    }
-
     /// Removes several ids from wherever they were written.
     ///
     /// Success means verified: after both writers have had their turn, the
@@ -68,8 +64,12 @@ impl HostfileManager {
     /// call, whichever writer reported what. An alias the application cannot
     /// remove itself is reported so the caller keeps the cleanup owed and a
     /// later stop, with the helper back, retries it.
-    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+    pub fn remove_host_entries(
+        &self, ids: &[&str], expected: &[(String, HostEntry)],
+    ) -> std::io::Result<()> {
+        let mut asked_helper = false;
         if let Some(helper) = self.helper() {
+            asked_helper = true;
             for id in ids {
                 if let Err(e) = helper.remove_host_entry(id) {
                     warn!("Helper hostfile remove failed for {id}: {e}");
@@ -88,12 +88,34 @@ impl HostfileManager {
         // fallback, and removing it would clear only the second. A failed read
         // is a failure: half a section still resolves, and treating it as
         // empty would report cleanup that did not happen.
-        let section = DirectHostfileManager::helper_section()?;
-        let handed = self
+        // Attribution for unmarked lines comes from two places: what this run
+        // handed to the helper, and what the configuration itself says its
+        // aliases are. The second survives restarts and a reply that never
+        // arrived, which the first does not.
+        let mut handed = self
             .handed_to_helper
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let stranded = DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        handed.extend(expected.iter().cloned());
+        // A helper from before this change answers before it writes: it queues
+        // the removal for a background writer that runs within a fraction of
+        // a second. Its lines are given that long to disappear before they are
+        // reported, so an installed helper that has not been upgraded yet does
+        // not fail every stop.
+        const HELPER_SETTLE: std::time::Duration = std::time::Duration::from_millis(100);
+        const HELPER_SETTLE_ATTEMPTS: usize = 20;
+        let mut stranded = Vec::new();
+        for attempt in 0..HELPER_SETTLE_ATTEMPTS {
+            let section = DirectHostfileManager::helper_section()?;
+            stranded = DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
+            if stranded.is_empty() || !asked_helper {
+                break;
+            }
+            if attempt + 1 < HELPER_SETTLE_ATTEMPTS {
+                std::thread::sleep(HELPER_SETTLE);
+            }
+        }
         if !stranded.is_empty() {
             return Err(std::io::Error::other(format!(
                 "Host entries for {} are still on disk and only the helper can remove them",
@@ -146,8 +168,68 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
     HOSTFILE_MANAGER.add_host_entry(id, entry)
 }
 
-pub fn remove_host_entry(id: &str) -> std::io::Result<()> {
-    HOSTFILE_MANAGER.remove_host_entry(id)
+/// Every alias a configuration may have written, keyed by the id each was
+/// written under.
+///
+/// Derived from the configuration rather than remembered: it is the one
+/// description of these aliases that survives a restart, and it is what
+/// lets a removal recognise an unmarked line an older helper left behind.
+pub fn config_host_entries(
+    id: i64, config: Option<&kftray_commons::models::config_model::Config>,
+) -> Vec<(String, HostEntry)> {
+    let Some(config) = config else {
+        return Vec::new();
+    };
+    let Some(alias) = config.alias.as_deref().filter(|alias| !alias.is_empty()) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    if let Some(ip) = config
+        .local_address
+        .as_deref()
+        .and_then(|address| address.parse().ok())
+    {
+        entries.push((
+            id.to_string(),
+            HostEntry {
+                ip,
+                hostname: alias.to_owned(),
+            },
+        ));
+    }
+    let loopback = "127.0.0.1".parse().unwrap();
+    entries.push((
+        format!("{id}-https"),
+        HostEntry {
+            ip: loopback,
+            hostname: alias.to_owned(),
+        },
+    ));
+    entries.push((
+        format!("{id}-https-local"),
+        HostEntry {
+            ip: loopback,
+            hostname: format!("{alias}.local"),
+        },
+    ));
+    entries
+}
+
+/// Removes every alias a configuration may have written, domain and SSL
+/// alike, with one reconciliation and one verification.
+///
+/// Reported rather than swallowed, so a caller keeps the configuration
+/// tracked for retry when an alias could not be verified gone.
+pub fn remove_config_host_entries(
+    id: i64, config: Option<&kftray_commons::models::config_model::Config>,
+) -> std::io::Result<()> {
+    let ids = [
+        id.to_string(),
+        format!("{id}-https"),
+        format!("{id}-https-local"),
+    ];
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    HOSTFILE_MANAGER.remove_host_entries(&ids, &config_host_entries(id, config))
 }
 
 pub fn remove_all_host_entries() -> std::io::Result<()> {
@@ -170,52 +252,6 @@ pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std
     Ok(())
 }
 
-pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
-    // Removed together so one reconciliation covers both: removing them one at
-    // a time would report the first failure even when the second write, which
-    // rewrites the whole file, already took both aliases out. Reported rather
-    // than swallowed, so a caller can keep the configuration tracked for retry.
-    let https = format!("{config_id}-https");
-    let local = format!("{config_id}-https-local");
-
-    HOSTFILE_MANAGER.remove_host_entries(&[https.as_str(), local.as_str()])
-}
-
-pub fn update_hosts_with_ssl_from_config(
-    config: &kftray_commons::models::config_model::Config,
-) -> Result<(), String> {
-    let alias = config
-        .alias
-        .as_ref()
-        .ok_or("Alias required for SSL hosts entry")?;
-
-    let config_id = config.id.unwrap_or(-1).to_string();
-    let port = config.local_port.unwrap_or(8080);
-
-    add_ssl_host_entry(&config_id, alias, port)
-        .map_err(|e| format!("Failed to add HTTPS hosts entry: {}", e))?;
-
-    log::info!(
-        "Added HTTPS hosts entries: {} and {}.local -> 127.0.0.1:{}",
-        alias,
-        alias,
-        port
-    );
-    Ok(())
-}
-
-pub fn remove_ssl_host_entry_from_config(
-    config: &kftray_commons::models::config_model::Config,
-) -> Result<(), String> {
-    let config_id = config.id.unwrap_or(-1).to_string();
-
-    remove_ssl_host_entry(&config_id)
-        .map_err(|e| format!("Failed to remove HTTPS hosts entry: {}", e))?;
-
-    log::info!("Removed HTTPS hosts entry for config: {}", config_id);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Once;
@@ -235,6 +271,46 @@ mod tests {
     // system hosts file, and it rewrote that file as a side effect. The
     // decisions it was meant to cover are asserted without touching it in
     // `hostfile_direct::tests`.
+
+    #[test]
+    fn a_configuration_names_the_aliases_its_removal_must_verify() {
+        use kftray_commons::models::config_model::Config;
+
+        let config = Config {
+            id: Some(41),
+            alias: Some("app.local".to_owned()),
+            local_address: Some("127.0.0.7".to_owned()),
+            ..Config::default()
+        };
+        let entries = config_host_entries(41, Some(&config));
+        let ids: Vec<String> = entries.iter().map(|(id, _)| id.clone()).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        assert_eq!(ids, vec!["41", "41-https", "41-https-local"]);
+        assert_eq!(
+            entries[0].1.ip,
+            "127.0.0.7".parse::<std::net::IpAddr>().unwrap()
+        );
+        assert_eq!(entries[2].1.hostname, "app.local.local");
+
+        // What survives a restart: nothing was handed to the helper in this
+        // run, yet an unmarked line an older helper wrote for this alias is
+        // still this configuration's and must be reported as stranded.
+        let section = vec![kftray_commons::utils::hostsfile::SectionEntry {
+            ip: "127.0.0.7".parse().unwrap(),
+            hostname: "app.local".to_owned(),
+            owner: None,
+        }];
+        let handed: HashSet<(String, HostEntry)> = entries.into_iter().collect();
+        assert_eq!(
+            DirectHostfileManager::stranded_in_helper_section(&section, &ids, &handed),
+            vec!["41"]
+        );
+        assert!(
+            DirectHostfileManager::stranded_in_helper_section(&section, &ids, &HashSet::new())
+                .is_empty(),
+            "without the configuration the same line is unattributable"
+        );
+    }
 
     #[test]
     fn test_manager_creation() {

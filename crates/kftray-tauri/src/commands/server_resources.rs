@@ -201,6 +201,17 @@ fn belongs_here(
         .is_none_or(|owner| owner == installation_id)
 }
 
+/// Whether `name` is a relay this application could have created for the
+/// current user, under the current naming rule or the one before it.
+///
+/// The current prefix truncates the username to keep the value valid as a
+/// label; relays from before that carry the full sanitized username and
+/// would otherwise vanish from the one screen meant to remove them by hand.
+fn is_forward_name(name: &str, username: &str) -> bool {
+    name.starts_with(&kftray_portforward::kube::proxy_resource_prefix())
+        || name.starts_with(&format!("kftray-forward-{username}-"))
+}
+
 async fn list_pods_in_namespace(
     client: &Client, namespace: &str, username: &str, config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
@@ -211,10 +222,6 @@ async fn list_pods_in_namespace(
         .await
         .map_err(|e| format!("Failed to list pods: {e}"))?;
 
-    // Taken from the function that builds the names, not rebuilt here: the
-    // proxy prefix truncates and drops non-ASCII to keep the value valid as a
-    // label, so a second copy of the rule silently stops matching.
-    let user_prefix_forward = kftray_portforward::kube::proxy_resource_prefix();
     let user_prefix_expose = format!("kftray-expose-{}", username);
 
     Ok(pods
@@ -223,8 +230,7 @@ async fn list_pods_in_namespace(
         .filter_map(|pod| {
             let pod_name = pod.name_any();
 
-            if !pod_name.starts_with(&user_prefix_forward)
-                && !pod_name.starts_with(&user_prefix_expose)
+            if !is_forward_name(&pod_name, username) && !pod_name.starts_with(&user_prefix_expose)
                 || !belongs_here(pod.labels(), installation_id)
             {
                 return None;
@@ -278,14 +284,13 @@ async fn list_deployments_in_namespace(
         .map_err(|e| format!("Failed to list deployments: {e}"))?;
 
     let expose_prefix = format!("kftray-expose-{}-", username);
-    let forward_prefix = kftray_portforward::kube::proxy_resource_prefix();
 
     Ok(deployments
         .items
         .into_iter()
         .filter(|deployment| {
             let name = deployment.name_any();
-            (name.starts_with(&expose_prefix) || name.starts_with(&forward_prefix))
+            (name.starts_with(&expose_prefix) || is_forward_name(&name, username))
                 && belongs_here(deployment.labels(), installation_id)
         })
         .map(|deployment| {
@@ -555,10 +560,24 @@ pub async fn delete_kftray_resource(
                 "{kind} {name} belongs to another kftray installation and was left alone"
             ));
         }
-        api.delete(name, params)
-            .await
-            .map(|_| ())
-            .map_err(|e| format!("Failed to delete {kind}: {e}"))
+        // Deleted only if it is still the object that passed the check: the
+        // name can be reused, or the labels changed, between the read and the
+        // delete, and the preconditions make the server refuse in that case.
+        let params = DeleteParams {
+            preconditions: Some(kube::api::Preconditions {
+                uid: object.meta().uid.clone(),
+                resource_version: object.meta().resource_version.clone(),
+            }),
+            ..params.clone()
+        };
+        match api.delete(name, &params).await {
+            Ok(_) => Ok(()),
+            Err(kube::Error::Api(response)) if response.code == 409 => Err(format!(
+                "{kind} {name} changed while it was being checked and was left alone; refresh and \
+                 try again"
+            )),
+            Err(e) => Err(format!("Failed to delete {kind}: {e}")),
+        }
     }
 
     match resource_type {

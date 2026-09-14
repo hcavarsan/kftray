@@ -166,6 +166,27 @@ mod tests {
     }
 
     #[test]
+    fn a_popup_with_one_interior_row_shows_only_the_way_out() {
+        // A three-row area leaves one row inside the borders.
+        let backend = TestBackend::new(60, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 60, 3);
+                let _ = render_error_popup(frame, "first line\nsecond line", area, 0, 0);
+            })
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("<Enter>"), "{screen}");
+    }
+
+    #[test]
     fn a_short_terminal_still_shows_how_to_close_a_long_error() {
         use crate::tui::input::AppState;
         use crate::tui::ui::draw::draw_ui;

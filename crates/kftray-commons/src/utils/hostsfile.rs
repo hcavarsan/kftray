@@ -119,6 +119,27 @@ fn with_hosts_lock<T>(path: &Path, work: impl FnOnce() -> Result<T>) -> Result<T
 /// On Unix the lock is retaken until the locked descriptor and the path name
 /// the same inode, which is what excludes a holder whose lock is on a file a
 /// rename just retired.
+/// Opens the hosts file read-only, creating it first when a custom path names
+/// a file that does not exist yet.
+///
+/// The system file is never created here: a missing one is an error the
+/// caller reports before reaching this. A custom path, as the legacy
+/// per-configuration cleanup and tests use, starts empty. `create(true)`
+/// tolerates another process winning the creation, so two writers starting
+/// on the same fresh path both end up locking the one file.
+fn open_for_lock(path: &Path) -> Result<std::fs::File> {
+    match OpenOptions::new().read(true).open(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[cfg(unix)]
 fn open_locked(path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::MetadataExt;
@@ -131,7 +152,7 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
 
     let what = path.display().to_string();
     loop {
-        let file = OpenOptions::new().read(true).open(path)?;
+        let file = open_for_lock(path)?;
         wait_for_exclusive_lock(&file, LockRegion::PendingByte, &what)
             .map_err(HostsFileError::Io)?;
 
@@ -160,7 +181,7 @@ fn open_locked(path: &Path) -> Result<std::fs::File> {
         wait_for_exclusive_lock,
     };
 
-    let file = OpenOptions::new().read(true).open(path)?;
+    let file = open_for_lock(path)?;
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
     Ok(file)
@@ -485,6 +506,14 @@ pub fn read_hosts<T>(read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T
 /// [`read_hosts`] against a specific file.
 pub fn read_hosts_at<T>(path: &Path, read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T> {
     validate_hosts_path(path)?;
+    // A file that does not exist holds nothing, and a read must not be the
+    // thing that creates it.
+    if !path.exists() {
+        return read(&HostsDocument {
+            lines: Vec::new(),
+            original: Vec::new(),
+        });
+    }
     with_hosts_lock(path, || read(&HostsDocument::load(path)?))
 }
 
@@ -986,6 +1015,32 @@ mod tests {
         assert!(contents.contains("# DO NOT EDIT test BEGIN"));
         assert!(contents.contains("1.1.1.1 example.com"));
         assert!(contents.contains("# DO NOT EDIT test END"));
+    }
+
+    #[test]
+    fn a_missing_custom_hosts_file_is_created_on_first_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts");
+
+        let mut hosts = HostsFile::new("test");
+        hosts.add_entry([127, 0, 0, 1].into(), "fresh.local");
+        assert!(hosts.write_to(&path).unwrap());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("127.0.0.1 fresh.local")
+        );
+
+        // A read of a path that still does not exist reports an empty section
+        // rather than creating anything on its own.
+        let absent = dir.path().join("never");
+        assert!(
+            HostsFile::new("test")
+                .read_section_from(&absent)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!absent.exists(), "a read must not create the file");
     }
 
     #[test]

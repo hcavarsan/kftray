@@ -406,6 +406,20 @@ impl App {
     /// Cancels in-flight forwarding work and drains it under a deadline, so a
     /// stalled operation cannot hold the terminal in raw mode on exit.
     pub async fn finish_forwarding(&mut self) {
+        self.drain_forwarding().await;
+
+        // The event loop is over, so nothing draws a popup any more: whatever
+        // reached the error channel and was never shown goes to the log and to
+        // the terminal, which is back in its normal mode by now.
+        for report in self.take_shutdown_reports() {
+            log::error!("{report}");
+            eprintln!("{report}");
+        }
+    }
+
+    /// Cancels and joins every forwarding task, leaving whatever they had to
+    /// report in the error channel.
+    pub async fn drain_forwarding(&mut self) {
         // Signalled before draining: an in-flight startup observes cancellation
         // at its own safe points and runs its own rollback, instead of being
         // dropped mid-create when the abort deadline below expires.
@@ -422,16 +436,17 @@ impl App {
         if timed_out {
             log::error!("Abandoning forwarding tasks that ignored abort");
         }
+    }
 
-        // The event loop is over, so nothing draws a popup any more: whatever
-        // reached the error channel and was never shown goes to the log and to
-        // the terminal, which is back in its normal mode by now.
+    /// Everything queued for the error popup that was never shown.
+    pub fn take_shutdown_reports(&mut self) -> Vec<String> {
+        let mut reports = Vec::new();
         if let Some(receiver) = &mut self.error_receiver {
             while let Ok(report) = receiver.try_recv() {
-                log::error!("{report}");
-                eprintln!("{report}");
+                reports.push(report);
             }
         }
+        reports
     }
 
     /// Joins every forwarding task under the shutdown deadline, reporting the
