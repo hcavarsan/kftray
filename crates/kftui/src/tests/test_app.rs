@@ -17,9 +17,23 @@ mod tests {
     use super::*;
 
     // `handle_port_forwarding`'s dispatch loop and `App::drain_forwarding`
-    // both reach into process-wide registries owned by `kftray_portforward`,
-    // so tests exercising them must not run concurrently with each other.
-    static FORWARDING_GLOBALS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    // both reach into process-wide registries owned by `kftray_portforward`
+    // and `kftray_commons`, so tests exercising them must not run
+    // concurrently with each other or with those crates' own tests that use
+    // the same registries. Lock commons before portforward, always in that
+    // order, to match how any future combined lock site would have to.
+    async fn lock_forwarding_globals() -> (
+        tokio::sync::MutexGuard<'static, ()>,
+        tokio::sync::MutexGuard<'static, ()>,
+    ) {
+        let memory = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        let process = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+            .lock()
+            .await;
+        (memory, process)
+    }
 
     fn create_test_config(id: i64) -> Config {
         Config {
@@ -276,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn dispatching_an_already_pending_config_does_not_spawn_a_second_task() {
         let mut app = App::new(test_logger_state());
-        let _guard = FORWARDING_GLOBALS.lock().await;
+        let _guard = lock_forwarding_globals().await;
         app.stopped_configs = vec![create_test_config(1)];
         app.selected_row_stopped = 0;
         app.configs_being_processed.insert(
@@ -360,7 +374,7 @@ mod tests {
         let now = std::time::Instant::now();
         let stalled_at = now
             .checked_sub(crate::tui::input::PROCESSING_WATCHDOG + std::time::Duration::from_secs(1))
-            .unwrap_or(now);
+            .expect("Instant::now() must be far enough past the epoch to subtract the watchdog");
         queued.mark_running_at(stalled_at);
         app.update_configs(&[], &[]);
         assert!(
@@ -418,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn finishing_cancels_queued_forwards_without_waiting_for_a_slot() {
         let mut app = App::new(test_logger_state());
-        let _guard = FORWARDING_GLOBALS.lock().await;
+        let _guard = lock_forwarding_globals().await;
         let slots = app.forwarding_slots.available_permits() as u32;
         let _occupied = app
             .forwarding_slots
@@ -444,8 +458,42 @@ mod tests {
         assert!(reports.is_empty(), "{reports:?}");
     }
 
-    #[tokio::test]
-    async fn an_error_still_on_screen_reaches_the_shutdown_report() {
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_task_that_outlives_the_shutdown_budget_is_detached_not_aborted() {
+        let mut app = App::new(test_logger_state());
+        let _guard = lock_forwarding_globals().await;
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Models a stop that is still doing real cleanup (releasing a relay
+        // or an address claim) when both drain budgets in `drain_forwarding`
+        // expire: it must never observe an abort.
+        let abort = app.forwarding_tasks.spawn(async move {
+            release_rx.await.expect("release must be sent");
+            done_tx.send(()).expect("receiver must still be listening");
+        });
+        app.task_configs
+            .insert(abort.id(), crate::tui::input::TaskInfo::new(1, true, abort));
+
+        app.drain_forwarding().await;
+
+        assert_eq!(
+            app.forwarding_tasks.len(),
+            0,
+            "a stop task ignored by both budgets must be removed from the \
+             JoinSet so dropping it later cannot abort the stop"
+        );
+        release_tx
+            .send(())
+            .expect("a detached stop task must still be alive, not aborted, after the budget");
+        tokio::time::timeout(std::time::Duration::from_secs(1), done_rx)
+            .await
+            .expect("must not time out waiting on a still-running detached task")
+            .expect("the detached stop task must run to completion and report back");
+    }
+
+    #[test]
+    fn an_error_still_on_screen_reaches_the_shutdown_report() {
         let mut app = App::new(test_logger_state());
         // The failure has already moved from the channel into the popup.
         app.error_message = Some("Config 4: the relay never became ready".to_string());
@@ -462,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn a_saturated_start_batch_does_not_block_stopping() {
         let mut app = App::new(test_logger_state());
-        let _guard = FORWARDING_GLOBALS.lock().await;
+        let _guard = lock_forwarding_globals().await;
         let slots = app.forwarding_slots.available_permits() as u32;
         let _occupied = app
             .forwarding_slots

@@ -807,14 +807,13 @@ async fn handle_windows_connection(
             },
             Err(_) => {
                 debug!("Read operation timed out");
-                if buffer.is_empty() {
-                    if !waited_for_first_byte {
-                        waited_for_first_byte = true;
-                        debug!("No data yet, waiting briefly for a slow client");
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                    }
+                if buffer.is_empty() && !waited_for_first_byte {
+                    waited_for_first_byte = true;
+                    debug!("No data yet, waiting briefly for a slow client");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
+                debug!("Read timed out, ending read loop");
                 return respond_with_parse_error(&mut pipe, &buffer).await;
             }
         }

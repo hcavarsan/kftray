@@ -52,7 +52,7 @@ async fn init_path() {
                 .await
                 .unwrap_or_else(|e| {
                     warn!("init_path: spawn_blocking failed ({e}), falling back to current PATH");
-                    current
+                    with_fallback(&current)
                 });
                 unsafe { env::set_var("PATH", &resolved) };
             }

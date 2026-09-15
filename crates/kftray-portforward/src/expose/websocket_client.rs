@@ -51,9 +51,16 @@ impl WebSocketTunnelClient {
     }
 
     pub async fn start(&self, ready: oneshot::Sender<Result<(), String>>) -> Result<(), String> {
+        self.reconnect_loop(ready, 100).await
+    }
+
+    /// The retry loop behind [`Self::start`], with the attempt budget as a
+    /// parameter so a test can exhaust it without waiting on the real one.
+    async fn reconnect_loop(
+        &self, ready: oneshot::Sender<Result<(), String>>, max_retries: u32,
+    ) -> Result<(), String> {
         let mut ready = Some(ready);
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
-        let max_retries = 100;
         let mut retry_count = 0;
 
         loop {
@@ -75,10 +82,14 @@ impl WebSocketTunnelClient {
 
             retry_count += 1;
             if retry_count >= max_retries {
-                return Err(format!(
-                    "Max reconnection attempts ({}) reached",
-                    max_retries
-                ));
+                let message = format!("Max reconnection attempts ({}) reached", max_retries);
+                // Every attempt so far was retryable, so `ready` is still
+                // pending: without this, the caller only learns startup
+                // ended through the channel closing, losing why.
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(Err(message.clone()));
+                }
+                return Err(message);
             }
 
             let backoff_secs = std::cmp::min(2_u64.pow(retry_count.min(4)), 30);
@@ -393,6 +404,29 @@ mod tests {
         ready.unwrap().unwrap();
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn exhausting_every_retry_reports_the_failure_through_ready() {
+        // A port nothing listens on: every attempt is refused immediately,
+        // which classifies as retryable, so the loop runs out its attempt
+        // budget instead of ever reaching a permanent failure that sends
+        // early.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let client = WebSocketTunnelClient::new(port, "127.0.0.1".to_owned(), 8080);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let result =
+            tokio::time::timeout(Duration::from_secs(10), client.reconnect_loop(ready_tx, 2))
+                .await
+                .expect("a 2-attempt budget must not need more than a few seconds");
+        let error = result.expect_err("every attempt was refused");
+        assert!(error.contains("Max reconnection attempts"), "{error}");
+        let ready_result = ready_rx
+            .await
+            .expect("ready must be resolved with the failure, not dropped silently");
+        assert_eq!(ready_result, Err(error));
     }
 
     #[tokio::test]

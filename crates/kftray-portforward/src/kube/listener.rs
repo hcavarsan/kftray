@@ -88,6 +88,11 @@ pub struct PortForwarder {
     /// The API server the forward was built against. Retained so cleanup can
     /// tell whether the context still means the same server.
     cluster_url: http::Uri,
+    /// Canonicalized identity of `cluster_url`, computed once here so every
+    /// caller comparing or keying on the destination agrees with
+    /// `cluster_identity()` in `client::mod` (which disagrees with
+    /// `Uri::to_string()` on IPv6 hosts and default ports).
+    cluster_identity: Arc<str>,
     http_log_watcher: HttpLogStateWatcher,
     background_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     connection_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -100,6 +105,12 @@ impl PortForwarder {
     /// The API server this forward reaches.
     pub fn cluster_url(&self) -> &http::Uri {
         &self.cluster_url
+    }
+
+    /// Canonical string identity of the API server this forward reaches
+    /// (see `client::cluster_identity`), computed once at construction.
+    pub fn cluster_identity(&self) -> String {
+        self.cluster_identity.to_string()
     }
 
     pub async fn new(
@@ -206,6 +217,7 @@ impl PortForwarder {
             target_port,
             named_port,
             cluster_url: connection.cluster_url.clone(),
+            cluster_identity: cluster_identity(&connection.cluster_url).into(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -434,7 +446,19 @@ impl PortForwarder {
                                 rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::PodDied);
                             }
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // A ready-pod replacement can map the named port
+                            // to a different number on the new pod; drop the
+                            // cached mapping so the next acquire re-resolves
+                            // it instead of reusing the old pod's number.
+                            if let Some(named) = &self.named_port {
+                                named
+                                    .resolved
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .take();
+                            }
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             debug!("pod_change_rx lagged by {} for config {}", n, config_id);
                         }
@@ -961,6 +985,7 @@ mod tests {
             target_port: 8080,
             named_port: None,
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+            cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -1015,6 +1040,7 @@ mod tests {
             target_port: 8080,
             named_port: None,
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+            cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -1199,6 +1225,7 @@ mod tests {
             target_port: 8080,
             named_port: None,
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+            cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -1255,6 +1282,7 @@ mod tests {
             target_port: 8080,
             named_port: None,
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+            cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),

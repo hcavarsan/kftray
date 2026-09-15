@@ -299,7 +299,12 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
     #[cfg(target_os = "windows")]
     {
         info!("Using Windows-specific method for loopback removal");
-        Ok(LoopbackRelease::AlreadyAbsent)
+        // Windows has no non-blocking removal path outside the helper, so a
+        // failed helper call leaves the alias configured and unreachable
+        // without new privileges, not already gone.
+        Ok(LoopbackRelease::PrivilegeUnavailable(format!(
+            "Loopback address {addr} is still configured: removing it needs the helper"
+        )))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows",)))]

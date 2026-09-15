@@ -1,5 +1,6 @@
 use kftray_commons::models::hostfile::HostEntry;
 use kftray_commons::utils::hostsfile::{
+    HostsDocument,
     SectionEntry,
     edit_hosts,
     read_hosts,
@@ -50,6 +51,17 @@ fn survives_legacy_removal(line: &SectionEntry, entries: &[HostEntry]) -> bool {
         || !entries
             .iter()
             .any(|entry| entry.ip == line.ip && entry.hostname == line.hostname)
+}
+
+/// Clears both hosts sections whole, matching
+/// `DirectHostfileManager::remove_all_host_entries`: a remove-all is only
+/// complete once neither the helper's own section nor the application's
+/// direct fallback section still resolves.
+fn clear_all_sections(
+    document: &mut HostsDocument,
+) -> kftray_commons::utils::hostsfile::Result<()> {
+    document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
+    document.clear_section(KFTRAY_HOSTS_TAG)
 }
 
 impl HostfileManager {
@@ -120,11 +132,15 @@ impl HostfileManager {
         Ok(())
     }
 
-    /// Removes the whole section, unmarked lines included.
+    /// Removes both sections whole, unmarked lines included.
+    ///
+    /// The app falls back to `RemoveDirectOwned` (kftray-hosts-direct) when it
+    /// cannot write the hosts file itself, so a helper-mediated remove-all
+    /// must clear that section too, or its aliases outlive the purge.
     pub fn remove_all_entries(&self) -> Result<(), HostfileError> {
         info!("Removing all host entries");
 
-        edit_hosts(|document| document.clear_section(KFTRAY_HOSTS_TAG))?;
+        edit_hosts(clear_all_sections)?;
         Ok(())
     }
 
@@ -175,5 +191,38 @@ mod tests {
             &asked
         ));
         assert!(survives_legacy_removal(&line("other.local", None), &asked));
+    }
+
+    #[test]
+    fn remove_all_entries_clears_both_sections() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        kftray_commons::utils::hostsfile::HostsFile::new(KFTRAY_HOSTS_TAG)
+            .add_owned_entry([127, 0, 0, 1].into(), "helper.local", "7")
+            .unwrap()
+            .write_to(&temp_path)
+            .unwrap();
+        kftray_commons::utils::hostsfile::HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
+            .add_owned_entry([127, 0, 0, 1].into(), "direct.local", "9")
+            .unwrap()
+            .write_to(&temp_path)
+            .unwrap();
+
+        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, clear_all_sections).unwrap();
+
+        let helper_left = kftray_commons::utils::hostsfile::read_hosts_at(&temp_path, |document| {
+            document.section(KFTRAY_HOSTS_TAG)
+        })
+        .unwrap();
+        let direct_left = kftray_commons::utils::hostsfile::read_hosts_at(&temp_path, |document| {
+            document.section(KFTRAY_DIRECT_HOSTS_TAG)
+        })
+        .unwrap();
+
+        assert!(helper_left.is_empty(), "kftray-hosts must be cleared too");
+        assert!(
+            direct_left.is_empty(),
+            "remove-all must also clear kftray-hosts-direct, matching DirectHostfileManager"
+        );
     }
 }

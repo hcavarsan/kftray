@@ -283,20 +283,37 @@ fn open_locked(path: &Path, recover: bool) -> Result<std::fs::File> {
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
     if recover {
-        for pending in [pending_path(path), fallback_pending_path(path)?] {
-            if !pending.exists() {
-                continue;
-            }
+        let candidates: Vec<PathBuf> = [pending_path(path), fallback_pending_path(path)?]
+            .into_iter()
+            .filter(|pending| pending.exists())
+            .collect();
+        // Two locations can each hold a pending rewrite (one from before the
+        // hosts directory became unwritable, one from after); at most one of
+        // them is the intended state. Applying both in a fixed order would
+        // let a stale leftover at one location overwrite the newer pending
+        // at the other, so only the newest by mtime is ever applied.
+        if let Some(newest) = candidates.iter().max_by_key(|pending| {
+            std::fs::metadata(pending)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        }) {
             log::warn!(
                 "Completing an interrupted rewrite of the hosts file from {}",
-                pending.display()
+                newest.display()
             );
-            std::fs::copy(&pending, path)?;
+            std::fs::copy(newest, path)?;
             // Durable before the copy it was restored from goes: a power loss
             // after the removal would otherwise leave the file partial with
             // nothing left to complete it from.
             OpenOptions::new().write(true).open(path)?.sync_all()?;
-            std::fs::remove_file(&pending)?;
+        }
+        for pending in candidates {
+            if let Err(error) = std::fs::remove_file(&pending) {
+                log::warn!(
+                    "Could not remove stale pending hosts rewrite at {}: {error}",
+                    pending.display()
+                );
+            }
         }
     }
     Ok(file)
@@ -1121,6 +1138,43 @@ mod tests {
             Some("hosts-ae8644124165b0df.kftray-pending"),
             "the name must be the fixed FNV-1a digest of the path, not whatever \
              `DefaultHasher` derives for this build"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_locked_recovery_applies_only_the_newest_pending_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts");
+        std::fs::write(&path, "original\n").unwrap();
+
+        let primary = pending_path(&path);
+        let fallback = fallback_pending_path(&path).unwrap();
+
+        // A stale leftover at the fallback location, from an earlier write
+        // whose removal failed (write_content only warns when that
+        // happens), older than the pending copy of the current interrupted
+        // rewrite at the primary location.
+        std::fs::write(&fallback, "stale-pending\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&primary, "fresh-pending\n").unwrap();
+
+        open_locked(&path, true).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "fresh-pending\n",
+            "recovery must apply the newest pending file by mtime, not whichever \
+             location is checked last"
+        );
+        assert!(
+            !primary.exists(),
+            "every pending file must be removed once recovery completes"
+        );
+        assert!(
+            !fallback.exists(),
+            "every pending file must be removed once recovery completes, including \
+             the stale one that was not applied"
         );
     }
 

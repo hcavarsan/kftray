@@ -664,6 +664,7 @@ impl ActionHandler for StopPortForwardAction {
 /// needs a running Tauri action handler.
 fn toggle_message(started: usize, stopped: usize, failed_suffix: &str) -> String {
     match (started, stopped) {
+        (0, 0) => format!("No port forwards toggled{}", failed_suffix),
         (0, stopped) => format!(
             "Stopped {} port forward{}{}",
             stopped,
@@ -885,5 +886,15 @@ mod tests {
     fn started_and_stopped_mixed() {
         let message = toggle_message(2, 1, ", 1 failed");
         assert_eq!(message, "Started 2, stopped 1 port forwards, 1 failed");
+    }
+
+    #[test]
+    fn all_failed_reports_failure_not_stopped() {
+        // Regression: (0, stopped) matched (0, 0) too, so a toggle whose
+        // every start failed (0 started, 0 stopped) was announced as
+        // "Stopped 0 port forwards, N failed" instead of a failure-only
+        // message.
+        let message = toggle_message(0, 0, ", 3 failed");
+        assert_eq!(message, "No port forwards toggled, 3 failed");
     }
 }

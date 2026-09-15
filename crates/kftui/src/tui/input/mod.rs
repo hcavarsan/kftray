@@ -450,6 +450,12 @@ impl App {
         }
         if timed_out {
             log::error!("Abandoning forwarding tasks that ignored abort");
+            // Whatever is still in `forwarding_tasks` at this point is either
+            // an abort-ignoring start or a stop that must be left running:
+            // dropping the `JoinSet` (via `App`'s own drop, on process exit)
+            // aborts everything it still tracks, so remove them from its
+            // bookkeeping and let them finish detached instead.
+            self.forwarding_tasks.detach_all();
         }
     }
 

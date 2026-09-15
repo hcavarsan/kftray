@@ -54,10 +54,7 @@ static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
 });
 
 pub async fn create_client_with_config(config: &Config) -> KubeResult<Client> {
-    let mut config = config.clone();
-    if config.read_timeout.is_none() {
-        config.read_timeout = Some(DEFAULT_CONNECTION_TEST_TIMEOUT);
-    }
+    let config = config.clone();
     let total_budget = config
         .read_timeout
         .unwrap_or(DEFAULT_CONNECTION_TEST_TIMEOUT);

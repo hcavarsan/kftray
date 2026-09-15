@@ -131,50 +131,42 @@ async fn update_hosts_with_ssl(
     let snapshot = config.clone();
     tokio::spawn(async move {
         let _counted = counted;
-        let written = tokio::task::spawn_blocking(move || {
-            add_ssl_host_entry(&id.to_string(), &alias, port, mode)
-        })
-        .await
-        .map_err(|error| format!("Hosts write task failed: {error}"))
-        .and_then(|result| {
-            result.map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"))
-        });
+        let written = add_ssl_host_entry(&id.to_string(), &alias, port, mode)
+            .await
+            .map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"));
         let succeeded = written.is_ok();
         let _ = sender.send(written);
         if !succeeded {
             return;
         }
-        // Whether the waiter is still there says nothing about ownership: the
-        // process was registered before the write started and may well be
-        // running. Only a process that is gone, checked under the lifecycle
-        // lock so a stop or a restart cannot be halfway through, leaves these
-        // lines orphaned. A retry that has since claimed this id but not yet
-        // registered is caught by the claim, not by `CHILD_PROCESSES` alone:
-        // registration only happens at the very end of its startup.
+        // The claim was deliberately left in place by the caller so this
+        // deferred write's own cleanup, not a chance later start, is what
+        // releases it. Taking it here regardless of whether the process is
+        // still registered mirrors the non-deferred path, which releases it
+        // right after registration. Whether the waiter is still there says
+        // nothing about ownership: the process was registered before the
+        // write started and may well be running. Only a process that is
+        // gone, checked under the lifecycle lock so a stop or a restart
+        // cannot be halfway through, leaves these lines orphaned. A retry
+        // that has since claimed this id but not yet registered is caught
+        // by the claim, not by `CHILD_PROCESSES` alone: registration only
+        // happens at the very end of its startup.
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
         let guard = lock.lock().await;
-        if !CHILD_PROCESSES.contains_key(&id)
-            && crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim)
-        {
+        let claim_was_current =
+            crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+        if !CHILD_PROCESSES.contains_key(&id) && claim_was_current {
             warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
             let in_use = crate::kube::stop::forwarding_configs(mode).await;
-            let removed = tokio::task::spawn_blocking({
-                let snapshot = snapshot.clone();
-                move || {
-                    crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
-                }
-            })
-            .await;
+            let removed =
+                crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
+                    .await;
             match removed {
-                Ok(Ok(())) => {}
+                Ok(()) => {}
                 // Recorded so a later stop retries: the stop that removed the
                 // process has already run its cleanup and will not look again.
-                Ok(Err(error)) => {
-                    warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
-                    crate::kube::stop::record_local_cleanup(id, snapshot);
-                }
                 Err(error) => {
-                    warn!("Hosts cleanup task failed for config {id}: {error}");
+                    warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
                     crate::kube::stop::record_local_cleanup(id, snapshot);
                 }
             }
@@ -222,14 +214,11 @@ async fn rollback_local_resources(
     let id = config.id.unwrap_or_default();
     let snapshot = config.clone();
     let in_use = crate::kube::stop::forwarding_configs(mode).await;
-    let hosts = tokio::task::spawn_blocking(move || {
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
-    })
-    .await;
+    let hosts =
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
     match hosts {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => errors.push(error.to_string()),
-        Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
+        Ok(()) => {}
+        Err(error) => errors.push(error.to_string()),
     }
 
     if errors.is_empty() {
@@ -1120,7 +1109,13 @@ pub(super) async fn start_config_cancellable(
             // registered process, not the claim: nothing else is racing this
             // id's entries, and leaving the claim in place after a successful
             // start would only ever be cleared by chance, on the next start.
-            crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
+            // The deferred SSL write below still needs the claim to tell its
+            // own orphan cleanup apart from a superseding attempt, so it is
+            // only released here on the path that has no such write.
+            let ssl_write_deferred = should_use_ssl && protocol == "tcp";
+            if !ssl_write_deferred {
+                crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
+            }
             // The process now owns the local resources, so the record taken
             // when the address was allocated is no longer needed. Only the
             // local obligation goes: a cluster obligation left by an earlier

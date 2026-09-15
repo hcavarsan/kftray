@@ -1,4 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicUsize,
+    Ordering,
+};
 use std::time::{
     Duration,
     Instant,
@@ -48,10 +52,17 @@ impl CachedClient {
     }
 }
 
+/// A creation lock shared by every caller racing to build a client for one
+/// context. The count tracks callers currently interested (registered but
+/// not yet released), so the lock entry can be reclaimed exactly when the
+/// last interested caller releases it, instead of inferring "unshared" from
+/// `Arc::strong_count`, which a stray clone elsewhere could perturb.
+type CreationLock = Arc<(Mutex<()>, AtomicUsize)>;
+
 pub struct SharedClientManager {
     clients: DashMap<ServiceClientKey, CachedClient>,
     client_ttl: Duration,
-    creation_locks: DashMap<ServiceClientKey, Arc<Mutex<()>>>,
+    creation_locks: DashMap<ServiceClientKey, CreationLock>,
 }
 
 impl SharedClientManager {
@@ -83,10 +94,11 @@ impl SharedClientManager {
         let lock = self
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
             .clone();
+        lock.1.fetch_add(1, Ordering::SeqCst);
 
-        let guard = lock.lock().await;
+        let guard = lock.0.lock().await;
 
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
@@ -129,12 +141,21 @@ impl SharedClientManager {
         }
 
         let paths = get_kubeconfig_paths_from_option(key.kubeconfig_path.clone())?;
-        let (kubeconfig, _errors) = merge_kubeconfigs(&paths)?;
+        let (kubeconfig, errors) = merge_kubeconfigs(&paths)?;
         let current_context = kubeconfig.current_context.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Kubernetes context is required (kubeconfig: {}) and it has no current-context",
-                key.kubeconfig_path.as_deref().unwrap_or("default")
-            )
+            if errors.is_empty() {
+                anyhow::anyhow!(
+                    "Kubernetes context is required (kubeconfig: {}) and it has no current-context",
+                    key.kubeconfig_path.as_deref().unwrap_or("default")
+                )
+            } else {
+                anyhow::anyhow!(
+                    "Kubernetes context is required (kubeconfig: {}) and it has no current-context; \
+                     it also failed to read: {}",
+                    key.kubeconfig_path.as_deref().unwrap_or("default"),
+                    errors.join("; ")
+                )
+            }
         })?;
 
         Ok(ServiceClientKey {
@@ -147,21 +168,34 @@ impl SharedClientManager {
     /// success or failure — calls this so the lock entry does not outlive the
     /// callers racing to build a client for one context; a lock another
     /// waiter still holds a clone of is left in place.
-    fn release_creation_lock(&self, key: &ServiceClientKey, lock: &Arc<Mutex<()>>) {
-        self.creation_locks.remove_if(key, |_, entry| {
-            Arc::ptr_eq(entry, lock) && Arc::strong_count(entry) == 2
-        });
+    fn release_creation_lock(&self, key: &ServiceClientKey, lock: &CreationLock) {
+        if lock.1.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.creation_locks.remove_if(key, |_, entry| {
+                Arc::ptr_eq(entry, lock) && entry.1.load(Ordering::SeqCst) == 0
+            });
+        }
     }
 
+    /// Invalidates the cached client for `key`. A key with no explicit
+    /// context never lands in the cache under its raw form (`get_connection`
+    /// resolves it to the kubeconfig's current-context first), so the raw
+    /// key alone would silently no-op for every legacy caller; the resolved
+    /// form is removed too whenever it can be recomputed.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
         self.clients.remove(key);
+        if key.context_name.is_none()
+            && let Ok(resolved) = self.resolve_key(key.clone())
+        {
+            self.clients.remove(&resolved);
+        }
     }
 
     pub fn cleanup_expired(&self) {
         self.clients
             .retain(|_, cached| !cached.is_expired(self.client_ttl));
-        self.creation_locks
-            .retain(|key, lock| self.clients.contains_key(key) || Arc::strong_count(lock) > 1);
+        self.creation_locks.retain(|key, lock| {
+            self.clients.contains_key(key) || lock.1.load(Ordering::SeqCst) > 0
+        });
     }
 }
 
@@ -191,6 +225,11 @@ mod tests {
         assert!(
             err.to_string().contains("current-context"),
             "error should name the missing current-context: {err}"
+        );
+        assert!(
+            err.to_string().contains("failed to read"),
+            "error should surface the underlying kubeconfig read failure instead of \
+             discarding it: {err}"
         );
     }
 
@@ -261,6 +300,64 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn invalidate_client_with_none_context_removes_resolved_entry() {
+        use std::io::Write;
+
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        write!(
+            kubeconfig_file,
+            "apiVersion: v1\n\
+             kind: Config\n\
+             current-context: kftray-test-invalidate-context\n\
+             contexts:\n\
+             - name: kftray-test-invalidate-context\n  \
+               context:\n    \
+                 cluster: kftray-test-cluster\n    \
+                 user: kftray-test-user\n\
+             clusters:\n\
+             - name: kftray-test-cluster\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: kftray-test-user\n  \
+               user: {{}}\n"
+        )
+        .expect("write temp kubeconfig");
+
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = kubeconfig_file.path().to_string_lossy().to_string();
+        let raw_key = ServiceClientKey::new(None, Some(kubeconfig_path.clone()));
+        let resolved_key = ServiceClientKey::new(
+            Some("kftray-test-invalidate-context".to_string()),
+            Some(kubeconfig_path),
+        );
+
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let connection = KubeConnection {
+            client: kube::Client::new(mock_service, "default"),
+            cluster_url: "https://example.invalid".parse().unwrap(),
+        };
+        manager
+            .clients
+            .insert(resolved_key.clone(), CachedClient::new(connection));
+
+        manager.invalidate_client(&raw_key);
+
+        assert!(
+            !manager.clients.contains_key(&resolved_key),
+            "invalidate_client with a None-context key must remove the entry cached under \
+             the resolved current-context key, not just the never-cached raw key"
+        );
+    }
+
     #[test]
     fn release_creation_lock_keeps_entry_when_another_waiter_holds_it() {
         let manager = SharedClientManager::new();
@@ -268,9 +365,10 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
             .clone();
-        let _second_waiter = lock.clone();
+        // Two callers registered interest; only one releases.
+        lock.1.fetch_add(2, Ordering::SeqCst);
 
         manager.release_creation_lock(&key, &lock);
 
@@ -287,8 +385,9 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
             .clone();
+        lock.1.fetch_add(1, Ordering::SeqCst);
 
         manager.cleanup_expired();
         assert!(
@@ -296,7 +395,7 @@ mod tests {
             "cleanup_expired must not drop a lock entry an in-flight creation still holds"
         );
 
-        drop(lock);
+        lock.1.fetch_sub(1, Ordering::SeqCst);
         manager.cleanup_expired();
         assert!(
             !manager.creation_locks.contains_key(&key),
@@ -321,10 +420,10 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
             .clone();
-        let guard = lock.clone().lock_owned().await;
-        drop(lock);
+        lock.1.fetch_add(1, Ordering::SeqCst);
+        let guard = lock.0.lock().await;
 
         let waiter_manager = manager.clone();
         let waiter_key = key.clone();
@@ -344,9 +443,12 @@ mod tests {
             .clients
             .insert(key.clone(), CachedClient::new(connection));
 
-        // Release the lock: the waiter's post-lock check now sees the
-        // cache entry just inserted and must take the cache-hit path.
+        // Release the lock the way a real creator finishing its own attempt
+        // would: drop the guard, then release this caller's interest. The
+        // waiter's post-lock check now sees the cache entry just inserted
+        // and must take the cache-hit path.
         drop(guard);
+        manager.release_creation_lock(&key, &lock);
 
         let result = tokio::time::timeout(Duration::from_secs(2), waiter)
             .await

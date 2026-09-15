@@ -111,13 +111,16 @@ pub(crate) async fn start_single_expose(
         mode,
     )
     .await?;
-    // The create is never raced against cancellation: dropping it mid-flight
-    // would abandon a request whose outcome is unknown, including whether
-    // `create_ingress` reached its actual create call after recording that it
-    // might have. Letting it finish keeps every outcome definitive: an
-    // ambiguous one leaves the guard uncertain for a later reconciliation
-    // pass, and a confirmed one is rolled back below by UID.
-    let created = create_expose_resources(&connection, &config, mode).await;
+    // The individual create calls are never raced against cancellation:
+    // dropping one mid-flight would abandon a request whose outcome is
+    // unknown, including whether `create_ingress` reached its actual create
+    // call after recording that it might have. Letting each finish keeps
+    // every outcome definitive: an ambiguous one leaves the guard uncertain
+    // for a later reconciliation pass, and a confirmed one is rolled back
+    // below by UID. The pre-start cleanup wait and the pod readiness wait
+    // inside `create_expose_resources` are cancellable, since nothing there
+    // is a create whose outcome would become ambiguous.
+    let created = create_expose_resources(&connection, &config, mode, cancellation).await;
     // Confirmed only when the outcome is definitive. A transport failure or a
     // server-side timeout can be answered while the object is still being
     // applied, and rollback cannot name a resource whose create never returned.

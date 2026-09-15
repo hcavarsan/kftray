@@ -233,8 +233,8 @@ mod tests {
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
     }
 
-    #[tokio::test]
-    async fn scrolling_past_the_bottom_does_not_bank_offsets() {
+    #[test]
+    fn scrolling_past_the_bottom_does_not_bank_offsets() {
         let mut app = setup_app();
         app.error_message = Some("many failures".to_string());
         // What the last render could actually show.

@@ -34,6 +34,7 @@ use log::{
     debug,
     info,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::expose::{
     models::ExposeResources,
@@ -67,6 +68,7 @@ pub fn expose_resource_prefix() -> String {
 
 pub async fn create_expose_resources(
     connection: &crate::kube::client::KubeConnection, config: &Config, mode: DatabaseMode,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<ExposeResources, ExposeCreateError> {
     let client = connection.client.clone();
     let location = ExposeLocation::resolve(&connection.cluster_url, &config.namespace);
@@ -92,24 +94,40 @@ pub async fn create_expose_resources(
     // disappear is only part of this deadline, alongside the deletes and
     // listings around it.
     const PRE_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(60);
-    tokio::time::timeout(
-        PRE_START_CLEANUP_TIMEOUT,
-        delete_expose_resources(
-            client.clone(),
-            &config.namespace,
-            &config_id_str,
-            config.exposure_type.as_deref() == Some("public"),
-            &location,
-            mode,
-        ),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        Err(format!(
-            "Timed out after {PRE_START_CLEANUP_TIMEOUT:?} cleaning up the earlier exposure for \
-             config {config_id_str}"
-        ))
-    })
+    let cleanup_timeout = async {
+        tokio::time::timeout(
+            PRE_START_CLEANUP_TIMEOUT,
+            delete_expose_resources(
+                client.clone(),
+                &config.namespace,
+                &config_id_str,
+                config.exposure_type.as_deref() == Some("public"),
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(format!(
+                "Timed out after {PRE_START_CLEANUP_TIMEOUT:?} cleaning up the earlier exposure \
+                 for config {config_id_str}"
+            ))
+        })
+    };
+    // Nothing has been created yet, so cancelling this wait is a clean unwind
+    // rather than a rollback: a stop must not be held behind the full cleanup
+    // budget on top of the readiness budget below.
+    match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(format!(
+                "Expose startup cancelled for config {config_id_str} before cleaning up the \
+                 earlier exposure"
+            )),
+            result = cleanup_timeout => result,
+        },
+        None => cleanup_timeout.await,
+    }
     .map_err(ExposeCreateError::from)?;
 
     let timestamp = SystemTime::now()
@@ -170,19 +188,30 @@ pub async fn create_expose_resources(
     // same config id after our existence check.
     let mut created: Vec<CreatedResource> = Vec::new();
     let result: Result<ExposeResources, ExposeCreateError> = async {
-        created.push(
-            create_deployment(
-                &client,
-                &config.namespace,
-                &deployment_name,
-                &config_id_str,
-                config,
-                mode,
-            )
-            .await?,
-        );
+        let (deployment, relay) = create_deployment(
+            &client,
+            &config.namespace,
+            &deployment_name,
+            &config_id_str,
+            config,
+            mode,
+        )
+        .await?;
+        created.push(deployment);
 
-        let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str, mode).await?;
+        // Cancellable, unlike the create above: the deployment is already in
+        // `created` for UID-scoped rollback, so abandoning the wait here does
+        // not lose track of anything, and a stop must not be held behind the
+        // full readiness budget.
+        let pod_name = wait_for_pod_ready(
+            &client,
+            &config.namespace,
+            &config_id_str,
+            mode,
+            &relay,
+            cancellation,
+        )
+        .await?;
 
         let pod_ip = get_pod_ip(&client, &config.namespace, &pod_name).await?;
 
@@ -585,10 +614,22 @@ async fn still_present(
     })
 }
 
+/// Which container in the pod is the relay, and whether it ended up with a
+/// readiness probe (injected here, or already present in a customized
+/// template). [`wait_for_pod_ready`] uses this to decide whether the pod's
+/// aggregate `Ready` condition is a meaningful signal: without any
+/// readiness probe on the relay container, Kubernetes still requires every
+/// *other* container in the pod to report ready before the pod condition
+/// flips, which has nothing to do with the relay actually listening.
+struct RelayProbe {
+    container_name: Option<String>,
+    readiness_probe_present: bool,
+}
+
 async fn create_deployment(
     client: &Client, namespace: &str, deployment_name: &str, config_id: &str, config: &Config,
     mode: DatabaseMode,
-) -> Result<CreatedResource, ExposeCreateError> {
+) -> Result<(CreatedResource, RelayProbe), ExposeCreateError> {
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
     let local_port = config.local_port.unwrap_or(8080).to_string();
@@ -656,7 +697,12 @@ async fn create_deployment(
                 })
             })
     });
+    let mut relay_probe = RelayProbe {
+        container_name: None,
+        readiness_probe_present: false,
+    };
     if let Some(container) = relay {
+        relay_probe.container_name = Some(container.name.clone());
         if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
             container.startup_probe.get_or_insert_with(|| Probe {
                 tcp_socket: Some(TCPSocketAction {
@@ -681,12 +727,13 @@ async fn create_deployment(
                 ..Default::default()
             });
         }
+        relay_probe.readiness_probe_present = container.readiness_probe.is_some();
     }
 
     let created = create_bounded(&deployments, ResourceKind::Deployment, &deployment).await?;
 
     info!("Deployment created successfully");
-    Ok(created)
+    Ok((created, relay_probe))
 }
 
 /// Resolves the port an injected probe should target.
@@ -716,8 +763,47 @@ fn container_env_port(container: &Container, name: &str, default: i32) -> Option
     Some(default)
 }
 
+/// Whether the relay is ready to receive traffic.
+///
+/// With a readiness probe present on the relay container, the pod's
+/// aggregate `Ready` condition already reflects it and stays the signal,
+/// unchanged from before. Without one, the aggregate condition also waits on
+/// every other container in the pod, which the relay's own listener has
+/// nothing to do with, so `Running` plus the relay container's own
+/// `started`/`ready` status is what actually says it can serve traffic.
+fn relay_pod_ready(pod: &Pod, relay: &RelayProbe) -> bool {
+    if pod.metadata.deletion_timestamp.is_some() {
+        return false;
+    }
+    let Some(status) = pod.status.as_ref() else {
+        return false;
+    };
+    if status.phase.as_deref() != Some("Running") {
+        return false;
+    }
+    match (&relay.container_name, relay.readiness_probe_present) {
+        (Some(container_name), false) => {
+            status
+                .container_statuses
+                .as_ref()
+                .is_some_and(|containers| {
+                    containers.iter().any(|container| {
+                        &container.name == container_name
+                            && (container.ready || container.started == Some(true))
+                    })
+                })
+        }
+        _ => status.conditions.as_ref().is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+        }),
+    }
+}
+
 async fn wait_for_pod_ready(
-    client: &Client, namespace: &str, config_id: &str, mode: DatabaseMode,
+    client: &Client, namespace: &str, config_id: &str, mode: DatabaseMode, relay: &RelayProbe,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<String, String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     // Backed off and retried rather than propagated: every `watcher::Error` is
@@ -732,7 +818,7 @@ async fn wait_for_pod_ready(
     .default_backoff()
     .applied_objects();
     futures::pin_mut!(watcher);
-    tokio::time::timeout(Duration::from_secs(120), async {
+    let watch = async {
         while let Some(event) = watcher.next().await {
             let pod = match event {
                 Ok(pod) => pod,
@@ -741,16 +827,7 @@ async fn wait_for_pod_ready(
                     continue;
                 }
             };
-            if pod.metadata.deletion_timestamp.is_none()
-                && pod.status.as_ref().is_some_and(|status| {
-                    status.phase.as_deref() == Some("Running")
-                        && status.conditions.as_ref().is_some_and(|conditions| {
-                            conditions.iter().any(|condition| {
-                                condition.type_ == "Ready" && condition.status == "True"
-                            })
-                        })
-                })
-            {
+            if relay_pod_ready(&pod, relay) {
                 return pod
                     .metadata
                     .name
@@ -758,9 +835,21 @@ async fn wait_for_pod_ready(
             }
         }
         Err("Expose pod watch ended before readiness".to_string())
-    })
-    .await
-    .map_err(|_| "Timed out waiting for expose pod readiness".to_string())?
+    };
+    // Raced against the startup token so a stop is not held behind the full
+    // readiness budget: the deployment this pod belongs to is already in the
+    // caller's `created` list, so cancelling here still rolls it back by UID.
+    match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(format!("Expose startup cancelled for config {config_id}")),
+            result = tokio::time::timeout(Duration::from_secs(120), watch) => result
+                .map_err(|_| "Timed out waiting for expose pod readiness".to_string())?,
+        },
+        None => tokio::time::timeout(Duration::from_secs(120), watch)
+            .await
+            .map_err(|_| "Timed out waiting for expose pod readiness".to_string())?,
+    }
 }
 
 async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<String, String> {
@@ -913,9 +1002,13 @@ pub struct ExposeLocation {
 }
 
 impl ExposeLocation {
+    /// Keys history by the canonical destination, not the raw `Uri`: create,
+    /// rollback and cleanup must agree on the same string even when the
+    /// server has a default port or an IPv6 host, which `Uri::to_string()`
+    /// renders differently than `cluster_identity`.
     pub fn resolve(cluster_url: &http::Uri, namespace: &str) -> Self {
         Self {
-            cluster: cluster_url.to_string(),
+            cluster: crate::kube::client::cluster_identity(cluster_url),
             namespace: namespace.to_owned(),
         }
     }
@@ -1451,6 +1544,115 @@ mod tests {
         );
     }
 
+    #[test]
+    fn expose_location_stores_the_canonical_cluster_identity() {
+        // `Uri::to_string()` keeps an explicit default port and drops IPv6
+        // brackets; history, rollback and cleanup all key off `location`, so
+        // two connections to the same server must resolve to the same
+        // string even when one Uri carries a default port and the other
+        // doesn't, and an IPv6 host must stay valid (unbracketed, it reads
+        // as `host:port:port` and no longer parses as a `Uri` at all).
+        let with_default_port: http::Uri = "https://host:443/".parse().unwrap();
+        let without_port: http::Uri = "https://host".parse().unwrap();
+        assert_eq!(
+            ExposeLocation::resolve(&with_default_port, "default").cluster,
+            ExposeLocation::resolve(&without_port, "default").cluster,
+        );
+        assert_eq!(
+            ExposeLocation::resolve(&with_default_port, "default").cluster,
+            "https://host"
+        );
+
+        let ipv6: http::Uri = "https://[2001:db8::1]:6443/".parse().unwrap();
+        assert_eq!(
+            ExposeLocation::resolve(&ipv6, "default").cluster,
+            "https://[2001:db8::1]:6443"
+        );
+    }
+
+    #[test]
+    fn pod_readiness_falls_back_to_the_relay_container_without_a_probe() {
+        // No readiness probe was injected (an unresolved `HTTP_PORT`, e.g.
+        // `envFrom`), so the pod's aggregate `Ready` condition would also
+        // wait on unrelated containers. The old check, which only looked at
+        // that aggregate condition, would have read the same pod (no
+        // `conditions` at all) as never ready and stalled until the 120s
+        // timeout.
+        let relay = RelayProbe {
+            container_name: Some("kftray-server".to_owned()),
+            readiness_probe_present: false,
+        };
+        let ready: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{
+                    "name": "kftray-server", "ready": true, "started": false,
+                    "restartCount": 0, "image": "relay", "imageID": "relay"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(
+            relay_pod_ready(&ready, &relay),
+            "no readiness probe means Kubernetes marks the container ready as soon as it runs"
+        );
+
+        let not_ready: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{
+                    "name": "kftray-server", "ready": false, "started": false,
+                    "restartCount": 0, "image": "relay", "imageID": "relay"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(!relay_pod_ready(&not_ready, &relay));
+    }
+
+    #[test]
+    fn pod_readiness_requires_the_aggregate_condition_when_a_probe_is_present() {
+        let relay = RelayProbe {
+            container_name: Some("kftray-server".to_owned()),
+            readiness_probe_present: true,
+        };
+        // The relay container itself is ready, but a sidecar in the same pod
+        // is not: with a readiness probe actually injected, the aggregate
+        // condition must still gate readiness, unchanged from before this
+        // fallback existed.
+        let sidecar_not_ready: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "conditions": [{"type": "Ready", "status": "False"}],
+                "containerStatuses": [
+                    {"name": "kftray-server", "ready": true, "started": true,
+                     "restartCount": 0, "image": "relay", "imageID": "relay"},
+                    {"name": "sidecar", "ready": false, "started": true,
+                     "restartCount": 0, "image": "sidecar", "imageID": "sidecar"}
+                ]
+            }
+        }))
+        .unwrap();
+        assert!(!relay_pod_ready(&sidecar_not_ready, &relay));
+
+        let all_ready: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "containerStatuses": [
+                    {"name": "kftray-server", "ready": true, "started": true,
+                     "restartCount": 0, "image": "relay", "imageID": "relay"}
+                ]
+            }
+        }))
+        .unwrap();
+        assert!(relay_pod_ready(&all_ready, &relay));
+    }
+
     #[tokio::test]
     async fn cleanup_attempts_all_resources_and_ignores_not_found() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
@@ -1763,5 +1965,127 @@ mod tests {
             "a confirmed UID-scoped delete proves no ingress is left, so a later private start \
              must not need ingress-list rights just to rule this exposure out"
         );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_readiness_wait_rolls_back_the_created_deployment() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        kftray_commons::utils::manifests::create_expose_deployment_manifest().unwrap();
+
+        let config = Config {
+            id: Some(88_801),
+            workload_type: Some("expose".to_owned()),
+            exposure_type: Some("private".to_owned()),
+            alias: Some("myapp".to_owned()),
+            namespace: "default".to_owned(),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let connection = crate::kube::client::KubeConnection {
+            client: client.clone(),
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+        };
+        let cancellation = CancellationToken::new();
+        let server_cancellation = cancellation.clone();
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            // Pre-start cleanup lists deployments, services and ingresses
+            // several times (to decide what to delete, to confirm they are
+            // gone, and to check for unattributed leftovers); nothing exists
+            // yet, so every list is empty and nothing is ever deleted.
+            let (_request, send) = loop {
+                let (request, send) = handle.next_request().await.unwrap();
+                if request.method() == Method::POST {
+                    break (request, send);
+                }
+                assert_eq!(request.method(), Method::GET);
+                send.send_response(
+                    Response::builder()
+                        .status(200)
+                        .body(Body::from(
+                            serde_json::to_vec(&serde_json::json!({"items": []})).unwrap(),
+                        ))
+                        .unwrap(),
+                );
+            };
+
+            // The deployment create itself is never cancelled, so it is
+            // answered normally. Cancelling right before the response is
+            // delivered, rather than racing the client task from outside,
+            // guarantees the readiness wait that follows sees it: nothing
+            // observes the token between the create returning and the wait
+            // starting.
+            let deployment = serde_json::json!({
+                "apiVersion": "apps/v1", "kind": "Deployment",
+                "metadata": {"name": "relay-1", "namespace": "default", "uid": "deploy-uid"}
+            });
+            server_cancellation.cancel();
+            send.send_response(
+                Response::builder()
+                    .status(201)
+                    .body(Body::from(serde_json::to_vec(&deployment).unwrap()))
+                    .unwrap(),
+            );
+
+            // Rollback deletes exactly the deployment this attempt created.
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::DELETE);
+            assert!(
+                request.uri().path().ends_with("/relay-1"),
+                "{}",
+                request.uri()
+            );
+            let status = serde_json::json!({
+                "apiVersion": "v1", "kind": "Status", "status": "Success", "code": 200
+            });
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(Body::from(serde_json::to_vec(&status).unwrap()))
+                    .unwrap(),
+            );
+
+            // `still_present` confirms the delete before rollback reports it
+            // complete.
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::GET);
+            let not_found = serde_json::json!({
+                "apiVersion": "v1", "kind": "Status", "status": "Failure",
+                "reason": "NotFound", "message": "relay-1", "code": 404
+            });
+            send.send_response(
+                Response::builder()
+                    .status(404)
+                    .body(Body::from(serde_json::to_vec(&not_found).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            create_expose_resources(&connection, &config, mode, Some(&cancellation)),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+
+        match original_config_dir {
+            Some(val) => unsafe { std::env::set_var("KFTRAY_CONFIG", val) },
+            None => unsafe { std::env::remove_var("KFTRAY_CONFIG") },
+        }
+
+        let error = result.expect_err("a cancelled readiness wait must not report success");
+        assert!(
+            error.rolled_back,
+            "the deployment created before cancellation must be rolled back: {}",
+            error.message
+        );
+        assert!(error.message.contains("cancelled"), "{}", error.message);
     }
 }

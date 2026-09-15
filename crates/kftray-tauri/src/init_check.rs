@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use kftray_commons::config::get_config;
 use kftray_commons::config_state::{
     get_configs_state,
+    process_is_alive,
     update_config_state,
 };
 use kftray_commons::config_state_model::ConfigState;
@@ -41,6 +42,12 @@ pub trait PortOperations: Send + Sync {
     /// Whether a forward for the configuration is running or currently
     /// starting (queued/pending) in this process.
     async fn is_forward_registered(&self, id: i64) -> bool;
+    /// Stops a registered forward. Only meaningful when
+    /// `is_forward_registered` is true for `id`.
+    async fn stop_port_forward(&self, id: i64) -> Result<(), String>;
+    /// Starts one configuration through the workload/protocol dispatch used
+    /// by the SSL certificate restart path and the global shortcuts.
+    async fn dispatch_start(&self, config: &Config) -> Result<(), String>;
 }
 
 pub struct RealPortOperations;
@@ -80,6 +87,18 @@ impl PortOperations for RealPortOperations {
     async fn is_forward_registered(&self, id: i64) -> bool {
         kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
             || kftray_portforward::kube::is_start_pending(id)
+    }
+
+    async fn stop_port_forward(&self, id: i64) -> Result<(), String> {
+        kftray_portforward::kube::stop_port_forward(id.to_string())
+            .await
+            .map(|_| ())
+    }
+
+    async fn dispatch_start(&self, config: &Config) -> Result<(), String> {
+        crate::commands::portforward::dispatch_start(config)
+            .await
+            .and_then(|responses| kftray_commons::models::response::batch_failure(&responses))
     }
 }
 
@@ -258,6 +277,25 @@ async fn start_port_forwarding(
             if port_ops.is_forward_registered(config_id).await {
                 debug!("Config {config_id} is forwarding already; leaving its state as it is");
                 return Ok(());
+            }
+
+            // The guard above only covers this process. A concurrent start
+            // can also be owned by another live kftray/kftui process, whose
+            // config_state row already reflects that ownership; clearing it
+            // here would wipe that process's row out from under it.
+            if let Ok(states) = port_ops.get_configs_state().await
+                && let Some(state) = states.iter().find(|s| s.config_id == config_id)
+                && state.is_running
+                && state
+                    .process_id
+                    .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
+            {
+                debug!(
+                    "Config {config_id} is owned by another live process (pid {:?}); leaving its \
+                     state as it is",
+                    state.process_id
+                );
+                return Err(error_msg);
             }
             let config_state = ConfigState::new_without_process(config_id, false);
             port_ops.update_config_state(&config_state).await?;
@@ -590,6 +628,9 @@ mod tests {
         mock.expect_is_forward_registered()
             .times(1)
             .returning(|_| false);
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(|| Ok(vec![]));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -651,5 +692,83 @@ mod tests {
     async fn test_find_process_by_port_internal() {
         let result = find_process_by_port_internal(0).await;
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_start_failure_with_a_stale_row_from_this_process_still_clears() {
+        // The row's process_id equals this process's own pid: that is
+        // stale data from an earlier attempt in this same process, not
+        // another live owner, so it must still be cleared.
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _| Err("Port forwarding failed".to_string()));
+        mock.expect_is_forward_registered()
+            .times(1)
+            .returning(|_| false);
+        mock.expect_get_configs_state().times(1).returning(|| {
+            Ok(vec![ConfigState {
+                id: None,
+                config_id: 1,
+                is_running: true,
+                process_id: Some(std::process::id()),
+                ..Default::default()
+            }])
+        });
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && !state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_start_owned_by_another_live_process_leaves_its_config_state_row_alone() {
+        // Regression: the ownership guard only covered this process
+        // (`is_forward_registered`); a restore that failed because
+        // another live kftray/kftui process owned the config still wiped
+        // that process's config_state row.
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("failed to spawn helper process");
+        let other_pid = child.id();
+
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(move |_, _| {
+                Err(format!(
+                    "Config 1 is being forwarded by another kftray process ({other_pid})"
+                ))
+            });
+        mock.expect_is_forward_registered()
+            .times(1)
+            .returning(|_| false);
+        mock.expect_get_configs_state().times(1).returning(move || {
+            Ok(vec![ConfigState {
+                id: None,
+                config_id: 1,
+                is_running: true,
+                process_id: Some(other_pid),
+                ..Default::default()
+            }])
+        });
+        mock.expect_update_config_state().times(0);
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_err());
+
+        // The zombie stays alive until reaped; clean it up now that the
+        // check ran.
+        let _ = child.wait();
     }
 }

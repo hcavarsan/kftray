@@ -77,7 +77,7 @@ impl PortForwardProcess {
     pub fn destination(&self) -> Option<String> {
         self.direct_forwarder
             .as_ref()
-            .map(|forwarder| forwarder.cluster_url().to_string())
+            .map(|forwarder| forwarder.cluster_identity())
     }
 
     /// Cleanup and abort the port forward process.
@@ -199,9 +199,13 @@ pub async fn active_pods() -> std::collections::HashMap<i64, Option<String>> {
     pods
 }
 
-#[cfg(test)]
 lazy_static! {
-    pub(crate) static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+    /// Serializes tests across this crate (and kftui's, which shares the
+    /// same process-global registries) that touch `CHILD_PROCESSES` or
+    /// other global forwarding state. Compiled unconditionally, mirroring
+    /// `kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX`, so a dependent
+    /// crate's own `#[cfg(test)]` code can synchronize on it too.
+    pub static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }
 
 fn pod_readiness_for(workload_type: &str) -> kube_portforward::PodReadiness {
@@ -304,26 +308,20 @@ impl PortForward {
         }
         // Reported rather than swallowed: this runs when a startup failed or
         // was cancelled after adding an alias, and the caller keeps the config
-        // tracked for retry when cleanup did not finish. Run on a blocking
-        // thread because the hosts file is written synchronously behind a lock.
+        // tracked for retry when cleanup did not finish.
         let config_id = self.config_id;
         let snapshot = config.cloned();
         let in_use = crate::kube::stop::forwarding_configs(mode).await;
-        match tokio::task::spawn_blocking(
-            move || match crate::hostsfile::remove_config_host_entries(
-                config_id,
-                snapshot.as_ref(),
-                &in_use,
-                mode,
-            ) {
-                Ok(()) => Vec::new(),
-                Err(error) => vec![error.to_string()],
-            },
+        match crate::hostsfile::remove_config_host_entries(
+            config_id,
+            snapshot.as_ref(),
+            &in_use,
+            mode,
         )
         .await
         {
-            Ok(hosts_errors) => errors.extend(hosts_errors),
-            Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
+            Ok(()) => {}
+            Err(error) => errors.push(error.to_string()),
         }
         merge_cleanup_outcome(unsatisfiable, errors)
     }

@@ -931,21 +931,13 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
             cleanup.deferred.push(error.to_string());
         }
     }
-    // Hosts-file work is synchronous and serialized behind one lock, so it runs
-    // on a blocking thread: several stops at once would otherwise queue up on
-    // runtime workers and stall unrelated forwards.
     let snapshot = config.clone();
     let in_use = forwarding_configs(mode).await;
-    let hosts = spawn_blocking(move || {
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
-    })
-    .await;
+    let hosts =
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
     match hosts {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => cleanup.failures.push(error.to_string()),
-        Err(error) => cleanup
-            .failures
-            .push(format!("Hosts cleanup task failed: {error}")),
+        Ok(()) => {}
+        Err(error) => cleanup.failures.push(error.to_string()),
     }
     cleanup
 }

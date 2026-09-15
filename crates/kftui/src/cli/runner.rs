@@ -196,6 +196,11 @@ impl PortForwardRunner {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(error) = signal::ctrl_c().await {
             warn!("Failed to install Ctrl+C handler: {error}");
+            // No handler means no way to observe a real interrupt any more:
+            // stay up rather than tearing every forward down right after
+            // start. A real Ctrl+C still runs the teardown below when the
+            // handler installs successfully.
+            std::future::pending::<()>().await;
         }
         println!("\nStopping port forwards");
         Self::stop_all_port_forwards(configs, mode).await

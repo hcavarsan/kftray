@@ -92,8 +92,8 @@ impl HostfileManager {
     /// process restart still attributes and protects the aliases a stop
     /// needs to verify.
     pub fn add_ssl_host_entry(
-        &self, config_id: &str, alias: &str, mode: DatabaseMode,
-    ) -> std::io::Result<()> {
+        &self, config_id: &str, alias: &str,
+    ) -> std::io::Result<(String, String)> {
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
         let https_id = format!("{config_id}-https");
@@ -128,12 +128,8 @@ impl HostfileManager {
             written.insert(https_id.clone());
             written.insert(https_local_id.clone());
         }
-        tokio::runtime::Handle::current().block_on(async {
-            persist_ssl_id_written(&https_id, mode).await;
-            persist_ssl_id_written(&https_local_id, mode).await;
-        });
 
-        Ok(())
+        Ok((https_id, https_local_id))
     }
 
     /// Removes several ids from wherever they were written.
@@ -371,13 +367,13 @@ impl HostfileManager {
     /// persisted. `ssl_ids_written` alone starts empty after a restart, and
     /// a configuration's HTTPS aliases are only ever claimed for ids this
     /// set actually names.
-    fn ssl_ids_written_including_persisted(&self, mode: DatabaseMode) -> HashSet<String> {
+    async fn ssl_ids_written_including_persisted(&self, mode: DatabaseMode) -> HashSet<String> {
         let mut ids = self
             .ssl_ids_written
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        ids.extend(tokio::runtime::Handle::current().block_on(persisted_ssl_ids_written(mode)));
+        ids.extend(persisted_ssl_ids_written(mode).await);
         ids
     }
 }
@@ -532,21 +528,20 @@ async fn persisted_ssl_ids_written(mode: DatabaseMode) -> HashSet<String> {
 ///
 /// Reported rather than swallowed, so a caller keeps the configuration
 /// tracked for retry when an alias could not be verified gone.
-pub fn remove_config_host_entries(
+pub async fn remove_config_host_entries(
     id: i64, config: Option<&kftray_commons::models::config_model::Config>,
     in_use: &[kftray_commons::models::config_model::Config], mode: DatabaseMode,
 ) -> std::io::Result<()> {
-    let ids = [
-        id.to_string(),
-        format!("{id}-https"),
-        format!("{id}-https-local"),
-    ];
-    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let https_id = format!("{id}-https");
+    let https_local_id = format!("{id}-https-local");
+    let ids = [id.to_string(), https_id.clone(), https_local_id.clone()];
     // Unioned with what a run before a restart persisted: `ssl_ids_written`
     // alone starts empty after a restart, and without the persisted ids
     // neither this configuration's own HTTPS aliases nor another still-
     // forwarding configuration's would be attributable or protected.
-    let ssl_ids_written = HOSTFILE_MANAGER.ssl_ids_written_including_persisted(mode);
+    let ssl_ids_written = HOSTFILE_MANAGER
+        .ssl_ids_written_including_persisted(mode)
+        .await;
     let protected: Vec<HostEntry> = in_use
         .iter()
         .filter(|other| other.id != Some(id))
@@ -556,14 +551,20 @@ pub fn remove_config_host_entries(
         .map(|(_, entry)| entry)
         .collect();
     let expected = config_host_entries(id, config, &ssl_ids_written);
-    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)?;
+
+    tokio::task::spawn_blocking(move || {
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)
+    })
+    .await
+    .map_err(|e| {
+        std::io::Error::other(format!("remove_config_host_entries task panicked: {e}"))
+    })??;
 
     // Verified gone: forget the durable record so a future restart does not
     // keep attributing lines this configuration no longer writes.
-    tokio::runtime::Handle::current().block_on(async {
-        forget_ssl_id_written(ids[1], mode).await;
-        forget_ssl_id_written(ids[2], mode).await;
-    });
+    forget_ssl_id_written(&https_id, mode).await;
+    forget_ssl_id_written(&https_local_id, mode).await;
 
     Ok(())
 }
@@ -572,10 +573,21 @@ pub fn remove_all_host_entries() -> std::io::Result<()> {
     HOSTFILE_MANAGER.remove_all_host_entries()
 }
 
-pub fn add_ssl_host_entry(
+pub async fn add_ssl_host_entry(
     config_id: &str, alias: &str, _https_port: u16, mode: DatabaseMode,
 ) -> std::io::Result<()> {
-    HOSTFILE_MANAGER.add_ssl_host_entry(config_id, alias, mode)
+    let config_id = config_id.to_string();
+    let alias = alias.to_string();
+    let (https_id, https_local_id) = tokio::task::spawn_blocking(move || {
+        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id, &alias)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("add_ssl_host_entry task panicked: {e}")))??;
+
+    persist_ssl_id_written(&https_id, mode).await;
+    persist_ssl_id_written(&https_local_id, mode).await;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -732,12 +744,8 @@ mod tests {
 
         // A brand new manager, exactly what a restart leaves behind: its
         // `ssl_ids_written` is empty.
-        let ids = tokio::task::spawn_blocking(move || {
-            let manager = HostfileManager::without_helper();
-            manager.ssl_ids_written_including_persisted(mode)
-        })
-        .await
-        .unwrap();
+        let manager = HostfileManager::without_helper();
+        let ids = manager.ssl_ids_written_including_persisted(mode).await;
 
         assert!(
             ids.contains("77-https"),

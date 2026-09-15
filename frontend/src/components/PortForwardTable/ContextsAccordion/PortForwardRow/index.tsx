@@ -299,7 +299,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   }
 
   const getStatusInfo = () => {
-    if (pendingAction === 'starting') {
+    if (pendingAction?.action === 'starting') {
       return {
         color: 'rgba(59, 130, 246, 0.8)',
         status: 'Starting',
@@ -310,7 +310,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
       }
     }
 
-    if (pendingAction === 'stopping') {
+    if (pendingAction?.action === 'stopping') {
       return {
         color: 'rgba(59, 130, 246, 0.8)',
         status: 'Stopping',
@@ -321,12 +321,15 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
       }
     }
 
-    if (pendingAction === 'saving' || pendingAction === 'deleting') {
+    if (
+      pendingAction?.action === 'saving' ||
+      pendingAction?.action === 'deleting'
+    ) {
       return {
         color: 'rgba(100, 116, 139, 0.6)',
         status: 'Busy',
         description:
-          pendingAction === 'saving'
+          pendingAction.action === 'saving'
             ? 'Saving configuration...'
             : 'Deleting configuration...',
       }

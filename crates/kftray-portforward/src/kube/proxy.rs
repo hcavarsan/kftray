@@ -310,17 +310,11 @@ pub(super) async fn start_proxy_config(
         .remote_port
         .filter(|port| *port > 0)
         .ok_or("A proxy destination port is required")?;
-    let service_name = config
-        .service
-        .clone()
-        .filter(|service| !service.is_empty())
-        .unwrap_or_else(|| remote_address.clone());
     config.remote_address = Some(remote_address.clone());
 
     let mut values: HashMap<String, String> = HashMap::new();
     values.insert("hashed_name".to_string(), hashed_name.clone());
     values.insert("config_id".to_string(), config_id_str.clone());
-    values.insert("service_name".to_string(), service_name);
     values.insert("remote_address".to_string(), remote_address);
     values.insert("remote_port".to_string(), remote_port.to_string());
     values.insert("local_port".to_string(), remote_port.to_string());
@@ -383,8 +377,9 @@ fn prepare_relay_startup(
     spec: &mut PodSpec, port: u16, customized: bool,
 ) -> Result<String, String> {
     let index = relay_container_index(spec).ok_or_else(|| {
-        "Proxy manifest is customized and no container declares a LOCAL_PORT environment \
-         variable; add LOCAL_PORT to the relay container so kftray can attach its startup probe"
+        "No container declares a LOCAL_PORT environment variable (a customized proxy \
+         manifest may be missing it); add LOCAL_PORT to the relay container so kftray can \
+         attach its startup probe"
             .to_string()
     })?;
     let container = spec

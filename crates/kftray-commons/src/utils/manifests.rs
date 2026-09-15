@@ -42,6 +42,7 @@ const DEFAULT_PROXY_DEPLOYMENT: &str = r#"{
         }
       },
       "spec": {
+        "terminationGracePeriodSeconds": 10,
         "containers": [{
           "name": "{hashed_name}",
           "image": "ghcr.io/hcavarsan/kftray-server:latest",
@@ -204,6 +205,7 @@ pub fn default_pod_manifest() -> serde_json::Value {
             }
         },
         "spec": {
+            "terminationGracePeriodSeconds": 10,
             "containers": [{
                 "name": "{hashed_name}",
                 "image": "ghcr.io/hcavarsan/kftray-server:latest",

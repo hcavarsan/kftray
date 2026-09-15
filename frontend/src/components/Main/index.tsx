@@ -19,6 +19,7 @@ import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
 import type {
   Config,
+  PendingConfigAction,
   PortForwardAction,
   PortForwardResponse,
   PortForwardToggleAction,
@@ -102,12 +103,13 @@ const KFTray = () => {
     useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
 
-  const pendingConfigActionsRef = useRef<Map<number, PortForwardAction>>(
+  const pendingConfigActionsRef = useRef<Map<number, PendingConfigAction>>(
     new Map(),
   )
   const [pendingConfigActions, setPendingConfigActions] = useState<
-    Map<number, PortForwardAction>
+    Map<number, PendingConfigAction>
   >(new Map())
+  const pendingTokenCounterRef = useRef(0)
   const configRefreshVersion = useRef(0)
 
   const configsRef = useRef<Config[]>(configs)
@@ -117,11 +119,21 @@ const KFTray = () => {
   }, [configs])
 
   const markPending = useCallback((id: number, action: PortForwardAction) => {
-    pendingConfigActionsRef.current.set(id, action)
+    const token = ++pendingTokenCounterRef.current
+
+    pendingConfigActionsRef.current.set(id, { action, token })
     setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+
+    return token
   }, [])
 
-  const clearPending = useCallback((id: number) => {
+  // Only releases the reservation it created: a caller holding a stale token
+  // (superseded by a later markPending for the same id) must not clear
+  // someone else's in-flight reservation.
+  const clearPending = useCallback((id: number, token: number) => {
+    if (pendingConfigActionsRef.current.get(id)?.token !== token) {
+      return
+    }
     pendingConfigActionsRef.current.delete(id)
     setPendingConfigActions(new Map(pendingConfigActionsRef.current))
   }, [])
@@ -453,8 +465,13 @@ const KFTray = () => {
     // Reserved for the whole transaction, not only when a restart is needed:
     // `update_config_cmd` does not share the backend lifecycle lock, so a start
     // accepted while it is in flight would use the pre-edit snapshot.
+    let pendingToken: number | undefined
+
     if (isEdit) {
-      markPending(newConfig.id, wasRunning ? 'stopping' : 'saving')
+      pendingToken = markPending(
+        newConfig.id,
+        wasRunning ? 'stopping' : 'saving',
+      )
     }
 
     let configSaved = false
@@ -483,7 +500,7 @@ const KFTray = () => {
       }
       configSaved = true
       if (wasRunning) {
-        markPending(newConfig.id, 'starting')
+        pendingToken = markPending(newConfig.id, 'starting')
         await startPortForwardingForConfig(newConfig)
       }
 
@@ -516,8 +533,8 @@ const KFTray = () => {
         })
       }
     } finally {
-      if (isEdit) {
-        clearPending(newConfig.id)
+      if (isEdit && pendingToken !== undefined) {
+        clearPending(newConfig.id, pendingToken)
       }
       // The optimistic update only flips is_running, and the restart's version
       // bump discards any refresh that raced it.
@@ -603,7 +620,7 @@ const KFTray = () => {
       if (pendingConfigActionsRef.current.has(config.id)) {
         return
       }
-      markPending(config.id, action)
+      const token = markPending(config.id, action)
       try {
         if (action === 'starting') {
           await startPortForwardingForConfig(config)
@@ -621,7 +638,7 @@ const KFTray = () => {
           duration: 1000,
         })
       } finally {
-        clearPending(config.id)
+        clearPending(config.id, token)
         debouncedUpdateConfigs()
       }
     },
@@ -662,7 +679,7 @@ const KFTray = () => {
   const runPortForwardBatch = useCallback(
     async (
       candidates: Config[],
-      action: PortForwardAction,
+      action: PortForwardToggleAction,
       successMessage?: string,
     ) => {
       const controllerRef =
@@ -696,16 +713,27 @@ const KFTray = () => {
       const setBusy = action === 'starting' ? setIsInitiating : setIsStopping
       const queued = new Set(targets.map(config => config.id))
       const unresolved = new Set(targets.map(config => config.id))
+      const tokens = new Map<number, number>()
 
       for (const config of targets) {
-        pendingConfigActionsRef.current.set(config.id, action)
+        const token = ++pendingTokenCounterRef.current
+
+        tokens.set(config.id, token)
+        pendingConfigActionsRef.current.set(config.id, { action, token })
       }
       setPendingConfigActions(new Map(pendingConfigActionsRef.current))
       setBusy(true)
 
       const cancelQueued = () => {
         for (const id of queued) {
-          pendingConfigActionsRef.current.delete(id)
+          // Only the reservation this batch created: a worker that already
+          // settled and started a fresh operation on the same id must keep
+          // that newer reservation intact.
+          if (
+            pendingConfigActionsRef.current.get(id)?.token === tokens.get(id)
+          ) {
+            pendingConfigActionsRef.current.delete(id)
+          }
           // Released here, so the deadline message counts only the invocations
           // that are genuinely still running.
           unresolved.delete(id)
@@ -744,11 +772,17 @@ const KFTray = () => {
 
       try {
         const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
+          const token = tokens.get(config.id) as number
+
           queued.delete(config.id)
           if (
             controller.signal.aborted ||
-            !pendingConfigActionsRef.current.has(config.id)
+            pendingConfigActionsRef.current.get(config.id)?.token !== token
           ) {
+            // Already released by cancelQueued, or superseded by a newer
+            // reservation for this id: this worker has nothing left to hold.
+            unresolved.delete(config.id)
+
             return
           }
           try {
@@ -768,7 +802,7 @@ const KFTray = () => {
             }
           } finally {
             unresolved.delete(config.id)
-            clearPending(config.id)
+            clearPending(config.id, token)
           }
         })
         // The handle is kept so the loser of the race can be cancelled: an
@@ -787,17 +821,13 @@ const KFTray = () => {
           // Aborted while `cancelQueued` is still registered: configurations
           // that never started release their reservation immediately.
           controller.abort()
-          // The remaining ids are genuinely in flight: an invoke() that never
-          // settles must not hold its reservation forever, so it is released
-          // here too and `updateConfigsWithState()` in the finally block below
-          // re-establishes the authoritative state.
+          // The remaining ids are genuinely in flight: their reservation is
+          // kept (rows stay busy) instead of being cleared out from under a
+          // running invoke(); each worker's own finally releases its token
+          // once it actually settles. Releasing the batch controller below
+          // is what lets a new batch start in the meantime.
           const stillUnresolved = unresolved.size
 
-          for (const id of unresolved) {
-            pendingConfigActionsRef.current.delete(id)
-          }
-          unresolved.clear()
-          setPendingConfigActions(new Map(pendingConfigActionsRef.current))
           reportFailures()
           toaster.error({
             title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
@@ -866,9 +896,7 @@ const KFTray = () => {
         return false
       }
 
-      for (const id of ids) {
-        markPending(id, 'deleting')
-      }
+      const tokens = new Map(ids.map(id => [id, markPending(id, 'deleting')]))
       try {
         // Revalidated while reserved: a selected start can settle between the
         // dialog opening and its confirmation, and deleting only removes the
@@ -911,7 +939,7 @@ const KFTray = () => {
         return false
       } finally {
         for (const id of ids) {
-          clearPending(id)
+          clearPending(id, tokens.get(id) as number)
         }
       }
     },

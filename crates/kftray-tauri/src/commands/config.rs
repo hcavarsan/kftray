@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kftray_commons::config::{
     delete_all_configs,
     delete_config,
@@ -17,6 +19,11 @@ use log::{
     error,
     info,
     warn,
+};
+
+use crate::init_check::{
+    PortOperations,
+    RealPortOperations,
 };
 
 fn validate_config(config: &Config) -> Result<(), String> {
@@ -74,9 +81,10 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
     Ok(())
 }
 
-async fn restart_ssl_proxies_if_running(target_ids: Option<&[i64]>) -> Result<Vec<i64>, String> {
+async fn restart_ssl_proxies_if_running(
+    port_ops: &Arc<dyn PortOperations>, target_ids: Option<&[i64]>,
+) -> Result<Vec<i64>, String> {
     use kftray_commons::utils::config_state::get_configs_state;
-    use kftray_portforward::kube::stop_port_forward;
 
     info!("=== Starting SSL proxy restart process ===");
 
@@ -149,43 +157,32 @@ async fn restart_ssl_proxies_if_running(target_ids: Option<&[i64]>) -> Result<Ve
     let mut failed_ids: Vec<i64> = Vec::new();
     for config in &ssl_configs {
         let id = config.id.unwrap();
-        let config_id = id.to_string();
         info!(
             "Restarting SSL proxy for config {} ({})",
-            config_id,
+            id,
             config.alias.as_deref().unwrap_or("unnamed")
         );
 
-        // Stop the current port forward
-        if let Err(e) = stop_port_forward(config_id.clone()).await {
-            warn!(
-                "Failed to stop port forward for config {}: {}",
-                config_id, e
-            );
-            failed_ids.push(id);
-            continue;
+        // A candidate may already be stopped from a previous retry attempt
+        // (its stop succeeded last time but the start failed) or may never
+        // have started; only require a successful stop when it is still
+        // registered, and always attempt the start below so a down
+        // candidate keeps getting retried instead of being skipped forever.
+        if port_ops.is_forward_registered(id).await {
+            if let Err(e) = port_ops.stop_port_forward(id).await {
+                warn!("Failed to stop port forward for config {}: {}", id, e);
+                failed_ids.push(id);
+                continue;
+            }
+
+            // Small delay to ensure clean shutdown
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
-        // Small delay to ensure clean shutdown
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        match crate::commands::portforward::dispatch_start(config).await {
-            Ok(responses) => {
-                if let Err(e) = kftray_commons::models::response::batch_failure(&responses) {
-                    warn!(
-                        "Failed to restart port forward for config {}: {}",
-                        config_id, e
-                    );
-                    failed_ids.push(id);
-                } else {
-                    info!("Successfully restarted SSL proxy for config {}", config_id);
-                }
-            }
+        match port_ops.dispatch_start(config).await {
+            Ok(()) => info!("Successfully restarted SSL proxy for config {}", id),
             Err(e) => {
-                warn!(
-                    "Failed to restart port forward for config {}: {}",
-                    config_id, e
-                );
+                warn!("Failed to restart port forward for config {}: {}", id, e);
                 failed_ids.push(id);
             }
         }
@@ -196,6 +193,7 @@ async fn restart_ssl_proxies_if_running(target_ids: Option<&[i64]>) -> Result<Ve
 }
 
 async fn restart_ssl_proxies_with_retry() {
+    let port_ops: Arc<dyn PortOperations> = Arc::new(RealPortOperations);
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
     let mut target_ids: Option<Vec<i64>> = None;
@@ -208,7 +206,7 @@ async fn restart_ssl_proxies_with_retry() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
 
-        match restart_ssl_proxies_if_running(target_ids.as_deref()).await {
+        match restart_ssl_proxies_if_running(&port_ops, target_ids.as_deref()).await {
             Ok(failed_ids) if failed_ids.is_empty() => {
                 info!(
                     "SSL proxy restart attempt {} completed successfully",
@@ -833,5 +831,58 @@ mod tests {
         let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = delete_config_cmd(id).await;
+    }
+
+    #[tokio::test]
+    async fn test_restart_ssl_proxies_starts_already_down_config() {
+        // Regression: a config that stopped cleanly on a previous retry
+        // attempt (so it is no longer registered) must still be started
+        // here, not skipped because a stop was attempted and failed with
+        // "no process found".
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config {
+            alias: Some("ssl-restart-down-candidate".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        // The global DB pool is a process-wide OnceCell shared by every
+        // test in this binary (only the first `setup_isolated_test_db`
+        // call actually wins), so other tests' rows can still be present;
+        // find this test's own row by its unique alias rather than
+        // assuming it is the only or first one.
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("ssl-restart-down-candidate"))
+            .and_then(|c| c.id)
+            .expect("inserted config should be present");
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| false);
+        mock.expect_stop_port_forward().times(0);
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let port_ops: Arc<dyn PortOperations> = Arc::new(mock);
+
+        let failed_ids = restart_ssl_proxies_if_running(&port_ops, Some(&[id]))
+            .await
+            .expect("restart should succeed");
+
+        assert!(
+            failed_ids.is_empty(),
+            "a down candidate must still be started, not skipped"
+        );
     }
 }

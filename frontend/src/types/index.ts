@@ -28,6 +28,11 @@ export type PortForwardAction = 'starting' | 'stopping' | 'saving' | 'deleting'
 
 export type PortForwardToggleAction = 'starting' | 'stopping'
 
+export interface PendingConfigAction {
+  action: PortForwardAction
+  token: number
+}
+
 export interface PortForwardResponse {
   id: number | null
   service: string
@@ -67,7 +72,7 @@ export interface TableProps {
   configs: Config[]
   isInitiating: boolean
   isStopping: boolean
-  pendingConfigActions: Map<number, PortForwardAction>
+  pendingConfigActions: Map<number, PendingConfigAction>
   toggleConfigForward: (
     config: Config,
     action: PortForwardToggleAction,
@@ -101,7 +106,7 @@ export interface PortForwardRowProps {
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
-  pendingAction: PortForwardAction | null
+  pendingAction: PendingConfigAction | null
   toggleConfigForward: (
     config: Config,
     action: PortForwardToggleAction,
@@ -216,7 +221,7 @@ export interface ContextsAccordionProps {
   handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
-  pendingConfigActions: Map<number, PortForwardAction>
+  pendingConfigActions: Map<number, PendingConfigAction>
   toggleConfigForward: (
     config: Config,
     action: PortForwardToggleAction,

@@ -37,7 +37,7 @@ pub async fn start_port_forwarding_with_ssl(
         Some("expose") => {
             kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await
         }
-        Some("service") | Some("pod") => match config.protocol.as_str() {
+        Some("service") | Some("pod") | None => match config.protocol.as_str() {
             "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
             "udp" => {
                 deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await

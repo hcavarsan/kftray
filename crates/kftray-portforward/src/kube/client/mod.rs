@@ -60,7 +60,13 @@ pub fn cluster_identity(url: &http::Uri) -> String {
         identity.push_str(&scheme);
         identity.push_str("://");
     }
-    identity.push_str(&host);
+    if host.contains(':') && !host.starts_with('[') {
+        identity.push('[');
+        identity.push_str(&host);
+        identity.push(']');
+    } else {
+        identity.push_str(&host);
+    }
     if let Some(port) = port {
         identity.push(':');
         identity.push_str(&port.to_string());
@@ -102,5 +108,11 @@ mod tests {
     fn cluster_identity_keeps_non_default_port_and_path() {
         let url: http::Uri = "http://host:9443/api".parse().unwrap();
         assert_eq!(cluster_identity(&url), "http://host:9443/api");
+    }
+
+    #[test]
+    fn cluster_identity_brackets_ipv6_host() {
+        let url: http::Uri = "https://[2001:db8::1]:6443".parse().unwrap();
+        assert_eq!(cluster_identity(&url), "https://[2001:db8::1]:6443");
     }
 }
