@@ -94,14 +94,18 @@ pub struct SharedClientManager {
     /// `get_connection`/`resolve_key` call only reads and merges the
     /// kubeconfig on the first miss; later calls reuse the recorded
     /// context instead of touching disk again.
-    resolved_contexts: DashMap<Option<String>, String>,
+    resolved_contexts: DashMap<Option<String>, (String, Instant)>,
 }
 
 impl SharedClientManager {
     pub fn new() -> Self {
+        Self::with_ttl(Duration::from_secs(3600))
+    }
+
+    fn with_ttl(client_ttl: Duration) -> Self {
         Self {
             clients: DashMap::new(),
-            client_ttl: Duration::from_secs(3600),
+            client_ttl,
             creation_locks: DashMap::new(),
             resolved_contexts: DashMap::new(),
         }
@@ -177,10 +181,13 @@ impl SharedClientManager {
         }
 
         if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
-            return Ok(ServiceClientKey {
-                context_name: Some(resolved.clone()),
-                kubeconfig_path: key.kubeconfig_path,
-            });
+            let (context_name, resolved_at) = resolved.value();
+            if resolved_at.elapsed() <= self.client_ttl {
+                return Ok(ServiceClientKey {
+                    context_name: Some(context_name.clone()),
+                    kubeconfig_path: key.kubeconfig_path,
+                });
+            }
         }
 
         let kubeconfig_path = key.kubeconfig_path.clone();
@@ -207,8 +214,10 @@ impl SharedClientManager {
         .await
         .map_err(|e| anyhow::anyhow!("kubeconfig resolution task panicked: {e}"))??;
 
-        self.resolved_contexts
-            .insert(key.kubeconfig_path.clone(), current_context.clone());
+        self.resolved_contexts.insert(
+            key.kubeconfig_path.clone(),
+            (current_context.clone(), Instant::now()),
+        );
 
         Ok(ServiceClientKey {
             context_name: Some(current_context),
@@ -236,10 +245,13 @@ impl SharedClientManager {
     /// later `resolve_key` call re-reads the current context from disk
     /// instead of replaying the stale cached one; otherwise fall back to
     /// dropping every entry for the kubeconfig path, since there is no
-    /// recorded context to target.
+    /// recorded context to target. An explicit context is checked against
+    /// the recorded resolution for its kubeconfig path too and evicts it
+    /// when it matches, so a later `None`-context call does not replay a
+    /// resolution an exact-context eviction just invalidated.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
         if key.context_name.is_none() {
-            if let Some((_, resolved)) = self.resolved_contexts.remove(&key.kubeconfig_path) {
+            if let Some((_, (resolved, _))) = self.resolved_contexts.remove(&key.kubeconfig_path) {
                 let resolved_key = ServiceClientKey {
                     context_name: Some(resolved),
                     kubeconfig_path: key.kubeconfig_path.clone(),
@@ -251,6 +263,11 @@ impl SharedClientManager {
                 .retain(|cached_key, _| cached_key.kubeconfig_path != key.kubeconfig_path);
             return;
         }
+
+        if let Some(ctx) = key.context_name.as_deref() {
+            self.resolved_contexts
+                .remove_if(&key.kubeconfig_path, |_, (resolved, _)| resolved == ctx);
+        }
         self.clients.remove(key);
     }
 
@@ -260,6 +277,17 @@ impl SharedClientManager {
         self.creation_locks.retain(|key, lock| {
             self.clients.contains_key(key) || lock.1.load(Ordering::SeqCst) > 0
         });
+        self.resolved_contexts
+            .retain(|kubeconfig_path, (context_name, resolved_at)| {
+                if resolved_at.elapsed() > self.client_ttl {
+                    return false;
+                }
+                let resolved_key = ServiceClientKey {
+                    context_name: Some(context_name.clone()),
+                    kubeconfig_path: kubeconfig_path.clone(),
+                };
+                self.clients.contains_key(&resolved_key)
+            });
     }
 }
 
@@ -448,9 +476,10 @@ mod tests {
         manager
             .clients
             .insert(other_key.clone(), make_cached_client());
-        manager
-            .resolved_contexts
-            .insert(kubeconfig_path.clone(), "recorded-ctx".to_string());
+        manager.resolved_contexts.insert(
+            kubeconfig_path.clone(),
+            ("recorded-ctx".to_string(), Instant::now()),
+        );
 
         manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path.clone()));
 
@@ -538,7 +567,7 @@ mod tests {
             .insert(resolved_key.clone(), CachedClient::new(connection));
         manager.resolved_contexts.insert(
             Some(kubeconfig_path.clone()),
-            "kftray-test-invalidate-context".to_string(),
+            ("kftray-test-invalidate-context".to_string(), Instant::now()),
         );
 
         manager.invalidate_client(&raw_key);
@@ -753,6 +782,132 @@ mod tests {
         assert!(
             !manager.creation_locks.contains_key(&key),
             "a post-lock cache hit must release its clone of the creation lock"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_client_with_explicit_context_drops_matching_resolved_context() {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = Some("kftray-test-explicit-invalidate-kubeconfig".to_string());
+
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let connection = KubeConnection {
+            client: kube::Client::new(mock_service, "default"),
+            cluster_url: "https://example.invalid".parse().unwrap(),
+        };
+
+        let key = ServiceClientKey::new(Some("explicit-ctx".to_string()), kubeconfig_path.clone());
+        manager
+            .clients
+            .insert(key.clone(), CachedClient::new(connection));
+        manager.resolved_contexts.insert(
+            kubeconfig_path.clone(),
+            ("explicit-ctx".to_string(), Instant::now()),
+        );
+
+        manager.invalidate_client(&key);
+
+        assert!(
+            !manager.clients.contains_key(&key),
+            "the invalidated client entry must be removed"
+        );
+        assert!(
+            !manager.resolved_contexts.contains_key(&kubeconfig_path),
+            "invalidating the context currently recorded as resolved must drop the recorded \
+             resolution too, so a later None-context call re-reads the kubeconfig instead of \
+             replaying the now-invalid context"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_client_with_explicit_context_leaves_unrelated_resolved_context() {
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = Some("kftray-test-unrelated-kubeconfig".to_string());
+
+        manager.resolved_contexts.insert(
+            kubeconfig_path.clone(),
+            ("current-ctx".to_string(), Instant::now()),
+        );
+
+        manager.invalidate_client(&ServiceClientKey::new(
+            Some("some-other-ctx".to_string()),
+            kubeconfig_path.clone(),
+        ));
+
+        assert!(
+            manager.resolved_contexts.contains_key(&kubeconfig_path),
+            "invalidating a context that is not the currently recorded resolution must not \
+             touch the recorded resolution"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_key_re_resolves_after_ttl_expires() {
+        use std::io::Write;
+
+        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        write!(
+            kubeconfig_file,
+            "apiVersion: v1\n\
+             kind: Config\n\
+             current-context: kftray-test-ttl-context\n\
+             contexts:\n\
+             - name: kftray-test-ttl-context\n  \
+               context:\n    \
+                 cluster: kftray-test-cluster\n    \
+                 user: kftray-test-user\n\
+             clusters:\n\
+             - name: kftray-test-cluster\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: kftray-test-user\n  \
+               user: {{}}\n"
+        )
+        .expect("write temp kubeconfig");
+
+        let manager = SharedClientManager::with_ttl(Duration::from_millis(20));
+        let key = ServiceClientKey::new(
+            None,
+            Some(kubeconfig_file.path().to_string_lossy().to_string()),
+        );
+
+        let first = manager
+            .resolve_key(key.clone())
+            .await
+            .expect("initial resolution must succeed");
+        assert_eq!(
+            first.context_name.as_deref(),
+            Some("kftray-test-ttl-context")
+        );
+
+        // Stamp the recorded resolution as older than the ttl and corrupt its
+        // value; a fresh disk read is the only way the next resolve_key call
+        // can recover the real context name.
+        manager.resolved_contexts.insert(
+            key.kubeconfig_path.clone(),
+            (
+                "stale-context".to_string(),
+                Instant::now() - Duration::from_millis(21),
+            ),
+        );
+
+        let second = manager
+            .resolve_key(key)
+            .await
+            .expect("expired cache entry must fall back to a fresh kubeconfig read");
+        assert_eq!(
+            second.context_name.as_deref(),
+            Some("kftray-test-ttl-context"),
+            "an expired resolved-context cache entry must not be reused; resolve_key must \
+             re-read the kubeconfig instead of returning the stale recorded context"
         );
     }
 }

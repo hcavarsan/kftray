@@ -41,6 +41,11 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
             HelperError::PlatformService(format!("Failed to get current executable path: {}", e))
         })?;
 
+        // Persisted so the running service -- LocalSystem, with no "current
+        // user" of its own -- knows which account's named pipe connections
+        // to trust; see `crate::win_identity`.
+        crate::win_identity::record_authorized_user()?;
+
         let manager =
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
                 .map_err(|e| {

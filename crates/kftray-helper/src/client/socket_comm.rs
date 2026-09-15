@@ -21,6 +21,10 @@ use crate::messages::{
     RequestCommand,
 };
 
+/// Mirrors the server's request size cap: a response this large before it
+/// parses means something is wrong, not that more reading will fix it.
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
 pub fn is_socket_available(socket_path: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -232,6 +236,12 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 debug!("Read {n} bytes from response");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
+                if buffer.len() > MAX_RESPONSE_BYTES {
+                    return Err(HelperError::Communication(format!(
+                        "Response exceeded {MAX_RESPONSE_BYTES} bytes before parsing, aborting"
+                    )));
+                }
+
                 if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
                     debug!("Response appears complete");
                     break;
@@ -251,11 +261,6 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 }
 
                 debug!("Time elapsed: {:?}", start_time.elapsed());
-
-                if !buffer.is_empty() && start_time.elapsed() > Duration::from_secs(3) {
-                    debug!("We have some data and waited 3 seconds, assuming response is complete");
-                    break;
-                }
 
                 std::thread::sleep(Duration::from_millis(200));
                 continue;
@@ -337,10 +342,6 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
             Ok(result) => result,
             Err(_) => {
                 debug!("Read operation timed out, checking buffer state");
-                if !buffer.is_empty() && start_time.elapsed() > Duration::from_secs(3) {
-                    debug!("We have some data and waited 3 seconds, assuming response is complete");
-                    break;
-                }
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 continue;
             }
@@ -362,6 +363,12 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
                 debug!("Read {} bytes from pipe response", n);
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
+                if buffer.len() > MAX_RESPONSE_BYTES {
+                    return Err(HelperError::Communication(format!(
+                        "Response exceeded {MAX_RESPONSE_BYTES} bytes before parsing, aborting"
+                    )));
+                }
+
                 if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
                     debug!("Response appears complete");
                     break;
@@ -378,11 +385,6 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
                 }
 
                 debug!("Time elapsed: {:?}", start_time.elapsed());
-
-                if !buffer.is_empty() && start_time.elapsed() > Duration::from_secs(3) {
-                    debug!("We have some data and waited 3 seconds, assuming response is complete");
-                    break;
-                }
 
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 continue;
@@ -478,6 +480,64 @@ mod tests {
             elapsed < Duration::from_secs(5),
             "an old helper that never responds must fail fast instead of waiting out the 30s \
              response timeout, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn an_oversized_response_is_rejected_instead_of_read_forever() {
+        let socket_path = std::env::temp_dir().join(format!(
+            "kftray-cap-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        // Five times the cap: an unbounded reader would drain this over a
+        // local socket without ever blocking the writer; a capped reader
+        // stops well short, so the writer fills the kernel send buffer and
+        // times out before sending it all.
+        let target = MAX_RESPONSE_BYTES * 5;
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_write_timeout(Some(Duration::from_millis(300)))
+                .unwrap();
+            // Never valid JSON on its own: keeps the read loop going until
+            // the cap trips instead of a parse succeeding early.
+            let chunk = vec![b'a'; 65536];
+            let mut written = 0usize;
+            while written < target {
+                if io::Write::write_all(&mut conn, &chunk).is_err() {
+                    break;
+                }
+                written += chunk.len();
+            }
+            written
+        });
+
+        let stream = UnixStream::connect(&socket_path).unwrap();
+        let start = Instant::now();
+        let result = read_unix_response(stream);
+        let elapsed = start.elapsed();
+        let written = server.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(
+            result.is_err(),
+            "a response past the size cap must error out, not be read forever: {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the size cap must trip almost immediately once exceeded, not wait out the old \
+             3-second partial-data heuristic: took {elapsed:?}"
+        );
+        assert!(
+            written < target,
+            "the server side must block on a full send buffer once the cap stops the client \
+             consuming, not finish sending all {target} bytes unchecked: sent {written}"
         );
     }
 }

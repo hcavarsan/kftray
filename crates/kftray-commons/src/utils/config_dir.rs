@@ -649,7 +649,6 @@ pub fn get_kubeconfig_paths() -> Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -777,42 +776,7 @@ mod tests {
         assert!(is_valid_installation_id(&id), "{id}");
     }
 
-    struct EnvVarGuard {
-        key: String,
-        original_value: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &str, value: &str) -> Self {
-            let key = key.to_string();
-            let original_value = env::var(&key).ok();
-            unsafe { env::set_var(&key, value) };
-            EnvVarGuard {
-                key,
-                original_value,
-            }
-        }
-
-        fn remove(key: &str) -> Self {
-            let key = key.to_string();
-            let original_value = env::var(&key).ok();
-            unsafe { env::remove_var(&key) };
-            EnvVarGuard {
-                key,
-                original_value,
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.original_value {
-                Some(val) => unsafe { env::set_var(&self.key, val) },
-
-                None => unsafe { env::remove_var(&self.key) },
-            }
-        }
-    }
+    use crate::test_utils::EnvVarGuard;
 
     #[test]
     fn test_get_config_dir_kftray_var() {

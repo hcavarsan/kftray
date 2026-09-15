@@ -46,8 +46,6 @@ const Footer: React.FC<FooterProps> = ({
   setPollingInterval,
   pollingInterval,
   selectedConfigs,
-  setSelectedConfigs,
-  configs,
   syncStatus,
   onSyncComplete,
   openShortcutModal,
@@ -324,9 +322,7 @@ const Footer: React.FC<FooterProps> = ({
           </Tooltip>
 
           <BulkDeleteButton
-            setSelectedConfigs={setSelectedConfigs}
             selectedConfigs={selectedConfigs}
-            configs={configs}
             deleteConfigs={deleteConfigs}
           />
         </Group>

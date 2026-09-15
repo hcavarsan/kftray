@@ -98,9 +98,12 @@ async fn execute_strategies(
 
         let strategies_after = (strategy_count - index - 1) as u32;
         let reserved_for_rest = MIN_STRATEGY_SLICE.saturating_mul(strategies_after);
-        let strategy_budget = remaining
-            .saturating_sub(reserved_for_rest)
-            .max(remaining.min(MIN_STRATEGY_SLICE));
+        let after_reservation = remaining.saturating_sub(reserved_for_rest);
+        let strategy_budget = if after_reservation.is_zero() {
+            remaining
+        } else {
+            after_reservation
+        };
         let strategy_deadline = Instant::now() + strategy_budget;
 
         info!("Attempting strategy: {description}");
@@ -468,6 +471,41 @@ mod tests {
             elapsed < Duration::from_millis(400),
             "elapsed {elapsed:?} implies each strategy got its own timeout instead of \
              sharing one overall budget (3 strategies x 200ms would be >= 600ms)"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_strategies_reserves_slice_for_later_strategies() {
+        fn timeout_prone_strategy(description: &'static str, sleep_ms: u64) -> Strategy<'static> {
+            (
+                description,
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                    Err(KubeClientError::connection_error("unreachable"))
+                }),
+            )
+        }
+
+        // total_budget (5100ms) - MIN_STRATEGY_SLICE (5000ms) reserved for the
+        // one remaining strategy leaves the first strategy only ~100ms. A
+        // slow first strategy must be cut off there instead of eating into
+        // the second strategy's reserved slice.
+        let strategies = vec![
+            timeout_prone_strategy("slow-first", 250),
+            timeout_prone_strategy("fast-second", 1),
+        ];
+
+        let start = Instant::now();
+        let result = execute_strategies(strategies, Duration::from_millis(5100)).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "both strategies fail or time out");
+        assert!(
+            elapsed < Duration::from_millis(220),
+            "elapsed {elapsed:?} implies the first strategy was not capped at its reserved \
+             slice (~100ms); the previous `.max(remaining.min(MIN_STRATEGY_SLICE))` clamp undid \
+             the reservation and let the first strategy run its full 250ms sleep instead of \
+             timing out at ~100ms, leaving less than the intended slice for the second strategy"
         );
     }
 }

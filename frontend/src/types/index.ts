@@ -125,8 +125,6 @@ export interface FooterProps {
   selectedConfigs: Config[]
   setPollingInterval: (value: number) => void
   pollingInterval: number
-  setSelectedConfigs: (configs: Config[]) => void
-  configs: Config[]
   syncStatus: SyncStatus
   onSyncComplete: () => void
   openShortcutModal: () => void
@@ -197,8 +195,6 @@ export interface HeaderMenuProps {
 
 export interface BulkDeleteButtonProps {
   selectedConfigs: Config[]
-  setSelectedConfigs: (configs: Config[]) => void
-  configs: Config[]
   deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 

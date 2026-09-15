@@ -19,24 +19,10 @@ static PATH_INIT: OnceCell<()> = OnceCell::const_new();
 async fn init_path() {
     PATH_INIT
         .get_or_init(|| async {
-            unsafe {
-                env::remove_var("PYTHONHOME");
-                env::remove_var("PYTHONPATH");
-            }
-
-            // Windows GUI apps may not inherit PATH correctly from parent process.
-            // Re-setting forces std::process::Command to use current values.
-            #[cfg(windows)]
-            for var in ["PATH", "PATHEXT"] {
-                if let Ok(val) = env::var(var) {
-                    unsafe { env::set_var(var, &val) };
-                }
-            }
-
             #[cfg(unix)]
-            {
+            let resolved_path = {
                 let current = env::var("PATH").unwrap_or_default();
-                let resolved = tokio::task::spawn_blocking({
+                tokio::task::spawn_blocking({
                     let current = current.clone();
                     move || match shell_path() {
                         Some(p) => {
@@ -53,8 +39,28 @@ async fn init_path() {
                 .unwrap_or_else(|e| {
                     warn!("init_path: spawn_blocking failed ({e}), falling back to current PATH");
                     with_fallback(&current)
-                });
-                unsafe { env::set_var("PATH", &resolved) };
+                })
+            };
+
+            // Windows GUI apps may not inherit PATH correctly from parent process.
+            // Re-setting forces std::process::Command to use current values.
+            #[cfg(windows)]
+            let path_vars: Vec<(&'static str, String)> = ["PATH", "PATHEXT"]
+                .into_iter()
+                .filter_map(|var| env::var(var).ok().map(|val| (var, val)))
+                .collect();
+
+            unsafe {
+                env::remove_var("PYTHONHOME");
+                env::remove_var("PYTHONPATH");
+
+                #[cfg(windows)]
+                for (var, val) in &path_vars {
+                    env::set_var(var, val);
+                }
+
+                #[cfg(unix)]
+                env::set_var("PATH", &resolved_path);
             }
         })
         .await;

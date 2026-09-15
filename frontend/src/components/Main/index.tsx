@@ -954,12 +954,14 @@ const KFTray = () => {
             let forcedClear = false
 
             for (const id of unresolved) {
-              if (
-                pendingConfigActionsRef.current.get(id)?.token ===
-                tokens.get(id)
-              ) {
+              const token = tokens.get(id)
+
+              if (pendingConfigActionsRef.current.get(id)?.token === token) {
                 pendingConfigActionsRef.current.delete(id)
                 forcedClear = true
+              }
+              if (inFlightRef.current.get(id) === token) {
+                inFlightRef.current.delete(id)
               }
             }
             unresolved.clear()
@@ -1012,7 +1014,11 @@ const KFTray = () => {
 
   const deleteConfigs = useCallback(
     async (ids: number[]): Promise<boolean> => {
-      const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
+      const busy = ids.filter(
+        id =>
+          pendingConfigActionsRef.current.has(id) ||
+          inFlightRef.current.has(id),
+      )
 
       if (busy.length) {
         toaster.error({
@@ -1233,8 +1239,6 @@ const KFTray = () => {
               selectedConfigs={selectedConfigs}
               setPollingInterval={handleSetPollingInterval}
               pollingInterval={pollingInterval}
-              setSelectedConfigs={setSelectedConfigs}
-              configs={configs}
               syncStatus={syncStatus}
               onSyncComplete={handleSyncComplete}
               openShortcutModal={openShortcutModal}

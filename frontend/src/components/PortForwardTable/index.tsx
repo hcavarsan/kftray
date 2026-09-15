@@ -143,25 +143,11 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const handleSelectionChange = useCallback(
     (config: Config, isSelected: boolean) => {
-      setSelectedConfigs(prev => {
-        const newSelection = isSelected
-          ? [...prev, config]
-          : prev.filter(c => c.id !== config.id)
-
-        const contextConfigs = configs.filter(c => c.context === config.context)
-        const allContextSelected = contextConfigs.every(contextConfig =>
-          newSelection.some(selected => selected.id === contextConfig.id),
-        )
-
-        setSelectedConfigsByContext(prevByContext => ({
-          ...prevByContext,
-          [config.context]: allContextSelected,
-        }))
-
-        return newSelection
-      })
+      setSelectedConfigs(prev =>
+        isSelected ? [...prev, config] : prev.filter(c => c.id !== config.id),
+      )
     },
-    [configs, setSelectedConfigs],
+    [setSelectedConfigs],
   )
 
   return (

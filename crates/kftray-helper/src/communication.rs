@@ -641,9 +641,16 @@ fn read_request(stream: &mut UnixStream) -> Result<Option<HelperRequest>, Helper
                     return Ok(None);
                 }
 
-                if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
-                    debug!("Request parsed successfully");
-                    return Ok(Some(req));
+                match parse_framed_request(&buffer) {
+                    FramingOutcome::Complete(req) => {
+                        debug!("Request parsed successfully");
+                        return Ok(Some(req));
+                    }
+                    FramingOutcome::Invalid => {
+                        respond_with_parse_error(stream, &buffer)?;
+                        return Ok(None);
+                    }
+                    FramingOutcome::Incomplete => {}
                 }
             }
             // With a socket read timeout set (SO_RCVTIMEO), a timed-out read
@@ -675,6 +682,40 @@ fn read_request(stream: &mut UnixStream) -> Result<Option<HelperRequest>, Helper
                 )));
             }
         }
+    }
+}
+
+/// Outcome of trying to parse one `HelperRequest` out of a buffer that may
+/// still be growing.
+#[derive(Debug)]
+enum FramingOutcome {
+    /// A complete request, followed by nothing but whitespace.
+    Complete(HelperRequest),
+    /// Not enough bytes yet to tell whether this is a request.
+    Incomplete,
+    /// A complete value followed by other bytes, or JSON that no amount of
+    /// further reading would make valid.
+    Invalid,
+}
+
+/// Looks for exactly one `HelperRequest` at the start of `buffer`, using a
+/// `StreamDeserializer` instead of parsing the whole buffer as one value so
+/// trailing bytes are diagnosed instead of making the request unparseable
+/// forever as the client keeps appending to it.
+fn parse_framed_request(buffer: &[u8]) -> FramingOutcome {
+    let mut stream = serde_json::Deserializer::from_slice(buffer).into_iter::<HelperRequest>();
+    match stream.next() {
+        Some(Ok(request)) => {
+            let trailing = &buffer[stream.byte_offset()..];
+            if trailing.iter().all(u8::is_ascii_whitespace) {
+                FramingOutcome::Complete(request)
+            } else {
+                FramingOutcome::Invalid
+            }
+        }
+        Some(Err(e)) if e.is_eof() => FramingOutcome::Incomplete,
+        Some(Err(_)) => FramingOutcome::Invalid,
+        None => FramingOutcome::Incomplete,
     }
 }
 
@@ -739,22 +780,63 @@ fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<()
 
 #[cfg(target_os = "windows")]
 fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error> {
-    ServerOptions::new()
-        .pipe_mode(PipeMode::Byte)
-        .access_inbound(true)
-        .access_outbound(true)
-        .create(pipe_name)
+    use windows::Win32::Foundation::{
+        HLOCAL,
+        LocalFree,
+    };
+    use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows::Win32::Security::{
+        PSECURITY_DESCRIPTOR,
+        SECURITY_ATTRIBUTES,
+    };
+    use windows::core::HSTRING;
+
+    let sddl = HSTRING::from(crate::win_identity::pipe_security_descriptor_sddl());
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(&sddl, 1, &mut descriptor, None)
+    }
+    .map_err(|e| std::io::Error::other(format!("Failed to build pipe security descriptor: {e}")))?;
+
+    let mut attrs = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: false.into(),
+    };
+
+    // Safety: `attrs` outlives the call and `lpSecurityDescriptor` points at
+    // a descriptor that stays valid (and is freed) for the same span.
+    let result = unsafe {
+        ServerOptions::new()
+            .pipe_mode(PipeMode::Byte)
+            .access_inbound(true)
+            .access_outbound(true)
+            .reject_remote_clients(true)
+            .create_with_security_attributes_raw(
+                pipe_name,
+                (&mut attrs as *mut SECURITY_ATTRIBUTES).cast(),
+            )
+    };
+
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+    }
+
+    result
 }
 
-/// Verifies the named pipe's client process runs as the interactively
-/// logged-in console user, the Windows analogue of the `SO_PEERCRED`/
-/// `LOCAL_PEERCRED` UID check `validate_peer_credentials` does on Unix.
+/// Verifies the named pipe's client process runs as the account this
+/// installation trusts (`crate::win_identity::record_authorized_user`), the
+/// Windows analogue of the `SO_PEERCRED`/`LOCAL_PEERCRED` UID check
+/// `validate_peer_credentials` does on Unix.
 ///
 /// This helper normally runs as `LocalSystem`, so there is no "current
 /// process UID" to compare the peer against the way the Unix non-root
-/// fallback does; the active console session's user is the only identity
-/// on this machine an elevated service can trust without a
-/// per-installation secret.
+/// fallback does. Comparing against the physical console's session instead
+/// (the previous approach) rejects a legitimate client under RDP or fast
+/// user switching, and can trust the wrong account when no one is on the
+/// console at all; the account recorded at install avoids depending on
+/// which session happens to be active.
 #[cfg(target_os = "windows")]
 fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
     use std::os::windows::io::AsRawHandle;
@@ -771,10 +853,6 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         TokenUser,
     };
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::RemoteDesktop::{
-        WTSGetActiveConsoleSessionId,
-        WTSQueryUserToken,
-    };
     use windows::Win32::System::Threading::{
         OpenProcess,
         OpenProcessToken,
@@ -823,6 +901,14 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         HelperError::Authentication(format!("Failed to {what}: {e}"))
     };
 
+    let authorized_sid_string =
+        crate::win_identity::read_authorized_user_sid().ok_or_else(|| {
+            HelperError::Authentication(
+                "No authorized user recorded for this helper installation".to_owned(),
+            )
+        })?;
+    let authorized_sid = crate::win_identity::parse_sid(&authorized_sid_string)?;
+
     let pipe_handle = HANDLE(pipe.as_raw_handle());
     let mut client_pid = 0u32;
     unsafe { GetNamedPipeClientProcessId(pipe_handle, &mut client_pid) }
@@ -836,20 +922,10 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         open_token(client_process.0).map_err(|e| auth_err("open client process token", e))?;
     let client_sid_buf =
         token_user_sid(&client_token).map_err(|e| auth_err("read client token SID", e))?;
-
-    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
-    let mut session_token = HANDLE::default();
-    unsafe { WTSQueryUserToken(session_id, &mut session_token) }
-        .map_err(|e| auth_err("query the active console session", e))?;
-    let session_token = OwnedHandle(session_token);
-    let session_sid_buf =
-        token_user_sid(&session_token).map_err(|e| auth_err("read session token SID", e))?;
-
     let client_sid = unsafe { (*client_sid_buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
-    let session_sid = unsafe { (*session_sid_buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
 
-    unsafe { EqualSid(client_sid, session_sid) }.map_err(|_| {
-        HelperError::Authentication("Named pipe client is not the active console user".to_owned())
+    unsafe { EqualSid(client_sid, authorized_sid.0) }.map_err(|_| {
+        HelperError::Authentication("Named pipe client is not the authorized user".to_owned())
     })
 }
 
@@ -1086,9 +1162,16 @@ async fn read_request(pipe: &mut NamedPipeServer) -> Result<Option<HelperRequest
                         return Ok(None);
                     }
 
-                    if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
-                        debug!("Request parsed successfully");
-                        return Ok(Some(req));
+                    match parse_framed_request(&buffer) {
+                        FramingOutcome::Complete(req) => {
+                            debug!("Request parsed successfully");
+                            return Ok(Some(req));
+                        }
+                        FramingOutcome::Invalid => {
+                            respond_with_parse_error(pipe, &buffer).await?;
+                            return Ok(None);
+                        }
+                        FramingOutcome::Incomplete => {}
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1543,5 +1626,58 @@ mod tests {
             "the writer must block on a full send buffer once the cap stops the reader \
              consuming, not finish sending all {target} bytes unchecked: sent {written}"
         );
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+
+    fn sample_request_bytes() -> Vec<u8> {
+        let request = HelperRequest::new("com.kftray.app".to_string(), RequestCommand::Ping);
+        serde_json::to_vec(&request).unwrap()
+    }
+
+    #[test]
+    fn trailing_whitespace_after_a_complete_request_is_ignored() {
+        let mut buffer = sample_request_bytes();
+        buffer.extend_from_slice(b"  \n\t");
+
+        match parse_framed_request(&buffer) {
+            FramingOutcome::Complete(req) => {
+                assert!(matches!(req.command, RequestCommand::Ping))
+            }
+            other => panic!("expected a complete request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_garbage_after_a_complete_request_is_invalid() {
+        let mut buffer = sample_request_bytes();
+        buffer.extend_from_slice(b"garbage");
+
+        assert!(matches!(
+            parse_framed_request(&buffer),
+            FramingOutcome::Invalid
+        ));
+    }
+
+    #[test]
+    fn a_partial_request_is_incomplete() {
+        let buffer = sample_request_bytes();
+        let partial = &buffer[..buffer.len() - 1];
+
+        assert!(matches!(
+            parse_framed_request(partial),
+            FramingOutcome::Incomplete
+        ));
+    }
+
+    #[test]
+    fn malformed_json_is_invalid() {
+        assert!(matches!(
+            parse_framed_request(b"{not json"),
+            FramingOutcome::Invalid
+        ));
     }
 }

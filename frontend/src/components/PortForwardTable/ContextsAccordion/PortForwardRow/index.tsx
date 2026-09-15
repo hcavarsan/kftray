@@ -39,7 +39,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { PortForwardAction, PortForwardRowProps } from '@/types'
+import type { PortForwardRowProps, PortForwardToggleAction } from '@/types'
 
 import '../../styles.css'
 
@@ -211,7 +211,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
-    const action: PortForwardAction = isChecked ? 'starting' : 'stopping'
+    const action: PortForwardToggleAction = isChecked ? 'starting' : 'stopping'
 
     await toggleConfigForward(config, action)
   }
@@ -599,6 +599,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='duplicate'
+                disabled={isPending}
                 onClick={() => void handleDuplicateConfig(config.id)}
               >
                 <Box as={Copy} width='12px' height='12px' />
@@ -686,6 +687,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
               <Button
                 size='xs'
                 className='dialog-button dialog-button-primary'
+                disabled={isPending}
                 onClick={() => {
                   void (async () => {
                     const success = await deleteConfigs([config.id])

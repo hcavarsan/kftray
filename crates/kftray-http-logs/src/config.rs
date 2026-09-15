@@ -225,17 +225,13 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let temp_dir = TempDir::new().unwrap();
-        let previous = std::env::var("KFTRAY_CONFIG").ok();
-        unsafe { std::env::set_var("KFTRAY_CONFIG", temp_dir.path()) };
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            temp_dir.path().to_str().unwrap(),
+        );
 
-        let result = LogConfig::default_log_directory();
-
-        match previous {
-            Some(value) => unsafe { std::env::set_var("KFTRAY_CONFIG", value) },
-            None => unsafe { std::env::remove_var("KFTRAY_CONFIG") },
-        }
-
-        let log_dir = result.expect("default_log_directory should resolve");
+        let log_dir =
+            LogConfig::default_log_directory().expect("default_log_directory should resolve");
         assert_eq!(log_dir, temp_dir.path().join("http_logs"));
     }
 }
