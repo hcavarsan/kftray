@@ -49,6 +49,7 @@ pub use stop::{
     stop_all_port_forward_with_deadline,
     stop_all_port_forward_with_mode,
     stop_all_port_forward_with_mode_excluding,
+    stop_generation,
     stop_port_forward,
     stop_port_forward_with_mode,
 };

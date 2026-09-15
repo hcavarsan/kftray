@@ -1,12 +1,22 @@
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
-use kftray_portforward::kube::NO_READY_PODS_ERROR;
+use kftray_portforward::kube::{
+    NO_READY_PODS_ERROR,
+    stop_generation,
+};
 use log::{
     error,
     info,
 };
 
 pub struct ConfigManager;
+
+/// Whether this process currently runs a forward for `id`. The database
+/// row can still say running while a stop is in flight or has just finished;
+/// only the registry says what the monitor may restart.
+fn is_forward_registered(id: i64) -> bool {
+    kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
+}
 
 impl ConfigManager {
     pub async fn get_active_configs()
@@ -17,7 +27,9 @@ impl ConfigManager {
         let active_config_ids: Vec<i64> = config_states
             .into_iter()
             .filter(|state| {
-                state.is_running && state.process_id.is_none_or(|pid| pid == current_process_id)
+                state.is_running
+                    && state.process_id.is_none_or(|pid| pid == current_process_id)
+                    && is_forward_registered(state.config_id)
             })
             .map(|state| state.config_id)
             .collect();
@@ -62,21 +74,36 @@ impl ConfigManager {
     }
 
     async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str) {
-        info!("Restarting {} {} port forwards", configs.len(), protocol);
+        // Only what this process is still running is restarted: a forward the
+        // user stopped between the health check that flagged it and now must
+        // stay stopped. The stop generation catches a stop landing after
+        // this check: a count moved by anything other than our own stop
+        // means someone else stopped it, and starting it would undo that.
+        let owned: Vec<(i64, Config, u64)> = configs
+            .into_iter()
+            .filter_map(|config| {
+                let id = config.id?;
+                is_forward_registered(id).then(|| (id, config, stop_generation(id)))
+            })
+            .collect();
+        if owned.is_empty() {
+            info!("No {protocol} port forwards left to restart; they were stopped meanwhile");
+            return;
+        }
+        info!("Restarting {} {} port forwards", owned.len(), protocol);
 
-        let recovering: std::collections::HashSet<i64> = configs
+        let recovering: std::collections::HashSet<i64> = owned
             .iter()
-            .filter_map(|config| config.id)
-            .filter(|&config_id| kftray_portforward::kube::recovery_in_progress(config_id))
+            .map(|(id, _, _)| *id)
+            .filter(|&id| kftray_portforward::kube::recovery_in_progress(id))
             .collect();
 
-        let stop_tasks: Vec<_> = configs
+        let stop_tasks: Vec<_> = owned
             .iter()
-            .filter_map(|config| {
-                config.id.map(|config_id| {
-                    tokio::spawn(async move {
-                        kftray_portforward::kube::stop_port_forward(config_id.to_string()).await
-                    })
+            .map(|(id, _, _)| {
+                let id = *id;
+                tokio::spawn(async move {
+                    kftray_portforward::kube::stop_port_forward(id.to_string()).await
                 })
             })
             .collect();
@@ -88,6 +115,16 @@ impl ConfigManager {
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let configs: Vec<Config> = owned
+            .into_iter()
+            .filter(|(id, _, before)| stop_generation(*id) == before + 1)
+            .map(|(_, config, _)| config)
+            .collect();
+        if configs.is_empty() {
+            info!("No {protocol} port forwards left to restart; they were stopped meanwhile");
+            return;
+        }
 
         let (proxy_configs, other_configs) = partition_configs_by_workload(configs);
 

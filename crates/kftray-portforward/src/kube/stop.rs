@@ -115,6 +115,19 @@ lazy_static::lazy_static! {
     static ref PENDING_CLEANUP: dashmap::DashMap<i64, Vec<PendingTarget>> = dashmap::DashMap::new();
 }
 
+lazy_static::lazy_static! {
+    /// How many stops have acted on each id in this process. A caller that
+    /// stops a forward in order to start it again reads this before and
+    /// after, so a stop that lands in between (the user stopping the same
+    /// forward) is noticed and the restart is dropped rather than undoing it.
+    static ref STOP_GENERATIONS: dashmap::DashMap<i64, u64> = dashmap::DashMap::new();
+}
+
+/// The number of stops that have acted on `id` in this process so far.
+pub fn stop_generation(id: i64) -> u64 {
+    STOP_GENERATIONS.get(&id).map_or(0, |count| *count)
+}
+
 /// How long a lifecycle operation waits for another process to finish with
 /// the same configuration before giving up. A start elsewhere can hold it
 /// through relay readiness, so this is generous without being unbounded.
@@ -2183,6 +2196,7 @@ async fn stop_config(
             "Config {id} is being forwarded by another kftray process ({owner}); stop it there"
         ));
     }
+    *STOP_GENERATIONS.entry(id).or_insert(0) += 1;
     let process = CHILD_PROCESSES.remove(&id);
     let existed = process.is_some();
     let mut retained = None;
@@ -2565,6 +2579,32 @@ mod tests {
 
         let _tcp = TcpListener::bind(tcp_address).await.unwrap();
         let _udp = UdpSocket::bind(udp_address).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn every_stop_that_acts_on_an_id_advances_its_generation() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_012;
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(local_config(id));
+        CHILD_PROCESSES.insert(id, process);
+
+        let before = stop_generation(id);
+        stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(
+            stop_generation(id),
+            before + 1,
+            "a stop that found the forward counts once"
+        );
+
+        // A second stop finds nothing to stop, but still counts: a restart
+        // that reads the generation around its own stop must see that
+        // someone else acted on the id in between, whatever they found.
+        let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;
+        assert_eq!(stop_generation(id), before + 2);
     }
 
     #[tokio::test]
