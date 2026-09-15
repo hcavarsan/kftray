@@ -22,7 +22,7 @@
     "@types/lodash": "^4.17.25",
     "@vitejs/plugin-react": "^6.1.1",
     "lodash": "^4.18.1",
-    "lucide-react": "1.43.0",
+    "lucide-react": "1.46.0",
     "next-themes": "^0.4.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -44,6 +44,6 @@
     "knip": "^6.34.0",
     "rollup-plugin-visualizer": "^7.1.1",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.3.0"
   }
 }
