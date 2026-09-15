@@ -11,8 +11,8 @@ use lazy_static::lazy_static;
 use log::{
     error,
     info,
+    warn,
 };
-use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
 
@@ -20,6 +20,7 @@ use crate::config_dir::{
     get_db_file_path,
     get_pod_manifest_path,
 };
+use crate::utils::db_mode::DatabaseMode;
 use crate::utils::manifests::{
     create_expose_deployment_manifest,
     create_expose_ingress_manifest,
@@ -28,6 +29,9 @@ use crate::utils::manifests::{
     expose_deployment_manifest_exists,
     expose_ingress_manifest_exists,
     expose_service_manifest_exists,
+    migrate_expose_deployment_manifest_if_previous_default,
+    migrate_pod_manifest_if_previous_default,
+    migrate_proxy_deployment_manifest_if_previous_default,
     proxy_deployment_manifest_exists,
 };
 
@@ -42,16 +46,22 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     if !pod_manifest_file_exists() {
         create_server_config_manifest()?;
+    } else if let Err(error) = migrate_pod_manifest_if_previous_default() {
+        warn!("Failed to migrate pod manifest: {error}");
     }
 
     if !proxy_deployment_manifest_exists() {
         info!("Creating proxy deployment manifest");
         create_proxy_deployment_manifest()?;
+    } else if let Err(error) = migrate_proxy_deployment_manifest_if_previous_default() {
+        warn!("Failed to migrate proxy deployment manifest: {error}");
     }
 
     if !expose_deployment_manifest_exists() {
         info!("Creating expose deployment manifest");
         create_expose_deployment_manifest()?;
+    } else if let Err(error) = migrate_expose_deployment_manifest_if_previous_default() {
+        warn!("Failed to migrate expose deployment manifest: {error}");
     }
 
     if !expose_service_manifest_exists() {
@@ -66,6 +76,18 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     create_db_table(&pool).await?;
+    if let Err(error) =
+        crate::utils::settings::establish_expose_history_baseline_at_init(&pool, DatabaseMode::File)
+            .await
+    {
+        // Bookkeeping only: expose::kubernetes::ensure_expose_history_baseline
+        // re-establishes it lazily, using the snapshot taken above of
+        // which config ids already existed, so a configuration inserted
+        // after this point is never mistaken for one that predates ingress
+        // history. A transient SQLITE_BUSY from another kftray process
+        // sharing this file database must not stop this one from starting.
+        warn!("Failed to establish the expose history baseline: {error}");
+    }
 
     Ok(())
 }
@@ -216,42 +238,8 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
         fs::create_dir_all(manifest_dir)?;
     }
 
-    let placeholders = json!({
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {
-            "name": "{hashed_name}",
-            "labels": {
-                "app": "{hashed_name}",
-                "config_id": "{config_id}"
-            }
-        },
-        "spec": {
-            "containers": [{
-                "name": "{hashed_name}",
-                "image": "ghcr.io/hcavarsan/kftray-server:latest",
-                "env": [
-                    {"name": "LOCAL_PORT", "value": "{local_port}"},
-                    {"name": "REMOTE_PORT", "value": "{remote_port}"},
-                    {"name": "REMOTE_ADDRESS", "value": "{remote_address}"},
-                    {"name": "PROXY_TYPE", "value": "{protocol}"},
-                    {"name": "RUST_LOG", "value": "DEBUG"},
-                ],
-                "resources": {
-                    "limits": {
-                        "cpu": "100m",
-                        "memory": "200Mi"
-                    },
-                    "requests": {
-                        "cpu": "100m",
-                        "memory": "100Mi"
-                    }
-                }
-            }],
-        }
-    });
-
-    let manifest_json = serde_json::to_string_pretty(&placeholders)?;
+    let manifest_json =
+        serde_json::to_string_pretty(&crate::utils::manifests::default_pod_manifest())?;
 
     File::create(&manifest_path)?.write_all(manifest_json.as_bytes())
 }

@@ -46,12 +46,11 @@ const Footer: React.FC<FooterProps> = ({
   setPollingInterval,
   pollingInterval,
   selectedConfigs,
-  setSelectedConfigs,
-  configs,
   syncStatus,
   onSyncComplete,
   openShortcutModal,
   setIsAutoImportModalOpen,
+  deleteConfigs,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
@@ -323,9 +322,8 @@ const Footer: React.FC<FooterProps> = ({
           </Tooltip>
 
           <BulkDeleteButton
-            setSelectedConfigs={setSelectedConfigs}
             selectedConfigs={selectedConfigs}
-            configs={configs}
+            deleteConfigs={deleteConfigs}
           />
         </Group>
 

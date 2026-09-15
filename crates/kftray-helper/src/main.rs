@@ -27,6 +27,15 @@ enum Commands {
     Install {
         #[arg(short, long)]
         service_name: Option<String>,
+
+        // Passed by `client::installation::install_helper` on Windows,
+        // computed from the unelevated process launching this one's
+        // elevation, since by the time this process runs -- after
+        // `Start-Process -Verb RunAs` -- it may be running as a different
+        // administrator account than the one installing. Not meant for
+        // direct use.
+        #[arg(long, hide = true)]
+        authorized_sid: Option<String>,
     },
 
     Uninstall {
@@ -46,11 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Install { service_name } => {
+        Commands::Install {
+            service_name,
+            authorized_sid,
+        } => {
             let service = service_name
                 .clone()
                 .unwrap_or_else(|| "kftray.helper".to_string());
-            install_platform_service(&service)?;
+            install_platform_service(&service, authorized_sid.as_deref())?;
             if std::env::var("RUST_LOG").is_ok() {
                 println!("Service installed successfully");
             }

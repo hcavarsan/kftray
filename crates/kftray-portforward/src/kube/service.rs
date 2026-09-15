@@ -27,15 +27,15 @@ pub async fn retrieve_service_configs(
     let client_key = ServiceClientKey::new(Some(context.to_string()), kubeconfig.clone());
 
     let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+        .get_connection(client_key)
         .await
         .map_err(|e| e.to_string())?;
 
-    retrieve_service_configs_direct(context, kubeconfig, &client).await
+    retrieve_service_configs_direct(context, kubeconfig, &client.client).await
 }
 
 async fn retrieve_service_configs_direct(
-    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<kube::Client>,
+    context: &str, kubeconfig: Option<String>, client: &Client,
 ) -> Result<Vec<Config>, String> {
     let annotation = "kftray.app/configs";
 

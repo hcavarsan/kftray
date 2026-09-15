@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use futures::stream::{
-    FuturesUnordered,
+    self,
     StreamExt,
 };
 use kftray_commons::models::config_model::Config;
@@ -17,10 +17,7 @@ use kftray_commons::utils::settings::{
     set_ssl_ca_auto_install,
     set_ssl_enabled,
 };
-use kftray_portforward::kube::{
-    stop_port_forward_with_mode,
-    stop_proxy_forward_with_mode,
-};
+use kftray_portforward::kube::stop_port_forward_with_mode;
 use kftray_portforward::ssl::CertificateManager;
 use log::{
     info,
@@ -84,24 +81,22 @@ impl PortForwardRunner {
             println!("Starting {} port forward(s)", config_ids.len());
         }
 
-        let mut tasks = FuturesUnordered::new();
+        let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
+        let ssl_override = cli.ssl && !ssl_settings_enabled;
         let mut errors = Vec::new();
-
-        for config_id in config_ids {
-            let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
-            let ssl_override = cli.ssl && !ssl_settings_enabled;
-            tasks.push(async move {
+        let mut tasks = stream::iter(config_ids)
+            .map(|config_id| async move {
                 match core::port_forward::start_port_forward(config_id, mode, ssl_override).await {
                     Ok(()) => Ok(config_id),
-                    Err(e) => {
+                    Err(error) => {
                         eprintln!(
-                            "Error: Failed to start port forward for config {config_id}: {e}"
+                            "Error: Failed to start port forward for config {config_id}: {error}"
                         );
-                        Err((config_id, e))
+                        Err((config_id, error))
                     }
                 }
-            });
-        }
+            })
+            .buffer_unordered(16);
 
         let mut successful_config_ids = Vec::new();
         while let Some(result) = tasks.next().await {
@@ -117,7 +112,8 @@ impl PortForwardRunner {
                 if successful_config_ids.is_empty() {
                     eprintln!("Error: All port forwards failed to start in non-interactive mode");
                     eprintln!("Check the errors above for details");
-                    std::process::exit(1);
+                    Self::reconcile_before_exit(mode).await;
+                    return Err("all port forwards failed to start in non-interactive mode".into());
                 } else {
                     eprintln!(
                         "Note: {} port forward(s) started successfully",
@@ -138,12 +134,36 @@ impl PortForwardRunner {
         if started_configs.is_empty() {
             eprintln!("Error: No configurations found");
             eprintln!("Ensure config source contains valid port forward configurations");
-            std::process::exit(1);
+            Self::reconcile_before_exit(mode).await;
+            return Err("no configurations found to run in non-interactive mode".into());
         }
 
         Self::print_active_configurations(&started_configs);
-        Self::wait_for_shutdown_signal(&started_configs, mode).await;
+        Self::wait_for_shutdown_signal(&started_configs, mode).await?;
         Ok(())
+    }
+
+    /// Reconciles anything a start abandoned before an early, non-interactive
+    /// exit — the same reconcile pass the interactive shutdown paths always
+    /// run before terminating, so exiting here still reaps a relay
+    /// Deployment, an address claim, or a hosts entry a partial start left
+    /// behind.
+    async fn reconcile_before_exit(mode: DatabaseMode) {
+        let (still_owed, cleanup_result) = crate::core::port_forward::reconcile_shutdown_cleanup(
+            mode,
+            &HashSet::new(),
+            crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT,
+        )
+        .await;
+        if !still_owed.is_empty() {
+            eprintln!(
+                "Warning: cleanup for configuration(s) {still_owed:?} did not complete; they \
+                 stay marked running and are retried on the next stop"
+            );
+        }
+        if let Err(error) = cleanup_result {
+            eprintln!("Warning: failed to clean up configuration states: {error}");
+        }
     }
 
     async fn handle_save_only_non_interactive() -> Result<(), Box<dyn std::error::Error>> {
@@ -191,36 +211,152 @@ impl PortForwardRunner {
         println!("Keeping port forwards active");
     }
 
-    async fn wait_for_shutdown_signal(configs: &[Config], mode: DatabaseMode) {
-        let ctrl_c = signal::ctrl_c();
+    /// Fails when teardown left something behind, so a script running this
+    /// mode can tell an incomplete shutdown from a clean one by the exit code.
+    async fn wait_for_shutdown_signal(
+        configs: &[Config], mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(unix)]
+        {
+            let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                .map_err(|error| warn!("Failed to install SIGTERM handler: {error}"))
+                .ok();
 
-        tokio::select! {
-            _ = ctrl_c => {
-                println!("\nStopping port forwards");
-                Self::stop_all_port_forwards(configs, mode).await;
+            tokio::select! {
+                result = signal::ctrl_c() => {
+                    if let Err(error) = result {
+                        warn!("Failed to install Ctrl+C handler: {error}");
+                        match sigterm.as_mut() {
+                            Some(sigterm) => {
+                                eprintln!(
+                                    "Warning: failed to install a Ctrl+C handler ({error}); \
+                                     waiting for SIGTERM instead"
+                                );
+                                sigterm.recv().await;
+                            }
+                            None => {
+                                eprintln!(
+                                    "Error: no shutdown signal handler could be installed; \
+                                     stopping port forwards and exiting"
+                                );
+                                Self::stop_all_port_forwards(configs, mode).await?;
+                                return Err(
+                                    "no shutdown signal handler could be installed".into()
+                                );
+                            }
+                        }
+                    }
+                }
+                _ = async {
+                    match sigterm.as_mut() {
+                        Some(sigterm) => {
+                            sigterm.recv().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {}
+            }
+            println!("\nStopping port forwards");
+
+            // A second signal during the stop below is raced against it
+            // instead of being silently swallowed by tokio's still-installed
+            // handlers: without this, a user stuck waiting on a stalled
+            // recovery lock or cluster delete has no way to abort short of
+            // SIGKILL.
+            let stop = Self::stop_all_port_forwards(configs, mode);
+            tokio::pin!(stop);
+            tokio::select! {
+                result = &mut stop => result,
+                _ = async {
+                    match sigterm.as_mut() {
+                        Some(sigterm) => {
+                            tokio::select! {
+                                _ = signal::ctrl_c() => {}
+                                _ = sigterm.recv() => {}
+                            }
+                        }
+                        None => {
+                            let _ = signal::ctrl_c().await;
+                        }
+                    }
+                } => {
+                    eprintln!(
+                        "Warning: a second interrupt was received; exiting without waiting \
+                         for the stop to finish. Stops already dispatched keep running \
+                         detached in the background."
+                    );
+                    Err("shutdown interrupted by a second signal before stopping finished".into())
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if let Err(error) = signal::ctrl_c().await {
+                warn!("Failed to install Ctrl+C handler: {error}");
+                eprintln!(
+                    "Error: no shutdown signal handler could be installed; stopping port \
+                     forwards and exiting"
+                );
+                Self::stop_all_port_forwards(configs, mode).await?;
+                return Err("no shutdown signal handler could be installed".into());
+            }
+            println!("\nStopping port forwards");
+
+            let stop = Self::stop_all_port_forwards(configs, mode);
+            tokio::pin!(stop);
+            tokio::select! {
+                result = &mut stop => result,
+                _ = signal::ctrl_c() => {
+                    eprintln!(
+                        "Warning: a second interrupt was received; exiting without waiting \
+                         for the stop to finish. Stops already dispatched keep running \
+                         detached in the background."
+                    );
+                    Err("shutdown interrupted by a second signal before stopping finished".into())
+                }
             }
         }
     }
 
-    async fn stop_all_port_forwards(configs: &[Config], mode: DatabaseMode) {
-        let mut tasks = FuturesUnordered::new();
+    async fn stop_all_port_forwards(
+        configs: &[Config], mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dispatched_ids: HashSet<i64> = configs.iter().filter_map(|config| config.id).collect();
 
-        for config in configs {
-            if let Some(config_id) = config.id {
-                let config_clone = config.clone();
-                tasks.push(async move {
-                    match Self::stop_single_port_forward(&config_clone, config_id, mode).await {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(format!("Config {config_id}: {e}")),
-                    }
+        // Every stop is spawned onto the runtime right here, before any
+        // waiting begins: a config past whatever `drain_stop_tasks` awaits
+        // concurrently is not left queued behind a lazily polled stream, so
+        // it starts stopping immediately instead of only once an earlier
+        // stop's join future happens to be polled.
+        let handles: Vec<(i64, tokio::task::JoinHandle<Result<(), String>>)> = dispatched_ids
+            .iter()
+            .copied()
+            .map(|config_id| {
+                let handle = tokio::spawn(async move {
+                    Self::stop_single_port_forward(config_id, mode)
+                        .await
+                        .map_err(|error| format!("Config {config_id}: {error}"))
                 });
-            }
-        }
+                (config_id, handle)
+            })
+            .collect();
+
+        // Both phases below (this drain and the reconcile pass further down)
+        // share one overall deadline instead of each getting its own full
+        // `CLEANUP_RECONCILE_TIMEOUT`: a caller bounded by a supervisor's own
+        // stop timeout (systemd, Docker, Kubernetes) needs the total wait
+        // bounded too, not doubled.
+        let deadline_at =
+            tokio::time::Instant::now() + crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT;
+        let (results, completed_ids, drained_ok) = Self::drain_stop_tasks(
+            handles,
+            deadline_at.saturating_duration_since(tokio::time::Instant::now()),
+        )
+        .await;
 
         let mut stop_errors = Vec::new();
         let mut stopped_count = 0;
-
-        while let Some(result) = tasks.next().await {
+        for (_, result) in results {
             match result {
                 Ok(()) => stopped_count += 1,
                 Err(e) => stop_errors.push(e),
@@ -229,36 +365,112 @@ impl PortForwardRunner {
 
         println!("Stopped {stopped_count} port forward(s)");
 
-        if stop_errors.is_empty() {
+        let mut failures: Vec<String> = Vec::new();
+        if stop_errors.is_empty() && drained_ok {
             println!("Port forwards stopped");
-        } else {
+        } else if !stop_errors.is_empty() {
             eprintln!("Warning: Some port forwards failed to stop properly");
-            for error in stop_errors {
+            for error in &stop_errors {
                 eprintln!("  {error}");
             }
+            failures.extend(stop_errors);
+        }
+
+        let unfinished_stop_ids: HashSet<i64> =
+            dispatched_ids.difference(&completed_ids).copied().collect();
+        if !drained_ok {
+            let still_owed: Vec<i64> = unfinished_stop_ids.iter().copied().collect();
+            let message = format!(
+                "stop for configuration(s) {still_owed:?} did not finish within the shutdown \
+                 budget; they stay marked running and are retried on the next stop"
+            );
+            eprintln!("Warning: {message}");
+            failures.push(message);
+        }
+
+        // The cleanup registry lives only in this process, so anything a failed
+        // stop left outstanding has to be retried before it exits. Both
+        // interactive exits do this; without it a transient delete failure on
+        // Ctrl+C leaks a relay Deployment with nothing left to remove it. Ids
+        // still mid-stop above are excluded here too: they are still running
+        // detached and hold their per-config recovery lock, so reconciling or
+        // re-stopping them here would only contend for it.
+        let (still_owed, cleanup_result) = crate::core::port_forward::reconcile_shutdown_cleanup(
+            mode,
+            &unfinished_stop_ids,
+            deadline_at.saturating_duration_since(tokio::time::Instant::now()),
+        )
+        .await;
+        if !still_owed.is_empty() {
+            let message = format!(
+                "cleanup for configuration(s) {still_owed:?} did not complete; they stay \
+                 marked running and are retried on the next stop"
+            );
+            eprintln!("Warning: {message}");
+            failures.push(message);
+        }
+
+        if let Err(error) = cleanup_result {
+            eprintln!("Warning: failed to clean up configuration states: {error}");
+            failures.push(format!("failed to clean up configuration states: {error}"));
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("shutdown left work outstanding: {}", failures.join("; ")).into())
         }
     }
 
     async fn stop_single_port_forward(
-        config: &Config, config_id: i64, mode: DatabaseMode,
+        config_id: i64, mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        match config.workload_type.as_deref() {
-            Some("proxy") => {
-                let namespace = &config.namespace;
-                let service_name = config
-                    .service
-                    .clone()
-                    .unwrap_or_else(|| format!("proxy-{config_id}"));
-                stop_proxy_forward_with_mode(config_id, namespace, service_name, mode)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
+        stop_port_forward_with_mode(config_id.to_string(), mode)
+            .await
+            .map(|_| ())
+            .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
+    }
+
+    /// Awaits every already-spawned handle, each bounded by whatever of
+    /// `deadline` remains after the ones before it. Every handle was spawned
+    /// by the caller (`stop_all_port_forwards`) before this function was
+    /// ever called, so a stop still running when its slice of the deadline
+    /// elapses keeps running to completion detached in the background
+    /// instead of being cancelled mid-cleanup (which could leave a relay or
+    /// an address claim half released): the `tokio::time::timeout` here only
+    /// drops the future joining it, not the spawned task itself. The caller
+    /// learns which ids never reported back
+    /// (`dispatched_ids.difference(&completed_ids)`) and excludes them from
+    /// cleanup work that would otherwise contend for their per-config
+    /// recovery lock.
+    pub(crate) async fn drain_stop_tasks(
+        handles: Vec<(i64, tokio::task::JoinHandle<Result<(), String>>)>,
+        deadline: std::time::Duration,
+    ) -> (Vec<(i64, Result<(), String>)>, HashSet<i64>, bool) {
+        let mut results = Vec::new();
+        let mut completed_ids: HashSet<i64> = HashSet::new();
+        let deadline_at = tokio::time::Instant::now() + deadline;
+        let mut drained_ok = true;
+        for (id, handle) in handles {
+            let remaining = deadline_at.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, handle).await {
+                Ok(Ok(result)) => {
+                    completed_ids.insert(id);
+                    results.push((id, result));
+                }
+                Ok(Err(join_error)) => {
+                    completed_ids.insert(id);
+                    results.push((
+                        id,
+                        Err(format!("Config {id}: stop task panicked: {join_error}")),
+                    ));
+                }
+                Err(_) => {
+                    drained_ok = false;
+                }
             }
-            _ => stop_port_forward_with_mode(config_id.to_string(), mode)
-                .await
-                .map(|_| ())
-                .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>),
         }
+        (results, completed_ids, drained_ok)
     }
 
     async fn ensure_ssl_setup_with_configs(

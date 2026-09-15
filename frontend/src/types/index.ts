@@ -24,6 +24,29 @@ export interface Config {
   ingress_annotations?: string
 }
 
+export type PortForwardAction = 'starting' | 'stopping' | 'saving' | 'deleting'
+
+export type PortForwardToggleAction = 'starting' | 'stopping'
+
+export interface PendingConfigAction {
+  action: PortForwardAction
+  token: number
+  timedOut?: boolean
+}
+
+export interface PortForwardResponse {
+  id: number | null
+  service: string
+  namespace: string
+  local_port: number
+  remote_port: number
+  context: string
+  stdout: string
+  stderr: string
+  status: number
+  protocol: string
+}
+
 type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {
@@ -50,39 +73,39 @@ export interface TableProps {
   configs: Config[]
   isInitiating: boolean
   isStopping: boolean
+  pendingConfigActions: Map<number, PendingConfigAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
   initiatePortForwarding: (configs: Config[]) => Promise<void>
   startSelectedPortForwarding: () => Promise<void>
   stopSelectedPortForwarding: () => Promise<void>
   stopAllPortForwarding: () => Promise<void>
   abortStartOperation: () => void
   abortStopOperation: () => void
-  confirmDeleteConfig: () => void
-  handleDeleteConfig: (id: number) => void
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   openSettingsModal: () => void
   openServerResourcesModal: () => void
 }
 
 export interface PortForwardRowProps {
   config: Config
-  confirmDeleteConfig: () => void
-  handleDeleteConfig: (id: number) => void
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
   showContext?: boolean
-  onSelectionChange: (isSelected: boolean) => void
+  onSelectionChange: (id: number, isSelected: boolean) => void
   selected: boolean
-  _isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingAction: PendingConfigAction | null
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
 }
 
 export interface SyncStatus {
@@ -103,12 +126,11 @@ export interface FooterProps {
   selectedConfigs: Config[]
   setPollingInterval: (value: number) => void
   pollingInterval: number
-  setSelectedConfigs: (configs: Config[]) => void
-  configs: Config[]
   syncStatus: SyncStatus
   onSyncComplete: () => void
   openShortcutModal: () => void
   setIsAutoImportModalOpen: (open: boolean) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface SyncConfigsButtonProps {
@@ -135,7 +157,7 @@ export interface CustomConfigProps {
   closeModal: () => void
   newConfig: Config
   handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  handleSaveConfig: (config: Config) => Promise<void>
+  handleSaveConfig: (config: Config) => Promise<boolean>
   handleEditSubmit: (e: React.FormEvent) => Promise<void>
   isEdit: boolean
   cancelRef: React.RefObject<HTMLElement>
@@ -174,26 +196,24 @@ export interface HeaderMenuProps {
 
 export interface BulkDeleteButtonProps {
   selectedConfigs: Config[]
-  setSelectedConfigs: (configs: Config[]) => void
-  configs: Config[]
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface ContextsAccordionProps {
   context: string
   contextConfigs: Config[]
   selectedConfigs: Config[]
-  handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: () => void
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
-  handleSelectionChange: (config: Config, isSelected: boolean) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
+  handleSelectionChange: (id: number, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
-  isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingConfigActions: Map<number, PendingConfigAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
 }
 
 export interface AutoImportModalProps {

@@ -2,12 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use dashmap::DashSet;
-use futures::{
-    future::BoxFuture,
-    stream::{
-        FuturesUnordered,
-        StreamExt,
-    },
+use futures::stream::{
+    self,
+    StreamExt,
 };
 use kftray_commons::{
     models::{
@@ -31,6 +28,7 @@ use log::{
 };
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     hostsfile::{
@@ -71,12 +69,12 @@ pub async fn cleanup_stale_timeout_entries() {
     }
 }
 
-async fn handle_timeout_callback(id: i64) {
+async fn handle_timeout_callback(id: i64, mode: DatabaseMode) {
     info!("User-configured timeout reached for config {id}, stopping port forward");
 
     STOPPED_BY_TIMEOUT.insert(id);
 
-    if let Err(e) = crate::kube::stop::stop_port_forward(id.to_string()).await {
+    if let Err(e) = crate::kube::stop::stop_port_forward_with_mode(id.to_string(), mode).await {
         error!("Failed to stop port forward {id} on timeout: {e}");
         STOPPED_BY_TIMEOUT.remove(&id);
     } else {
@@ -84,10 +82,10 @@ async fn handle_timeout_callback(id: i64) {
     }
 }
 
-fn create_static_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
+fn create_static_timeout_callback(mode: DatabaseMode) -> Arc<dyn Fn(i64) + Send + Sync> {
     Arc::new(move |id: i64| {
         tokio::spawn(async move {
-            handle_timeout_callback(id).await;
+            handle_timeout_callback(id, mode).await;
         });
     })
 }
@@ -111,19 +109,97 @@ async fn build_tls_acceptor(
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
 
-async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
+/// Writes the HTTPS aliases from a task that outlives the startup.
+///
+/// Off the runtime for the same reason as the domain alias: the write waits
+/// on the cross-process hosts lock. The process is already registered when
+/// this runs, so a stop can race the write; a task whose process is gone by
+/// the time the lines are on disk removes them again, since the stop that
+/// removed the process has already done its hosts cleanup.
+async fn update_hosts_with_ssl(
+    config: &Config, mode: DatabaseMode, hosts_claim: u64,
+) -> Result<(), String> {
     let alias = config
         .alias
-        .as_ref()
+        .clone()
         .ok_or("Alias required for SSL hosts entry")?;
-
-    let config_id = &config.id.unwrap_or(-1).to_string();
+    let id = config.id.ok_or("Config id required for SSL hosts entry")?;
     let port = config.local_port.unwrap_or(8080);
 
-    add_ssl_host_entry(config_id, alias, port)
-        .map_err(|e| format!("Failed to add HTTPS hosts entries: {}", e))?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let counted = AllocationInFlight::start();
+    let snapshot = config.clone();
+    tokio::spawn(async move {
+        let _counted = counted;
+        // A newer attempt may have claimed this id's hosts entries while this
+        // write was only queued: writing anyway would hand it lines that
+        // belong to this abandoned attempt, with nothing left to remove them
+        // once they land.
+        if !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim) {
+            debug!(
+                "Config {id} was claimed by a newer attempt; skipping its deferred SSL hosts \
+                 write"
+            );
+            let _ = sender.send(Ok(()));
+            return;
+        }
+        let written = add_ssl_host_entry(&id.to_string(), &alias, port, mode)
+            .await
+            .map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"));
+        let _ = sender.send(written);
+        // The claim was deliberately left in place by the caller so this
+        // deferred write's own cleanup, not a chance later start, is what
+        // releases it, whether the write succeeded or failed: a failed
+        // write can still have landed partial lines, and either way
+        // nothing else will release this claim.
+        finish_deferred_ssl_write(id, hosts_claim, &snapshot, mode).await;
+    });
+    receiver
+        .await
+        .map_err(|_| "Hosts write ended unexpectedly".to_string())?
+}
 
-    Ok(())
+/// Releases this attempt's hosts claim once its deferred SSL write has
+/// settled, whether it succeeded or failed, and removes the lines it landed
+/// if nobody is left to own them.
+///
+/// Taking the claim here regardless of the write's outcome mirrors the
+/// non-deferred path, which releases it right after registration. A
+/// registered process is proof this write has a current owner; so is a
+/// claim a newer attempt has taken and not yet resolved, since that
+/// attempt's own deferred cleanup will decide these lines' fate once it
+/// finishes. Only when neither is true, whether this attempt is still the
+/// current claim holder or a newer one has since given up in turn, does
+/// nobody remain to manage the lines this write just landed.
+async fn finish_deferred_ssl_write(
+    id: i64, hosts_claim: u64, snapshot: &Config, mode: DatabaseMode,
+) {
+    let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+    let guard = lock.lock().await;
+    crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+    let has_current_owner =
+        CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+    if !has_current_owner {
+        warn!(
+            "Removing HTTPS hosts entries for config {id} written after it was stopped or \
+             superseded"
+        );
+        let in_use = crate::kube::stop::forwarding_configs(mode).await;
+        let removed =
+            crate::hostsfile::remove_config_host_entries(id, Some(snapshot), &in_use, mode).await;
+        match removed {
+            Ok(()) => {}
+            // Recorded so a later stop retries: the stop that removed the
+            // process has already run its cleanup and will not look again.
+            Err(error) => {
+                warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
+                crate::kube::stop::record_local_cleanup(id, snapshot.clone(), mode).await;
+            }
+        }
+    }
+    drop(guard);
+    drop(lock);
+    crate::kube::proxy_recovery::remove_recovery_lock(id);
 }
 
 fn workload_type_description(workload_type: Option<&str>) -> &'static str {
@@ -136,7 +212,437 @@ fn workload_type_description(workload_type: Option<&str>) -> &'static str {
 
 static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
-async fn allocate_local_address_for_config(config: &mut Config) -> Result<String, String> {
+/// Releases what a startup registered outside the process before it had a
+/// forwarder, and keeps the configuration recorded only if that did not
+/// finish.
+async fn rollback_local_resources(
+    config: &Config, address: &str, reason: String, mode: DatabaseMode,
+) -> String {
+    let mut errors = Vec::new();
+    let mut unsatisfiable = Vec::new();
+    // Routed through the ownership-safe release: the helper hands the same
+    // address to two configurations of one service, and removing it directly
+    // would take the alias from under a forward that is still using it.
+    if crate::network_utils::is_custom_loopback_address(address)
+        && let Err(error) =
+            crate::kube::stop::release_address_with_fallback(address, config.id, mode).await
+    {
+        if error.is_unsatisfiable() {
+            unsatisfiable.push(error.to_string());
+        } else {
+            errors.push(error.to_string());
+        }
+    }
+    let id = config.id.unwrap_or_default();
+    let snapshot = config.clone();
+    let in_use = crate::kube::stop::forwarding_configs(mode).await;
+    let hosts =
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
+    match hosts {
+        Ok(()) => {}
+        Err(error) => errors.push(error.to_string()),
+    }
+
+    if errors.is_empty() {
+        if let Some(id) = config.id {
+            crate::kube::stop::settle_local_cleanup(id, config, mode).await;
+        }
+        // Releasing the address needed privileges that are not available
+        // right now: reported once, but not by keeping this queued forever.
+        if unsatisfiable.is_empty() {
+            reason
+        } else {
+            format!("{reason}; {}", unsatisfiable.join("; "))
+        }
+    } else {
+        if let Some(id) = config.id {
+            crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
+        }
+        let mut incomplete = unsatisfiable;
+        incomplete.extend(errors);
+        format!("{reason}; cleanup incomplete: {}", incomplete.join("; "))
+    }
+}
+
+async fn rollback_startup(
+    port_forward: &PortForward, config: Config, reason: String, mode: DatabaseMode,
+) -> String {
+    match port_forward.cleanup_resources(Some(&config), mode).await {
+        crate::port_forward::CleanupOutcome::Settled(unsatisfiable) => {
+            if let Some(id) = config.id {
+                crate::kube::stop::settle_local_cleanup(id, &config, mode).await;
+            }
+            match unsatisfiable {
+                Some(note) => format!("{reason}; {note}"),
+                None => reason,
+            }
+        }
+        crate::port_forward::CleanupOutcome::Incomplete(error) => {
+            if let Some(id) = config.id {
+                crate::kube::stop::record_local_cleanup(id, config, mode).await;
+            }
+            format!("{reason}; cleanup incomplete: {error}")
+        }
+    }
+}
+
+/// Local setup tasks (address allocations, hosts writes) that have been
+/// started but whose result has not been observed yet. A startup dropped
+/// while one runs leaves the task to roll its own work back, and shutdown
+/// reconciliation waits for that: nothing is in the cleanup registry until
+/// the task records it.
+pub(crate) static OUTSTANDING_ALLOCATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Decrements the outstanding count however the task ends.
+struct AllocationInFlight;
+
+impl AllocationInFlight {
+    fn start() -> Self {
+        OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for AllocationInFlight {
+    fn drop(&mut self) {
+        OUTSTANDING_ALLOCATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Writes a domain alias from a task that outlives the startup.
+///
+/// The write is synchronous and waits on the cross-process hosts lock, so it
+/// runs off the runtime; and a startup abandoned while it waits (the
+/// terminal's shutdown drain aborts forwarding tasks after its deadline)
+/// would otherwise leave the line behind after every cleanup has run and
+/// forgotten it. The task observes its own completion: for a startup that is
+/// no longer waiting it rolls back everything that startup held locally, the
+/// line it just wrote and the address allocated before it, since nothing
+/// else will.
+async fn add_host_entry_owned(
+    id: i64, config: &Config, address: &str, entry: HostEntry, mode: DatabaseMode, hosts_claim: u64,
+) -> Result<(), String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let counted = AllocationInFlight::start();
+    let entry_id = id.to_string();
+    let snapshot = config.clone();
+    let address = address.to_owned();
+    tokio::spawn(async move {
+        let _counted = counted;
+        if !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim) {
+            debug!("Config {id} was claimed by a newer attempt; skipping its deferred hosts write");
+            let _ = sender.send(Ok(()));
+            return;
+        }
+        let written = tokio::task::spawn_blocking({
+            let entry_id = entry_id.clone();
+            move || add_host_entry(entry_id, entry)
+        })
+        .await
+        .map_err(|error| format!("Hosts write task failed: {error}"))
+        .and_then(|result| result.map_err(|error| error.to_string()));
+        if sender.send(written).is_err() {
+            // Under the lifecycle lock: a retry of the same configuration can
+            // have started once the abandoned future released it, claimed the
+            // same address and written the same lines, and rolling those
+            // back would tear the retry down. A registered process is proof
+            // these lines have a current owner; so is a claim a newer
+            // attempt has taken and not yet resolved, since that attempt's
+            // own deferred cleanup will decide these lines' fate once it
+            // finishes. Only when neither is true, whether this attempt is
+            // still the current claim holder or a newer one has since given
+            // up in turn, is this write's own rollback the only thing left
+            // to run it.
+            let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+            let _guard = lock.lock().await;
+            crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+            let has_current_owner = CHILD_PROCESSES.contains_key(&id)
+                || crate::kube::stop::host_entry_has_any_claim(id);
+            if has_current_owner {
+                debug!("Config {id} was restarted; leaving its local resources to the new owner");
+                return;
+            }
+            warn!(
+                "{}",
+                rollback_local_resources(
+                    &snapshot,
+                    &address,
+                    format!("Startup for config {id} was abandoned during its hosts write"),
+                    mode,
+                )
+                .await
+            );
+        }
+    });
+    receiver
+        .await
+        .map_err(|_| "Hosts write ended unexpectedly".to_string())?
+}
+
+/// Allocates a loopback address and returns it together with the claim that
+/// keeps any release away from it until the startup registers its process.
+///
+/// The claim is taken by the allocating task itself, before the address is
+/// handed over: between the allocation and the claim a stop of another
+/// configuration sharing the same helper allocation would find neither a
+/// claim nor a process and release the alias and its pool reservation.
+async fn allocate_local_address_owned(
+    config: &mut Config, mode: DatabaseMode,
+) -> Result<(String, Option<crate::kube::stop::AddressClaim>), String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let mut owned = config.clone();
+    // Counted before the task exists: shutdown reconciliation waits for these,
+    // because an allocation still in flight has nothing in the cleanup registry
+    // yet and would otherwise be abandoned.
+    let counted = AllocationInFlight::start();
+    tokio::spawn(async move {
+        let _counted = counted;
+        let Allocated {
+            result,
+            claim,
+            acquired,
+        } = allocate_and_claim(&mut owned, mode).await;
+        // Recorded before the handoff, and whether or not the attempt went on
+        // to succeed: a successful send does not prove the startup consumed
+        // it, a failed claim or confirmation still leaves the alias bound, and
+        // an address nobody recorded is an address stop-all and reconciliation
+        // cannot find.
+        let mut held = owned.clone();
+        held.local_address = acquired.clone();
+        if acquired.is_some()
+            && let Some(id) = held.id
+        {
+            crate::kube::stop::record_local_cleanup(id, held.clone(), mode).await;
+        }
+        let failed = result.is_err();
+        let handed_over = match sender.send((result, owned, claim)) {
+            Ok(()) => true,
+            Err((_, _, claim)) => {
+                // Our own claim must not block our own release.
+                drop(claim);
+                false
+            }
+        };
+        // An alias acquired by an attempt that then failed has no startup to
+        // roll it back: the startup only ever sees the error. One handed to a
+        // startup that is no longer waiting has nobody either.
+        if let Some(address) = acquired.as_deref()
+            && (failed || !handed_over)
+        {
+            // Released through the same path a stop uses: the helper keeps a
+            // pool reservation next to the alias, and removing only the alias
+            // would leave that reservation consumed by every abandoned startup.
+            // The release marks the address under the entry lock and stands
+            // down if any startup or running forward holds it by now, which is
+            // why no owner is exempted: a retry of this same configuration is
+            // not what this task is rolling back.
+            warn!("Releasing address {address} allocated after startup was abandoned");
+            match crate::kube::stop::release_address_with_fallback(address, None, mode).await {
+                Ok(()) => {
+                    if let Some(id) = held.id {
+                        crate::kube::stop::settle_local_cleanup(id, &held, mode).await;
+                    }
+                }
+                Err(error) => {
+                    // The record stays, so a later stop retries the release.
+                    warn!("Failed to release {address} after an abandoned startup: {error}");
+                }
+            }
+        }
+    });
+
+    let (result, owned, claim) = receiver
+        .await
+        .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
+    let address = result?;
+    // Persisted only now that the result reached a startup that is still
+    // current. The task keeps running when this future is abandoned, and
+    // writing from there would overwrite settings edited in the meantime.
+    if owned.auto_loopback_address
+        && let Some(id) = owned.id
+        && let Err(error) = persist_allocated_address(id, &address, mode).await
+    {
+        error!("Failed to save allocated address {address} for config {id}: {error}");
+    }
+    *config = owned;
+    Ok((address, claim))
+}
+
+/// Writes only the allocated address, and only while the stored configuration
+/// still asks for one.
+async fn persist_allocated_address(
+    id: i64, address: &str, mode: DatabaseMode,
+) -> Result<(), String> {
+    use kftray_commons::utils::config::AllocatedAddressWrite;
+    match kftray_commons::utils::config::set_allocated_local_address(id, address, mode).await? {
+        AllocatedAddressWrite::Written => {}
+        AllocatedAddressWrite::NotRequested => {
+            debug!("Config {id} no longer requests an allocated address; keeping its own");
+        }
+        AllocatedAddressWrite::RowMissing => {
+            warn!("Config {id} was deleted before its allocated address {address} could be saved");
+        }
+    }
+    Ok(())
+}
+
+/// What an allocation attempt left behind.
+struct Allocated {
+    result: Result<String, String>,
+    claim: Option<crate::kube::stop::AddressClaim>,
+    /// The custom loopback address this attempt acquired, whether or not it
+    /// went on to succeed. A claim that could not be taken, a confirmation
+    /// that failed, or a sequence that never settled all leave an alias behind
+    /// that has to be tracked, and released, like any other.
+    acquired: Option<String>,
+}
+
+/// Allocates an address and returns it held by a claim that no release can
+/// get past.
+///
+/// The claim can only be taken once the address is known, and the helper
+/// hands the same address to every configuration of one service, so between
+/// the allocation and the claim a stop of a sibling configuration can complete
+/// a release of exactly this address, alias and pool reservation included.
+/// A check for a running release does not see one that already finished.
+/// So the allocation is repeated under the claim: the helper either confirms
+/// the reservation still stands, or makes a fresh one now that nothing can
+/// release it, and if it hands back a different address the claim moves to
+/// that one and the confirmation runs again.
+async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated {
+    const ATTEMPTS: usize = 3;
+
+    let mut acquired = None;
+    let (mut address, provenance) = match allocate_local_address_for_config(owned, mode).await {
+        Ok(allocation) => allocation,
+        Err(error) => {
+            return Allocated {
+                result: Err(error),
+                claim: None,
+                acquired,
+            };
+        }
+    };
+    for _ in 0..ATTEMPTS {
+        if !crate::network_utils::is_custom_loopback_address(&address) {
+            return Allocated {
+                result: Ok(address),
+                claim: None,
+                acquired,
+            };
+        }
+        acquired = Some(address.clone());
+        let Some(claim) = crate::kube::stop::AddressClaim::take(&address, owned.id) else {
+            return Allocated {
+                result: Err(format!(
+                    "Local address {address} is still being released by an earlier stop"
+                )),
+                claim: None,
+                acquired,
+            };
+        };
+        if provenance != Allocation::Helper {
+            return Allocated {
+                result: Ok(address),
+                claim: Some(claim),
+                acquired,
+            };
+        }
+        let confirmed = match allocate_local_address_for_config(owned, mode).await {
+            Ok((confirmed, Allocation::Helper)) => confirmed,
+            // The helper stopped answering between the two calls; the address
+            // it gave first is still the one this startup holds under its
+            // claim, and the fallback's fresh alias is not wanted.
+            Ok((other, _)) => {
+                if other != address {
+                    release_stray_alias(owned, &other, mode).await;
+                }
+                owned.local_address = Some(address.clone());
+                return Allocated {
+                    result: Ok(address),
+                    claim: Some(claim),
+                    acquired,
+                };
+            }
+            Err(error) => {
+                return Allocated {
+                    result: Err(error),
+                    claim: None,
+                    acquired,
+                };
+            }
+        };
+        if confirmed == address {
+            return Allocated {
+                result: Ok(address),
+                claim: Some(claim),
+                acquired,
+            };
+        }
+        warn!("Address {address} was reassigned while it was being claimed; moving to {confirmed}");
+        drop(claim);
+        // Nothing will use this alias any more: the claim only protected it
+        // from a concurrent release, and dropping the claim does not release
+        // the alias itself.
+        release_stray_alias(owned, &address, mode).await;
+        address = confirmed;
+        // The alias the helper just handed out is bound whether or not another
+        // attempt follows; an exhausted sequence must release this one, not
+        // the one it replaced.
+        acquired = Some(address.clone());
+    }
+    Allocated {
+        result: Err(format!(
+            "Could not settle on a local address for config {}: it kept changing under the claim",
+            owned.id.unwrap_or_default()
+        )),
+        claim: None,
+        acquired,
+    }
+}
+
+/// Removes an alias the fallback allocator created while the helper's address
+/// was being confirmed; nothing will ever forward on it.
+///
+/// A release that fails leaves the alias bound with nothing else naming it,
+/// so it is recorded as this configuration's local obligation and a later
+/// stop retries it.
+async fn release_stray_alias(owned: &Config, address: &str, mode: DatabaseMode) {
+    if let Err(error) = crate::kube::stop::release_address_with_fallback(address, None, mode).await
+    {
+        warn!("Failed to release stray alias {address}: {error}");
+        // A privilege that is not available right now will not become
+        // available by retrying automatically; the warning above is the only
+        // report this gets.
+        if !error.is_unsatisfiable()
+            && let Some(id) = owned.id
+        {
+            let mut stray = owned.clone();
+            stray.local_address = Some(address.to_owned());
+            crate::kube::stop::record_local_cleanup(id, stray, mode).await;
+        }
+    }
+}
+
+/// Where an allocated address came from.
+///
+/// Only a helper allocation is backed by a reservation a sibling's release
+/// can take away, and only the helper answers the same address for the same
+/// service. The fallback creates a fresh alias on every call, so an address
+/// it produced is never re-requested for confirmation: doing so would strand
+/// the previous alias each time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Allocation {
+    Helper,
+    Fallback,
+    /// The configuration's own address, or the default; nothing was reserved.
+    Static,
+}
+
+async fn allocate_local_address_for_config(
+    config: &mut Config, mode: DatabaseMode,
+) -> Result<(String, Allocation), String> {
     if !config.auto_loopback_address {
         let address = config
             .local_address
@@ -156,7 +662,7 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
             }
         }
 
-        return Ok(address);
+        return Ok((address, Allocation::Static));
     }
 
     let service_name = config
@@ -164,7 +670,12 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
         .clone()
         .unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()));
 
-    match try_allocate_address(&service_name).await {
+    let service = service_name.clone();
+    let allocation = tokio::task::spawn_blocking(move || try_allocate_address(&service))
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+    match allocation {
         Ok(allocated_address) => {
             info!("Auto-allocated address {allocated_address} for service {service_name}");
             config.local_address = Some(allocated_address.clone());
@@ -174,34 +685,19 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
                 allocated_address,
                 config.id.unwrap_or_default()
             );
-            if let Err(e) = save_allocated_address_to_db(config).await {
-                error!(
-                    "Failed to save allocated address {} to database for config {}: {}",
-                    allocated_address,
-                    config.id.unwrap_or_default(),
-                    e
-                );
-            } else {
-                info!(
-                    "Successfully updated database with allocated address {} for config {}",
-                    allocated_address,
-                    config.id.unwrap_or_default()
-                );
-            }
-
-            Ok(allocated_address)
+            Ok((allocated_address, Allocation::Helper))
         }
         Err(e) => {
             warn!(
                 "Failed to auto-allocate address for service {service_name} via helper: {e}. Trying fallback allocation"
             );
 
-            match try_fallback_allocate_and_save(&service_name, config).await {
+            match try_fallback_allocate_and_save(&service_name, config, mode).await {
                 Ok(allocated_address) => {
                     info!(
                         "Fallback-allocated address {allocated_address} for service {service_name}"
                     );
-                    Ok(allocated_address)
+                    Ok((allocated_address, Allocation::Fallback))
                 }
                 Err(fallback_err) => {
                     if fallback_err.contains("cancelled") || fallback_err.contains("canceled") {
@@ -214,14 +710,14 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
                     );
                     let default_address = "127.0.0.1".to_string();
                     config.local_address = Some(default_address.clone());
-                    Ok(default_address)
+                    Ok((default_address, Allocation::Static))
                 }
             }
         }
     }
 }
 
-async fn try_allocate_address(service_name: &str) -> Result<String, String> {
+fn try_allocate_address(service_name: &str) -> Result<String, String> {
     let app_id = "com.kftray.app".to_string();
 
     let socket_path =
@@ -248,19 +744,26 @@ async fn try_allocate_address(service_name: &str) -> Result<String, String> {
 }
 
 async fn try_fallback_allocate_and_save(
-    service_name: &str, config: &mut Config,
+    service_name: &str, config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
     let _lock = FALLBACK_ALLOCATION_MUTEX.lock().await;
 
     debug!("Acquired fallback allocation lock for service: {service_name}");
 
-    let allocated_addresses = get_allocated_loopback_addresses().await;
+    let allocated_addresses = get_allocated_loopback_addresses(mode).await;
 
     for octet in 2..255 {
         let address = format!("127.0.0.{octet}");
 
         if allocated_addresses.contains(&address) {
             debug!("Address {address} already allocated to another config, skipping");
+            continue;
+        }
+
+        // A release that timed out can still be executing, and it would remove
+        // the alias from underneath this forward.
+        if crate::kube::stop::address_release_in_flight(&address) {
+            debug!("Address {address} is still being released, skipping");
             continue;
         }
 
@@ -282,33 +785,7 @@ async fn try_fallback_allocate_and_save(
                     config.id.unwrap_or_default()
                 );
 
-                match save_allocated_address_to_db(config).await {
-                    Ok(_) => {
-                        info!(
-                            "Successfully updated database with fallback allocated address {} for config {}",
-                            address,
-                            config.id.unwrap_or_default()
-                        );
-                        return Ok(address);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to save fallback allocated address {} to database for config {}: {}",
-                            address,
-                            config.id.unwrap_or_default(),
-                            e
-                        );
-                        if let Err(cleanup_err) =
-                            crate::network_utils::remove_loopback_address(&address).await
-                        {
-                            error!(
-                                "Failed to cleanup address {} after DB save failure: {}",
-                                address, cleanup_err
-                            );
-                        }
-                        continue;
-                    }
-                }
+                return Ok(address);
             }
             Err(e) => {
                 let error_msg = e.to_string();
@@ -331,12 +808,12 @@ async fn try_fallback_allocate_and_save(
     Err("No available addresses found in fallback allocation".to_string())
 }
 
-async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String> {
+async fn get_allocated_loopback_addresses(mode: DatabaseMode) -> std::collections::HashSet<String> {
     use std::collections::HashSet;
 
     let mut allocated = HashSet::new();
 
-    if let Ok(configs) = kftray_commons::config::get_configs().await {
+    if let Ok(configs) = kftray_commons::config::get_configs_with_mode(mode).await {
         for config in configs {
             if let Some(addr) = &config.local_address
                 && crate::network_utils::is_custom_loopback_address(addr)
@@ -356,71 +833,118 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
     allocated
 }
 
-async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
-    use kftray_commons::utils::config::update_config;
-
-    match update_config(config.clone()).await {
-        Ok(_) => {
-            info!(
-                "Successfully saved allocated address to database for config {}",
-                config.id.unwrap_or_default()
-            );
-            Ok(())
-        }
-        Err(e) => {
-            error!("Failed to update config in database: {e}");
-            Err(e)
-        }
-    }
-}
-
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str,
 ) -> Result<Vec<CustomResponse>, String> {
     start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
-enum SingleConfigResult {
-    Success(CustomResponse),
-    Error {
-        message: String,
-        failed_handle: Option<String>,
-    },
-    ExposeResult {
-        responses: Vec<CustomResponse>,
-        error: Option<String>,
-    },
-}
+/// `cancellation` covers the phase after the relay is ready: loopback
+/// allocation, TLS setup and stream acquisition all run while the proxy
+/// lifecycle lock is held, so a stop issued during them would otherwise wait
+/// for the whole startup to finish.
+pub(super) async fn start_config_cancellable(
+    mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    cancellation: Option<&CancellationToken>, expected_destination: Option<String>,
+) -> Result<CustomResponse, String> {
+    let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
+    let config_id = config.id.ok_or("Config has no ID")?;
+    if !matches!(protocol, "tcp" | "udp") {
+        return Err(format!("Unsupported protocol: {protocol}"));
+    }
+    if cancelled() {
+        return Err(format!("Startup cancelled for config {config_id}"));
+    }
+    let mut allocated_claim = None;
+    if config.auto_loopback_address || config.local_address.is_none() {
+        const ALLOCATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-async fn process_single_config_with_address(
-    config: Config, protocol: String, mode: DatabaseMode, ssl_override: bool,
-) -> SingleConfigResult {
+        // Bounded rather than raced against cancellation: the helper request
+        // runs on a blocking task that keeps going once this future is dropped,
+        // and an address it assigns afterwards would never be recorded or
+        // released. Waiting for the outcome keeps that impossible while still
+        // releasing the lifecycle lock in bounded time.
+        match tokio::time::timeout(
+            ALLOCATION_TIMEOUT,
+            allocate_local_address_owned(&mut config, mode),
+        )
+        .await
+        {
+            Ok(allocated) => {
+                let (_, claim) = allocated?;
+                allocated_claim = claim;
+            }
+            Err(_) => {
+                return Err(format!(
+                    "Timed out allocating a local address for config {config_id}"
+                ));
+            }
+        };
+        if cancelled() {
+            // Routed through the same rollback as every other exit: the
+            // allocation task recorded a cleanup obligation for this address,
+            // and releasing it here without withdrawing that record leaves a
+            // pending target every later stop re-releases and never settles.
+            let reason = format!("Startup cancelled for config {config_id}");
+            return Err(match &config.local_address {
+                Some(address) => {
+                    let address = address.clone();
+                    rollback_local_resources(&config, &address, reason, mode).await
+                }
+                None => reason,
+            });
+        }
+    }
+    // Claimed for the address actually chosen, whichever path chose it. An
+    // allocated address arrives already claimed by the allocating task; a
+    // manually configured one skips allocation and is claimed here. A release
+    // that timed out is still executing and would remove the alias from
+    // underneath this forward, and a check instead of a claim would pass just
+    // before an abandoned allocation task started removing the same address.
+    // The claim is held for the whole startup, and the registered process
+    // takes over from there.
+    let _address_claim = match (allocated_claim, &config.local_address) {
+        (Some(claim), _) => Some(claim),
+        (None, Some(address)) => match crate::kube::stop::AddressClaim::take(address, config.id) {
+            Some(claim) => Some(claim),
+            None => {
+                return Err(format!(
+                    "Local address {address} is still being released by an earlier stop"
+                ));
+            }
+        },
+        (None, None) => None,
+    };
+    // Claimed once for the whole startup, before any hosts entry is written,
+    // so a deferred cleanup task spawned by an earlier, abandoned attempt for
+    // this id can tell it has been superseded rather than deleting what this
+    // attempt writes. Held by a guard so a return before registration (below,
+    // or from any `?` in between) still releases it instead of leaking it
+    // until the next start of this id silently overwrites it.
+    let mut hosts_claim_guard = crate::kube::stop::HostsClaimGuard::new(config_id);
+    let hosts_claim = hosts_claim_guard.token();
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);
     }
 
-    let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
-        (Some("pod"), "tcp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-        (Some("pod"), "udp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-        (Some("service"), "tcp") => {
-            TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
+    // Every UDP forward and every proxy runs through a relay the deploy step
+    // created and recorded in `service`, so all of them select the relay pod.
+    // Only a TCP pod or service forward talks to the workload directly.
+    let relay_backed = config.protocol == "udp" || config.workload_type.as_deref() == Some("proxy");
+    let selector = match (relay_backed, config.workload_type.as_deref()) {
+        (true, _) => {
+            let owner_selector = crate::kube::proxy::proxy_owner_selector(
+                &config.id.unwrap_or_default().to_string(),
+                mode,
+            )
+            .await?;
+            TargetSelector::PodLabel(format!(
+                "app={},{owner_selector}",
+                config.service.clone().unwrap_or_default()
+            ))
         }
-        (Some("service"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
+        (false, Some("pod")) => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        (false, _) => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
     let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
@@ -446,48 +970,66 @@ async fn process_single_config_with_address(
     if config.domain_enabled.unwrap_or_default()
         && let Some(service_name) = &config.service
     {
-        match final_local_address.parse::<std::net::IpAddr>() {
-            Ok(ip_addr) => {
-                let entry_id = format!("{}", config.id.unwrap_or_default());
-                let host_entry = HostEntry {
-                    ip: ip_addr,
-                    hostname: config.alias.clone().unwrap_or_default(),
-                };
+        // Validated first: nothing has been created yet, so a rejected address
+        // must not leave a cleanup record that would then block deleting the
+        // configuration.
+        let Ok(ip_addr) = final_local_address.parse::<std::net::IpAddr>() else {
+            let error_message =
+                format!("Invalid IP address format for domain alias: {final_local_address}");
+            error!("{}", error_message);
+            return Err(error_message);
+        };
 
-                if let Err(e) = add_host_entry(entry_id, host_entry) {
-                    let error_message = format!(
-                        "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
-                    );
-                    error!("{}", error_message);
-                    return SingleConfigResult::Error {
-                        message: error_message,
-                        failed_handle: None,
-                    };
-                }
-            }
-            Err(_) => {
-                let error_message =
-                    format!("Invalid IP address format for domain alias: {final_local_address}");
-                error!("{}", error_message);
-                return SingleConfigResult::Error {
-                    message: error_message,
-                    failed_handle: None,
-                };
-            }
+        // Recorded before the alias exists: from here the startup owns a hosts
+        // entry, and being dropped before the process is registered would
+        // otherwise leave it behind with nothing tracking it.
+        if let Some(id) = config.id {
+            crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
+        }
+        let host_entry = HostEntry {
+            ip: ip_addr,
+            hostname: config.alias.clone().unwrap_or_default(),
+        };
+        let written = add_host_entry_owned(
+            config.id.unwrap_or_default(),
+            &config,
+            &final_local_address,
+            host_entry,
+            mode,
+            hosts_claim,
+        )
+        .await;
+        if let Err(e) = written {
+            let error_message = format!(
+                "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
+                 requires hostfile access."
+            );
+            error!("{}", error_message);
+
+            // Releases the address this startup may already have allocated, and
+            // keeps the configuration recorded only if that did not finish.
+            return Err(rollback_local_resources(
+                &config,
+                &final_local_address,
+                error_message,
+                mode,
+            )
+            .await);
         }
     }
 
     let local_address_clone = Some(final_local_address);
 
-    let should_use_ssl = if let Ok(settings) = get_app_settings().await {
-        (settings.ssl_enabled || ssl_override) && config.alias.is_some()
-    } else {
-        ssl_override && config.alias.is_some()
-    };
+    let settings = get_app_settings().await.ok();
+    let should_use_ssl = (settings
+        .as_ref()
+        .is_some_and(|settings| settings.ssl_enabled)
+        || ssl_override)
+        && config.alias.is_some();
 
     let actual_config = config.clone();
 
-    let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
+    let port_forward = PortForward::new(
         target,
         actual_config.local_port,
         local_address_clone,
@@ -496,311 +1038,339 @@ async fn process_single_config_with_address(
         actual_config.id.unwrap_or_default(),
         actual_config.workload_type.clone().unwrap_or_default(),
     )
-    .await;
+    .expecting_destination(expected_destination);
 
-    match port_forward_result {
-        Ok(port_forward) => {
-            let tls_acceptor = if protocol == "tcp" && should_use_ssl {
-                match get_app_settings().await {
-                    Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
-                        Ok(acceptor) => Some(acceptor),
-                        Err(e) => {
-                            warn!("Failed to create TLS acceptor: {}", e);
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get app settings for SSL: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            let forward_result = match protocol.as_str() {
-                "udp" => port_forward.clone().port_forward_udp().await,
-                "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
-                _ => {
-                    error!("Unsupported protocol: {protocol}");
-                    Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
-                }
-            };
-
-            match forward_result {
-                Ok((actual_local_port, handle)) => {
-                    let protocol_upper = protocol.to_uppercase();
-                    info!(
-                        "{} port forwarding is set up on local port: {:?} for {}: {:?}",
-                        protocol_upper,
-                        actual_local_port,
-                        workload_type_description(config.workload_type.as_deref()),
-                        config.service
-                    );
-
-                    debug!(
-                        "Port forwarding established for config_id: {}",
-                        port_forward.config_id
-                    );
-                    debug!("Actual local port: {actual_local_port}");
-
-                    let handle_key = format!(
-                        "config:{}:service:{}",
-                        config.id.unwrap(),
-                        config.service.clone().unwrap_or_default()
-                    );
-
-                    // Insert into DashMap - lock-free operation
-                    CHILD_PROCESSES.insert(handle_key.clone(), handle);
-
-                    let config_state = ConfigState::new(config.id.unwrap(), true);
-                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                        error!("Failed to update config state: {e}");
-                    }
-
-                    let config_id = config.id.unwrap();
-
-                    let timeout_callback = create_static_timeout_callback();
-
-                    if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
-                        error!("Failed to start timeout for config {config_id}: {e}");
-                    }
-
-                    if should_use_ssl
-                        && protocol == "tcp"
-                        && let Err(e) = update_hosts_with_ssl(&config).await
-                    {
-                        warn!("Failed to update hosts file for SSL: {}", e);
-                    }
-
-                    SingleConfigResult::Success(CustomResponse {
-                        id: config.id,
-                        service: config.service.clone().unwrap(),
-                        namespace: namespace.clone(),
-                        local_port: actual_local_port,
-                        remote_port: config.remote_port.unwrap_or_default(),
-                        context: config.context.clone().unwrap_or_default(),
-                        protocol: config.protocol.clone(),
-                        stdout: {
-                            let protocol_display = if should_use_ssl && protocol == "tcp" {
-                                "HTTPS".to_string()
-                            } else {
-                                protocol.to_uppercase()
-                            };
-                            format!(
-                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
-                                protocol_display,
-                                actual_local_port,
-                                config.remote_port.unwrap_or_default(),
-                                config.service.clone().unwrap(),
-                                if should_use_ssl && protocol == "tcp" {
-                                    " (HTTP redirects to HTTPS)"
-                                } else {
-                                    ""
-                                }
-                            )
-                        },
-                        stderr: String::new(),
-                        status: 0,
-                    })
-                }
+    let tls_acceptor = if protocol == "tcp" && should_use_ssl {
+        if let Some(settings) = &settings {
+            match build_tls_acceptor(&actual_config, settings).await {
+                Ok(acceptor) => Some(acceptor),
                 Err(e) => {
-                    let protocol_upper = protocol.to_uppercase();
-                    let error_message = format!(
-                        "Failed to start {} port forwarding for {} {}: {}",
-                        protocol_upper,
-                        workload_type_description(config.workload_type.as_deref()),
-                        config.service.clone().unwrap_or_default(),
-                        e
-                    );
-                    error!("{}", error_message);
-
-                    if let Err(cleanup_err) = port_forward.cleanup_resources().await {
-                        error!(
-                            "Failed to cleanup resources for failed port forward: {}",
-                            cleanup_err
-                        );
-                    }
-
-                    let failed_handle = config.id.map(|config_id| {
-                        format!(
-                            "config:{}:service:{}",
-                            config_id,
-                            config.service.clone().unwrap_or_default()
-                        )
-                    });
-
-                    SingleConfigResult::Error {
-                        message: error_message,
-                        failed_handle,
-                    }
+                    warn!("Failed to create TLS acceptor: {}", e);
+                    None
                 }
             }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Raced against the startup token: `PortForward` builds its own token, so
+    // these phases, and the connection loading and selector resolution inside
+    // them, would otherwise hold the lifecycle lock while a stop waits on it.
+    let forward = async {
+        match protocol {
+            "udp" => port_forward.clone().port_forward_udp().await,
+            "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
+            _ => {
+                error!("Unsupported protocol: {protocol}");
+                Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+            }
+        }
+    };
+    let forward_result = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(rollback_startup(&port_forward, config, format!(
+                    "Startup cancelled for config {config_id}"
+                ), mode).await);
+            }
+            forwarded = forward => forwarded,
+        },
+        None => forward.await,
+    };
+
+    match forward_result {
+        Ok((actual_local_port, mut handle)) => {
+            let protocol_upper = protocol.to_uppercase();
+            info!(
+                "{} port forwarding is set up on local port: {:?} for {}: {:?}",
+                protocol_upper,
+                actual_local_port,
+                workload_type_description(config.workload_type.as_deref()),
+                config.service
+            );
+
+            debug!(
+                "Port forwarding established for config_id: {}",
+                port_forward.config_id
+            );
+            debug!("Actual local port: {actual_local_port}");
+
+            if cancelled() {
+                handle.cleanup_and_abort().await;
+                return Err(rollback_startup(
+                    &port_forward,
+                    config,
+                    format!("Startup cancelled for config {config_id}"),
+                    mode,
+                )
+                .await);
+            }
+
+            // The snapshot goes first: what this forward holds is written
+            // before anything says it is running, so another process never
+            // reads a running row with no record of its resources.
+            let recorded =
+                kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode)
+                    .await;
+            let config_state = ConfigState::new(config_id, true);
+            if let Err(error) = match recorded {
+                Ok(()) => update_config_state_with_mode(&config_state, mode).await,
+                Err(error) => Err(error),
+            } {
+                handle.cleanup_and_abort().await;
+                kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
+                return Err(rollback_startup(&port_forward, config, error, mode).await);
+            }
+
+            handle.set_config(config.clone());
+            CHILD_PROCESSES.insert(config_id, handle);
+            // Ownership of these hosts entries is now signified by the
+            // registered process, not the claim: nothing else is racing this
+            // id's entries, and leaving the claim in place after a successful
+            // start would only ever be cleared by chance, on the next start.
+            // The deferred SSL write below still needs the claim to tell its
+            // own orphan cleanup apart from a superseding attempt, so it is
+            // only released here on the path that has no such write.
+            let ssl_write_deferred = should_use_ssl && protocol == "tcp";
+            if !ssl_write_deferred {
+                crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
+            }
+            // The claim's fate is now owned by whichever of the two paths
+            // above applies, not by this guard: releasing it again here
+            // would be a no-op for the direct path, and would wrongly steal
+            // it out from under the deferred SSL write's own cleanup.
+            hosts_claim_guard.disarm();
+            // The process now owns the local resources, so the record taken
+            // when the address was allocated is no longer needed. Only the
+            // local obligation goes: a cluster obligation left by an earlier
+            // attempt on another server is not settled by this start.
+            crate::kube::stop::settle_local_cleanup(config_id, &config, mode).await;
+            let timeout_callback = create_static_timeout_callback(mode);
+
+            if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
+                error!("Failed to start timeout for config {config_id}: {e}");
+            }
+
+            if should_use_ssl
+                && protocol == "tcp"
+                && let Err(e) = update_hosts_with_ssl(&config, mode, hosts_claim).await
+            {
+                warn!("Failed to update hosts file for SSL: {}", e);
+            }
+
+            let target_name =
+                config
+                    .service
+                    .as_deref()
+                    .unwrap_or_else(|| match &port_forward.target.selector {
+                        TargetSelector::ServiceName(name) | TargetSelector::PodLabel(name) => name,
+                    });
+
+            Ok(CustomResponse {
+                id: config.id,
+                service: target_name.to_owned(),
+                namespace: namespace.clone(),
+                local_port: actual_local_port,
+                remote_port: config.remote_port.unwrap_or_default(),
+                context: config.context.clone().unwrap_or_default(),
+                protocol: config.protocol.clone(),
+                stdout: {
+                    let protocol_display = if should_use_ssl && protocol == "tcp" {
+                        "HTTPS".to_string()
+                    } else {
+                        protocol.to_uppercase()
+                    };
+                    format!(
+                        "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
+                        protocol_display,
+                        actual_local_port,
+                        config.remote_port.unwrap_or_default(),
+                        target_name,
+                        if should_use_ssl && protocol == "tcp" {
+                            " (HTTP redirects to HTTPS)"
+                        } else {
+                            ""
+                        }
+                    )
+                },
+                stderr: String::new(),
+                status: 0,
+            })
         }
         Err(e) => {
+            let protocol_upper = protocol.to_uppercase();
             let error_message = format!(
-                "Failed to create PortForward for {} {}: {}",
+                "Failed to start {} port forwarding for {} {}: {}",
+                protocol_upper,
                 workload_type_description(config.workload_type.as_deref()),
                 config.service.clone().unwrap_or_default(),
                 e
             );
             error!("{}", error_message);
 
-            if let Some(local_addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(local_addr)
-                && let Err(cleanup_err) =
-                    crate::network_utils::remove_loopback_address(local_addr).await
-            {
-                error!(
-                    "Failed to cleanup loopback address {} after PortForward creation failure: {}",
-                    local_addr, cleanup_err
-                );
-            }
-
-            let failed_handle = config.id.map(|config_id| {
-                format!(
-                    "config:{}:service:{}",
-                    config_id,
-                    config.service.clone().unwrap_or_default()
-                )
-            });
-
-            SingleConfigResult::Error {
-                message: error_message,
-                failed_handle,
-            }
+            Err(rollback_startup(&port_forward, config, error_message, mode).await)
         }
     }
 }
 
-async fn process_expose_config(config: Config, mode: DatabaseMode) -> SingleConfigResult {
-    match crate::expose::start_expose(vec![config.clone()], mode).await {
-        Ok(responses) => SingleConfigResult::ExposeResult {
-            responses,
-            error: None,
-        },
-        Err(e) => {
-            let error_message = format!(
-                "Failed to start expose for config {}: {}",
-                config.id.unwrap_or_default(),
-                e
-            );
-            error!("{}", error_message);
-            SingleConfigResult::ExposeResult {
-                responses: vec![],
-                error: Some(error_message),
+pub(super) async fn start_config_locked(
+    config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    cancellation: Option<&CancellationToken>,
+) -> Result<CustomResponse, String> {
+    let id = config.id.ok_or("Config has no ID")?;
+    let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+    // A stop that cancels this registration must be able to overtake a start
+    // waiting on the lifecycle lock, otherwise the start acquires the lock
+    // afterwards and creates a listener the stop already reported as gone.
+    let result = {
+        let guard = match cancellation {
+            Some(token) => tokio::select! {
+                biased;
+                _ = token.cancelled() => None,
+                guard = lock.lock() => Some(guard),
+            },
+            None => Some(lock.lock().await),
+        };
+        match guard {
+            None => Err(format!("Startup cancelled for config {id}")),
+            Some(guard) => {
+                // Held through registration and the state write, so a delete
+                // or stop in another process sees either the row untouched or
+                // the forward fully registered, never the gap between.
+                let shared = kftray_commons::utils::config_dir::lock_config(
+                    id,
+                    mode,
+                    crate::kube::stop::SHARED_LOCK_WAIT,
+                )
+                .await;
+                let result = if let Err(error) = &shared {
+                    Err(error.clone())
+                } else if cancellation.is_some_and(CancellationToken::is_cancelled) {
+                    Err(format!("Startup cancelled for config {id}"))
+                } else if CHILD_PROCESSES.contains_key(&id) {
+                    Err(format!(
+                        "Port forwarding is already running for config {id}"
+                    ))
+                } else if let Some(owner) =
+                    crate::kube::stop::running_in_another_process(id, mode).await
+                {
+                    // Checked under the shared lock: a second process starting
+                    // the same row would otherwise overwrite the recorded owner
+                    // while the first listener keeps running.
+                    Err(format!(
+                        "Config {id} is being forwarded by another kftray process ({owner})"
+                    ))
+                } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
+                    .await
+                    .is_err()
+                {
+                    // Re-read under the lock: deletion takes the same lock, so
+                    // a start that waited on it must not forward a row that has
+                    // since disappeared.
+                    Err(format!("Config {id} no longer exists"))
+                } else if config.workload_type.as_deref() == Some("expose") {
+                    crate::expose::start_single_expose(config, mode, cancellation).await
+                } else {
+                    start_config_cancellable(
+                        config,
+                        protocol,
+                        mode,
+                        ssl_override,
+                        cancellation,
+                        None,
+                    )
+                    .await
+                };
+                drop(shared);
+                drop(guard);
+                result
             }
         }
+    };
+    drop(lock);
+    crate::kube::proxy_recovery::remove_recovery_lock(id);
+    result
+}
+
+/// Failure placeholder mirroring [`stop_response`](super::stop) so a batch can
+/// report per-config outcomes. Returning a batch-level `Err` would discard the
+/// responses of the configs that did start, including their dynamically
+/// assigned local ports.
+pub(super) fn start_failure_response(config: &Config, error: String) -> CustomResponse {
+    CustomResponse {
+        id: config.id,
+        service: config.service.clone().unwrap_or_default(),
+        namespace: config.namespace.clone(),
+        local_port: config.local_port.unwrap_or_default(),
+        remote_port: config.remote_port.unwrap_or_default(),
+        context: config.context.clone().unwrap_or_default(),
+        protocol: config.protocol.clone(),
+        stdout: String::new(),
+        status: 1,
+        stderr: error,
     }
 }
 
 pub async fn start_port_forward_with_mode(
     configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    let mut responses = Vec::new();
-    let mut errors = Vec::new();
-    let mut failed_handles = Vec::new();
+    // Registration is eager so a stop-all that snapshots the pending starts
+    // sees the whole batch: `buffer_unordered` only polls a window, and the
+    // unpolled tail would otherwise start after that snapshot.
+    let (queued, rejected) = crate::kube::proxy::register_start_batch(configs);
 
-    let (expose_configs, regular_configs): (Vec<_>, Vec<_>) = configs
-        .into_iter()
-        .partition(|c| c.workload_type.as_deref() == Some("expose"));
-
-    let mut regular_configs_with_addresses = Vec::with_capacity(regular_configs.len());
-    for mut config in regular_configs {
-        if config.auto_loopback_address || config.local_address.is_none() {
-            match allocate_local_address_for_config(&mut config).await {
-                Ok(address) => {
-                    debug!(
-                        "Pre-allocated address {} for config {}",
-                        address,
-                        config.id.unwrap_or_default()
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to pre-allocate address for config {}: {}",
-                        config.id.unwrap_or_default(),
-                        e
-                    );
-                    errors.push(format!(
-                        "Address allocation failed for config {}: {}",
-                        config.id.unwrap_or_default(),
-                        e
-                    ));
-                    continue;
-                }
+    let mut responses: Vec<CustomResponse> = stream::iter(queued)
+        .map(|(config, startup)| async move {
+            if startup.cancellation().is_cancelled() {
+                return start_failure_response(
+                    &config,
+                    "Startup cancelled before it began".to_string(),
+                );
             }
-        }
-        regular_configs_with_addresses.push(config);
-    }
-
-    let mut futures: FuturesUnordered<BoxFuture<'static, SingleConfigResult>> =
-        FuturesUnordered::new();
-
-    for config in expose_configs {
-        futures.push(Box::pin(process_expose_config(config, mode)));
-    }
-
-    let protocol_owned = protocol.to_string();
-    for config in regular_configs_with_addresses {
-        let proto = protocol_owned.clone();
-        futures.push(Box::pin(process_single_config_with_address(
-            config,
-            proto,
-            mode,
-            ssl_override,
-        )));
-    }
-
-    while let Some(result) = futures.next().await {
-        match result {
-            SingleConfigResult::Success(response) => {
-                responses.push(response);
+            match start_config_locked(
+                config.clone(),
+                protocol,
+                mode,
+                ssl_override,
+                Some(startup.cancellation()),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => start_failure_response(&config, error),
             }
-            SingleConfigResult::Error {
-                message,
-                failed_handle,
-            } => {
-                errors.push(message);
-                if let Some(handle) = failed_handle {
-                    failed_handles.push(handle);
-                }
-            }
-            SingleConfigResult::ExposeResult {
-                responses: expose_responses,
-                error,
-            } => {
-                responses.extend(expose_responses);
-                if let Some(e) = error {
-                    errors.push(e);
-                }
-            }
-        }
-    }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+    responses.extend(
+        rejected
+            .into_iter()
+            .map(|(config, error)| start_failure_response(&config, error)),
+    );
+    finish_start_batch(responses)
+}
 
-    for handle_key in failed_handles {
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&handle_key) {
-            process.abort();
-        }
+/// A mixed batch keeps its per-config responses (including the dynamically
+/// assigned local ports of the configs that did start): a batch-level `Err`
+/// would discard those. Only a batch where every config failed is reported
+/// as `Err`.
+pub(super) fn finish_start_batch(
+    responses: Vec<CustomResponse>,
+) -> Result<Vec<CustomResponse>, String> {
+    if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
+        let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
+        return Err(errors.join("; "));
     }
-
-    if !responses.is_empty() {
-        if !errors.is_empty() {
-            for error in errors {
-                warn!("Partial failure: {}", error);
-            }
-        }
-        Ok(responses)
-    } else if !errors.is_empty() {
-        Err(errors.join("\n"))
-    } else {
-        Ok(Vec::new())
-    }
+    Ok(responses)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
 
     use super::*;
 
@@ -834,13 +1404,6 @@ mod tests {
         }
     }
 
-    fn setup_pod_config() -> Config {
-        let mut config = setup_test_config();
-        config.workload_type = Some("pod".to_string());
-        config.target = Some("app=test".to_string());
-        config
-    }
-
     fn setup_config_with_domain() -> Config {
         let mut config = setup_test_config();
         config.domain_enabled = Some(true);
@@ -855,13 +1418,6 @@ mod tests {
         config
     }
 
-    async fn test_protocol_validation(protocol: &str) -> Result<(), String> {
-        match protocol {
-            "tcp" | "udp" => Ok(()),
-            _ => Err(format!("Unsupported protocol: {protocol}")),
-        }
-    }
-
     #[tokio::test]
     async fn test_start_port_forward_empty_configs() {
         let configs = Vec::new();
@@ -871,97 +1427,145 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
+    /// Inserts a configuration so a start reaches the phase under test instead
+    /// of stopping at the missing-row check.
+    async fn insert_fixture(config: Config) -> Config {
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            config.clone(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        Config {
+            id: Some(id),
+            ..config
+        }
+    }
+
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
-        let result = test_protocol_validation("invalid").await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("Unsupported protocol: invalid"));
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = insert_fixture(setup_test_config()).await;
+        let id = config.id.unwrap();
+
+        // The batch has a single config and it fails, so the batch is
+        // all-failed: it is reported as `Err` instead of `Ok` with a single
+        // failed response (finding 29).
+        let error =
+            start_port_forward_with_mode(vec![config], "invalid", DatabaseMode::Memory, false)
+                .await
+                .unwrap_err();
+
+        assert!(error.contains("Unsupported protocol: invalid"), "{error}");
+        assert!(!CHILD_PROCESSES.contains_key(&id));
     }
 
     #[tokio::test]
-    async fn test_start_port_forward_with_pod_label() {
-        let configs = vec![setup_pod_config()];
+    async fn a_failed_config_does_not_hide_its_siblings_results() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let healthy = insert_fixture(setup_config_with_domain()).await;
+        let broken = insert_fixture(setup_config_with_invalid_ip()).await;
 
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
+        // Both configs fail in this test environment (no reachable
+        // cluster), so the batch is all-failed and reported as `Err`; each
+        // sibling's message still appears in it, joined rather than
+        // dropped (finding 29).
+        let error =
+            start_port_forward_with_mode(vec![healthy, broken], "tcp", DatabaseMode::Memory, false)
+                .await
+                .unwrap_err();
+
+        assert!(
+            error.contains("Invalid IP address"),
+            "the broken sibling's failure must be present: {error}"
+        );
+        assert!(
+            error.contains("; "),
+            "the healthy sibling's failure must still be present, not dropped in favor of the \
+             other: {error}"
+        );
     }
 
     #[tokio::test]
-    async fn test_start_port_forward_with_domain_enabled() {
-        let configs = vec![setup_config_with_domain()];
+    async fn a_stop_overtakes_a_start_waiting_on_the_lifecycle_lock() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_150;
+        let config = Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        };
+        let token = CancellationToken::new();
 
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
+        // Hold the lifecycle lock the way an in-flight stop does.
+        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+        let held = lock.clone().lock_owned().await;
+
+        let start = tokio::spawn({
+            let token = token.clone();
+            async move {
+                start_config_locked(config, "tcp", DatabaseMode::Memory, false, Some(&token)).await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !start.is_finished(),
+            "the start must be waiting on the lock"
+        );
+
+        token.cancel();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), start)
+            .await
+            .expect("a cancelled start must not wait for the lock")
+            .unwrap();
+
+        assert!(
+            result.unwrap_err().contains("cancelled"),
+            "a start cancelled while queued must not create a listener"
+        );
+        assert!(!CHILD_PROCESSES.contains_key(&id));
+        drop(held);
+        drop(lock);
+        crate::kube::proxy_recovery::remove_recovery_lock(id);
     }
 
     #[tokio::test]
-    async fn test_start_port_forward_with_invalid_ip() {
-        let configs = vec![setup_config_with_invalid_ip()];
+    async fn a_batch_start_registers_through_the_shared_pending_registry() {
+        // Shares the process-wide startup registry with the stop-all tests,
+        // which cancel everything they find registered there.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_090;
+        let (queued, _) = crate::kube::proxy::register_start_batch(vec![Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        }]);
+        assert_eq!(queued.len(), 1);
 
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
-    }
+        // Holding the registration models the queued tail of a larger batch:
+        // stop-all can see and cancel it, and a second start cannot slip past.
+        let error = start_port_forward_with_mode(
+            vec![Config {
+                id: Some(id),
+                ..setup_config_with_invalid_ip()
+            }],
+            "tcp",
+            DatabaseMode::Memory,
+            false,
+        )
+        .await
+        .unwrap_err();
 
-    #[test]
-    fn test_port_selector_creation() {
-        let config = setup_test_config();
-        let selector = match config.workload_type.as_deref() {
-            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-            Some("proxy") => TargetSelector::PodLabel(format!(
-                "app={},config_id={}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            )),
-            _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
-        };
+        assert!(error.contains("already in progress"), "{error}");
+        assert!(!CHILD_PROCESSES.contains_key(&id));
 
-        match selector {
-            TargetSelector::ServiceName(name) => {
-                assert_eq!(name, "test-service");
-            }
-            TargetSelector::PodLabel(_) => {
-                panic!("Should be ServiceName selector");
-            }
-        }
-
-        let config = setup_pod_config();
-        let selector = match config.workload_type.as_deref() {
-            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-            Some("proxy") => TargetSelector::PodLabel(format!(
-                "app={},config_id={}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            )),
-            _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
-        };
-
-        match selector {
-            TargetSelector::PodLabel(label) => {
-                assert_eq!(label, "app=test");
-            }
-            TargetSelector::ServiceName(_) => {
-                panic!("Should be PodLabel selector");
-            }
-        }
-    }
-
-    #[test]
-    fn test_host_entry_creation() {
-        let config = setup_config_with_domain();
-        let _service_name = config.service.as_ref().unwrap();
-        let local_address = config.local_address.as_ref().unwrap();
-        let ip_addr = local_address.parse::<IpAddr>().unwrap();
-
-        let entry_id = format!("{}", config.id.unwrap_or_default());
-        let host_entry = HostEntry {
-            ip: ip_addr,
-            hostname: config.alias.clone().unwrap_or_default(),
-        };
-
-        assert_eq!(host_entry.ip.to_string(), "127.0.0.1");
-        assert_eq!(host_entry.hostname, "test-alias");
-        assert_eq!(entry_id, "1");
+        drop(queued);
+        assert!(!crate::kube::proxy::STARTING_PROXIES.contains_key(&id));
     }
 
     #[tokio::test]
@@ -970,47 +1574,232 @@ mod tests {
         config.auto_loopback_address = false;
         config.local_address = Some("192.168.1.1".to_string());
 
-        let result = allocate_local_address_for_config(&mut config)
-            .await
-            .unwrap();
+        let (result, provenance) =
+            allocate_local_address_for_config(&mut config, DatabaseMode::Memory)
+                .await
+                .unwrap();
         assert_eq!(result, "192.168.1.1");
+        assert_eq!(provenance, Allocation::Static);
         assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
     }
 
-    async fn mock_allocate_local_address_for_config(config: &mut Config) -> String {
-        if !config.auto_loopback_address {
-            return config
-                .local_address
-                .clone()
-                .unwrap_or_else(|| "127.0.0.1".to_string());
-        }
+    #[tokio::test]
+    async fn rejected_duplicate_start_keeps_the_existing_listener_alive() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_031;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _listener = listener;
+            std::future::pending::<anyhow::Result<()>>().await
+        });
+        let mut existing = crate::port_forward::PortForwardProcess::new(task, id.to_string());
+        existing.set_config(Config {
+            id: Some(id),
+            ..setup_test_config()
+        });
+        CHILD_PROCESSES.insert(id, existing);
+        let config = Config {
+            id: Some(id),
+            kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_string()),
+            ..setup_test_config()
+        };
+        let error = start_port_forward_with_mode(vec![config], "tcp", DatabaseMode::Memory, false)
+            .await
+            .unwrap_err();
+        assert!(error.contains("already running"));
+        assert!(tokio::net::TcpListener::bind(address).await.is_err());
+        super::super::stop::stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let _listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    }
 
-        let service_name = config
-            .service
-            .clone()
-            .unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()));
+    #[test]
+    fn a_superseded_ssl_write_leaves_a_still_claimed_newer_attempts_lines() {
+        let id = 918_273_645;
+        // Token A: the attempt whose deferred SSL hosts write is still
+        // queued. Token B: a newer attempt that starts before A's write
+        // lands and takes over the claim, mirroring `claim_host_entries`
+        // being called again for the same id at the top of a fresh startup.
+        let stale_token = crate::kube::stop::claim_host_entries(id);
+        let current_token = crate::kube::stop::claim_host_entries(id);
 
-        let mock_address = format!("127.0.0.{}", 100 + (service_name.len() % 155));
-        config.local_address = Some(mock_address.clone());
-        mock_address
+        // `update_hosts_with_ssl`'s deferred cleanup task takes the claim
+        // under its own token before deciding whether to remove anything.
+        let claim_was_current =
+            crate::kube::stop::take_host_entry_claim_if_current(id, stale_token);
+        assert!(
+            !claim_was_current,
+            "the newer attempt's claim must supersede the stale attempt's token"
+        );
+        // Mirrors the removal gate: a registered process or a still-active
+        // newer claim both count as a current owner, and either one leaves
+        // a superseded write's lines alone.
+        let has_current_owner =
+            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+        assert!(
+            has_current_owner,
+            "the newer attempt's own claim is still active, so a superseded write must leave \
+             its HTTPS hosts lines alone"
+        );
+        // The newer attempt's own claim is untouched: taking the stale token
+        // above only clears the entry it actually matched.
+        assert!(crate::kube::stop::host_entry_claim_is_current(
+            id,
+            current_token
+        ));
+
+        crate::kube::stop::take_host_entry_claim_if_current(id, current_token);
+    }
+
+    #[test]
+    fn a_superseded_ssl_write_removes_lines_nobody_still_owns() {
+        let id = 918_273_646;
+        let stale_token = crate::kube::stop::claim_host_entries(id);
+        let current_token = crate::kube::stop::claim_host_entries(id);
+
+        // The newer attempt gave up in turn, taking its own claim away
+        // without ever registering a process: nothing is left to manage
+        // these lines once the stale write's cleanup runs.
+        crate::kube::stop::take_host_entry_claim_if_current(id, current_token);
+
+        let claim_was_current =
+            crate::kube::stop::take_host_entry_claim_if_current(id, stale_token);
+        assert!(
+            !claim_was_current,
+            "the token was already superseded before this attempt's own take"
+        );
+        let has_current_owner =
+            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+        assert!(
+            !has_current_owner,
+            "neither this attempt's claim nor a newer one is current, and nothing is \
+             registered: the lines this write landed have nobody left to own them and must \
+             come out"
+        );
     }
 
     #[tokio::test]
-    async fn test_allocate_local_address_for_config_mocked() {
-        let mut config = setup_test_config();
-        config.auto_loopback_address = true;
-        config.local_address = None;
+    async fn a_hosts_claim_is_released_by_an_early_return_before_registration() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_160;
+        let config = Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        };
 
-        let result = mock_allocate_local_address_for_config(&mut config).await;
+        let result =
+            start_config_cancellable(config, "tcp", DatabaseMode::Memory, false, None, None).await;
 
-        assert!(result.starts_with("127.0.0."));
-        assert_ne!(result, "127.0.0.1");
-        assert_eq!(config.local_address, Some(result.clone()));
+        assert!(
+            result.is_err(),
+            "an invalid loopback address must fail before registration"
+        );
+        assert!(
+            !crate::kube::stop::host_entry_has_any_claim(id),
+            "the hosts claim taken at the top of the startup must be released by the RAII \
+             guard on this early return, not left for the next start of this id to silently \
+             overwrite"
+        );
+    }
 
-        let mut config2 = setup_test_config();
-        config2.auto_loopback_address = true;
-        config2.local_address = None;
-        let result2 = mock_allocate_local_address_for_config(&mut config2).await;
-        assert_eq!(result, result2);
+    #[tokio::test]
+    async fn a_deferred_ssl_write_releases_its_hosts_claim_once_it_settles() {
+        // The real hosts file (and the machine's own installed hostfile
+        // helper) is out of reach for a deterministic test: forcing
+        // `add_ssl_host_entry` itself to fail would depend on which of the
+        // two writers this machine happens to route through. What must
+        // hold regardless of that outcome is the property `finish_deferred_
+        // ssl_write` was extracted to make directly testable: the deferred
+        // write's own cleanup always takes the claim once the write has
+        // settled, success or failure, rather than only on success.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 918_273_648;
+        let hosts_claim = crate::kube::stop::claim_host_entries(id);
+        let config = Config {
+            id: Some(id),
+            ..setup_test_config()
+        };
+
+        // A registered process stands in for this attempt's real owner, so
+        // the orphan-cleanup branch (which would otherwise reach for the
+        // real hosts file) is not exercised here; only the claim release
+        // itself is under test.
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let process = crate::port_forward::PortForwardProcess::new(task, id.to_string());
+        CHILD_PROCESSES.insert(id, process);
+
+        finish_deferred_ssl_write(id, hosts_claim, &config, DatabaseMode::Memory).await;
+
+        assert!(
+            !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim),
+            "the deferred write's own cleanup must release its hosts claim once it settles, \
+             whether the write succeeded or failed, instead of returning before reaching this \
+             regardless of outcome"
+        );
+
+        if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
+            process.cleanup_and_abort().await;
+        }
+    }
+
+    #[test]
+    fn finish_start_batch_errors_when_every_config_failed() {
+        let responses = vec![
+            start_failure_response(
+                &Config {
+                    id: Some(1),
+                    ..setup_test_config()
+                },
+                "boom-1".to_string(),
+            ),
+            start_failure_response(
+                &Config {
+                    id: Some(2),
+                    ..setup_test_config()
+                },
+                "boom-2".to_string(),
+            ),
+        ];
+
+        let error = finish_start_batch(responses).unwrap_err();
+        assert!(error.contains("boom-1"));
+        assert!(error.contains("boom-2"));
+    }
+
+    #[test]
+    fn finish_start_batch_stays_ok_for_a_mixed_batch() {
+        let succeeded = CustomResponse {
+            id: Some(1),
+            service: String::new(),
+            namespace: String::new(),
+            local_port: 8080,
+            remote_port: 80,
+            context: String::new(),
+            protocol: "tcp".to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
+            status: 0,
+        };
+        let failed = start_failure_response(
+            &Config {
+                id: Some(2),
+                ..setup_test_config()
+            },
+            "boom".to_string(),
+        );
+
+        let responses = finish_start_batch(vec![succeeded, failed]).unwrap();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].id, Some(1));
+        assert_eq!(responses[0].status, 0);
+        assert_eq!(responses[1].id, Some(2));
+        assert_ne!(responses[1].status, 0);
+    }
+
+    #[test]
+    fn finish_start_batch_stays_ok_for_an_empty_batch() {
+        assert!(finish_start_batch(Vec::new()).unwrap().is_empty());
     }
 }

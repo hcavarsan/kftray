@@ -1,5 +1,6 @@
+use std::sync::Arc;
+
 use kftray_commons::config::{
-    delete_all_configs,
     delete_config,
     delete_configs,
     export_configs,
@@ -17,6 +18,11 @@ use log::{
     error,
     info,
     warn,
+};
+
+use crate::init_check::{
+    PortOperations,
+    RealPortOperations,
 };
 
 fn validate_config(config: &Config) -> Result<(), String> {
@@ -50,7 +56,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
                         info!(
                             "Certificate regeneration successful, attempting to restart SSL proxies"
                         );
-                        restart_ssl_proxies_with_retry().await;
+                        restart_ssl_proxies_with_retry(Arc::new(RealPortOperations)).await;
                     }
                 }
                 Err(e) => {
@@ -74,33 +80,45 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
     Ok(())
 }
 
-async fn restart_ssl_proxies_if_running() -> Result<(), String> {
+/// Restarts the SSL-enabled candidates found among `target_ids` (or, when
+/// `None`, among the currently-running configs). Returns `Ok(None)` when no
+/// SSL-enabled candidate was found at all, and `Ok(Some(failed_ids))`
+/// otherwise, `failed_ids` being empty when every candidate that was
+/// actually attempted restarted successfully. Callers must not conflate the
+/// two: an empty `target_ids` pass that finds nothing is not evidence
+/// everything is running, only that nothing was found yet.
+async fn restart_ssl_proxies_if_running(
+    port_ops: &Arc<dyn PortOperations>, target_ids: Option<&[i64]>,
+) -> Result<Option<Vec<i64>>, String> {
     use kftray_commons::utils::config_state::get_configs_state;
-    use kftray_portforward::kube::{
-        start_port_forward,
-        stop_port_forward,
-    };
 
     info!("=== Starting SSL proxy restart process ===");
 
-    // Get all currently running configs
-    let config_states = get_configs_state()
-        .await
-        .map_err(|e| format!("Failed to get config states: {}", e))?;
+    // On a retry, restart exactly the configs that failed last time: a
+    // config that failed to restart typically no longer shows as running
+    // in config_state, so re-deriving the candidate set from "currently
+    // running" would drop it and keep re-restarting whatever DID succeed.
+    let running_config_ids: Vec<i64> = if let Some(ids) = target_ids {
+        ids.to_vec()
+    } else {
+        let config_states = get_configs_state()
+            .await
+            .map_err(|e| format!("Failed to get config states: {}", e))?;
 
-    info!("Found {} total config states", config_states.len());
+        info!("Found {} total config states", config_states.len());
 
-    let running_config_ids: Vec<i64> = config_states
-        .iter()
-        .filter(|state| state.is_running)
-        .map(|state| state.config_id)
-        .collect();
+        config_states
+            .iter()
+            .filter(|state| state.is_running)
+            .map(|state| state.config_id)
+            .collect()
+    };
 
-    info!("Running config IDs: {:?}", running_config_ids);
+    info!("Candidate config IDs: {:?}", running_config_ids);
 
     if running_config_ids.is_empty() {
-        info!("No running configs found, no SSL proxies to restart");
-        return Ok(());
+        info!("No candidate configs found, no SSL proxies to restart");
+        return Ok(None);
     }
 
     // Get all configs to filter for SSL-enabled ones
@@ -113,70 +131,77 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     let ssl_configs: Vec<Config> = all_configs
         .into_iter()
         .filter(|config| {
-            let is_running = config.id.is_some_and(|id| running_config_ids.contains(&id));
+            let is_candidate = config.id.is_some_and(|id| running_config_ids.contains(&id));
             let is_ssl_enabled = config.domain_enabled.unwrap_or(false);
             info!(
-                "Config {}: running={}, ssl_enabled={}, alias={:?}",
+                "Config {}: candidate={}, ssl_enabled={}, alias={:?}",
                 config.id.unwrap_or(-1),
-                is_running,
+                is_candidate,
                 is_ssl_enabled,
                 config.alias
             );
-            is_running && is_ssl_enabled
+            is_candidate && is_ssl_enabled
         })
         .collect();
 
     info!(
-        "Filtered to {} SSL-enabled running configs",
+        "Filtered to {} SSL-enabled candidate configs",
         ssl_configs.len()
     );
 
     if ssl_configs.is_empty() {
-        info!("No running SSL-enabled configs found, no SSL proxies to restart");
-        return Ok(());
+        info!("No SSL-enabled candidate configs found, no SSL proxies to restart");
+        return Ok(None);
     }
 
     info!("Found {} SSL-enabled configs to restart", ssl_configs.len());
 
-    // Stop and restart each SSL-enabled config
+    // Stop and restart each SSL-enabled config through the same
+    // workload/protocol dispatch the global shortcuts use: a proxy or udp
+    // config restarted through a plain tcp port-forward would come back on
+    // the wrong forwarding path.
+    let mut failed_ids: Vec<i64> = Vec::new();
     for config in &ssl_configs {
-        let config_id = config.id.unwrap().to_string();
+        let id = config.id.unwrap();
         info!(
             "Restarting SSL proxy for config {} ({})",
-            config_id,
+            id,
             config.alias.as_deref().unwrap_or("unnamed")
         );
 
-        // Stop the current port forward
-        if let Err(e) = stop_port_forward(config_id.clone()).await {
-            warn!(
-                "Failed to stop port forward for config {}: {}",
-                config_id, e
-            );
-            continue;
+        // A candidate may already be stopped from a previous retry attempt
+        // (its stop succeeded last time but the start failed) or may never
+        // have started; only require a successful stop when it is still
+        // registered, and always attempt the start below so a down
+        // candidate keeps getting retried instead of being skipped forever.
+        if port_ops.is_forward_registered(id).await {
+            if let Err(e) = port_ops.stop_port_forward(id).await {
+                warn!("Failed to stop port forward for config {}: {}", id, e);
+                failed_ids.push(id);
+                continue;
+            }
+
+            // Small delay to ensure clean shutdown
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
-        // Small delay to ensure clean shutdown
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        // Restart with the same protocol (assuming TCP for SSL)
-        if let Err(e) = start_port_forward(vec![config.clone()], "tcp").await {
-            warn!(
-                "Failed to restart port forward for config {}: {}",
-                config_id, e
-            );
-        } else {
-            info!("Successfully restarted SSL proxy for config {}", config_id);
+        match port_ops.dispatch_start(config).await {
+            Ok(()) => info!("Successfully restarted SSL proxy for config {}", id),
+            Err(e) => {
+                warn!("Failed to restart port forward for config {}: {}", id, e);
+                failed_ids.push(id);
+            }
         }
     }
 
     info!("Completed SSL proxy restart process");
-    Ok(())
+    Ok(Some(failed_ids))
 }
 
-async fn restart_ssl_proxies_with_retry() {
+async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
+    let mut target_ids: Option<Vec<i64>> = None;
 
     for (attempt, delay) in delays.iter().enumerate() {
         info!(
@@ -186,13 +211,31 @@ async fn restart_ssl_proxies_with_retry() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
 
-        match restart_ssl_proxies_if_running().await {
-            Ok(()) => {
+        match restart_ssl_proxies_if_running(&port_ops, target_ids.as_deref()).await {
+            Ok(Some(failed_ids)) if failed_ids.is_empty() => {
                 info!(
                     "SSL proxy restart attempt {} completed successfully",
                     attempt + 1
                 );
                 return;
+            }
+            Ok(Some(failed_ids)) => {
+                warn!(
+                    "SSL proxy restart attempt {} left {} config(s) failing: {:?}",
+                    attempt + 1,
+                    failed_ids.len(),
+                    failed_ids
+                );
+                target_ids = Some(failed_ids);
+            }
+            Ok(None) => {
+                // No SSL-enabled candidate was found at all: auto-start may
+                // not have marked the configs running yet. Keep retrying
+                // rather than mistaking this for "everything is running".
+                info!(
+                    "SSL proxy restart attempt {} found no running candidates yet",
+                    attempt + 1
+                );
             }
             Err(e) => {
                 warn!("SSL proxy restart attempt {} failed: {}", attempt + 1, e);
@@ -206,8 +249,19 @@ async fn restart_ssl_proxies_with_retry() {
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
-    clear_stopped_by_timeout(id);
-    let result = delete_config(id).await;
+    // Deleting only removes the database row, so a forward that is running,
+    // starting or still being cleaned up would be left with nothing to stop it
+    // by. Coordinated in the backend under the lifecycle lock, because
+    // shortcuts start forwards without going through the interface.
+    let result = kftray_portforward::kube::delete_configs_if_idle(
+        &[id],
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+        || async move {
+            clear_stopped_by_timeout(id);
+            delete_config(id).await
+        },
+    )
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
@@ -217,10 +271,18 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
-    for id in &ids {
-        clear_stopped_by_timeout(*id);
-    }
-    let result = delete_configs(ids).await;
+    let targets = ids.clone();
+    let result = kftray_portforward::kube::delete_configs_if_idle(
+        &targets,
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+        || async move {
+            for id in &ids {
+                clear_stopped_by_timeout(*id);
+            }
+            delete_configs(ids).await
+        },
+    )
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
@@ -230,11 +292,12 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
-    let result = delete_all_configs().await;
-    if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
-    }
-    result
+    let ids: Vec<i64> = get_configs()
+        .await?
+        .into_iter()
+        .filter_map(|c| c.id)
+        .collect();
+    delete_configs_cmd(ids).await
 }
 
 #[tauri::command]
@@ -418,6 +481,138 @@ mod tests {
         assert!(
             configs_after.is_empty(),
             "All configs should have been deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_enumerated_configs_leaves_a_row_added_after_enumeration() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        insert_config_cmd(Config::default())
+            .await
+            .expect("Failed to insert test config");
+        let enumerated: Vec<i64> = get_configs_cmd()
+            .await
+            .expect("Failed to enumerate configs")
+            .into_iter()
+            .filter_map(|c| c.id)
+            .collect();
+        insert_config_cmd(Config {
+            service: Some("added-after-enumeration".to_string()),
+            ..Config::default()
+        })
+        .await
+        .expect("Failed to insert the later config");
+
+        delete_configs_cmd(enumerated)
+            .await
+            .expect("Deleting the enumerated configs should succeed");
+
+        let configs_after = get_configs_cmd()
+            .await
+            .expect("Failed to get configs after deletion");
+        assert_eq!(
+            configs_after
+                .iter()
+                .filter_map(|c| c.service.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["added-after-enumeration"],
+            "only the enumerated rows may be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_configs_cmd_propagates_get_configs_error() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        // `delete_all_configs_cmd` used to call `get_configs().unwrap_or_default()`,
+        // so a DB read failure enumerated zero ids and `delete_all_configs()`
+        // still wiped every row unconditionally.
+        let good_config = Config::default();
+        insert_config_cmd(good_config)
+            .await
+            .expect("Failed to insert good config");
+
+        let pool = kftray_commons::utils::db::get_db_pool()
+            .await
+            .expect("Failed to get db pool");
+
+        // A row whose `data` column is not valid JSON makes `get_configs()`
+        // fail without touching the pool itself, unlike closing it.
+        sqlx::query("INSERT INTO configs (data) VALUES (?)")
+            .bind("not json")
+            .execute(&*pool)
+            .await
+            .expect("Failed to insert malformed row");
+
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM configs")
+            .fetch_one(&*pool)
+            .await
+            .expect("Failed to count rows before delete");
+
+        let result = delete_all_configs_cmd().await;
+
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM configs")
+            .fetch_one(&*pool)
+            .await
+            .expect("Failed to count rows after delete");
+
+        // Clean up the malformed row unconditionally so it cannot poison
+        // later tests that share this process-global DB pool.
+        sqlx::query("DELETE FROM configs")
+            .execute(&*pool)
+            .await
+            .expect("cleanup failed");
+
+        assert!(
+            result.is_err(),
+            "delete_all_configs_cmd must propagate a get_configs failure instead of \
+             silently deleting"
+        );
+        assert_eq!(
+            count_before, count_after,
+            "no rows should be deleted when config ids cannot be enumerated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_configs_cmd_skips_running() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config::default();
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs[0].id.expect("Config should have an ID");
+
+        // `delete_all_configs_cmd` used to call `delete_all_configs()`
+        // directly, deleting every row regardless of what is registered
+        // here as a live forward.
+        let handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async { Ok(()) });
+        kftray_portforward::port_forward::CHILD_PROCESSES.insert(
+            id,
+            kftray_portforward::port_forward::PortForwardProcess::new(handle, id.to_string()),
+        );
+
+        let result = delete_all_configs_cmd().await;
+        kftray_portforward::port_forward::CHILD_PROCESSES.remove(&id);
+
+        assert!(
+            result.is_err(),
+            "Delete all configs should refuse to delete a config with a live forward"
+        );
+
+        let configs_after = get_configs_cmd()
+            .await
+            .expect("Failed to get configs after refused deletion");
+        assert!(
+            configs_after.iter().any(|c| c.id == Some(id)),
+            "Config with a live forward must not have been deleted"
         );
     }
 
@@ -670,5 +865,118 @@ mod tests {
         let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = delete_config_cmd(id).await;
+    }
+
+    #[tokio::test]
+    async fn test_restart_ssl_proxies_starts_already_down_config() {
+        // Regression: a config that stopped cleanly on a previous retry
+        // attempt (so it is no longer registered) must still be started
+        // here, not skipped because a stop was attempted and failed with
+        // "no process found".
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config {
+            alias: Some("ssl-restart-down-candidate".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        // The global DB pool is a process-wide OnceCell shared by every
+        // test in this binary (only the first `setup_isolated_test_db`
+        // call actually wins), so other tests' rows can still be present;
+        // find this test's own row by its unique alias rather than
+        // assuming it is the only or first one.
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("ssl-restart-down-candidate"))
+            .and_then(|c| c.id)
+            .expect("inserted config should be present");
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| false);
+        mock.expect_stop_port_forward().times(0);
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let port_ops: Arc<dyn PortOperations> = Arc::new(mock);
+
+        let failed_ids = restart_ssl_proxies_if_running(&port_ops, Some(&[id]))
+            .await
+            .expect("restart should succeed")
+            .expect("a target id list must always yield a candidate result");
+
+        assert!(
+            failed_ids.is_empty(),
+            "a down candidate must still be started, not skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_ssl_proxies_with_retry_does_not_give_up_before_auto_start_catches_up() {
+        // Regression: the first retry attempt runs before auto-start has
+        // marked the config running, so `restart_ssl_proxies_if_running`
+        // finds no candidates and returns `Ok(vec![])`. Treating that as
+        // "all restarted" ended the loop before a later attempt could see
+        // the config once it actually started running.
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config {
+            alias: Some("ssl-retry-not-yet-running".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("ssl-retry-not-yet-running"))
+            .and_then(|c| c.id)
+            .expect("inserted config should be present");
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| false);
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let port_ops: Arc<dyn PortOperations> = Arc::new(mock);
+
+        // The first retry attempt fires after the 100ms delay; mark the
+        // config running only after that, so it is invisible to the first
+        // attempt and must be picked up by a later one instead of the loop
+        // having already returned.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            kftray_commons::utils::config_state::update_config_state(
+                &kftray_commons::models::config_state_model::ConfigState::new_without_process(
+                    id, true,
+                ),
+            )
+            .await
+            .expect("Failed to mark config running");
+        });
+
+        // `mock`'s expectations (`times(1)` each) are verified when it is
+        // dropped; a premature return from the loop leaves
+        // `dispatch_start` unmet and panics there.
+        restart_ssl_proxies_with_retry(port_ops).await;
     }
 }

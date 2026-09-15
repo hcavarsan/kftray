@@ -18,7 +18,6 @@ brotli = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
-dirs = { workspace = true }
 flate2 = { workspace = true }
 httparse = { workspace = true }
 kftray-commons = { workspace = true }

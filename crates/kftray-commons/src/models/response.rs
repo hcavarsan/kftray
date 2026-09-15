@@ -12,3 +12,36 @@ pub struct CustomResponse {
     pub status: i32,
     pub protocol: String,
 }
+
+impl CustomResponse {
+    pub fn failed(&self) -> bool {
+        self.status != 0
+    }
+}
+
+/// Collapses a batch of per-configuration responses into a single error.
+///
+/// The start and stop batch commands report one result per configuration, so an
+/// all-failed batch still returns `Ok`; every consumer has to inspect the
+/// statuses rather than the outer result.
+pub fn batch_failure(responses: &[CustomResponse]) -> Result<(), String> {
+    let failures: Vec<String> = responses
+        .iter()
+        .filter(|response| response.failed())
+        .map(|response| {
+            if response.stderr.trim().is_empty() {
+                match response.id {
+                    Some(id) => format!("config {id} failed with no error message"),
+                    None => "a configuration failed with no error message".to_owned(),
+                }
+            } else {
+                response.stderr.clone()
+            }
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}

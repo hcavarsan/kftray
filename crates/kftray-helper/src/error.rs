@@ -14,6 +14,9 @@ pub enum HelperError {
     #[error("Address pool error: {0}")]
     AddressPool(String),
 
+    #[error("Address not allocated: {0}")]
+    AddressNotAllocated(String),
+
     #[error("Communication error: {0}")]
     Communication(String),
 

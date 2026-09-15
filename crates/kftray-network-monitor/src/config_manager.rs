@@ -1,10 +1,22 @@
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::response::CustomResponse;
+use kftray_portforward::kube::{
+    NO_READY_PODS_ERROR,
+    stop_generation,
+};
 use log::{
     error,
     info,
 };
 
 pub struct ConfigManager;
+
+/// Whether this process currently runs a forward for `id`. The database
+/// row can still say running while a stop is in flight or has just finished;
+/// only the registry says what the monitor may restart.
+fn is_forward_registered(id: i64) -> bool {
+    kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
+}
 
 impl ConfigManager {
     pub async fn get_active_configs()
@@ -15,7 +27,9 @@ impl ConfigManager {
         let active_config_ids: Vec<i64> = config_states
             .into_iter()
             .filter(|state| {
-                state.is_running && state.process_id.is_none_or(|pid| pid == current_process_id)
+                state.is_running
+                    && state.process_id.is_none_or(|pid| pid == current_process_id)
+                    && is_forward_registered(state.config_id)
             })
             .map(|state| state.config_id)
             .collect();
@@ -60,15 +74,36 @@ impl ConfigManager {
     }
 
     async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str) {
-        info!("Restarting {} {} port forwards", configs.len(), protocol);
-
-        let stop_tasks: Vec<_> = configs
-            .iter()
+        // Only what this process is still running is restarted: a forward the
+        // user stopped between the health check that flagged it and now must
+        // stay stopped. The stop generation catches a stop landing after
+        // this check: a count moved by anything other than our own stop
+        // means someone else stopped it, and starting it would undo that.
+        let owned: Vec<(i64, Config, u64)> = configs
+            .into_iter()
             .filter_map(|config| {
-                config.id.map(|config_id| {
-                    tokio::spawn(async move {
-                        kftray_portforward::kube::stop_port_forward(config_id.to_string()).await
-                    })
+                let id = config.id?;
+                is_forward_registered(id).then(|| (id, config, stop_generation(id)))
+            })
+            .collect();
+        if owned.is_empty() {
+            info!("No {protocol} port forwards left to restart; they were stopped meanwhile");
+            return;
+        }
+        info!("Restarting {} {} port forwards", owned.len(), protocol);
+
+        let recovering: std::collections::HashSet<i64> = owned
+            .iter()
+            .map(|(id, _, _)| *id)
+            .filter(|&id| kftray_portforward::kube::recovery_in_progress(id))
+            .collect();
+
+        let stop_tasks: Vec<_> = owned
+            .iter()
+            .map(|(id, _, _)| {
+                let id = *id;
+                tokio::spawn(async move {
+                    kftray_portforward::kube::stop_port_forward(id.to_string()).await
                 })
             })
             .collect();
@@ -81,52 +116,140 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
+        let configs: Vec<Config> = owned
+            .into_iter()
+            .filter(|(id, _, before)| stop_generation(*id) == before + 1)
+            .map(|(_, config, _)| config)
+            .collect();
+        if configs.is_empty() {
+            info!("No {protocol} port forwards left to restart; they were stopped meanwhile");
+            return;
+        }
+
         let (proxy_configs, other_configs) = partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
             match kftray_portforward::kube::start_port_forward(other_configs, protocol).await {
-                Ok(_) => info!("Successfully restarted {protocol} port forwards"),
-                Err(e) => {
-                    if protocol == "udp" && e.contains("No ready pods available") {
-                        log::warn!(
-                            "UDP port forward restart skipped - no ready pods available: {e}"
-                        );
-                    } else {
-                        error!("Failed to restart {protocol} port forwards: {e}");
-                    }
+                Ok(responses) => {
+                    report_restart_outcome(&responses, protocol, "port forwards", true)
                 }
+                Err(e) => report_restart_failure(&e, protocol, "port forwards", true),
             }
         }
 
         if !proxy_configs.is_empty() {
-            // Filter out proxy configs that already have recovery in progress
-            let configs_to_restart: Vec<Config> = proxy_configs
-                .into_iter()
-                .filter(|config| {
-                    if let Some(config_id) = config.id
-                        && kftray_portforward::kube::proxy_recovery::RECOVERY_LOCKS
-                            .contains_key(&config_id)
-                    {
-                        info!(
-                            "Skipping network monitor restart for config {} \
-                             \u{2014} recovery already in progress",
-                            config_id
-                        );
-                        return false;
-                    }
-                    true
-                })
-                .collect();
+            let configs_to_restart = proxy_configs_to_restart(proxy_configs, &recovering);
 
             if !configs_to_restart.is_empty() {
                 match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
-                    Ok(_) => info!("Successfully restarted {protocol} proxy port forwards"),
-                    Err(e) => {
-                        error!("Failed to restart {protocol} proxy port forwards: {e}");
+                    Ok(responses) => {
+                        report_restart_outcome(&responses, protocol, "proxy port forwards", false)
                     }
+                    Err(e) => report_restart_failure(&e, protocol, "proxy port forwards", false),
                 }
             }
         }
+    }
+}
+
+/// Drops proxy configs whose recovery was in progress before this restart
+/// stopped them. `recovering` must be snapshotted before the stop pass runs,
+/// since `stop_config` unconditionally clears `RECOVERY_MANAGERS` and a
+/// live check here would always see it already gone.
+fn proxy_configs_to_restart(
+    proxy_configs: Vec<Config>, recovering: &std::collections::HashSet<i64>,
+) -> Vec<Config> {
+    proxy_configs
+        .into_iter()
+        .filter(|config| {
+            if let Some(config_id) = config.id
+                && recovering.contains(&config_id)
+            {
+                info!(
+                    "Skipping network monitor restart for config {} \
+                     \u{2014} recovery already in progress",
+                    config_id
+                );
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
+/// Splits a restart batch's responses into a restarted count, UDP "not ready
+/// yet" responses that should only warn, and everything else that failed.
+///
+/// `downgrade_no_ready_pods` is false for the proxy batch: a proxy UDP
+/// restart failing with the same message is a real failure, not a transient
+/// readiness wait, and must not be demoted to a warning (see
+/// `proxy_udp_configs_are_not_skipped_on_no_ready_pods`).
+fn classify_restart_outcome<'a>(
+    responses: &'a [CustomResponse], protocol: &str, downgrade_no_ready_pods: bool,
+) -> (usize, Vec<&'a CustomResponse>, Vec<&'a CustomResponse>) {
+    let (pending_pods, failures): (Vec<&CustomResponse>, Vec<&CustomResponse>) = responses
+        .iter()
+        .filter(|response| response.failed())
+        .partition(|response| {
+            downgrade_no_ready_pods
+                && protocol == "udp"
+                && response.stderr.contains(NO_READY_PODS_ERROR)
+        });
+    let restarted = responses.len() - pending_pods.len() - failures.len();
+    (restarted, pending_pods, failures)
+}
+
+fn report_restart_outcome(
+    responses: &[CustomResponse], protocol: &str, kind: &str, downgrade_no_ready_pods: bool,
+) {
+    let (restarted, pending_pods, failures) =
+        classify_restart_outcome(responses, protocol, downgrade_no_ready_pods);
+    if restarted > 0 {
+        info!("Restarted {restarted} {protocol} {kind}");
+    }
+    for response in &pending_pods {
+        log::warn!(
+            "Skipped UDP {kind} with no ready pods: config {:?} ({}/{}): {}",
+            response.id,
+            response.namespace,
+            response.service,
+            response.stderr
+        );
+    }
+    for response in &failures {
+        error!(
+            "Failed to restart {protocol} {kind}: config {:?} ({}/{}): {}",
+            response.id, response.namespace, response.service, response.stderr
+        );
+    }
+}
+
+/// A batch in which every configuration failed comes back as one joined
+/// error; a UDP batch whose every failure is the transient readiness wait is
+/// downgraded the same way its per-configuration responses would be.
+fn only_waiting_for_pods(error: &str, protocol: &str, downgrade_no_ready_pods: bool) -> bool {
+    if !(downgrade_no_ready_pods && protocol == "udp") {
+        return false;
+    }
+
+    let mut failures: Vec<&str> = Vec::new();
+    for part in error.split("; ") {
+        if part.starts_with("cleanup incomplete:") && !failures.is_empty() {
+            continue;
+        }
+        failures.push(part);
+    }
+
+    failures
+        .iter()
+        .all(|failure| failure.contains(NO_READY_PODS_ERROR))
+}
+
+fn report_restart_failure(error: &str, protocol: &str, kind: &str, downgrade_no_ready_pods: bool) {
+    if only_waiting_for_pods(error, protocol, downgrade_no_ready_pods) {
+        log::warn!("Skipped UDP {kind} with no ready pods: {error}");
+    } else {
+        error!("Failed to restart {protocol} {kind}: {error}");
     }
 }
 
@@ -139,8 +262,15 @@ fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Conf
 #[cfg(test)]
 mod tests {
     use kftray_commons::models::config_model::Config;
+    use kftray_commons::models::response::CustomResponse;
 
-    use super::partition_configs_by_workload;
+    use super::{
+        NO_READY_PODS_ERROR,
+        classify_restart_outcome,
+        only_waiting_for_pods,
+        partition_configs_by_workload,
+        proxy_configs_to_restart,
+    };
 
     fn make_config(id: i64, workload_type: &str, protocol: &str) -> Config {
         Config {
@@ -241,6 +371,47 @@ mod tests {
     }
 
     #[test]
+    fn a_config_recovering_before_the_stop_pass_is_skipped() {
+        // `recovering` must be captured before `stop_port_forward` runs, or
+        // every config would already be missing from `RECOVERY_MANAGERS` by
+        // the time this filter looks it up, and none would ever be skipped.
+        let recovering: std::collections::HashSet<i64> = [2].into_iter().collect();
+        let configs = vec![
+            make_config(1, "proxy", "tcp"),
+            make_config(2, "proxy", "tcp"),
+        ];
+
+        let restart = proxy_configs_to_restart(configs, &recovering);
+
+        let ids: Vec<i64> = restart.iter().filter_map(|c| c.id).collect();
+        assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn an_all_failed_udp_batch_waiting_for_pods_is_only_a_warning() {
+        let error = format!("{NO_READY_PODS_ERROR} 'a'; {NO_READY_PODS_ERROR} 'b'");
+        assert!(only_waiting_for_pods(&error, "udp", true));
+        assert!(!only_waiting_for_pods(&error, "udp", false));
+        assert!(!only_waiting_for_pods(&error, "tcp", true));
+        let mixed = format!("{NO_READY_PODS_ERROR} 'a'; connection refused");
+        assert!(!only_waiting_for_pods(&mixed, "udp", true));
+    }
+
+    #[test]
+    fn a_no_ready_pods_failure_with_a_failed_cleanup_note_is_still_only_a_warning() {
+        // `rollback_startup`/`rollback_local_resources` append
+        // "; cleanup incomplete: {error}" to the original reason, so a
+        // single no-ready-pods failure can itself contain "; " once its own
+        // cleanup also failed. That continuation must not be mistaken for
+        // an unrelated second failure once it is joined with other
+        // responses' stderr and re-split here.
+        let error = format!(
+            "{NO_READY_PODS_ERROR} 'a'; cleanup incomplete: address not allocated; {NO_READY_PODS_ERROR} 'b'"
+        );
+        assert!(only_waiting_for_pods(&error, "udp", true));
+    }
+
+    #[test]
     fn proxy_udp_configs_are_not_skipped_on_no_ready_pods() {
         // This test verifies that proxy UDP configs are routed to
         // deploy_and_forward_pod() and NOT subject to the "No ready pods
@@ -281,5 +452,41 @@ mod tests {
             Some("service"),
             "other partition must contain service workload_type"
         );
+
+        // The proxy branch calls report_restart_outcome with
+        // downgrade_no_ready_pods=false: a "No ready pods available" failure
+        // there must stay a real failure, not get demoted to a warning like
+        // the non-proxy UDP branch does.
+        let response = make_response(&format!("{NO_READY_PODS_ERROR} to resolve port name 'foo'"));
+        let (restarted, pending_pods, failures) =
+            classify_restart_outcome(std::slice::from_ref(&response), "udp", false);
+        assert_eq!(restarted, 0);
+        assert!(
+            pending_pods.is_empty(),
+            "proxy branch must not downgrade a no-ready-pods failure to a warning"
+        );
+        assert_eq!(failures.len(), 1);
+
+        // The non-proxy branch still downgrades the same message.
+        let (restarted, pending_pods, failures) =
+            classify_restart_outcome(std::slice::from_ref(&response), "udp", true);
+        assert_eq!(restarted, 0);
+        assert_eq!(pending_pods.len(), 1);
+        assert!(failures.is_empty());
+    }
+
+    fn make_response(stderr: &str) -> CustomResponse {
+        CustomResponse {
+            id: Some(1),
+            service: "svc".to_string(),
+            namespace: "ns".to_string(),
+            local_port: 8080,
+            remote_port: 8080,
+            context: "ctx".to_string(),
+            stdout: String::new(),
+            stderr: stderr.to_string(),
+            status: 1,
+            protocol: "udp".to_string(),
+        }
     }
 }

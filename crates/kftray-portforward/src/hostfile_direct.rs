@@ -1,399 +1,397 @@
-use std::collections::HashMap;
-use std::sync::{
-    Arc,
-    Mutex,
-    RwLock,
-};
-use std::thread;
-use std::time::Duration;
+use std::collections::HashSet;
 
 use kftray_commons::models::hostfile::HostEntry;
-use kftray_commons::utils::hostsfile::HostsFile;
-use log::{
-    debug,
-    error,
-    info,
+use kftray_commons::utils::hostsfile::{
+    HostsDocument,
+    SectionEntry,
+    edit_hosts,
+    read_hosts,
 };
+use log::debug;
 
-const BATCH_DELAY_MS: u64 = 100;
-const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
+/// Section the privileged helper owns, and where older versions of this
+/// manager wrote before the two were separated.
+pub const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
+/// Section this manager owns outright.
+///
+/// Sharing one section with the helper meant every write had to reconstruct
+/// another writer's lines from an unsynchronized read, which loses a concurrent
+/// change in whichever direction the race went. Separate sections remove the
+/// interaction: each writer touches only what it owns.
+pub const KFTRAY_DIRECT_HOSTS_TAG: &str = "kftray-hosts-direct";
 
-type HostEntriesMap = HashMap<String, HostEntry>;
-
-pub struct DirectHostfileManager {
-    entries: Arc<RwLock<HostEntriesMap>>,
-    needs_update: Arc<Mutex<bool>>,
-    writer_running: Arc<Mutex<bool>>,
-}
+/// Writes host aliases straight into the hosts file when the privileged
+/// helper is not available.
+///
+/// The file is the only state. Every mutation is an owner-scoped
+/// read-modify-write under the cross-process hosts lock, so a line written by
+/// an earlier run, by another instance, or by the helper is never rebuilt from
+/// memory and never lost. A write that fails is reported to the caller, which
+/// already records the cleanup it still owes and retries it; queueing the
+/// change here instead would report success for an alias still on disk.
+#[derive(Default)]
+pub struct DirectHostfileManager;
 
 impl DirectHostfileManager {
     pub fn new() -> Self {
-        Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
-            needs_update: Arc::new(Mutex::new(false)),
-            writer_running: Arc::new(Mutex::new(false)),
-        }
+        Self
     }
 
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> std::io::Result<()> {
         debug!("Adding host entry for ID {id}: {entry:?}");
 
-        {
-            match self.entries.write() {
-                Ok(mut entries) => {
-                    entries.insert(id, entry);
-                }
-                Err(e) => {
-                    error!("Failed to acquire host entries write lock: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
-            }
-        }
-
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
-        self.ensure_writer_running();
-
-        Ok(())
-    }
-
-    pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        debug!("Removing host entry for ID {id}");
-
-        {
-            match self.entries.write() {
-                Ok(mut entries) => {
-                    entries.remove(id);
-                }
-                Err(e) => {
-                    error!("Failed to acquire host entries write lock: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
-            }
-        }
-
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
-        self.ensure_writer_running();
-
-        Ok(())
-    }
-
-    pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
-        info!("Removing all host entries");
-
-        {
-            match self.entries.write() {
-                Ok(mut entries) => {
-                    entries.clear();
-                }
-                Err(e) => {
-                    error!("Failed to acquire host entries write lock: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
-            }
-        }
-
-        self.update_hosts_file()
-    }
-
-    pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
-        match self.entries.read() {
-            Ok(entries) => Ok(entries
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()),
-            Err(e) => {
-                error!("Failed to acquire host entries read lock: {e}");
-                Err(std::io::Error::other(e.to_string()))
-            }
-        }
-    }
-
-    fn ensure_writer_running(&self) {
-        let mut writer_running = self.writer_running.lock().unwrap_or_else(|e| {
-            error!("Failed to acquire writer_running lock: {e}");
-            e.into_inner()
-        });
-
-        if !*writer_running {
-            *writer_running = true;
-
-            let entries = self.entries.clone();
-            let needs_update = self.needs_update.clone();
-            let writer_running = self.writer_running.clone();
-
-            thread::spawn(move || {
-                Self::batch_writer_loop(entries, needs_update, writer_running);
-            });
-        }
-    }
-
-    fn batch_writer_loop(
-        entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
-        writer_running: Arc<Mutex<bool>>,
-    ) {
-        loop {
-            thread::sleep(Duration::from_millis(BATCH_DELAY_MS));
-
-            let should_update = {
-                let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
-                    error!("Failed to acquire needs_update lock in writer loop: {e}");
-                    e.into_inner()
-                });
-
-                if *update_flag {
-                    *update_flag = false;
-                    true
-                } else {
-                    false
-                }
-            };
-
-            if should_update {
-                if let Err(e) = Self::update_hosts_file_static(&entries) {
-                    error!("Failed to write hosts file in background writer: {e}");
-                }
-            } else {
-                let pending = {
-                    *needs_update.lock().unwrap_or_else(|e| {
-                        error!("Failed to check for pending updates: {e}");
-                        e.into_inner()
-                    })
-                };
-
-                if !pending {
-                    break;
-                }
-            }
-        }
-
-        let mut writer_running = writer_running.lock().unwrap_or_else(|e| {
-            error!("Failed to acquire writer_running lock when exiting: {e}");
-            e.into_inner()
-        });
-        *writer_running = false;
-    }
-
-    fn update_hosts_file(&self) -> std::io::Result<()> {
-        Self::update_hosts_file_static(&self.entries)
-    }
-
-    fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {
-        let entries_snapshot = match entries.read() {
-            Ok(entries) => entries.clone(),
-            Err(e) => {
-                error!("Failed to acquire host entries read lock: {e}");
-                return Err(std::io::Error::other(e.to_string()));
-            }
+        let owned = SectionEntry {
+            ip: entry.ip,
+            hostname: entry.hostname.clone(),
+            owner: Some(id.clone()),
         };
+        // An unmarked copy of the same alias left in the shared section by an
+        // older version is left where it is: it may be the line an older
+        // instance, still running, resolves by, and nothing here can tell.
+        // Removal attributes such copies to the configuration and prunes
+        // them then, keeping the ones a running forward still needs.
+        edit_hosts(|document| {
+            document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, &[id.as_str()], &[owned])?;
+            Ok(())
+        })
+        .map_err(std::io::Error::from)
+    }
 
-        let mut hosts_file = HostsFile::new(KFTRAY_HOSTS_TAG);
+    /// Removes several ids with one write.
+    ///
+    /// `protected` are mappings a still-forwarding configuration could have
+    /// written; an unmarked copy of one of them is never pruned on this
+    /// configuration's behalf.
+    pub fn remove_host_entries(
+        &self, ids: &[&str], protected: &[HostEntry],
+    ) -> std::io::Result<()> {
+        debug!("Removing host entries for IDs {ids:?}");
 
-        for (id, entry) in &entries_snapshot {
-            debug!("Adding entry for ID {id} to hosts file: {entry:?}");
-            hosts_file.add_entry(entry.ip, &entry.hostname);
-        }
+        edit_hosts(|document| {
+            // Read inside the same edit that drops them: once the owned lines
+            // are gone nothing else records which mapping a legacy copy would
+            // be, and a failure between the two would lose it.
+            //
+            // A duplicated section (a hand edit, or an older bug) must be
+            // folded into one before it is read: `section` refuses a
+            // duplicated tag outright, while `reconcile_owners` right below
+            // can merge it fine, so reading first without merging would fail
+            // this whole removal over something the next call handles.
+            document.merge_duplicate_sections(KFTRAY_DIRECT_HOSTS_TAG)?;
+            let dropping = legacy_mappings_to_prune(
+                &document.section(KFTRAY_DIRECT_HOSTS_TAG)?,
+                ids,
+                protected,
+            );
+            document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, ids, &[])?;
+            prune_legacy(document, &dropping)?;
+            Ok(())
+        })
+        .map_err(std::io::Error::from)
+    }
 
-        match hosts_file.write() {
-            Ok(_) => {
-                debug!(
-                    "Successfully wrote {} entries to hosts file",
-                    entries_snapshot.len()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to write to hosts file: {e}");
-                Err(std::io::Error::other(e))
-            }
-        }
+    /// Takes unmarked copies of `mappings` out of the shared section, when
+    /// this process can write the hosts file.
+    ///
+    /// An installation that never had the helper still has the aliases an
+    /// earlier version wrote into the shared section, with no owner to remove
+    /// them by. They are attributed the same way the verification attributes
+    /// them, by the aliases the configuration says are its own.
+    pub fn prune_legacy_entries(
+        &self, mappings: &[(std::net::IpAddr, String)],
+    ) -> std::io::Result<()> {
+        edit_hosts(|document| prune_legacy(document, mappings)).map_err(std::io::Error::from)
+    }
+
+    /// Removes these owners' marked lines from the section the privileged
+    /// helper normally writes, for when the helper is gone but this process
+    /// can still write the hosts file itself.
+    ///
+    /// The section is not privileged at the OS level, only by convention: a
+    /// process that can write the file at all can take a line out of it
+    /// whether the line is marked for the helper's section or this
+    /// manager's own. Only entries owned by one of `ids` are touched; an
+    /// unmarked line, or one owned by another configuration, stays.
+    pub fn remove_owned_from_helper_section(&self, ids: &[&str]) -> std::io::Result<()> {
+        edit_hosts(|document| remove_owned_lines(document, ids)).map_err(std::io::Error::from)
+    }
+
+    /// This manager's own section, as it is on disk.
+    ///
+    /// Tolerates a duplicated `KFTRAY_DIRECT_HOSTS_TAG` marker by reading
+    /// every copy instead of erroring: a caller reaching this on the
+    /// removal path (`HostfileManager::remove_host_entries`) would
+    /// otherwise fail here even though the very next step,
+    /// `remove_host_entries` below, already repairs the duplication via
+    /// `merge_duplicate_sections` before it writes.
+    pub fn direct_section() -> std::io::Result<Vec<SectionEntry>> {
+        read_hosts(|document| document.section_merging_duplicates(KFTRAY_DIRECT_HOSTS_TAG))
+            .map_err(std::io::Error::from)
+    }
+
+    /// The privileged helper's section, as it is on disk.
+    ///
+    /// This manager cannot write there, so a caller that needs verified
+    /// cleanup has to look at what is actually left. Tolerates a
+    /// duplicated `KFTRAY_HOSTS_TAG` marker the same way `direct_section`
+    /// does: this is a read used for verification, including on a stop's
+    /// failure path, where erroring outright over something a write
+    /// elsewhere already knows how to repair would turn a repairable state
+    /// into a hard failure.
+    pub fn helper_section() -> std::io::Result<Vec<SectionEntry>> {
+        read_hosts(|document| document.section_merging_duplicates(KFTRAY_HOSTS_TAG))
+            .map_err(std::io::Error::from)
+    }
+
+    /// Every owned alias in this manager's section.
+    pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
+        Ok(
+            read_hosts(|document| document.section(KFTRAY_DIRECT_HOSTS_TAG))
+                .map_err(std::io::Error::from)?
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.owner.map(|owner| {
+                        (
+                            owner,
+                            HostEntry {
+                                ip: entry.ip,
+                                hostname: entry.hostname,
+                            },
+                        )
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether any of `ids` still has a line in the helper's section, judged
+    /// against what is on disk.
+    ///
+    /// A line the helper marked is attributed by its owner. One it wrote
+    /// without a mark, as older versions did, counts only when `handed`
+    /// records that exact mapping being given to the helper for that id.
+    pub fn stranded_in_helper_section<'a>(
+        section: &[SectionEntry], ids: &[&'a str], handed: &HashSet<(String, HostEntry)>,
+    ) -> Vec<&'a str> {
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                section.iter().any(|entry| match &entry.owner {
+                    Some(owner) => owner == id,
+                    None => handed.contains(&(
+                        (*id).to_owned(),
+                        HostEntry {
+                            ip: entry.ip,
+                            hostname: entry.hostname.clone(),
+                        },
+                    )),
+                })
+            })
+            .collect()
     }
 }
 
-impl Default for DirectHostfileManager {
-    fn default() -> Self {
-        Self::new()
+/// The mappings whose unmarked copies go with the owned lines of `ids`, less
+/// the ones another running configuration still needs.
+fn legacy_mappings_to_prune(
+    owned: &[SectionEntry], ids: &[&str], protected: &[HostEntry],
+) -> Vec<(std::net::IpAddr, String)> {
+    owned
+        .iter()
+        .filter(|entry| {
+            entry
+                .owner
+                .as_deref()
+                .is_some_and(|owner| ids.contains(&owner))
+        })
+        .filter(|entry| {
+            !protected
+                .iter()
+                .any(|kept| kept.ip == entry.ip && kept.hostname == entry.hostname)
+        })
+        .map(|entry| (entry.ip, entry.hostname.clone()))
+        .collect()
+}
+
+/// Takes unmarked copies of `mappings` out of the shared section.
+///
+/// Only lines with no owner are candidates: they were written by a version
+/// that shared the helper's section and cannot be attributed any other way. A
+/// line the helper marked with another configuration's id is that
+/// configuration's, however similar its alias, and stays.
+fn prune_legacy(
+    document: &mut HostsDocument, mappings: &[(std::net::IpAddr, String)],
+) -> kftray_commons::utils::hostsfile::Result<()> {
+    if mappings.is_empty() {
+        return Ok(());
     }
+    document.retain(KFTRAY_HOSTS_TAG, |entry: &SectionEntry| {
+        entry.owner.is_some()
+            || !mappings
+                .iter()
+                .any(|(ip, hostname)| entry.ip == *ip && entry.hostname == *hostname)
+    })
+}
+
+/// Takes these owners' marked lines out of the section the privileged
+/// helper normally writes.
+///
+/// The section is not privileged at the OS level, only by convention: a
+/// process that can write the file at all can take a line out of it
+/// whether the line is marked for the helper's section or this manager's
+/// own. Only entries owned by one of `ids` are touched; an unmarked line,
+/// or one owned by another configuration, stays.
+fn remove_owned_lines(
+    document: &mut HostsDocument, ids: &[&str],
+) -> kftray_commons::utils::hostsfile::Result<()> {
+    document
+        .reconcile_owners(KFTRAY_HOSTS_TAG, ids, &[])
+        .map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{
-        IpAddr,
-        Ipv4Addr,
-    };
-    use std::sync::Once;
+    use std::net::IpAddr;
+
+    use kftray_commons::utils::hostsfile::HostsFile;
 
     use super::*;
 
-    static INIT: Once = Once::new();
-
-    fn init() {
-        INIT.call_once(|| {
-            let _ = env_logger::builder().is_test(true).try_init();
-        });
-    }
-
-    fn get_test_entry() -> HostEntry {
-        HostEntry {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-            hostname: "test.local".to_string(),
-        }
+    fn addr(last: u8) -> IpAddr {
+        IpAddr::from([127, 0, 0, last])
     }
 
     #[test]
-    fn test_add_and_remove_host_entry() {
-        init();
-        let manager = DirectHostfileManager::new();
-
-        let id = "test-id-1".to_string();
-        let entry = get_test_entry();
-
-        {
-            let mut entries = manager.entries.write().unwrap();
-            entries.clear();
-            entries.insert(id.clone(), entry.clone());
-        }
-
-        let entries = manager.list_host_entries().unwrap();
-        assert!(
-            entries.iter().any(|(k, v)| k == &id && v == &entry),
-            "Entry should be in the list after add_host_entry"
+    fn a_mapping_a_running_configuration_still_needs_is_not_pruned_on_anothers_behalf() {
+        let owned = vec![
+            SectionEntry {
+                ip: addr(1),
+                hostname: "shared.local".to_owned(),
+                owner: Some("7".to_owned()),
+            },
+            SectionEntry {
+                ip: addr(1),
+                hostname: "only-mine.local".to_owned(),
+                owner: Some("7".to_owned()),
+            },
+        ];
+        let protected = [HostEntry {
+            ip: addr(1),
+            hostname: "shared.local".to_owned(),
+        }];
+        assert_eq!(
+            legacy_mappings_to_prune(&owned, &["7"], &protected),
+            vec![(addr(1), "only-mine.local".to_owned())]
         );
+    }
 
-        {
-            let mut entries = manager.entries.write().unwrap();
-            entries.remove(&id);
-        }
+    #[test]
+    fn pruning_spares_lines_the_helper_attributed_to_another_configuration() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
 
-        let entries = manager.list_host_entries().unwrap();
-        assert!(
-            !entries.iter().any(|(k, _)| k == &id),
-            "Entry should not be in the list after remove_host_entry"
+        // The shared section as an upgrade finds it: one alias written by an
+        // older direct writer with no owner, and the same alias the current
+        // helper wrote for configuration 7.
+        let mut legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
+        legacy
+            .add_entry(addr(1), "shared.local")
+            .unwrap()
+            .add_owned_entry(addr(1), "shared.local", "7")
+            .unwrap()
+            .add_entry(addr(1), "other.local")
+            .unwrap();
+        legacy.write_to(&temp_path).unwrap();
+
+        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {
+            prune_legacy(document, &[(addr(1), "shared.local".to_owned())])
+        })
+        .unwrap();
+
+        let remaining: Vec<(String, Option<String>)> = HostsFile::new(KFTRAY_HOSTS_TAG)
+            .read_section_from(&temp_path)
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.hostname, entry.owner))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec![
+                ("shared.local".to_owned(), Some("7".to_owned())),
+                ("other.local".to_owned(), None),
+            ],
+            "only the unmarked copy of the pruned alias goes; configuration 7's line and an \
+             unrelated alias stay"
         );
-
-        if can_write_hosts_file() {
-            let manager = DirectHostfileManager::new();
-            let _ = manager.remove_all_host_entries();
-
-            let result = manager.add_host_entry(id.clone(), entry.clone());
-            assert!(result.is_ok());
-
-            {
-                let mut writer_running = manager.writer_running.lock().unwrap();
-                *writer_running = false;
-            }
-
-            let entries = manager.list_host_entries().unwrap();
-            assert!(
-                entries.iter().any(|(k, v)| k == &id && v == &entry),
-                "Entry should be in the list after add_host_entry"
-            );
-
-            let result = manager.remove_host_entry(&id);
-            assert!(result.is_ok());
-
-            {
-                let mut writer_running = manager.writer_running.lock().unwrap();
-                *writer_running = false;
-            }
-
-            let entries = manager.list_host_entries().unwrap();
-            assert!(
-                !entries.iter().any(|(k, _)| k == &id),
-                "Entry should not be in the list after remove_host_entry"
-            );
-        } else {
-            println!("Skipping hosts file write test - insufficient permissions");
-        }
     }
 
     #[test]
-    fn test_remove_all_host_entries() {
-        init();
-        let manager = DirectHostfileManager::new();
+    fn helper_lines_are_attributed_by_owner_or_by_what_was_handed_over() {
+        let section = vec![
+            SectionEntry {
+                ip: addr(1),
+                hostname: "marked.local".to_owned(),
+                owner: Some("1-https".to_owned()),
+            },
+            SectionEntry {
+                ip: addr(1),
+                hostname: "unmarked.local".to_owned(),
+                owner: None,
+            },
+        ];
+        let handed = HashSet::from([(
+            "2-https".to_owned(),
+            HostEntry {
+                ip: addr(1),
+                hostname: "unmarked.local".to_owned(),
+            },
+        )]);
 
-        let id1 = "test-id-1".to_string();
-        let id2 = "test-id-2".to_string();
-        let entry = get_test_entry();
-
-        {
-            let mut entries = manager.entries.write().unwrap();
-            entries.insert(id1.clone(), entry.clone());
-            entries.insert(id2.clone(), entry.clone());
-        }
-
-        let entries = manager.list_host_entries().unwrap();
-        assert!(!entries.is_empty());
-        assert_eq!(entries.len(), 2);
-
-        {
-            let mut entries = manager.entries.write().unwrap();
-            entries.clear();
-        }
-
-        let entries = manager.list_host_entries().unwrap();
-        assert!(entries.is_empty());
-
-        if can_write_hosts_file() {
-            let manager = DirectHostfileManager::new();
-            let _ = manager.add_host_entry(id1, entry.clone());
-            let _ = manager.add_host_entry(id2, entry.clone());
-
-            let result = manager.remove_all_host_entries();
-            assert!(result.is_ok());
-
-            let entries = manager.list_host_entries().unwrap();
-            assert!(entries.is_empty());
-        } else {
-            println!("Skipping hosts file write test - insufficient permissions");
-        }
-    }
-
-    fn can_write_hosts_file() -> bool {
-        let test_hosts_file = HostsFile::new("test-permission-check");
-        match test_hosts_file.write() {
-            Ok(_) => {
-                let cleanup_hosts_file = HostsFile::new("test-permission-check");
-                let _ = cleanup_hosts_file.write();
-                true
-            }
-            Err(_) => false,
-        }
+        let stranded = DirectHostfileManager::stranded_in_helper_section(
+            &section,
+            &["1-https", "2-https", "3-https"],
+            &handed,
+        );
+        assert_eq!(
+            stranded,
+            vec!["1-https", "2-https"],
+            "a marked line names its owner; an unmarked one counts only for the id it was \
+             handed over for; an id with neither is not stranded"
+        );
     }
 
     #[test]
-    fn test_writer_flags() {
-        init();
-        let manager = DirectHostfileManager::new();
+    fn no_helper_fallback_removes_only_the_stranded_ids_own_marked_line() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
 
-        {
-            let mut writer_running = manager.writer_running.lock().unwrap();
-            *writer_running = true;
-            assert!(*writer_running);
-            *writer_running = false;
-            assert!(!*writer_running);
-        }
+        let mut file = HostsFile::new(KFTRAY_HOSTS_TAG);
+        file.add_owned_entry(addr(1), "mine.local", "7")
+            .unwrap()
+            .add_owned_entry(addr(1), "theirs.local", "9")
+            .unwrap()
+            .add_entry(addr(1), "unmarked.local")
+            .unwrap();
+        file.write_to(&temp_path).unwrap();
 
-        {
-            let mut needs_update = manager.needs_update.lock().unwrap();
-            *needs_update = true;
-            assert!(*needs_update);
-            *needs_update = false;
-            assert!(!*needs_update);
-        }
+        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {
+            remove_owned_lines(document, &["7"])
+        })
+        .unwrap();
+
+        let remaining: Vec<(String, Option<String>)> = HostsFile::new(KFTRAY_HOSTS_TAG)
+            .read_section_from(&temp_path)
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.hostname, entry.owner))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec![
+                ("theirs.local".to_owned(), Some("9".to_owned())),
+                ("unmarked.local".to_owned(), None),
+            ],
+            "the no-helper fallback removes only the stranded id's own marked line; another \
+             configuration's line and an unmarked one stay, so a stop does not fail forever \
+             once the helper is gone"
+        );
     }
 }

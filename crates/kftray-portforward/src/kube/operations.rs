@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use k8s_openapi::api::core::v1::{
     Namespace,
@@ -14,11 +17,11 @@ use kube::{
 };
 use log::info;
 
-use super::client::create_client_with_specific_context;
 use super::client::error::{
     KubeClientError,
     KubeResult,
 };
+use super::client::get_kubeconfig_paths_from_option;
 use crate::kube::models::KubeContextInfo;
 
 pub type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
@@ -106,28 +109,54 @@ pub fn list_contexts(kubeconfig: &Kubeconfig) -> Vec<String> {
 pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<KubeContextInfo>> {
     info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
 
-    let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
-        .await
-        .map_err(|err| {
-            KubeClientError::config_error(format!("Failed to read kubeconfig contexts: {err}"))
-        })?;
+    let contexts = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
+        let paths = get_kubeconfig_paths_from_option(kubeconfig)?;
+        // Each readable kubeconfig contributes its own contexts directly,
+        // rather than going through a single merged `Kubeconfig`: a name
+        // collision or other merge failure in one file would otherwise drop
+        // every context from that file, not just the conflicting one.
+        let mut contexts = Vec::new();
+        let mut seen = HashSet::new();
+        let mut errors = Vec::new();
+        for path in &paths {
+            match Kubeconfig::read_from(path) {
+                Ok(parsed) => {
+                    for name in list_contexts(&parsed) {
+                        if seen.insert(name.clone()) {
+                            contexts.push(name);
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("Failed to read kubeconfig from {path:?}: {e}")),
+            }
+        }
+        if contexts.is_empty() && !errors.is_empty() {
+            anyhow::bail!(errors.join("\n"));
+        }
+        if !errors.is_empty() {
+            log::warn!(
+                "Some kubeconfig paths failed to load and were skipped: {}",
+                errors.join("; ")
+            );
+        }
+        Ok(contexts)
+    })
+    .await
+    .map_err(|err| KubeClientError::config_error(format!("Kubeconfig loading task failed: {err}")))?
+    .map_err(|err| {
+        KubeClientError::config_error(format!("Failed to read kubeconfig contexts: {err}"))
+    })?;
 
-    if let Some(kubeconfig) = kubeconfig {
-        Ok(kubeconfig
-            .contexts
-            .into_iter()
-            .map(|c| KubeContextInfo { name: c.name })
-            .collect())
-    } else if !contexts.is_empty() {
-        Ok(contexts
-            .into_iter()
-            .map(|name| KubeContextInfo { name })
-            .collect())
-    } else {
-        Err(KubeClientError::config_error(
+    if contexts.is_empty() {
+        return Err(KubeClientError::config_error(
             "No kubeconfig found or no contexts available. Please check your kubeconfig file exists and contains valid contexts",
-        ))
+        ));
     }
+
+    Ok(contexts
+        .into_iter()
+        .map(|name| KubeContextInfo { name })
+        .collect())
 }
 
 #[cfg(test)]
@@ -284,5 +313,105 @@ mod tests {
     async fn test_list_kube_contexts_empty() {
         let result = list_kube_contexts(Some("invalid".to_string())).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_preserves_load_error() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let kubeconfig_path = temp_dir.path().join("kubeconfig");
+        std::fs::write(&kubeconfig_path, "not: valid: yaml: [").unwrap();
+
+        let result = list_kube_contexts(Some(kubeconfig_path.to_string_lossy().to_string())).await;
+
+        let err = result
+            .err()
+            .expect("malformed kubeconfig must fail")
+            .to_string();
+        assert!(
+            err.contains(
+                kubeconfig_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("kubeconfig path must have a file name")
+            ),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_keeps_other_files_contexts_when_one_fails_to_merge() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path_a = temp_dir.path().join("kubeconfig-a");
+        let path_b = temp_dir.path().join("kubeconfig-b");
+
+        std::fs::write(
+            &path_a,
+            "apiVersion: v1\n\
+             kind: Config\n\
+             current-context: context-a\n\
+             contexts:\n\
+             - name: context-a\n  \
+               context:\n    \
+                 cluster: cluster-a\n    \
+                 user: user-a\n\
+             clusters:\n\
+             - name: cluster-a\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: user-a\n  \
+               user: {}\n",
+        )
+        .unwrap();
+
+        // A different apiVersion makes `Kubeconfig::merge` fail with
+        // `ApiVersionMismatch` when combining this file with `path_a`; with
+        // the old whole-object merge, that error dropped every context from
+        // this file, not just the conflicting field.
+        std::fs::write(
+            &path_b,
+            "apiVersion: v1beta1\n\
+             kind: Config\n\
+             current-context: context-b\n\
+             contexts:\n\
+             - name: context-b\n  \
+               context:\n    \
+                 cluster: cluster-b\n    \
+                 user: user-b\n\
+             clusters:\n\
+             - name: cluster-b\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: user-b\n  \
+               user: {}\n",
+        )
+        .unwrap();
+
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        let combined = format!(
+            "{}{separator}{}",
+            path_a.to_string_lossy(),
+            path_b.to_string_lossy()
+        );
+
+        let result = list_kube_contexts(Some(combined))
+            .await
+            .expect("both files parse individually and must contribute their contexts");
+        let names: Vec<_> = result.into_iter().map(|ctx| ctx.name).collect();
+
+        assert!(
+            names.contains(&"context-a".to_string()),
+            "expected context-a in {names:?}"
+        );
+        assert!(
+            names.contains(&"context-b".to_string()),
+            "a merge failure between the two files must not hide context-b's own context: \
+             {names:?}"
+        );
     }
 }

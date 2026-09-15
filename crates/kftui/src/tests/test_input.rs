@@ -233,17 +233,61 @@ mod tests {
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
     }
 
-    #[tokio::test]
-    async fn test_handle_error_popup_input() {
+    #[test]
+    fn scrolling_past_the_bottom_does_not_bank_offsets() {
         let mut app = setup_app();
         app.state = AppState::ShowErrorPopup;
+        app.error_message = Some("many failures".to_string());
+        // What the last render could actually show.
+        app.error_scroll_max = 3;
 
+        for _ in 0..10 {
+            handle_error_popup_input(&mut app, KeyCode::Down).unwrap();
+        }
+        assert_eq!(app.error_scroll, 3, "scrolling stops at the last page");
+
+        handle_error_popup_input(&mut app, KeyCode::Up).unwrap();
+        assert_eq!(
+            app.error_scroll, 2,
+            "one key press must reveal the preceding line"
+        );
+    }
+
+    #[test]
+    fn test_handle_error_popup_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowErrorPopup;
+        app.error_scroll_max = 25;
+        app.error_scroll = 12;
+
+        handle_error_popup_input(&mut app, KeyCode::PageDown).unwrap();
+        assert_eq!(app.error_scroll, 22, "PageDown advances by 10");
+
+        handle_error_popup_input(&mut app, KeyCode::PageDown).unwrap();
+        assert_eq!(
+            app.error_scroll, 25,
+            "PageDown clamps at the last usable offset"
+        );
+
+        handle_error_popup_input(&mut app, KeyCode::PageUp).unwrap();
+        assert_eq!(app.error_scroll, 15, "PageUp backs up by 10");
+
+        handle_error_popup_input(&mut app, KeyCode::End).unwrap();
+        assert_eq!(app.error_scroll, 25, "End jumps to the last usable offset");
+
+        handle_error_popup_input(&mut app, KeyCode::Home).unwrap();
+        assert_eq!(app.error_scroll, 0, "Home jumps back to the top");
+
+        app.error_scroll = 12;
         handle_error_popup_input(&mut app, KeyCode::Esc).unwrap();
         assert_eq!(app.state, AppState::Normal);
+        assert_eq!(app.error_scroll, 0, "Esc must reset the scroll offset");
 
         app.state = AppState::ShowErrorPopup;
+        app.error_scroll = 12;
         handle_error_popup_input(&mut app, KeyCode::Enter).unwrap();
         assert_eq!(app.state, AppState::Normal);
+        assert_eq!(app.error_scroll, 0, "Enter must reset the scroll offset");
     }
 
     #[tokio::test]

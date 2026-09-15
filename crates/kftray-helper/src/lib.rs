@@ -7,6 +7,8 @@ mod hostfile;
 pub mod messages;
 mod network;
 pub mod platforms;
+#[cfg(target_os = "windows")]
+mod win_identity;
 
 pub use client::HelperClient;
 pub use error::HelperError;

@@ -4,7 +4,6 @@ import { Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -14,10 +13,12 @@ const DeleteDialog = ({
   isOpen,
   onClose,
   onConfirm,
+  isDeleting,
 }: {
   isOpen: boolean
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: () => void | Promise<void>
+  isDeleting: boolean
 }) => {
   if (!isOpen) {
     return null
@@ -86,7 +87,20 @@ const DeleteDialog = ({
               size='xs'
               bg='blue.500'
               _hover={{ bg: 'blue.600' }}
-              onClick={onConfirm}
+              disabled={isDeleting}
+              onClick={() => {
+                try {
+                  const result = onConfirm()
+
+                  if (result instanceof Promise) {
+                    result.catch(error => {
+                      console.error('Failed to delete configs:', error)
+                    })
+                  }
+                } catch (error) {
+                  console.error('Failed to delete configs:', error)
+                }
+              }}
               height='28px'
             >
               Delete
@@ -101,11 +115,12 @@ const DeleteDialog = ({
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
-  setSelectedConfigs,
+  deleteConfigs,
 }) => {
   const [state, setState] = useState({
     configsToDelete: [] as number[],
     isDialogOpen: false,
+    isDeleting: false,
   })
 
   const handleDeleteClick = (selectedIds: number[]) => {
@@ -121,6 +136,9 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   }
 
   const handleConfirmDelete = async () => {
+    if (state.isDeleting) {
+      return
+    }
     if (!state.configsToDelete.length) {
       toaster.error({
         title: 'Error',
@@ -131,22 +149,18 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
       return
     }
 
+    setState(prev => ({ ...prev, isDeleting: true }))
     try {
-      await invoke('delete_configs_cmd', { ids: state.configsToDelete })
-      setSelectedConfigs([])
-      setState(prev => ({ ...prev, isDialogOpen: false }))
-      toaster.success({
-        title: 'Success',
-        description: 'Configurations deleted successfully.',
-        duration: 1000,
-      })
-    } catch (error) {
-      console.error('Failed to delete configurations:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to delete configurations.',
-        duration: 1000,
-      })
+      // Reservation, deletion and refresh happen together in Main: deleting
+      // only removes the database row, so a queued start could otherwise
+      // still reach the cluster with a configuration that no longer exists.
+      const deleted = await deleteConfigs(state.configsToDelete)
+
+      if (deleted) {
+        setState(prev => ({ ...prev, isDialogOpen: false }))
+      }
+    } finally {
+      setState(prev => ({ ...prev, isDeleting: false }))
     }
   }
 
@@ -187,6 +201,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
         isOpen={state.isDialogOpen}
         onClose={handleClose}
         onConfirm={handleConfirmDelete}
+        isDeleting={state.isDeleting}
       />
     </Box>
   )

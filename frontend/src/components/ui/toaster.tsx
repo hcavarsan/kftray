@@ -144,7 +144,7 @@ export const Toaster = () => {
           <Toast.Root
             ref={toastRef}
             width={{ base: '240px', md: '260px' }}
-            maxWidth='90%'
+            maxWidth='calc(100vw - 16px)'
             py='2'
             px='3'
             bg='gray.900'

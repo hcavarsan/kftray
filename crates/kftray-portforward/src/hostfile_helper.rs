@@ -36,14 +36,37 @@ impl HostfileHelperClient {
         })
     }
 
-    pub fn add_host_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileHelperError> {
-        debug!("Adding host entry via helper for ID {id}: {entry:?}");
-
+    /// Sends a hosts command whose only interesting outcome is success or
+    /// failure, and turns the helper's reply into a `Result`.
+    fn send_unit(
+        &self, command: kftray_helper::messages::RequestCommand,
+    ) -> Result<(), HostfileHelperError> {
         if !self.is_available() {
             return Err(HostfileHelperError::Communication(
                 "Helper service is not available".to_string(),
             ));
         }
+
+        match kftray_helper::client::socket_comm::send_request(
+            &self.socket_path,
+            &self.app_id,
+            command,
+        ) {
+            Ok(response) => match response.result {
+                kftray_helper::messages::RequestResult::Success => Ok(()),
+                kftray_helper::messages::RequestResult::Error(err) => {
+                    Err(HostfileHelperError::Communication(err))
+                }
+                _ => Err(HostfileHelperError::InvalidResponse(
+                    "Expected Success or Error response".to_string(),
+                )),
+            },
+            Err(e) => Err(HostfileHelperError::Helper(e)),
+        }
+    }
+
+    pub fn add_host_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileHelperError> {
+        debug!("Adding host entry via helper for ID {id}: {entry:?}");
 
         let command = kftray_helper::messages::RequestCommand::Host(
             kftray_helper::messages::HostCommand::Add {
@@ -52,114 +75,58 @@ impl HostfileHelperClient {
             },
         );
 
-        match kftray_helper::client::socket_comm::send_request(
-            &self.socket_path,
-            &self.app_id,
-            command,
-        ) {
-            Ok(response) => match response.result {
-                kftray_helper::messages::RequestResult::Success => {
-                    debug!("Successfully added host entry for ID: {id}");
-                    Ok(())
-                }
-                kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for add_host_entry: {err}");
-                    Err(HostfileHelperError::Communication(err))
-                }
-                _ => {
-                    error!("Unexpected response type for add_host_entry");
-                    Err(HostfileHelperError::InvalidResponse(
-                        "Expected Success or Error response".to_string(),
-                    ))
-                }
-            },
-            Err(e) => {
-                error!("Failed to send add_host_entry request to helper: {e}");
-                Err(HostfileHelperError::Helper(e))
-            }
-        }
+        self.send_unit(command)
+            .inspect(|_| debug!("Successfully added host entry for ID: {id}"))
+            .inspect_err(|e| error!("Failed to add host entry for ID {id} via helper: {e}"))
     }
 
     pub fn remove_host_entry(&self, id: &str) -> Result<(), HostfileHelperError> {
         debug!("Removing host entry via helper for ID: {id}");
 
-        if !self.is_available() {
-            return Err(HostfileHelperError::Communication(
-                "Helper service is not available".to_string(),
-            ));
-        }
-
         let command = kftray_helper::messages::RequestCommand::Host(
             kftray_helper::messages::HostCommand::Remove { id: id.to_string() },
         );
 
-        match kftray_helper::client::socket_comm::send_request(
-            &self.socket_path,
-            &self.app_id,
-            command,
-        ) {
-            Ok(response) => match response.result {
-                kftray_helper::messages::RequestResult::Success => {
-                    debug!("Successfully removed host entry for ID: {id}");
-                    Ok(())
-                }
-                kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for remove_host_entry: {err}");
-                    Err(HostfileHelperError::Communication(err))
-                }
-                _ => {
-                    error!("Unexpected response type for remove_host_entry");
-                    Err(HostfileHelperError::InvalidResponse(
-                        "Expected Success or Error response".to_string(),
-                    ))
-                }
-            },
-            Err(e) => {
-                error!("Failed to send remove_host_entry request to helper: {e}");
-                Err(HostfileHelperError::Helper(e))
-            }
-        }
+        self.send_unit(command)
+            .inspect(|_| debug!("Successfully removed host entry for ID: {id}"))
+            .inspect_err(|e| error!("Failed to remove host entry for ID {id} via helper: {e}"))
     }
 
-    pub fn remove_all_host_entries(&self) -> Result<(), HostfileHelperError> {
-        debug!("Removing all host entries via helper");
-
-        if !self.is_available() {
-            return Err(HostfileHelperError::Communication(
-                "Helper service is not available".to_string(),
-            ));
-        }
-
-        let command = kftray_helper::messages::RequestCommand::Host(
-            kftray_helper::messages::HostCommand::RemoveAll,
+    /// Asks the helper to remove unmarked copies of `entries` from its section.
+    ///
+    /// An already-installed helper that predates this command cannot parse
+    /// it and closes the connection without responding; the caller fails
+    /// fast on that instead of waiting out the timeout.
+    pub fn remove_unowned_host_entries(
+        &self, entries: Vec<HostEntry>,
+    ) -> Result<(), HostfileHelperError> {
+        debug!(
+            "Removing {} unmarked host entries via helper",
+            entries.len()
         );
 
-        match kftray_helper::client::socket_comm::send_request(
-            &self.socket_path,
-            &self.app_id,
-            command,
-        ) {
-            Ok(response) => match response.result {
-                kftray_helper::messages::RequestResult::Success => {
-                    debug!("Successfully removed all host entries");
-                    Ok(())
-                }
-                kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for remove_all_host_entries: {err}");
-                    Err(HostfileHelperError::Communication(err))
-                }
-                _ => {
-                    error!("Unexpected response type for remove_all_host_entries");
-                    Err(HostfileHelperError::InvalidResponse(
-                        "Expected Success or Error response".to_string(),
-                    ))
-                }
+        let command = kftray_helper::messages::RequestCommand::Host(
+            kftray_helper::messages::HostCommand::RemoveUnowned { entries },
+        );
+
+        self.send_unit(command)
+    }
+
+    /// Asks the helper to remove these owners' lines from the section this
+    /// application writes directly, for when it may no longer write there.
+    pub fn remove_direct_owned_entries(
+        &self, ids: &[&str], legacy: Vec<HostEntry>,
+    ) -> Result<(), HostfileHelperError> {
+        debug!("Removing direct host entries for {ids:?} via helper");
+
+        let command = kftray_helper::messages::RequestCommand::Host(
+            kftray_helper::messages::HostCommand::RemoveDirectOwned {
+                ids: ids.iter().map(|id| (*id).to_owned()).collect(),
+                legacy,
             },
-            Err(e) => {
-                error!("Failed to send remove_all_host_entries request to helper: {e}");
-                Err(HostfileHelperError::Helper(e))
-            }
-        }
+        );
+
+        self.send_unit(command)
     }
 
     pub fn list_host_entries(&self) -> Result<Vec<(String, HostEntry)>, HostfileHelperError> {

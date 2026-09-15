@@ -63,10 +63,40 @@ pub enum ServiceCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostCommand {
-    Add { id: String, entry: HostEntry },
-    Remove { id: String },
-    RemoveAll,
+    Add {
+        id: String,
+        entry: HostEntry,
+    },
+    Remove {
+        id: String,
+    },
+    /// Removes unmarked copies of the given aliases. Lines written by a helper
+    /// that did not mark its lines can only be tied to a configuration by what
+    /// that configuration says its aliases are, and only those are removed.
+    RemoveUnowned {
+        entries: Vec<HostEntry>,
+    },
+    /// Removes the given owners' lines from the application's own section,
+    /// the one it writes without the helper. An application that wrote there
+    /// and later lost write access has no other way to take its lines out.
+    RemoveDirectOwned {
+        ids: Vec<String>,
+        /// Unmarked copies of these aliases in the helper's own section go in
+        /// the same write: the owned lines being removed are the only record
+        /// tying those copies to the configuration, so the two cannot be
+        /// separate requests with a failure possible between them.
+        #[serde(default)]
+        legacy: Vec<HostEntry>,
+    },
     List,
+    /// Clears both hosts sections this helper writes, whoever wrote each
+    /// line.
+    ///
+    /// Kept for a client of another version still sending it: the current
+    /// client uses `RemoveDirectOwned` and `RemoveUnowned` instead, but an
+    /// installed helper of this version must still answer an older one
+    /// rather than reject it as unrecognized.
+    RemoveAll,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
