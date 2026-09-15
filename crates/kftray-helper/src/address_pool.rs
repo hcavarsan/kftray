@@ -50,7 +50,10 @@ fn is_pid_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn is_pid_alive(pid: u32) -> bool {
-    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::{
+        CloseHandle,
+        ERROR_INVALID_PARAMETER,
+    };
     use windows::Win32::System::Threading::{
         OpenProcess,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -62,7 +65,13 @@ fn is_pid_alive(pid: u32) -> bool {
                 let _ = CloseHandle(handle);
                 true
             }
-            Err(_) => false,
+            // No such pid: definitively gone.
+            Err(e) if e.code() == ERROR_INVALID_PARAMETER.to_hresult() => false,
+            // Any other failure (`ACCESS_DENIED` for a protected or
+            // higher-integrity process, and the like) still means the
+            // process exists, symmetric with the Unix `EPERM` handling
+            // above.
+            Err(_) => true,
         }
     }
 }
@@ -163,7 +172,20 @@ impl AddressPoolManager {
             if let Some(alloc) = allocations.get(&addr).cloned() {
                 let mut updated_alloc = alloc;
                 updated_alloc.last_refreshed = SystemTime::now();
-                updated_alloc.owner_pid = caller_pid;
+
+                // Only take ownership when nothing else still holds it: a
+                // different, live recorded owner keeps it, so a second
+                // process cannot re-allocate the same service name to
+                // become the recorded owner and then release out from
+                // under the original caller.
+                let owned_by_other_live_process =
+                    updated_alloc.owner_pid.is_some_and(|owner_pid| {
+                        Some(owner_pid) != caller_pid && is_pid_alive(owner_pid)
+                    });
+                if !owned_by_other_live_process {
+                    updated_alloc.owner_pid = caller_pid;
+                }
+
                 allocations.insert(addr.clone(), updated_alloc);
             }
 
@@ -202,7 +224,7 @@ impl AddressPoolManager {
         let mut allocations = self.allocations.write().await;
 
         let Some(allocation) = allocations.get(address) else {
-            return Err(HelperError::AddressPool(format!(
+            return Err(HelperError::AddressNotAllocated(format!(
                 "Address {address} is not allocated"
             )));
         };
@@ -235,13 +257,24 @@ impl AddressPoolManager {
         Ok(result)
     }
 
+    /// Expires an allocation once it is stale by age, or once its recorded
+    /// owner is no longer alive -- the latter is checked here rather than
+    /// only left to `release_address`, so a process that dies without
+    /// releasing its address does not pin it for up to `MAX_ALLOCATION_AGE`
+    /// and narrow the window in which the OS could recycle that pid onto
+    /// an unrelated live process before this runs again (it runs on every
+    /// `allocate_address` call).
     async fn cleanup_stale_allocations(&self) -> Result<(), HelperError> {
         let mut allocations = self.allocations.write().await;
         let now = SystemTime::now();
 
-        allocations.retain(|_, alloc| match now.duration_since(alloc.last_refreshed) {
-            Ok(duration) => duration < MAX_ALLOCATION_AGE,
-            Err(_) => true,
+        allocations.retain(|_, alloc| {
+            let stale_by_age = match now.duration_since(alloc.last_refreshed) {
+                Ok(duration) => duration >= MAX_ALLOCATION_AGE,
+                Err(_) => false,
+            };
+            let owner_dead = alloc.owner_pid.is_some_and(|pid| !is_pid_alive(pid));
+            !(stale_by_age || owner_dead)
         });
 
         drop(allocations);
@@ -272,16 +305,30 @@ impl AddressPoolManager {
 mod tests {
     use super::*;
 
-    fn manager() -> AddressPoolManager {
-        let path = std::env::temp_dir().join(format!(
-            "kftray-address-pool-test-{}-{}.json",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        AddressPoolManager::for_test(path)
+    /// Wraps the manager with the `tempfile::TempPath` backing its storage
+    /// file, so the file is removed on drop instead of leaked into the OS
+    /// temp directory on every test run (and permanently on a panic).
+    struct TestManager {
+        inner: AddressPoolManager,
+        _temp: tempfile::TempPath,
+    }
+
+    impl std::ops::Deref for TestManager {
+        type Target = AddressPoolManager;
+        fn deref(&self) -> &AddressPoolManager {
+            &self.inner
+        }
+    }
+
+    fn manager() -> TestManager {
+        let temp = tempfile::Builder::new()
+            .prefix("kftray-address-pool-test-")
+            .suffix(".json")
+            .tempfile()
+            .expect("create a temp file for the test address pool")
+            .into_temp_path();
+        let inner = AddressPoolManager::for_test(temp.to_path_buf());
+        TestManager { inner, _temp: temp }
     }
 
     /// A pid that has already exited: spawning and waiting on a child
@@ -298,6 +345,15 @@ mod tests {
             .expect("spawn a short-lived child process");
         let pid = child.id();
         child.wait().expect("wait for the child to exit");
+        // Narrows the window for the OS to have already recycled `pid`
+        // onto an unrelated live process (a busy CI runner with a low
+        // `pid_max` is the realistic case): asserted here, immediately
+        // after reaping, so that rare reuse fails with a clear message
+        // instead of a confusing failure in whichever test called this.
+        assert!(
+            !is_pid_alive(pid),
+            "pid {pid} was already reused by another live process right after exiting"
+        );
         pid
     }
 
@@ -347,5 +403,66 @@ mod tests {
         pool.release_address(&address, Some(std::process::id()))
             .await
             .expect("an allocation with no recorded owner must not block release");
+    }
+
+    #[tokio::test]
+    async fn allocate_does_not_transfer_ownership_away_from_a_live_owner() {
+        let pool = manager();
+        let owner_pid = std::process::id();
+        let address = pool
+            .allocate_address("svc-d", Some(owner_pid))
+            .await
+            .unwrap();
+
+        // A different live caller re-allocating the same service name gets
+        // the same address back, but must not become its recorded owner:
+        // otherwise it could immediately release it out from under the
+        // process that still holds it.
+        let other_pid = owner_pid + 1;
+        let same_address = pool
+            .allocate_address("svc-d", Some(other_pid))
+            .await
+            .unwrap();
+        assert_eq!(address, same_address);
+
+        let err = pool
+            .release_address(&address, Some(other_pid))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("owned by another live process"),
+            "unexpected error: {err}"
+        );
+
+        // The original owner can still release it.
+        pool.release_address(&address, Some(owner_pid))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_dead_owners_allocation_is_reclaimed_without_waiting_for_the_age_limit() {
+        let pool = manager();
+        let dead_owner = dead_pid();
+        pool.allocate_address("svc-e", Some(dead_owner))
+            .await
+            .unwrap();
+
+        // Allocating an unrelated service runs `cleanup_stale_allocations`,
+        // which must free the dead owner's allocation immediately rather
+        // than only after `MAX_ALLOCATION_AGE`, so a live process cannot
+        // end up recycled onto that pid and block the release for up to 7
+        // days. The freed address may be handed straight back out to the
+        // next allocation, so the service name -- not the address string,
+        // which can legitimately be reused -- is what proves the reclaim.
+        pool.allocate_address("svc-f", Some(std::process::id()))
+            .await
+            .unwrap();
+
+        let allocations = pool.list_allocations().await.unwrap();
+        assert!(
+            !allocations.iter().any(|(service, _)| service == "svc-e"),
+            "the dead owner's allocation should have been reclaimed: {allocations:?}"
+        );
     }
 }

@@ -34,13 +34,7 @@ use crate::tui::ui::draw_ui;
 
 type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 
-/// How long exit waits for cleanup targets that have not settled yet.
-///
-/// Covers the backend's uncertainty window with room for the retries inside it:
-/// a create abandoned on the way out can still be applied, and the registry
-/// tracking it does not survive the process.
-pub(crate) const CLEANUP_RECONCILE_TIMEOUT: std::time::Duration =
-    kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
+pub(crate) use crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT;
 
 pub async fn run_tui(
     mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
@@ -67,14 +61,25 @@ pub async fn run_tui(
     let mut update_check: Option<UpdateCheckTask> = None;
 
     // Start network monitor if enabled
+    let mut network_monitor_started = false;
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
         && enabled
-        && let Err(e) = kftray_network_monitor::start().await
     {
-        error!("Failed to start network monitor: {e}");
+        match kftray_network_monitor::start().await {
+            Ok(()) => network_monitor_started = true,
+            Err(e) => error!("Failed to start network monitor: {e}"),
+        }
     }
 
     let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
+
+    // Stopped before the drain below, which can run for minutes: left alive,
+    // the monitor's health check reacts to exactly the symptom shutdown
+    // produces (forwards that stopped responding) by restarting them right
+    // before the process exits, re-creating what cleanup just reaped.
+    if network_monitor_started && let Err(e) = kftray_network_monitor::stop().await {
+        error!("Failed to stop network monitor: {e}");
+    }
 
     // Restore the terminal first: stopping every forward waits on recovery
     // locks and cluster deletions, and none of that should keep the shell in
@@ -89,16 +94,27 @@ pub async fn run_tui(
     .into_iter()
     .find_map(Result::err);
 
+    println!(
+        "Stopping port forwards, this may take up to {}s…",
+        CLEANUP_RECONCILE_TIMEOUT.as_secs() * 3
+    );
     let failures = crate::core::port_forward::shutdown_port_forwarding(&mut app, mode).await;
+
+    let mut had_failure = !failures.is_empty();
 
     if let Err(err) = res {
         error!("{err:?}");
+        eprintln!("Error: the event loop failed unexpectedly: {err}");
+        had_failure = true;
     }
     if let Some(error) = restored {
-        return Err(error.into());
+        error!("Failed to restore terminal: {error}");
+        eprintln!("Error: failed to restore terminal: {error}");
+        had_failure = true;
     }
-    if !failures.is_empty() {
-        return Err(format!("shutdown left work outstanding: {}", failures.join("; ")).into());
+
+    if had_failure {
+        return Err("kftui did not shut down cleanly; see the errors above".into());
     }
 
     Ok(())
@@ -187,6 +203,7 @@ mod tests {
         ActiveComponent,
         ActiveTable,
         App,
+        AppState,
     };
     use crate::tui::ui::draw_ui;
 
@@ -206,6 +223,53 @@ mod tests {
                 }
             });
         }
+    }
+
+    /// Regression for a clamp that used to run unconditionally every frame:
+    /// `app.error_scroll_max`/`app.error_scroll` were reset to 0 whenever
+    /// any state other than `ShowErrorPopup` rendered, even though the error
+    /// message and the reader's position in it were still logically live
+    /// (e.g. a confirmation briefly covering an open error popup).
+    #[test]
+    fn error_scroll_state_is_preserved_when_another_popup_covers_the_error_popup() {
+        initialize_test_db();
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(test_logger_state());
+        app.error_message = Some("line 1\nline 2\nline 3\nline 4\nline 5".to_string());
+        app.state = AppState::ShowErrorPopup;
+        let config_states: Vec<ConfigState> = vec![];
+
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+        let max_after_first_render = app.error_scroll_max;
+        assert!(
+            max_after_first_render > 0,
+            "a multi-line error must produce a nonzero scroll bound"
+        );
+        app.error_scroll = max_after_first_render;
+
+        // A different popup temporarily covers the error popup.
+        app.state = AppState::ShowDeleteConfirmation;
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+        assert_eq!(
+            app.error_scroll_max, max_after_first_render,
+            "covering the error popup with another must not reset its scroll bound"
+        );
+        assert_eq!(
+            app.error_scroll, max_after_first_render,
+            "covering the error popup with another must not reset the reader's position"
+        );
+
+        // Returning to the error popup must still reflect the preserved position.
+        app.state = AppState::ShowErrorPopup;
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+        assert_eq!(app.error_scroll, max_after_first_render);
     }
 
     #[test]

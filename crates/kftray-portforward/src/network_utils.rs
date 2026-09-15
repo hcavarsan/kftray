@@ -233,7 +233,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
         return Ok(LoopbackRelease::AlreadyAbsent);
     }
 
-    if addr == "127.0.0.1" {
+    if is_default_loopback_address(addr) || addr == "::1" {
         return Ok(LoopbackRelease::AlreadyAbsent);
     }
     #[cfg(target_os = "windows")]
@@ -667,6 +667,14 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_remove_loopback_address_ipv6_default_is_already_absent() {
+        assert_eq!(
+            remove_loopback_address("::1").await.unwrap(),
+            LoopbackRelease::AlreadyAbsent
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_non_interactive_sudo_password_refusal_is_a_privilege_refusal() {
@@ -844,11 +852,14 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    async fn a_helper_failure_outside_the_127_range_is_retryable_not_privilege_unavailable() {
-        match remove_loopback_address("::1").await.unwrap() {
-            LoopbackRelease::Failed(_) => {}
-            other => panic!("expected Failed without a helper, got {other:?}"),
-        }
+    async fn ipv6_default_loopback_is_already_absent_without_calling_the_helper() {
+        // `::1` is the IPv6 loopback that is always accessible without an
+        // interface alias, so it must be treated the same as 127.0.0.1
+        // rather than falling through to the helper-required Windows branch.
+        assert_eq!(
+            remove_loopback_address("::1").await.unwrap(),
+            LoopbackRelease::AlreadyAbsent
+        );
     }
 
     #[cfg(test)]

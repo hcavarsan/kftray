@@ -83,11 +83,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [selectedConfigs, configs, configsByContext])
 
   useEffect(() => {
-    setSelectedConfigs(prev =>
-      prev
+    setSelectedConfigs(prev => {
+      const next = prev
         .map(selected => configs.find(c => c.id === selected.id))
-        .filter((config): config is Config => config !== undefined),
-    )
+        .filter((config): config is Config => config !== undefined)
+
+      if (
+        next.length === prev.length &&
+        next.every((config, index) => config.id === prev[index].id)
+      ) {
+        return prev
+      }
+
+      return next
+    })
   }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
@@ -142,16 +151,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   )
 
   const handleSelectionChange = useCallback(
-    (config: Config, isSelected: boolean) => {
-      setSelectedConfigs(prev =>
-        isSelected
-          ? prev.some(c => c.id === config.id)
-            ? prev
-            : [...prev, config]
-          : prev.filter(c => c.id !== config.id),
-      )
+    (id: number, isSelected: boolean) => {
+      setSelectedConfigs(prev => {
+        if (!isSelected) {
+          return prev.filter(c => c.id !== id)
+        }
+        if (prev.some(c => c.id === id)) {
+          return prev
+        }
+        const config = configs.find(c => c.id === id)
+
+        return config ? [...prev, config] : prev
+      })
     },
-    [setSelectedConfigs],
+    [configs, setSelectedConfigs],
   )
 
   return (

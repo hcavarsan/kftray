@@ -644,7 +644,9 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config, destination: Opti
 /// `restore_uncertain_targets` resurrect it after the in-memory record was
 /// already cleared. The in-memory record is what `delete_configs_if_idle`
 /// and stop-all actually consult.
-pub async fn settle_cluster_obligation(config_id: i64, destination: &str) -> Result<(), String> {
+pub async fn settle_cluster_obligation(
+    config_id: i64, destination: &str, mode: DatabaseMode,
+) -> Result<(), String> {
     let matching: Vec<PendingTarget> = pending_cleanup_targets(config_id)
         .into_iter()
         .filter(|target| target.cluster && target.destination.as_deref() == Some(destination))
@@ -654,7 +656,7 @@ pub async fn settle_cluster_obligation(config_id: i64, destination: &str) -> Res
             config_id,
             &target.config,
             target.destination.as_deref(),
-            DatabaseMode::File,
+            mode,
         )
         .await
         .map_err(|error| {
@@ -1709,6 +1711,10 @@ pub async fn reconcile_pending_cleanup(
     mode: DatabaseMode, deadline: Duration, exclude: &HashSet<i64>,
 ) -> Vec<i64> {
     const RETRY_DELAY: Duration = Duration::from_secs(2);
+    // As `remaining` shrinks toward zero near the deadline, `RETRY_DELAY.
+    // min(remaining)` degenerates into a near-zero sleep, spinning on the
+    // CPU for the last stretch of the shutdown budget.
+    const MIN_RETRY_DELAY: Duration = Duration::from_millis(50);
 
     // Creates abandoned by an earlier run are picked up here: nothing else in
     // this process knows about them.
@@ -1746,7 +1752,7 @@ pub async fn reconcile_pending_cleanup(
 
                 return unresolved_cleanup(mode, exclude).await;
             };
-            tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
+            tokio::time::sleep(RETRY_DELAY.min(remaining).max(MIN_RETRY_DELAY)).await;
             continue;
         }
         let Some(remaining) = until.checked_duration_since(Instant::now()) else {
@@ -1756,7 +1762,7 @@ pub async fn reconcile_pending_cleanup(
             );
             return unresolved_cleanup(mode, exclude).await;
         };
-        tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
+        tokio::time::sleep(RETRY_DELAY.min(remaining).max(MIN_RETRY_DELAY)).await;
         for id in ids {
             // Each attempt carries the remaining budget: a stop can wait on the
             // lifecycle lock and several requests, and the caller's deadline
@@ -2992,14 +2998,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settle_clears_the_durable_record_under_the_callers_own_mode() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            id: Some(730_414),
+            namespace: "shared".to_string(),
+            service: Some("relay".to_string()),
+            workload_type: Some("expose".to_string()),
+            ..Config::default()
+        };
+        let id = config.id.unwrap();
+        let destination = Some("https://a".to_string());
+        PENDING_CLEANUP.remove(&id);
+
+        // The durable key is mode-scoped: persisted under `Memory` here, the
+        // same as a memory-mode session's own record would be.
+        persist_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let key = uncertain_create_key(id, &config, destination.as_deref(), DatabaseMode::Memory);
+        record_target(id, config.clone(), None, true, false, destination.clone());
+
+        settle_cluster_obligation(id, "https://a", DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let stored =
+            kftray_commons::utils::settings::get_setting_with_mode(&key, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        assert!(
+            stored.is_none(),
+            "settle_cluster_obligation must clear the durable record under the caller's own \
+             mode, not always DatabaseMode::File: a memory-mode session's obligation would \
+             otherwise survive and be resurrected by the next `restore_uncertain_targets`"
+        );
+        assert!(
+            pending_cleanup_targets(id).is_empty(),
+            "the in-memory cluster obligation must be settled too"
+        );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
     async fn settle_forgets_the_record_only_for_a_matching_destination() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_dir = tempfile::tempdir().unwrap();
         let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
         unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
-        // `settle_cluster_obligation` always deletes through the file-mode
-        // database regardless of the caller's own mode, so the isolated
-        // config dir needs its schema before the durable delete can succeed.
+        // The durable delete goes through the file-mode database, so the
+        // isolated config dir needs its schema before it can succeed.
         kftray_commons::utils::db::init().await.unwrap();
 
         let config = Config {
@@ -3031,7 +3079,9 @@ mod tests {
             Some("https://b".to_string()),
         );
 
-        settle_cluster_obligation(id, "https://a").await.unwrap();
+        settle_cluster_obligation(id, "https://a", DatabaseMode::File)
+            .await
+            .unwrap();
 
         if let Some(original) = original_config_dir {
             unsafe { std::env::set_var("KFTRAY_CONFIG", original) };

@@ -25,6 +25,41 @@ use crate::messages::{
 /// parses means something is wrong, not that more reading will fix it.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
+/// Outcome of trying to parse one `HelperResponse` out of a buffer that may
+/// still be growing.
+enum FramingOutcome {
+    /// A complete response, followed by nothing but whitespace.
+    Complete(HelperResponse),
+    /// Not enough bytes yet to tell whether this is a response.
+    Incomplete,
+    /// A complete value followed by other bytes, or JSON that no amount of
+    /// further reading would make valid.
+    Invalid,
+}
+
+/// Looks for exactly one `HelperResponse` at the start of `buffer`, the
+/// same way the server's `parse_framed_request` looks for a request:
+/// a `StreamDeserializer` rather than parsing the whole buffer as one
+/// value, so trailing bytes are diagnosed instead of looping until the
+/// 30s timeout, and a growing buffer is walked once per call instead of
+/// re-parsed from byte zero after every read.
+fn parse_framed_response(buffer: &[u8]) -> FramingOutcome {
+    let mut stream = serde_json::Deserializer::from_slice(buffer).into_iter::<HelperResponse>();
+    match stream.next() {
+        Some(Ok(response)) => {
+            let trailing = &buffer[stream.byte_offset()..];
+            if trailing.iter().all(u8::is_ascii_whitespace) {
+                FramingOutcome::Complete(response)
+            } else {
+                FramingOutcome::Invalid
+            }
+        }
+        Some(Err(e)) if e.is_eof() => FramingOutcome::Incomplete,
+        Some(Err(_)) => FramingOutcome::Invalid,
+        None => FramingOutcome::Incomplete,
+    }
+}
+
 pub fn is_socket_available(socket_path: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -242,9 +277,21 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                     )));
                 }
 
-                if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
-                    debug!("Response appears complete");
-                    break;
+                match parse_framed_response(&buffer) {
+                    FramingOutcome::Complete(response) => {
+                        debug!("Response appears complete");
+                        return Ok(response);
+                    }
+                    FramingOutcome::Invalid => {
+                        debug!(
+                            "Response is malformed or has trailing bytes, failing fast instead \
+                             of waiting out the timeout"
+                        );
+                        return Err(HelperError::Communication(
+                            "Received a malformed response".into(),
+                        ));
+                    }
+                    FramingOutcome::Incomplete => {}
                 }
             }
             Err(e)
@@ -294,20 +341,20 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
         return Err(HelperError::Communication("Empty response received".into()));
     }
 
-    match serde_json::from_slice::<HelperResponse>(&buffer) {
-        Ok(response) => {
+    match parse_framed_response(&buffer) {
+        FramingOutcome::Complete(response) => {
             debug!("Successfully parsed response: {:?}", response.result);
             Ok(response)
         }
-        Err(e) => {
-            debug!("Failed to parse response JSON: {e}");
+        _ => {
+            debug!("Failed to parse response JSON");
             debug!(
                 "Response content (first 100 bytes): {:?}",
                 String::from_utf8_lossy(&buffer[..std::cmp::min(buffer.len(), 100)])
             );
-            Err(HelperError::Communication(format!(
-                "Failed to parse response: {e}"
-            )))
+            Err(HelperError::Communication(
+                "Failed to parse response".into(),
+            ))
         }
     }
 }
@@ -369,9 +416,21 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
                     )));
                 }
 
-                if serde_json::from_slice::<HelperResponse>(&buffer).is_ok() {
-                    debug!("Response appears complete");
-                    break;
+                match parse_framed_response(&buffer) {
+                    FramingOutcome::Complete(response) => {
+                        debug!("Response appears complete");
+                        return Ok(response);
+                    }
+                    FramingOutcome::Invalid => {
+                        debug!(
+                            "Response is malformed or has trailing bytes, failing fast instead \
+                             of waiting out the timeout"
+                        );
+                        return Err(HelperError::Communication(
+                            "Received a malformed response".into(),
+                        ));
+                    }
+                    FramingOutcome::Incomplete => {}
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -419,21 +478,20 @@ async fn read_windows_response<T: tokio::io::AsyncRead + Unpin>(
         return Err(HelperError::Communication("Empty response received".into()));
     }
 
-    match serde_json::from_slice::<HelperResponse>(&buffer) {
-        Ok(response) => {
+    match parse_framed_response(&buffer) {
+        FramingOutcome::Complete(response) => {
             debug!("Successfully parsed response: {:?}", response.result);
             Ok(response)
         }
-        Err(e) => {
-            debug!("Failed to parse response JSON: {}", e);
+        _ => {
+            debug!("Failed to parse response JSON");
             debug!(
                 "Response content (first 100 bytes): {:?}",
                 String::from_utf8_lossy(&buffer[..std::cmp::min(buffer.len(), 100)])
             );
-            Err(HelperError::Communication(format!(
-                "Failed to parse response: {}",
-                e
-            )))
+            Err(HelperError::Communication(
+                "Failed to parse response".into(),
+            ))
         }
     }
 }
@@ -538,6 +596,51 @@ mod tests {
             written < target,
             "the server side must block on a full send buffer once the cap stops the client \
              consuming, not finish sending all {target} bytes unchecked: sent {written}"
+        );
+    }
+
+    #[test]
+    fn trailing_garbage_after_a_complete_response_fails_fast() {
+        let socket_path = std::env::temp_dir().join(format!(
+            "kft-trail-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        // The connection is kept open well past when the client must have
+        // already returned: this proves the trailing bytes are diagnosed
+        // from the buffer itself, not merely detected once EOF finally
+        // arrives after nothing else in `buffer` ever parses.
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut bytes =
+                serde_json::to_vec(&HelperResponse::success("req-1".to_string())).unwrap();
+            bytes.extend_from_slice(b"garbage-after-response");
+            io::Write::write_all(&mut conn, &bytes).unwrap();
+            std::thread::sleep(Duration::from_secs(4));
+        });
+
+        let stream = UnixStream::connect(&socket_path).unwrap();
+        let start = Instant::now();
+        let result = read_unix_response(stream);
+        let elapsed = start.elapsed();
+
+        server.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(
+            result.is_err(),
+            "a response followed by trailing bytes must be diagnosed as malformed: {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "trailing bytes must be diagnosed from the buffer itself and fail fast, not wait \
+             for EOF or the 30s response timeout, took {elapsed:?}"
         );
     }
 }

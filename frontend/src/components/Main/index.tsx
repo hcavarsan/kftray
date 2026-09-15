@@ -54,7 +54,11 @@ async function runWithLimit<T, R>(
     while (nextIndex < items.length) {
       const currentIndex = nextIndex
       nextIndex += 1
-      results[currentIndex] = await worker(items[currentIndex])
+      try {
+        results[currentIndex] = await worker(items[currentIndex])
+      } catch (error) {
+        console.error('runWithLimit worker failed:', error)
+      }
     }
   }
 
@@ -167,11 +171,32 @@ const KFTray = () => {
 
       if (version === configRefreshVersion.current) {
         setConfigs(updatedConfigs)
+        // A grace-timeout can mark a reservation `timedOut` when its invoke
+        // never settles; once the backend state catches up with the action
+        // that reservation was waiting for, release it instead of leaving
+        // the row disabled for the lifetime of the app.
+        const runningById = new Map(
+          updatedConfigs.map(config => [config.id, config.is_running]),
+        )
+
+        for (const [id, pending] of pendingConfigActionsRef.current) {
+          if (!pending.timedOut) {
+            continue
+          }
+          const isRunning = runningById.get(id)
+
+          if (
+            (pending.action === 'starting' && isRunning === true) ||
+            (pending.action === 'stopping' && isRunning === false)
+          ) {
+            clearPending(id, pending.token)
+          }
+        }
       }
     } catch (error) {
       console.error('Error updating configs:', error)
     }
-  }, [fetchConfigsWithState])
+  }, [fetchConfigsWithState, clearPending])
 
   // Applies an authoritative local change and invalidates any refresh that is
   // still in flight, so a stale fetch cannot resurrect what this just removed
@@ -194,6 +219,7 @@ const KFTray = () => {
     )
   }, [])
 
+  const graceTimeoutsRef = useRef<Set<NodeJS.Timeout>>(new Set())
   const debouncedUpdateTimer = useRef<NodeJS.Timeout | null>(null)
   const debouncedUpdateConfigs = useCallback(() => {
     if (debouncedUpdateTimer.current) {
@@ -203,6 +229,16 @@ const KFTray = () => {
       updateConfigsWithState()
     }, 100)
   }, [updateConfigsWithState])
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(debouncedUpdateTimer.current ?? undefined)
+      for (const timeout of graceTimeoutsRef.current) {
+        clearTimeout(timeout)
+      }
+      graceTimeoutsRef.current.clear()
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -537,6 +573,24 @@ const KFTray = () => {
 
         if (runningConfig) {
           try {
+            if (pendingToken !== undefined) {
+              const pending = pendingConfigActionsRef.current.get(
+                configToSave.id,
+              )
+
+              if (
+                pending?.token === pendingToken &&
+                pending.action !== 'starting'
+              ) {
+                pendingConfigActionsRef.current.set(configToSave.id, {
+                  ...pending,
+                  action: 'starting',
+                })
+                setPendingConfigActions(
+                  new Map(pendingConfigActionsRef.current),
+                )
+              }
+            }
             await startPortForwardingForConfig(runningConfig, pendingToken)
             toaster.error({
               title: 'Error',
@@ -760,7 +814,9 @@ const KFTray = () => {
   const abortStartOperation = useCallback(() => {
     if (startAbortControllerRef.current) {
       startAbortControllerRef.current.abort()
+      startAbortControllerRef.current = null
     }
+    setIsInitiating(false)
     toaster.info({
       title: 'Aborted',
       description: 'Queued starts cancelled. Active starts will finish.',
@@ -772,7 +828,9 @@ const KFTray = () => {
   const abortStopOperation = useCallback(() => {
     if (stopAbortControllerRef.current) {
       stopAbortControllerRef.current.abort()
+      stopAbortControllerRef.current = null
     }
+    setIsStopping(false)
     toaster.info({
       title: 'Aborted',
       description: 'Queued stops cancelled. Active stops will finish.',
@@ -952,7 +1010,9 @@ const KFTray = () => {
             duration: 3000,
           })
 
-          setTimeout(() => {
+          const graceTimeout = setTimeout(() => {
+            graceTimeoutsRef.current.delete(graceTimeout)
+
             let markedTimedOut = false
 
             for (const id of unresolved) {
@@ -971,6 +1031,8 @@ const KFTray = () => {
               setPendingConfigActions(new Map(pendingConfigActionsRef.current))
             }
           }, DEADLINE_GRACE_MS)
+
+          graceTimeoutsRef.current.add(graceTimeout)
 
           return
         }

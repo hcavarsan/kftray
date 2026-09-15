@@ -106,7 +106,7 @@ impl HostfileManager {
     /// decided here, since forgetting them is a durability decision the
     /// caller owns.
     fn add_ssl_host_entry(
-        &self, config_id: &str, alias: &str,
+        &self, config_id: &str, alias: &str, protected: &[HostEntry],
     ) -> Result<(String, String), SslWriteError> {
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -135,8 +135,14 @@ impl HostfileManager {
             // The second write may have partially landed even though the
             // client saw an error (a reply lost after the helper's write
             // succeeded): both ids are rolled back, not just the first.
-            let rollback =
-                self.remove_host_entries(&[https_id.as_str(), https_local_id.as_str()], &[], &[]);
+            // `protected` keeps this rollback from pruning an unmarked
+            // legacy copy another still-forwarding configuration needs,
+            // the same aliases `remove_config_host_entries` protects.
+            let rollback = self.remove_host_entries(
+                &[https_id.as_str(), https_local_id.as_str()],
+                &[],
+                protected,
+            );
             let left_on_disk = rollback.is_err();
             if let Err(cleanup_error) = rollback {
                 warn!(
@@ -216,7 +222,7 @@ impl HostfileManager {
         // gone, since the helper does not prune legacy copies for it: those
         // are attributed below through the mappings read above.
         match self.direct_manager.remove_host_entries(ids, protected) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
                 let Some(helper) = self.helper() else {
                     return Err(error);
@@ -398,11 +404,19 @@ impl HostfileManager {
         if persisted.is_empty() {
             return ids;
         }
-        match (
-            DirectHostfileManager::helper_section(),
-            DirectHostfileManager::direct_section(),
-        ) {
-            (Ok(helper_section), Ok(direct_section)) => {
+        // Both reads hold the cross-process hosts lock (`with_hosts_lock` ->
+        // `open_locked`, up to 50 retries at a 15s budget each) and are
+        // fully blocking; run them on the blocking pool instead of parking
+        // this Tokio worker for however long a contended lock takes.
+        let sections = tokio::task::spawn_blocking(|| {
+            (
+                DirectHostfileManager::helper_section(),
+                DirectHostfileManager::direct_section(),
+            )
+        })
+        .await;
+        match sections {
+            Ok((Ok(helper_section), Ok(direct_section))) => {
                 let expected = expected_ssl_entries(&persisted, mode).await;
                 let (verified, stale) = persisted_ids_verified_on_disk(
                     persisted,
@@ -415,9 +429,10 @@ impl HostfileManager {
                 }
                 ids.extend(verified);
             }
-            // A read failure means what is on disk cannot be told, so every
-            // persisted id stays attributable rather than risk dropping
-            // protection for a line that is actually there.
+            // A read failure, or the blocking task itself panicking, means
+            // what is on disk cannot be told, so every persisted id stays
+            // attributable rather than risk dropping protection for a line
+            // that is actually there.
             _ => ids.extend(persisted),
         }
         ids
@@ -724,10 +739,28 @@ pub async fn add_ssl_host_entry(
     persist_ssl_id_written(&https_id, mode).await;
     persist_ssl_id_written(&https_local_id, mode).await;
 
+    // What a rollback of a failed second write must not prune: the same
+    // "still forwarding" protection `remove_config_host_entries` builds,
+    // so a failed write here cannot delete another configuration's
+    // unmarked legacy alias out from under it.
+    let this_id: Option<i64> = config_id.parse().ok();
+    let ssl_ids_written = HOSTFILE_MANAGER
+        .ssl_ids_written_including_persisted(mode)
+        .await;
+    let protected: Vec<HostEntry> = crate::kube::stop::forwarding_configs(mode)
+        .await
+        .iter()
+        .filter(|other| other.id != this_id)
+        .flat_map(|other| {
+            config_host_entries(other.id.unwrap_or_default(), Some(other), &ssl_ids_written)
+        })
+        .map(|(_, entry)| entry)
+        .collect();
+
     let config_id_owned = config_id.to_string();
     let alias_owned = alias.to_string();
     let result = tokio::task::spawn_blocking(move || {
-        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id_owned, &alias_owned)
+        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id_owned, &alias_owned, &protected)
     })
     .await
     .map_err(|e| std::io::Error::other(format!("add_ssl_host_entry task panicked: {e}")))?;

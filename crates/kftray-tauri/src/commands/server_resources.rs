@@ -264,8 +264,13 @@ async fn list_pods_in_namespace(
 ) -> Result<Vec<ServerResource>, String> {
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
+    // Same treatment as deployments, services and ingresses below: selects on
+    // `config_id` existing rather than listing every pod in the namespace.
+    // Both proxy and expose manifests always carry `config_id` on the pod
+    // itself (directly, or through the Deployment's pod template), so this
+    // stays cheap without missing anything this installation could own.
     let pods = pods_api
-        .list(&ListParams::default())
+        .list(&ListParams::default().labels("config_id"))
         .await
         .map_err(|e| format!("Failed to list pods: {e}"))?;
 
@@ -801,8 +806,12 @@ pub async fn delete_kftray_resource(
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    if let Err(e) =
-                        kftray_portforward::kube::settle_cluster_obligation(id, destination).await
+                    if let Err(e) = kftray_portforward::kube::settle_cluster_obligation(
+                        id,
+                        destination,
+                        DatabaseMode::File,
+                    )
+                    .await
                     {
                         error!(
                             "Failed to settle cluster obligation for config {id} after manual \

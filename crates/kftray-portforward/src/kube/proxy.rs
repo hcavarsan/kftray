@@ -14,7 +14,6 @@ use dashmap::{
 };
 use futures::{
     StreamExt,
-    TryStreamExt,
     stream,
 };
 use k8s_openapi::api::{
@@ -52,6 +51,7 @@ use kube::api::{
 };
 use kube_runtime::WatchStreamExt;
 use log::{
+    debug,
     error,
     info,
 };
@@ -200,18 +200,7 @@ pub async fn deploy_and_forward_pod_with_mode(
             .into_iter()
             .map(|(config, error)| super::start::start_failure_response(&config, error)),
     );
-    finish_start_batch(responses)
-}
-
-/// A mixed batch keeps its per-config responses (including the dynamically
-/// assigned local ports of the configs that did start) as `Ok`; only a batch
-/// where every config failed is reported as `Err`.
-fn finish_start_batch(responses: Vec<CustomResponse>) -> Result<Vec<CustomResponse>, String> {
-    if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
-        let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
-        return Err(errors.join("; "));
-    }
-    Ok(responses)
+    super::start::finish_start_batch(responses)
 }
 
 async fn process_single_proxy_config(
@@ -672,6 +661,7 @@ async fn wait_for_relay_pod(
         pods.clone(),
         kube_runtime::watcher::Config::default().labels(label_selector),
     )
+    .default_backoff()
     .applied_objects();
     futures::pin_mut!(watcher);
     let result = tokio::select! {
@@ -680,7 +670,14 @@ async fn wait_for_relay_pod(
         result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
             async {
-                while let Some(pod) = watcher.try_next().await.map_err(|error| error.to_string())? {
+                while let Some(event) = watcher.next().await {
+                    let pod = match event {
+                        Ok(pod) => pod,
+                        Err(error) => {
+                            debug!("Retrying the proxy relay pod watch: {error}");
+                            continue;
+                        }
+                    };
                     if relay_started(Some(&pod), container_name, customized) {
                         return pod
                             .metadata
@@ -1018,60 +1015,6 @@ mod tests {
         // returning `Ok` with a single failed response (finding 29).
         let error = deploy_and_forward_pod(vec![config]).await.unwrap_err();
         assert!(!error.is_empty());
-    }
-
-    #[test]
-    fn finish_start_batch_errors_when_every_config_failed() {
-        let responses = vec![
-            crate::kube::start::start_failure_response(
-                &Config {
-                    id: Some(1),
-                    ..Default::default()
-                },
-                "boom-1".to_string(),
-            ),
-            crate::kube::start::start_failure_response(
-                &Config {
-                    id: Some(2),
-                    ..Default::default()
-                },
-                "boom-2".to_string(),
-            ),
-        ];
-
-        let error = finish_start_batch(responses).unwrap_err();
-        assert!(error.contains("boom-1"));
-        assert!(error.contains("boom-2"));
-    }
-
-    #[test]
-    fn finish_start_batch_stays_ok_for_a_mixed_batch() {
-        let succeeded = CustomResponse {
-            id: Some(1),
-            service: String::new(),
-            namespace: String::new(),
-            local_port: 8080,
-            remote_port: 8080,
-            context: String::new(),
-            stdout: String::new(),
-            stderr: String::new(),
-            status: 0,
-            protocol: "tcp".to_string(),
-        };
-        let failed = crate::kube::start::start_failure_response(
-            &Config {
-                id: Some(2),
-                ..Default::default()
-            },
-            "boom".to_string(),
-        );
-
-        let responses = finish_start_batch(vec![succeeded, failed]).unwrap();
-        assert_eq!(responses.len(), 2);
-        assert_eq!(responses[0].id, Some(1));
-        assert_eq!(responses[0].status, 0);
-        assert_eq!(responses[1].id, Some(2));
-        assert_ne!(responses[1].status, 0);
     }
 
     #[test]

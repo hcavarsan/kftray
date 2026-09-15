@@ -46,22 +46,22 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     if !pod_manifest_file_exists() {
         create_server_config_manifest()?;
-    } else {
-        migrate_pod_manifest_if_previous_default()?;
+    } else if let Err(error) = migrate_pod_manifest_if_previous_default() {
+        warn!("Failed to migrate pod manifest: {error}");
     }
 
     if !proxy_deployment_manifest_exists() {
         info!("Creating proxy deployment manifest");
         create_proxy_deployment_manifest()?;
-    } else {
-        migrate_proxy_deployment_manifest_if_previous_default()?;
+    } else if let Err(error) = migrate_proxy_deployment_manifest_if_previous_default() {
+        warn!("Failed to migrate proxy deployment manifest: {error}");
     }
 
     if !expose_deployment_manifest_exists() {
         info!("Creating expose deployment manifest");
         create_expose_deployment_manifest()?;
-    } else {
-        migrate_expose_deployment_manifest_if_previous_default()?;
+    } else if let Err(error) = migrate_expose_deployment_manifest_if_previous_default() {
+        warn!("Failed to migrate expose deployment manifest: {error}");
     }
 
     if !expose_service_manifest_exists() {

@@ -112,7 +112,8 @@ impl PortForwardRunner {
                 if successful_config_ids.is_empty() {
                     eprintln!("Error: All port forwards failed to start in non-interactive mode");
                     eprintln!("Check the errors above for details");
-                    std::process::exit(1);
+                    Self::reconcile_before_exit(mode).await;
+                    return Err("all port forwards failed to start in non-interactive mode".into());
                 } else {
                     eprintln!(
                         "Note: {} port forward(s) started successfully",
@@ -133,12 +134,36 @@ impl PortForwardRunner {
         if started_configs.is_empty() {
             eprintln!("Error: No configurations found");
             eprintln!("Ensure config source contains valid port forward configurations");
-            std::process::exit(1);
+            Self::reconcile_before_exit(mode).await;
+            return Err("no configurations found to run in non-interactive mode".into());
         }
 
         Self::print_active_configurations(&started_configs);
         Self::wait_for_shutdown_signal(&started_configs, mode).await?;
         Ok(())
+    }
+
+    /// Reconciles anything a start abandoned before an early, non-interactive
+    /// exit — the same reconcile pass the interactive shutdown paths always
+    /// run before terminating, so exiting here still reaps a relay
+    /// Deployment, an address claim, or a hosts entry a partial start left
+    /// behind.
+    async fn reconcile_before_exit(mode: DatabaseMode) {
+        let (still_owed, cleanup_result) = crate::core::port_forward::reconcile_shutdown_cleanup(
+            mode,
+            &HashSet::new(),
+            crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT,
+        )
+        .await;
+        if !still_owed.is_empty() {
+            eprintln!(
+                "Warning: cleanup for configuration(s) {still_owed:?} did not complete; they \
+                 stay marked running and are retried on the next stop"
+            );
+        }
+        if let Err(error) = cleanup_result {
+            eprintln!("Warning: failed to clean up configuration states: {error}");
+        }
     }
 
     async fn handle_save_only_non_interactive() -> Result<(), Box<dyn std::error::Error>> {
@@ -203,6 +228,10 @@ impl PortForwardRunner {
                         warn!("Failed to install Ctrl+C handler: {error}");
                         match sigterm.as_mut() {
                             Some(sigterm) => {
+                                eprintln!(
+                                    "Warning: failed to install a Ctrl+C handler ({error}); \
+                                     waiting for SIGTERM instead"
+                                );
                                 sigterm.recv().await;
                             }
                             None => {
@@ -227,19 +256,66 @@ impl PortForwardRunner {
                     }
                 } => {}
             }
+            println!("\nStopping port forwards");
+
+            // A second signal during the stop below is raced against it
+            // instead of being silently swallowed by tokio's still-installed
+            // handlers: without this, a user stuck waiting on a stalled
+            // recovery lock or cluster delete has no way to abort short of
+            // SIGKILL.
+            let stop = Self::stop_all_port_forwards(configs, mode);
+            tokio::pin!(stop);
+            tokio::select! {
+                result = &mut stop => result,
+                _ = async {
+                    match sigterm.as_mut() {
+                        Some(sigterm) => {
+                            tokio::select! {
+                                _ = signal::ctrl_c() => {}
+                                _ = sigterm.recv() => {}
+                            }
+                        }
+                        None => {
+                            let _ = signal::ctrl_c().await;
+                        }
+                    }
+                } => {
+                    eprintln!(
+                        "Warning: a second interrupt was received; exiting without waiting \
+                         for the stop to finish. Stops already dispatched keep running \
+                         detached in the background."
+                    );
+                    Err("shutdown interrupted by a second signal before stopping finished".into())
+                }
+            }
         }
         #[cfg(not(unix))]
-        if let Err(error) = signal::ctrl_c().await {
-            warn!("Failed to install Ctrl+C handler: {error}");
-            eprintln!(
-                "Error: no shutdown signal handler could be installed; stopping port forwards \
-                 and exiting"
-            );
-            Self::stop_all_port_forwards(configs, mode).await?;
-            return Err("no shutdown signal handler could be installed".into());
+        {
+            if let Err(error) = signal::ctrl_c().await {
+                warn!("Failed to install Ctrl+C handler: {error}");
+                eprintln!(
+                    "Error: no shutdown signal handler could be installed; stopping port \
+                     forwards and exiting"
+                );
+                Self::stop_all_port_forwards(configs, mode).await?;
+                return Err("no shutdown signal handler could be installed".into());
+            }
+            println!("\nStopping port forwards");
+
+            let stop = Self::stop_all_port_forwards(configs, mode);
+            tokio::pin!(stop);
+            tokio::select! {
+                result = &mut stop => result,
+                _ = signal::ctrl_c() => {
+                    eprintln!(
+                        "Warning: a second interrupt was received; exiting without waiting \
+                         for the stop to finish. Stops already dispatched keep running \
+                         detached in the background."
+                    );
+                    Err("shutdown interrupted by a second signal before stopping finished".into())
+                }
+            }
         }
-        println!("\nStopping port forwards");
-        Self::stop_all_port_forwards(configs, mode).await
     }
 
     async fn stop_all_port_forwards(
@@ -247,32 +323,36 @@ impl PortForwardRunner {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let dispatched_ids: HashSet<i64> = configs.iter().filter_map(|config| config.id).collect();
 
-        let tasks = stream::iter(dispatched_ids.iter().copied())
+        // Every stop is spawned onto the runtime right here, before any
+        // waiting begins: a config past whatever `drain_stop_tasks` awaits
+        // concurrently is not left queued behind a lazily polled stream, so
+        // it starts stopping immediately instead of only once an earlier
+        // stop's join future happens to be polled.
+        let handles: Vec<(i64, tokio::task::JoinHandle<Result<(), String>>)> = dispatched_ids
+            .iter()
+            .copied()
             .map(|config_id| {
                 let handle = tokio::spawn(async move {
                     Self::stop_single_port_forward(config_id, mode)
                         .await
                         .map_err(|error| format!("Config {config_id}: {error}"))
                 });
-                async move {
-                    let result = match handle.await {
-                        Ok(result) => result,
-                        Err(join_error) => Err(format!(
-                            "Config {config_id}: stop task panicked: {join_error}"
-                        )),
-                    };
-                    (config_id, result)
-                }
+                (config_id, handle)
             })
-            .buffer_unordered(16);
+            .collect();
 
-        // Bounded like the reconciliation pass below: a stuck stop must not
-        // keep this process alive forever. Each stop above runs as its own
-        // spawned task, so past the budget it keeps running to completion
-        // detached in the background instead of being cancelled mid-cleanup;
-        // only the future joining it here is dropped.
-        let (results, completed_ids, drained_ok) =
-            Self::drain_stop_tasks(tasks, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;
+        // Both phases below (this drain and the reconcile pass further down)
+        // share one overall deadline instead of each getting its own full
+        // `CLEANUP_RECONCILE_TIMEOUT`: a caller bounded by a supervisor's own
+        // stop timeout (systemd, Docker, Kubernetes) needs the total wait
+        // bounded too, not doubled.
+        let deadline_at =
+            tokio::time::Instant::now() + crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT;
+        let (results, completed_ids, drained_ok) = Self::drain_stop_tasks(
+            handles,
+            deadline_at.saturating_duration_since(tokio::time::Instant::now()),
+        )
+        .await;
 
         let mut stop_errors = Vec::new();
         let mut stopped_count = 0;
@@ -315,12 +395,16 @@ impl PortForwardRunner {
         // still mid-stop above are excluded here too: they are still running
         // detached and hold their per-config recovery lock, so reconciling or
         // re-stopping them here would only contend for it.
-        let (still_owed, cleanup_result) =
-            crate::core::port_forward::reconcile_shutdown_cleanup(mode, &unfinished_stop_ids).await;
+        let (still_owed, cleanup_result) = crate::core::port_forward::reconcile_shutdown_cleanup(
+            mode,
+            &unfinished_stop_ids,
+            deadline_at.saturating_duration_since(tokio::time::Instant::now()),
+        )
+        .await;
         if !still_owed.is_empty() {
             let message = format!(
-                "cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
-                 running and are retried on the next stop"
+                "cleanup for configuration(s) {still_owed:?} did not complete; they stay \
+                 marked running and are retried on the next stop"
             );
             eprintln!("Warning: {message}");
             failures.push(message);
@@ -347,34 +431,46 @@ impl PortForwardRunner {
             .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
     }
 
-    /// Drains `tasks` under `deadline` and returns before doing anything
-    /// else. `tasks` is owned by this function, so if `deadline` elapses
-    /// while items are still buffered inside it, dropping it here only drops
-    /// whatever future is joining each item, not the underlying work: the
-    /// caller (`stop_all_port_forwards`) wraps each stop in `tokio::spawn`
-    /// before handing it to this function, so a stop still in flight past
-    /// the deadline keeps running to completion detached in the background
+    /// Awaits every already-spawned handle, each bounded by whatever of
+    /// `deadline` remains after the ones before it. Every handle was spawned
+    /// by the caller (`stop_all_port_forwards`) before this function was
+    /// ever called, so a stop still running when its slice of the deadline
+    /// elapses keeps running to completion detached in the background
     /// instead of being cancelled mid-cleanup (which could leave a relay or
-    /// an address claim half released). The caller learns which ids never
-    /// reported back (`dispatched_ids.difference(&completed_ids)`) and
-    /// excludes them from cleanup work that would otherwise contend for
-    /// their per-config recovery lock.
-    pub(crate) async fn drain_stop_tasks<S>(
-        mut tasks: S, deadline: std::time::Duration,
-    ) -> (Vec<(i64, Result<(), String>)>, HashSet<i64>, bool)
-    where
-        S: futures::stream::Stream<Item = (i64, Result<(), String>)> + Unpin,
-    {
+    /// an address claim half released): the `tokio::time::timeout` here only
+    /// drops the future joining it, not the spawned task itself. The caller
+    /// learns which ids never reported back
+    /// (`dispatched_ids.difference(&completed_ids)`) and excludes them from
+    /// cleanup work that would otherwise contend for their per-config
+    /// recovery lock.
+    pub(crate) async fn drain_stop_tasks(
+        handles: Vec<(i64, tokio::task::JoinHandle<Result<(), String>>)>,
+        deadline: std::time::Duration,
+    ) -> (Vec<(i64, Result<(), String>)>, HashSet<i64>, bool) {
         let mut results = Vec::new();
         let mut completed_ids: HashSet<i64> = HashSet::new();
-        let drained = tokio::time::timeout(deadline, async {
-            while let Some(item) = tasks.next().await {
-                completed_ids.insert(item.0);
-                results.push(item);
+        let deadline_at = tokio::time::Instant::now() + deadline;
+        let mut drained_ok = true;
+        for (id, handle) in handles {
+            let remaining = deadline_at.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, handle).await {
+                Ok(Ok(result)) => {
+                    completed_ids.insert(id);
+                    results.push((id, result));
+                }
+                Ok(Err(join_error)) => {
+                    completed_ids.insert(id);
+                    results.push((
+                        id,
+                        Err(format!("Config {id}: stop task panicked: {join_error}")),
+                    ));
+                }
+                Err(_) => {
+                    drained_ok = false;
+                }
             }
-        })
-        .await;
-        (results, completed_ids, drained.is_ok())
+        }
+        (results, completed_ids, drained_ok)
     }
 
     async fn ensure_ssl_setup_with_configs(

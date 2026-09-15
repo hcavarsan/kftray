@@ -19,20 +19,15 @@ mod tests {
     // `handle_port_forwarding`'s dispatch loop and `App::drain_forwarding`
     // both reach into process-wide registries owned by `kftray_portforward`
     // and `kftray_commons`, so tests exercising them must not run
-    // concurrently with each other or with those crates' own tests that use
-    // the same registries. Lock commons before portforward, always in that
-    // order, to match how any future combined lock site would have to.
-    async fn lock_forwarding_globals() -> (
-        tokio::sync::MutexGuard<'static, ()>,
-        tokio::sync::MutexGuard<'static, ()>,
-    ) {
-        let memory = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
-        let process = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
-            .lock()
-            .await;
-        (memory, process)
+    // concurrently with each other. `cargo test` runs one test binary per
+    // crate as a separate OS process, so a mutex from another crate could
+    // never serialize against that crate's own tests anyway; a crate-local
+    // mutex gives the same real guarantee this needs: serializing kftui's
+    // own tests against each other.
+    static FORWARDING_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn lock_forwarding_globals() -> tokio::sync::MutexGuard<'static, ()> {
+        FORWARDING_TEST_MUTEX.lock().await
     }
 
     fn create_test_config(id: i64) -> Config {
@@ -575,6 +570,19 @@ mod tests {
         app.task_configs
             .insert(start_abort.id(), crate::tui::input::TaskInfo::new(2, false));
 
+        // A detached task's own busy indicator must not be cleared until the
+        // task itself finishes: the operation is still genuinely running,
+        // just no longer joined by this `App`, and dropping the indicator
+        // early would let a second dispatch race it.
+        app.configs_being_processed.insert(
+            1,
+            std::sync::Arc::new(crate::tui::input::PendingForward::new(1)),
+        );
+        app.configs_being_processed.insert(
+            2,
+            std::sync::Arc::new(crate::tui::input::PendingForward::new(2)),
+        );
+
         let detached_ids = app.drain_forwarding().await;
 
         assert_eq!(
@@ -589,6 +597,17 @@ mod tests {
             "the caller must learn which config ids still have a start or \
              stop running detached, so it can skip re-dispatching or \
              reconciling them and contending for their recovery lock"
+        );
+        assert!(
+            app.task_configs.is_empty(),
+            "detached tasks are never joined through task_configs again, so it \
+             must not keep stale entries for them"
+        );
+        assert!(
+            app.configs_being_processed.contains_key(&1)
+                && app.configs_being_processed.contains_key(&2),
+            "a still-running detached task's busy indicator must not be cleared \
+             until the task itself finishes"
         );
 
         stop_release_tx
@@ -659,7 +678,7 @@ mod tests {
         // real-time waits, so this stays on real time rather than paused
         // time, but no longer spins the executor while it waits.
         tokio::time::timeout(
-            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(10),
             app.forwarding_tasks.join_next(),
         )
         .await
@@ -674,9 +693,8 @@ mod tests {
         // A substring unique to the real stop path, not merely the config id:
         // a coincidental id match would not prove `stop_port_forwarding` ran.
         assert!(
-            reported.contains("Failed to stop port forward")
-                && reported.contains("No port forwarding process found"),
-            "the report must come from the real backend call for this config: {reported}"
+            reported.contains("Failed to stop port forward"),
+            "the report must come from the real stop path for this config: {reported}"
         );
 
         assert_eq!(

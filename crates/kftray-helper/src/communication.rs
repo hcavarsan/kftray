@@ -435,14 +435,14 @@ async fn start_unix_socket_server(
                     let network_manager = Arc::clone(&network_manager);
                     let hostfile_manager = Arc::clone(&hostfile_manager);
 
-                    task::spawn_blocking(move || {
-                        if let Err(e) =
-                            tokio::runtime::Handle::current().block_on(handle_connection(
-                                stream,
-                                pool_manager,
-                                network_manager,
-                                hostfile_manager,
-                            ))
+                    task::spawn(async move {
+                        if let Err(e) = handle_connection(
+                            stream,
+                            pool_manager,
+                            network_manager,
+                            hostfile_manager,
+                        )
+                        .await
                         {
                             error!("Error handling connection: {e}");
                         }
@@ -518,7 +518,19 @@ async fn handle_connection(
             HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
         })?;
 
-    let request = match read_request(&mut stream)? {
+    // Blocks the calling thread until a full request is framed or the read
+    // times out; run on the blocking pool instead of the async task itself,
+    // now that the task is a plain `spawn` rather than a `spawn_blocking`
+    // wrapping the whole connection -- otherwise every concurrent
+    // connection would still park a blocking-pool thread for its request's
+    // full read, the same nesting this split is meant to avoid.
+    let (mut stream, request) = task::spawn_blocking(move || {
+        let request = read_request(&mut stream);
+        (stream, request)
+    })
+    .await
+    .map_err(|e| HelperError::Communication(format!("Connection task panicked: {e}")))?;
+    let request = match request? {
         Some(request) => request,
         None => return Ok(()),
     };
@@ -561,36 +573,44 @@ async fn handle_connection(
         "Writing response directly to client socket ({} bytes)",
         response_bytes.len()
     );
-    match stream.write_all(&response_bytes) {
-        Ok(_) => debug!("Response written successfully"),
-        Err(e) => {
-            error!("Failed to write response: {e}");
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                info!("Client disconnected (broken pipe), ignoring error");
-                return Ok(());
+    // The write, flush, and the settle delay below all block the calling
+    // thread; run them on the blocking pool for the same reason the read
+    // above does.
+    task::spawn_blocking(move || -> Result<(), HelperError> {
+        match stream.write_all(&response_bytes) {
+            Ok(_) => debug!("Response written successfully"),
+            Err(e) => {
+                error!("Failed to write response: {e}");
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    info!("Client disconnected (broken pipe), ignoring error");
+                    return Ok(());
+                }
+                return Err(HelperError::Communication(format!(
+                    "Failed to write response: {e}"
+                )));
             }
-            return Err(HelperError::Communication(format!(
-                "Failed to write response: {e}"
-            )));
         }
-    }
 
-    debug!("Flushing socket output");
-    match stream.flush() {
-        Ok(_) => debug!("Response flushed successfully"),
-        Err(e) => {
-            error!("Failed to flush response: {e}");
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                info!("Client disconnected (broken pipe), ignoring error");
-                return Ok(());
+        debug!("Flushing socket output");
+        match stream.flush() {
+            Ok(_) => debug!("Response flushed successfully"),
+            Err(e) => {
+                error!("Failed to flush response: {e}");
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    info!("Client disconnected (broken pipe), ignoring error");
+                    return Ok(());
+                }
+                return Err(HelperError::Communication(format!(
+                    "Failed to flush response: {e}"
+                )));
             }
-            return Err(HelperError::Communication(format!(
-                "Failed to flush response: {e}"
-            )));
         }
-    }
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        Ok(())
+    })
+    .await
+    .map_err(|e| HelperError::Communication(format!("Connection task panicked: {e}")))??;
 
     info!("Connection handled successfully");
     Ok(())
@@ -738,6 +758,18 @@ fn parse_error_request_id(buffer: &[u8]) -> String {
         .unwrap_or_default()
 }
 
+/// The `(request_id, message)` a parse-error reply carries, shared by both
+/// platforms' `respond_with_parse_error`: only how the bytes reach the
+/// client differs (sync `Write` vs async `AsyncWriteExt`), not what the
+/// reply says.
+fn parse_error_reply(buffer: &[u8]) -> (String, String) {
+    let message = serde_json::from_slice::<HelperRequest>(buffer)
+        .err()
+        .map(|e| format!("Failed to parse request: {e}"))
+        .unwrap_or_else(|| "Incomplete request".to_string());
+    (parse_error_request_id(buffer), message)
+}
+
 /// Writes an error response for a request that could not be parsed, so an
 /// old or misbehaving client fails fast instead of waiting out its timeout.
 ///
@@ -747,11 +779,7 @@ fn parse_error_request_id(buffer: &[u8]) -> String {
 /// caller cannot silently turn this into a report of success.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<(), HelperError> {
-    let message = serde_json::from_slice::<HelperRequest>(buffer)
-        .err()
-        .map(|e| format!("Failed to parse request: {e}"))
-        .unwrap_or_else(|| "Incomplete request".to_string());
-    let request_id = parse_error_request_id(buffer);
+    let (request_id, message) = parse_error_reply(buffer);
     error!("{message}");
 
     let bytes = serde_json::to_vec(&HelperResponse::error(request_id, message)).map_err(|e| {
@@ -1064,7 +1092,7 @@ async fn handle_windows_connection(
     let caller_pid = match validate_windows_peer(&pipe) {
         Ok(pid) => {
             debug!("Peer identity validated successfully");
-            pid
+            Some(pid)
         }
         Err(e) => {
             error!("Peer identity validation failed: {e}");
@@ -1275,11 +1303,7 @@ async fn respond_with_parse_error(
 ) -> Result<(), HelperError> {
     use tokio::io::AsyncWriteExt;
 
-    let message = serde_json::from_slice::<HelperRequest>(buffer)
-        .err()
-        .map(|e| format!("Failed to parse request: {e}"))
-        .unwrap_or_else(|| "Incomplete request".to_string());
-    let request_id = parse_error_request_id(buffer);
+    let (request_id, message) = parse_error_reply(buffer);
     error!("{}", message);
 
     let bytes = serde_json::to_vec(&HelperResponse::error(request_id, message)).map_err(|e| {
@@ -1320,7 +1344,7 @@ async fn respond_with_parse_error(
 async fn process_request(
     request: HelperRequest, pool_manager: Arc<AddressPoolManager>,
     network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
-    caller_pid: u32,
+    caller_pid: Option<u32>,
 ) -> Result<HelperResponse, HelperError> {
     let request_id = request.request_id.clone();
 
@@ -1405,7 +1429,7 @@ async fn process_request(
             AddressCommand::Allocate { service_name } => {
                 debug!("Processing Allocate request for service: {service_name}");
                 match pool_manager
-                    .allocate_address(&service_name, Some(caller_pid))
+                    .allocate_address(&service_name, caller_pid)
                     .await
                 {
                     Ok(address) => {
@@ -1424,9 +1448,8 @@ async fn process_request(
                                 error!(
                                     "Network interface addition failed for address {address}: {e}"
                                 );
-                                if let Err(release_err) = pool_manager
-                                    .release_address(&address, Some(caller_pid))
-                                    .await
+                                if let Err(release_err) =
+                                    pool_manager.release_address(&address, caller_pid).await
                                 {
                                     warn!(
                                         "Failed to release address from pool after network error: {release_err}"
@@ -1452,20 +1475,30 @@ async fn process_request(
             AddressCommand::Release { address } => {
                 debug!("Processing Release request for address: {address}");
 
-                // A pool failure (an ownership conflict, or the address
-                // being unknown) is returned to the caller rather than only
-                // logged: `Ok` here previously meant only "the network
-                // interface came off", so a refused release was
-                // indistinguishable from a successful one and the alias
-                // this address backs was torn down anyway.
-                if let Err(e) = pool_manager
-                    .release_address(&address, Some(caller_pid))
-                    .await
-                {
-                    error!("Address pool release failed for address {address}: {e}");
-                    return Ok(HelperResponse::error(request_id, format!("Error: {e}")));
+                // A genuine ownership conflict is returned to the caller
+                // rather than only logged: `Ok` here previously meant only
+                // "the network interface came off", so a refused release
+                // was indistinguishable from a successful one and the
+                // alias this address backs was torn down anyway. An
+                // unknown address (a lost/corrupt pool file, or an entry
+                // `cleanup_stale_allocations` already pruned) is not a
+                // conflict: the interface alias may still be bound even
+                // though the pool no longer knows about it, so treat it as
+                // a no-op and fall through to the interface removal.
+                match pool_manager.release_address(&address, caller_pid).await {
+                    Ok(()) => {
+                        info!("Address pool release successful for address: {address}");
+                    }
+                    Err(e @ HelperError::AddressNotAllocated(_)) => {
+                        warn!(
+                            "Address pool release for {address} found no allocation, proceeding to interface removal: {e}"
+                        );
+                    }
+                    Err(e) => {
+                        error!("Address pool release failed for address {address}: {e}");
+                        return Ok(HelperResponse::error(request_id, format!("Error: {e}")));
+                    }
                 }
-                info!("Address pool release successful for address: {address}");
 
                 let network_result = network_manager.remove_loopback_address(&address).await;
                 match network_result {

@@ -25,10 +25,16 @@ use tracing::{
     debug,
     error,
     info,
+    warn,
 };
 
 const BUFFER_SIZE: usize = 131072;
-const MAX_SESSIONS: usize = 128;
+/// Table-entry cap independent from the upstream's concurrent-stream
+/// budget (`listener::MAX_CONCURRENT_STREAMS`, shared with TCP): kept
+/// comfortably below it so eviction driven by session count, not upstream
+/// admission, is normally what bounds a busy listener, leaving headroom for
+/// TCP connections on the same forward.
+const MAX_SESSIONS: usize = 256;
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SESSION_QUEUE_DEPTH: usize = 64;
@@ -41,6 +47,14 @@ const SESSION_QUEUE_DEPTH: usize = 64;
 const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 const REPLY_QUEUE_DEPTH: usize = 256;
 const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the startup probe tunnel may sit unused before it is discarded
+/// instead of handed to the first session. Bounds two failure modes: a
+/// forward nobody ever sends a datagram to would otherwise pin one of the
+/// upstream's concurrent-stream slots for the listener's entire lifetime,
+/// and a probe old enough may already be dead (relay pod replaced,
+/// apiserver dropped the SPDY stream) — handing it to a client would then
+/// lose that client's first datagram before the dead tunnel is detected.
+const SPARE_TUNNEL_MAX_AGE: Duration = Duration::from_secs(15);
 const TUNNEL_RETRY_COOLDOWN: Duration = Duration::from_secs(1);
 
 /// Payload bytes queued by one listener.
@@ -116,7 +130,20 @@ struct Queued {
 pub trait UdpUpstream: Send + Sync + 'static {
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
 
-    fn connect(&self) -> impl Future<Output = anyhow::Result<Self::Stream>> + Send;
+    /// Opaque token proving upstream capacity was reserved for a session
+    /// before it is opened (see `try_reserve`).
+    type Reservation: Send + 'static;
+
+    /// Attempts to reserve upstream capacity for a new session without
+    /// blocking. `None` means the budget is exhausted, so admission can
+    /// drop an over-budget peer like an ordinary UDP peer instead of
+    /// spawning a session whose `connect` would only block on a permit and
+    /// eventually time out.
+    fn try_reserve(&self) -> Option<Self::Reservation>;
+
+    fn connect(
+        &self, reservation: Self::Reservation,
+    ) -> impl Future<Output = anyhow::Result<Self::Stream>> + Send;
 
     /// Called when a tunnel cannot be opened.
     fn on_connect_failure(&self, _error: &anyhow::Error) {}
@@ -138,7 +165,7 @@ struct SessionTable<U: UdpUpstream> {
     upstream: Arc<U>,
     cancellation_token: CancellationToken,
     budget: Arc<ByteBudget>,
-    spare_tunnel: Option<U::Stream>,
+    spare_tunnel: Option<(Instant, U::Stream)>,
 }
 
 struct UdpSession {
@@ -227,12 +254,23 @@ impl UdpForwarder {
         // real, usable tunnel: discarding it would cost the relay an extra
         // API-server stream for no reason, so it is kept as a spare and
         // handed to whichever client's datagram opens the first session.
-        let spare_tunnel = Some(
-            upstream
-                .connect()
-                .await
-                .context("Failed to open the upstream UDP tunnel")?,
-        );
+        // Reserving capacity for it the same way a session would means the
+        // probe cannot itself exhaust the budget a moment before the first
+        // real session needs it; a startup this starved of capacity skips
+        // the probe rather than failing the forward outright.
+        let spare_tunnel = match upstream.try_reserve() {
+            Some(reservation) => Some((
+                Instant::now(),
+                upstream
+                    .connect(reservation)
+                    .await
+                    .context("Failed to open the upstream UDP tunnel")?,
+            )),
+            None => {
+                debug!("Skipping the startup UDP tunnel probe: no free upstream capacity");
+                None
+            }
+        };
 
         info!("Local UDP socket bound to {}", local_udp_addr);
 
@@ -270,10 +308,11 @@ impl UdpForwarder {
                     }
                     _ = sweep.tick() => {
                         Self::retire_sessions(&mut table.sessions);
+                        Self::retire_stale_spare(&mut table.spare_tunnel);
                     }
                     Some((peer, packet)) = incoming_replies.recv() => {
                         if let Err(e) = local_udp_socket.send_to(&packet.payload, &peer).await {
-                            debug!("Failed to send a reply to {}: {:?}", peer, e);
+                            warn!("Failed to send a reply to {}: {:?}", peer, e);
                         }
                     }
                     received = local_udp_socket.recv_from(&mut datagram) => {
@@ -369,7 +408,7 @@ impl UdpForwarder {
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
         replies: &mpsc::Sender<(SocketAddr, Queued)>, upstream: &Arc<U>,
         cancellation_token: &CancellationToken, budget: &Arc<ByteBudget>,
-        spare_tunnel: &mut Option<U::Stream>,
+        spare_tunnel: &mut Option<(Instant, U::Stream)>,
     ) -> Option<mpsc::Sender<Queued>> {
         let now = Instant::now();
         if let Some(session) = sessions.get_mut(&peer) {
@@ -383,6 +422,40 @@ impl UdpForwarder {
         }
 
         Self::retire_sessions(sessions);
+
+        // The spare tunnel (if any) already carries its own reservation from
+        // the startup probe, so only a session that has to open a fresh
+        // tunnel needs one of its own. Reserved here, before the eviction
+        // loop below, so an over-budget peer is dropped immediately instead
+        // of paying for table eviction that would not free any upstream
+        // capacity (evicted sessions release their permit asynchronously,
+        // not on this call).
+        let spare = spare_tunnel.take().and_then(|(created_at, stream)| {
+            if created_at.elapsed() > SPARE_TUNNEL_MAX_AGE {
+                debug!(
+                    "Discarding the startup UDP tunnel probe for {peer}: older than \
+                     {SPARE_TUNNEL_MAX_AGE:?}"
+                );
+                None
+            } else {
+                Some(stream)
+            }
+        });
+        let reservation = if spare.is_some() {
+            None
+        } else {
+            match upstream.try_reserve() {
+                Some(reservation) => Some(reservation),
+                None => {
+                    debug!(
+                        "Dropping a new UDP session for {}: no free upstream capacity",
+                        peer
+                    );
+                    return None;
+                }
+            }
+        };
+
         while sessions.len() >= MAX_SESSIONS {
             // A cooling-down entry is a closed session kept only to block an
             // immediate reconnect; evicting it before an active session would
@@ -415,7 +488,6 @@ impl UdpForwarder {
         let session_cancellation = cancellation.clone();
         let replies = replies.clone();
         let upstream = Arc::clone(upstream);
-        let spare = spare_tunnel.take();
 
         let tunnel_activity = Arc::new(AtomicU64::new(0));
         let session_activity = Arc::clone(&tunnel_activity);
@@ -431,10 +503,12 @@ impl UdpForwarder {
             let stream = if let Some(spare) = spare {
                 Some(spare)
             } else {
+                let reservation = reservation
+                    .expect("a reservation is always taken when no spare tunnel is available");
                 tokio::select! {
                     biased;
                     _ = session_cancellation.cancelled() => None,
-                    connected = upstream.connect() => match connected {
+                    connected = upstream.connect(reservation) => match connected {
                         Ok(stream) => Some(stream),
                         Err(error) => {
                             upstream.on_connect_failure(&error);
@@ -574,6 +648,22 @@ impl UdpForwarder {
         });
     }
 
+    /// Drops the startup probe tunnel once it has sat unused past
+    /// `SPARE_TUNNEL_MAX_AGE`, so a forward nobody ever sends a datagram to
+    /// does not pin an upstream concurrent-stream slot for its entire
+    /// lifetime.
+    fn retire_stale_spare<S>(spare_tunnel: &mut Option<(Instant, S)>) {
+        if let Some((created_at, _)) = spare_tunnel
+            && created_at.elapsed() > SPARE_TUNNEL_MAX_AGE
+        {
+            debug!(
+                "Discarding the unused startup UDP tunnel probe: older than \
+                 {SPARE_TUNNEL_MAX_AGE:?}"
+            );
+            *spare_tunnel = None;
+        }
+    }
+
     async fn read_tcp_length_and_packet(
         tcp_read: &mut (impl AsyncReadExt + Unpin),
     ) -> anyhow::Result<Option<Vec<u8>>> {
@@ -629,8 +719,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for SpawningUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             let (near, far) = duplex(self.capacity);
             self.opened
                 .send(far)
@@ -643,9 +738,38 @@ pub(crate) mod tests {
 
     impl UdpUpstream for UnreachableUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             Err(anyhow::anyhow!("no relay pod"))
+        }
+    }
+
+    /// Never has upstream capacity to reserve, so a session must never be
+    /// admitted far enough to call `connect`.
+    #[derive(Default)]
+    struct NoCapacityUpstream {
+        connects: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl UdpUpstream for NoCapacityUpstream {
+        type Stream = DuplexStream;
+        type Reservation = ();
+
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            None
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
+            self.connects
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(anyhow::anyhow!(
+                "connect must never run when admission has no free capacity"
+            ))
         }
     }
 
@@ -668,8 +792,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for ConsumeThenCloseUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             let (ours, mut theirs) = duplex(4096);
             tokio::spawn(async move {
                 let mut frame = [0u8; 64];
@@ -692,8 +821,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for ClosingUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             let (ours, theirs) = duplex(64);
             drop(theirs);
             Ok(ours)
@@ -733,8 +867,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for StallingUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             if self
                 .remaining
                 .fetch_update(
@@ -746,7 +885,7 @@ pub(crate) mod tests {
             {
                 std::future::pending::<()>().await;
             }
-            self.inner.connect().await
+            self.inner.connect(()).await
         }
     }
 
@@ -908,7 +1047,7 @@ pub(crate) mod tests {
         let (replies, _incoming) = mpsc::channel(REPLY_QUEUE_DEPTH);
         let cancellation_token = CancellationToken::new();
         let budget = ByteBudget::new(MAX_QUEUED_BYTES);
-        let mut spare_tunnel: Option<DuplexStream> = None;
+        let mut spare_tunnel: Option<(Instant, DuplexStream)> = None;
 
         let new_peer: SocketAddr = "127.0.0.1:60000".parse().unwrap();
         UdpForwarder::session_for(
@@ -957,7 +1096,7 @@ pub(crate) mod tests {
         let (replies, _incoming) = mpsc::channel(REPLY_QUEUE_DEPTH);
         let cancellation_token = CancellationToken::new();
         let budget = ByteBudget::new(MAX_QUEUED_BYTES);
-        let mut spare_tunnel: Option<DuplexStream> = None;
+        let mut spare_tunnel: Option<(Instant, DuplexStream)> = None;
 
         let new_peer: SocketAddr = "127.0.0.1:61000".parse().unwrap();
         UdpForwarder::session_for(
@@ -1081,8 +1220,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for HangingCloseUpstream {
         type Stream = HangingShutdown;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             self.connects
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let (ours, theirs) = duplex(64);
@@ -1323,6 +1467,53 @@ pub(crate) mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("upstream UDP tunnel"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn admission_drops_a_peer_when_no_upstream_capacity_is_reserved() {
+        let upstream = Arc::new(NoCapacityUpstream::default());
+        let connects = Arc::clone(&upstream.connects);
+        let cancellation_token = CancellationToken::new();
+        // The startup probe itself has no capacity to reserve either, so it
+        // is skipped rather than failing the forward outright.
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            upstream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        client.send(b"hello").await.unwrap();
+
+        // Give the listener a chance to process the datagram and, if
+        // admission were not gated on reserved capacity, attempt a connect.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            connects.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "an over-budget peer must be dropped at admission, never reaching connect"
+        );
+
+        let mut buffer = [0u8; 32];
+        let no_reply =
+            tokio::time::timeout(Duration::from_millis(200), client.recv(&mut buffer)).await;
+        assert!(
+            no_reply.is_err(),
+            "a peer dropped at admission must not receive a reply from a session that was \
+             never created"
+        );
+
+        cancellation_token.cancel();
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1600,8 +1791,13 @@ pub(crate) mod tests {
 
     impl UdpUpstream for SpareThenFailingUpstream {
         type Stream = DuplexStream;
+        type Reservation = ();
 
-        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        fn try_reserve(&self) -> Option<Self::Reservation> {
+            Some(())
+        }
+
+        async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             let attempt = self
                 .connects
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

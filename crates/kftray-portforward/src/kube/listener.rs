@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::Context;
 use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -81,9 +80,13 @@ struct NamedPort {
 }
 
 /// Concurrent upstream streams a single forward may hold open, shared by
-/// its TCP and UDP paths. Matches the limit the pre-refactor
-/// `portforward_semaphore` used.
-const MAX_CONCURRENT_STREAMS: usize = 50;
+/// its TCP and UDP paths. The permit rides with each stream for its whole
+/// lifetime (see `PermitStream`), so this bounds concurrent *open*
+/// connections rather than just concurrent creations — raised well above
+/// the pre-refactor `portforward_semaphore` creation-only limit of 50 to
+/// leave headroom for keep-alive HTTP, gRPC, websockets, and UDP peers
+/// that each pin a permit for the life of the connection.
+const MAX_CONCURRENT_STREAMS: usize = 512;
 
 pub struct PortForwarder {
     namespace: Arc<str>,
@@ -151,6 +154,31 @@ impl AsyncWrite for PermitStream {
     ) -> std::task::Poll<std::io::Result<()>> {
         std::pin::Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
     }
+}
+
+/// Marks a `PortForwarder::get_stream` failure caused by the
+/// concurrent-stream semaphore timing out rather than by the upstream
+/// connection itself, so callers can treat sustained load (back-pressure)
+/// separately from a genuinely broken relay when deciding whether to
+/// escalate to recovery.
+#[derive(Debug)]
+struct StreamPermitExhausted;
+
+impl std::fmt::Display for StreamPermitExhausted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "No free concurrent-stream slot became available in time")
+    }
+}
+
+impl std::error::Error for StreamPermitExhausted {}
+
+/// Whether `error` (or anything in its source chain) is a
+/// `StreamPermitExhausted` marker, i.e. `get_stream` timed out waiting for
+/// a semaphore permit rather than failing to open the upstream stream.
+fn is_permit_exhausted(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<StreamPermitExhausted>())
 }
 
 impl PortForwarder {
@@ -278,6 +306,19 @@ impl PortForwarder {
         })
     }
 
+    /// Any unsuccessful acquisition drops the cached mapping: a rollout can
+    /// change the number a port name maps to, and every later client would
+    /// otherwise repeat the same stale lookup.
+    fn clear_named_port_cache(&self) {
+        if let Some(named) = &self.named_port {
+            named
+                .resolved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+        }
+    }
+
     pub async fn get_stream(&self) -> anyhow::Result<PermitStream> {
         const STREAM_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -287,32 +328,83 @@ impl PortForwarder {
         // semaphore permit is acquired inside the same deadline and rides
         // with the returned stream, so it bounds concurrent open streams
         // (TCP and UDP share it) rather than just concurrent acquisitions.
-        let acquired = tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, async {
-            let permit = Arc::clone(&self.stream_semaphore)
-                .acquire_owned()
-                .await
-                .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
-            let stream = self.acquire_stream().await?;
-            Ok::<_, anyhow::Error>(PermitStream {
+        //
+        // The permit wait and the stream creation race the same deadline
+        // through two `select!`s sharing one `sleep`, instead of a single
+        // `tokio::time::timeout` around both: that lets a timeout while
+        // still waiting on the semaphore be reported as
+        // `StreamPermitExhausted` (back-pressure from concurrent load)
+        // distinctly from a timeout during stream creation (a stalled
+        // upstream), so callers can stop sustained load from tripping the
+        // same recovery signal as a broken relay.
+        let sleep = tokio::time::sleep(STREAM_ACQUIRE_TIMEOUT);
+        tokio::pin!(sleep);
+
+        let permit = tokio::select! {
+            permit = Arc::clone(&self.stream_semaphore).acquire_owned() => {
+                permit.map_err(|_| anyhow::anyhow!("Semaphore closed"))?
+            }
+            _ = &mut sleep => {
+                self.clear_named_port_cache();
+                return Err(anyhow::Error::new(StreamPermitExhausted)
+                    .context("Timed out acquiring a port-forward stream"));
+            }
+        };
+
+        let stream = tokio::select! {
+            result = self.acquire_stream() => {
+                match result {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        self.clear_named_port_cache();
+                        return Err(error);
+                    }
+                }
+            }
+            _ = &mut sleep => {
+                self.clear_named_port_cache();
+                return Err(anyhow::anyhow!("Timed out acquiring a port-forward stream"));
+            }
+        };
+
+        Ok(PermitStream {
+            stream,
+            _permit: permit,
+        })
+    }
+
+    /// Attempts to reserve a concurrent-stream slot without waiting, so UDP
+    /// session admission can tell "no budget available" apart from "the
+    /// upstream is unreachable" before spawning a session, instead of
+    /// discovering it only after `connect` blocks for the length of
+    /// `get_stream`'s deadline.
+    pub fn try_reserve_stream(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        Arc::clone(&self.stream_semaphore).try_acquire_owned().ok()
+    }
+
+    /// Opens a stream using a permit already reserved via
+    /// `try_reserve_stream`, so only the stream-creation half of
+    /// `get_stream`'s deadline applies here — the semaphore wait already
+    /// happened synchronously at admission time.
+    pub async fn open_reserved_stream(
+        &self, permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> anyhow::Result<PermitStream> {
+        const STREAM_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+        match tokio::time::timeout(STREAM_OPEN_TIMEOUT, self.acquire_stream()).await {
+            Ok(Ok(stream)) => Ok(PermitStream {
                 stream,
                 _permit: permit,
-            })
-        })
-        .await;
-        // Any unsuccessful acquisition drops the cached mapping, including a
-        // timeout: a rollout can change the number a port name maps to, and
-        // every later client would otherwise repeat the same stale lookup.
-        if !matches!(acquired, Ok(Ok(_)))
-            && let Some(named) = &self.named_port
-        {
-            named
-                .resolved
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take();
+            }),
+            Ok(Err(error)) => {
+                self.clear_named_port_cache();
+                Err(error)
+            }
+            Err(_) => {
+                self.clear_named_port_cache();
+                Err(anyhow::anyhow!("Timed out acquiring a port-forward stream"))
+            }
         }
-
-        acquired.context("Timed out acquiring a port-forward stream")?
     }
 
     /// Opens a stream on the pod whose port number it used.
@@ -576,6 +668,11 @@ impl PortForwarder {
                     Ok(stream) => {
                         stream_failures_clone.store(0, std::sync::atomic::Ordering::SeqCst);
                         stream
+                    }
+                    Err(e) if is_permit_exhausted(&e) => {
+                        debug!("No free concurrent-stream slot for {}: {}", client_addr, e);
+                        let _ = client_conn.shutdown().await;
+                        return;
                     }
                     Err(e) => {
                         let failures = stream_failures_clone
@@ -874,9 +971,14 @@ struct ForwarderUpstream {
 
 impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
     type Stream = PermitStream;
+    type Reservation = tokio::sync::OwnedSemaphorePermit;
 
-    async fn connect(&self) -> anyhow::Result<Self::Stream> {
-        self.forwarder.get_stream().await
+    fn try_reserve(&self) -> Option<Self::Reservation> {
+        self.forwarder.try_reserve_stream()
+    }
+
+    async fn connect(&self, reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
+        self.forwarder.open_reserved_stream(reservation).await
     }
 
     fn on_connect_failure(&self, error: &anyhow::Error) {
@@ -1143,13 +1245,83 @@ mod tests {
             Err(error) => error,
         };
         assert!(
+            !is_permit_exhausted(&error),
+            "a timeout during stream creation, with the permit already held, must not be \
+             reported as permit exhaustion: {error}"
+        );
+        assert!(
             error
-                .downcast_ref::<tokio::time::error::Elapsed>()
-                .is_some()
+                .to_string()
+                .contains("Timed out acquiring a port-forward stream"),
+            "unexpected error: {error}"
         );
         port_forwarder.shutdown().await;
         driver.abort();
         let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn a_permit_exhaustion_timeout_is_reported_distinctly_from_a_stream_failure() {
+        tokio::time::pause();
+
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let cluster_url: http::Uri = "http://127.0.0.1:1".parse().unwrap();
+
+        let forwarder =
+            kube_portforward::Forwarder::builder(kube_client, cluster_url.clone(), "default")
+                .pod_selector(kube_portforward::PodSelector::Name("web-0".to_owned()))
+                .build()
+                .await
+                .expect("forwarder should build without contacting the apiserver");
+
+        let port_forwarder = PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            named_port: None,
+            cluster_url: cluster_url.clone(),
+            cluster_identity: cluster_url.to_string().into(),
+            http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+
+        // Hold the sole permit externally so `get_stream` blocks purely on
+        // the semaphore and never reaches the network.
+        let held_permit = port_forwarder
+            .try_reserve_stream()
+            .expect("the sole permit must be free at the start");
+
+        let mut call = Box::pin(port_forwarder.get_stream());
+        // Poll once so `get_stream`'s internal sleep is registered against
+        // the paused clock before it is advanced below.
+        tokio::select! {
+            biased;
+            result = &mut call => panic!(
+                "get_stream must not resolve before the semaphore times out: {:?}",
+                result.err().map(|e| e.to_string())
+            ),
+            _ = tokio::time::sleep(Duration::ZERO) => {}
+        }
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let error = match tokio::time::timeout(Duration::from_secs(1), &mut call)
+            .await
+            .expect("the acquisition deadline must complete")
+        {
+            Ok(_) => panic!("get_stream must fail when the semaphore never frees up"),
+            Err(error) => error,
+        };
+
+        assert!(
+            is_permit_exhausted(&error),
+            "a timeout while still waiting on the semaphore must be reported as permit \
+             exhaustion, not a generic stream failure: {error}"
+        );
+
+        drop(held_permit);
     }
 
     #[tokio::test]
@@ -1212,26 +1384,26 @@ mod tests {
         }
 
         // UDP path shares the same `PortForwarder` field: with the sole
-        // permit held by the TCP call above, its connect() must stay
-        // blocked on the semaphore rather than reaching the network.
+        // permit held by the TCP call above, admission must be refused
+        // immediately instead of spawning a session that would only block
+        // on the semaphore.
         let udp_upstream = ForwarderUpstream {
             forwarder: Arc::clone(&port_forwarder),
             failures: UdpUpstreamFailures::new(1),
         };
-        let mut udp_call = Box::pin(udp_upstream.connect());
-        tokio::select! {
-            biased;
-            result = &mut udp_call => panic!(
-                "UDP connect proceeded while the TCP call still held the sole permit: {:?}",
-                result.err()
-            ),
-            _ = tokio::time::sleep(Duration::ZERO) => {}
-        }
+        assert!(
+            udp_upstream.try_reserve().is_none(),
+            "UDP admission should be refused while the TCP call holds the sole permit"
+        );
 
-        // Dropping the TCP call releases its permit; the UDP call can now
-        // reach the network and issue its own upgrade request.
+        // Dropping the TCP call releases its permit; UDP admission now
+        // succeeds and connect() reaches the network with it.
         let udp_notified = upgrade_started.notified();
         drop(tcp_call);
+        let reservation = udp_upstream
+            .try_reserve()
+            .expect("the permit released by the TCP call should be available to UDP");
+        let mut udp_call = Box::pin(udp_upstream.connect(reservation));
         tokio::select! {
             () = udp_notified => {}
             result = &mut udp_call => panic!(

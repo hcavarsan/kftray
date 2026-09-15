@@ -7,6 +7,7 @@ use std::time::{
 use log::{
     debug,
     info,
+    warn,
 };
 
 use crate::error::HelperError;
@@ -52,7 +53,7 @@ fn validate_timestamp(timestamp: u64) -> Result<(), HelperError> {
 #[cfg(target_os = "linux")]
 pub fn validate_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
-) -> Result<u32, HelperError> {
+) -> Result<Option<u32>, HelperError> {
     use std::os::fd::AsRawFd;
 
     let socket_fd = stream.as_raw_fd();
@@ -88,7 +89,7 @@ pub fn validate_peer_credentials(
                 "Peer credentials validated (root accepting authorized user): UID={}, GID={}, PID={}",
                 cred.uid, cred.gid, cred.pid
             );
-            return Ok(cred.pid as u32);
+            return Ok(Some(cred.pid as u32));
         } else {
             return Err(HelperError::Authentication(format!(
                 "Peer UID {} is not authorized (expected UID {})",
@@ -109,13 +110,13 @@ pub fn validate_peer_credentials(
         cred.uid, cred.gid, cred.pid
     );
 
-    Ok(cred.pid as u32)
+    Ok(Some(cred.pid as u32))
 }
 
 #[cfg(target_os = "macos")]
 pub fn validate_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
-) -> Result<u32, HelperError> {
+) -> Result<Option<u32>, HelperError> {
     use std::os::fd::AsRawFd;
 
     let socket_fd = stream.as_raw_fd();
@@ -172,7 +173,18 @@ pub fn validate_peer_credentials(
         debug!("Peer credentials validated: UID={}", cred.cr_uid);
     }
 
-    peer_pid(socket_fd)
+    // The pid is only used for advisory address-pool ownership tracking,
+    // which already treats an unknown pid as "owner unknown" rather than a
+    // conflict. A `LOCAL_PEERPID` failure here must not turn an already
+    // UID-authorized connection into a hard rejection: peer authentication
+    // and pid discovery fail independently.
+    match peer_pid(socket_fd) {
+        Ok(pid) => Ok(Some(pid)),
+        Err(e) => {
+            warn!("Could not determine peer pid, proceeding without it: {e}");
+            Ok(None)
+        }
+    }
 }
 
 /// The pid of the process on the other end of `socket_fd`.

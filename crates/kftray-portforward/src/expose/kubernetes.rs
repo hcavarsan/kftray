@@ -500,9 +500,13 @@ pub async fn delete_created_resources(
     // and its containers, running. Rollback is only complete once the recorded
     // objects are gone, or replaced by something this attempt does not own.
     let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
-    let mut read_errors: Vec<String> = Vec::new();
     loop {
         let mut remaining = Vec::new();
+        // Reset every iteration: a persistently failing read otherwise
+        // accumulates one copy of the same message per resource per poll
+        // (up to ~180 over the full deadline), making the eventual error
+        // unreadable. Only the last iteration's read failures are relevant.
+        let mut read_errors: Vec<String> = Vec::new();
         for resource in created {
             match still_present(client, namespace, resource).await {
                 Ok(true) => remaining.push(resource.name.clone()),
@@ -1289,10 +1293,25 @@ pub async fn delete_expose_resources(
     // be read as absence. That fails a private start on a role that cannot
     // list ingresses, and says so, rather than reconnecting a public ingress
     // that a partial cleanup left behind to the new tunnel.
-    ensure_expose_history_baseline(mode).await?;
-    let ingress_possible = ingress_possible
-        || ingress_was_created(config_id_label, location, mode).await
-        || legacy_exposure_possible(config_id_label, location, mode).await;
+    // A transient failure here (SQLite contention from another kftray
+    // process) must not fail the cleanup itself: `ingress_was_created` and
+    // `legacy_exposure_possible` already treat unreadable history as
+    // "possible" and proceed conservatively, the same way an unreadable
+    // record does above and below.
+    if let Err(error) = ensure_expose_history_baseline(mode).await {
+        warn!("Could not establish the exposure history baseline: {error}");
+    }
+    // Captured on its own, not just folded into `ingress_possible`: the
+    // doubt `record_legacy_verified` settles below only exists for a
+    // configuration this check actually evaluated it for, not merely one
+    // whose ingress is possible for some other reason (a caller-supplied
+    // `ingress_possible` or a history record already answers that).
+    let mut legacy_possible = false;
+    let ingress_possible =
+        ingress_possible || ingress_was_created(config_id_label, location, mode).await || {
+            legacy_possible = legacy_exposure_possible(config_id_label, location, mode).await;
+            legacy_possible
+        };
     let lp = ListParams::default().labels(&expose_owner_selector(config_id_label, mode).await?);
 
     info!(
@@ -1368,9 +1387,12 @@ pub async fn delete_expose_resources(
     }
 
     // Nothing is left, so the history that forced the ingress checks above has
-    // served its purpose, and so has the doubt about what came before it.
+    // served its purpose, and so has the doubt about what came before it, if
+    // this configuration was actually a legacy candidate to begin with.
     forget_ingress_history(config_id_label, location, mode).await;
-    record_legacy_verified(config_id_label, location, mode).await;
+    if legacy_possible {
+        record_legacy_verified(config_id_label, location, mode).await;
+    }
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
         config_id_label
@@ -1486,10 +1508,16 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
 }
 
 /// Waits for every resource matching `lp` to disappear.
+///
+/// Polls with exponential backoff (250ms doubling up to a 2s cap) rather
+/// than a fixed 250ms rate: this runs on every start's pre-cleanup and every
+/// stop, and a fixed rate over the full 45s budget is up to ~180 LIST calls
+/// per cleanup against deployments, services and ingresses alike.
 async fn wait_until_gone(
     client: &Client, namespace: &str, lp: &ListParams, ingress_possible: bool,
 ) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
+    let mut poll_interval = ROLLBACK_DELETION_POLL;
     loop {
         let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
         let services: Api<Service> = Api::namespaced(client.clone(), namespace);
@@ -1524,7 +1552,8 @@ async fn wait_until_gone(
                 remaining.join(", ")
             ));
         }
-        tokio::time::sleep(ROLLBACK_DELETION_POLL).await;
+        tokio::time::sleep(poll_interval).await;
+        poll_interval = (poll_interval * 2).min(std::time::Duration::from_secs(2));
     }
 }
 

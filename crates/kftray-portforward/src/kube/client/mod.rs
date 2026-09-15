@@ -5,7 +5,10 @@ pub mod error;
 pub mod proxy;
 pub mod utils;
 
-pub use builder::create_client_with_specific_context;
+pub use builder::{
+    create_client_with_specific_context,
+    warm_up_path_env,
+};
 pub use config::{
     ConfigExtClone,
     create_config_with_context,
@@ -50,10 +53,7 @@ pub fn cluster_identity(url: &http::Uri) -> String {
         _ => None,
     };
     let port = url.port_u16().filter(|port| Some(*port) != default_port);
-    let path = match url.path() {
-        "/" => "",
-        path => path,
-    };
+    let path = url.path().trim_end_matches('/');
 
     let mut identity = String::new();
     if !scheme.is_empty() {
@@ -108,6 +108,22 @@ mod tests {
     fn cluster_identity_keeps_non_default_port_and_path() {
         let url: http::Uri = "http://host:9443/api".parse().unwrap();
         assert_eq!(cluster_identity(&url), "http://host:9443/api");
+    }
+
+    #[test]
+    fn cluster_identity_drops_trailing_slash_on_a_path_prefixed_url() {
+        let with_slash: http::Uri = "https://host/k8s/clusters/c-x/".parse().unwrap();
+        let without_slash: http::Uri = "https://host/k8s/clusters/c-x".parse().unwrap();
+
+        assert_eq!(
+            cluster_identity(&with_slash),
+            cluster_identity(&without_slash),
+            "a trailing slash on a path-prefixed API server URL must not change its identity"
+        );
+        assert_eq!(
+            cluster_identity(&with_slash),
+            "https://host/k8s/clusters/c-x"
+        );
     }
 
     #[test]

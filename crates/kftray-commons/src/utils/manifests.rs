@@ -537,60 +537,23 @@ pub fn expose_ingress_manifest_exists() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-    use std::sync::Mutex;
-
-    use lazy_static::lazy_static;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_utils::EnvVarGuard;
     use crate::utils::config_dir::{
         get_expose_deployment_manifest_path,
         get_pod_manifest_path,
         get_proxy_deployment_manifest_path,
     };
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
-
-    struct StrictEnvGuard {
-        saved_vars: Vec<(String, Option<String>)>,
-    }
-
-    impl StrictEnvGuard {
-        fn new(keys: &[&str]) -> Self {
-            let saved_vars = keys
-                .iter()
-                .map(|&key| (key.to_string(), env::var(key).ok()))
-                .collect::<Vec<_>>();
-
-            for key in keys {
-                unsafe { env::remove_var(key) };
-            }
-
-            StrictEnvGuard { saved_vars }
-        }
-    }
-
-    impl Drop for StrictEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.saved_vars.drain(..) {
-                match value {
-                    Some(val) => unsafe { env::set_var(key, val) },
-                    None => unsafe { env::remove_var(key) },
-                }
-            }
-        }
-    }
-
     #[test]
     fn a_manifest_equal_to_the_previous_default_is_not_customized_and_gets_migrated() {
-        let _lock = ENV_TEST_MUTEX.lock().unwrap();
-        let _guard = StrictEnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+        let _guard_home = EnvVarGuard::remove("HOME");
 
         let temp_dir = tempdir().unwrap();
-        unsafe { env::set_var("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap()) };
+        let _guard_config = EnvVarGuard::set("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap());
         create_config_dir().unwrap();
 
         let pod_path = get_pod_manifest_path().unwrap();

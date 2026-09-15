@@ -57,7 +57,15 @@ pub mod test_utils {
 
     impl Drop for EnvLock {
         fn drop(&mut self) {
-            ENV_LOCK_DEPTH.with(|cell| cell.set(cell.get() - 1));
+            let depth = ENV_LOCK_DEPTH.with(Cell::get);
+            if let EnvLock::Owned { .. } = self {
+                debug_assert_eq!(
+                    depth, 1,
+                    "EnvVarGuard dropped out of order: the guard holding ENV_MUTEX must be the \
+                     last one dropped, which requires guards to be plain stack bindings"
+                );
+            }
+            ENV_LOCK_DEPTH.with(|cell| cell.set(depth - 1));
         }
     }
 

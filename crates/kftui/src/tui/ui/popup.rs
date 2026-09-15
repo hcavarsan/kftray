@@ -722,6 +722,7 @@ pub fn render_error_popup(
                 format!("<Enter> closes, {remaining} more, <Up>/<Down>"),
                 format!("<Enter> closes, {remaining} more"),
                 "<Enter> closes".to_string(),
+                "<Enter>".to_string(),
             ],
         ),
         (true, false, true) => pick_compact_hint(
@@ -729,9 +730,13 @@ pub fn render_error_popup(
             &[
                 "<Enter> closes, <Up> scrolls back".to_string(),
                 "<Enter> closes".to_string(),
+                "<Enter>".to_string(),
             ],
         ),
-        (true, false, false) => pick_compact_hint(hint_width, &["<Enter> closes".to_string()]),
+        (true, false, false) => pick_compact_hint(
+            hint_width,
+            &["<Enter> closes".to_string(), "<Enter>".to_string()],
+        ),
         (false, true, _) => hint_more_lines(remaining),
         (false, false, true) => HINT_END_OF_MESSAGE.to_string(),
         (false, false, false) => HINT_CLOSE.to_string(),
@@ -789,7 +794,9 @@ fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {
     let mut current_line = String::new();
 
     for word in text.split_whitespace() {
-        if current_line.len() + word.len() + 1 > max_width && !current_line.is_empty() {
+        if current_line.chars().count() + word.chars().count() + 1 > max_width
+            && !current_line.is_empty()
+        {
             lines.push(current_line);
             current_line = String::new();
         }

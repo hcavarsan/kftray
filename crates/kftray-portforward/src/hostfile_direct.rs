@@ -59,15 +59,12 @@ impl DirectHostfileManager {
 
     /// Removes several ids with one write.
     ///
-    /// Returns whether any of the ids had a line here: a caller that reached
-    /// this through a failing helper needs to tell "already gone" apart from
-    /// "this manager never owned it".
     /// `protected` are mappings a still-forwarding configuration could have
     /// written; an unmarked copy of one of them is never pruned on this
     /// configuration's behalf.
     pub fn remove_host_entries(
         &self, ids: &[&str], protected: &[HostEntry],
-    ) -> std::io::Result<bool> {
+    ) -> std::io::Result<()> {
         debug!("Removing host entries for IDs {ids:?}");
 
         edit_hosts(|document| {
@@ -86,9 +83,9 @@ impl DirectHostfileManager {
                 ids,
                 protected,
             );
-            let present = document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, ids, &[])?;
+            document.reconcile_owners(KFTRAY_DIRECT_HOSTS_TAG, ids, &[])?;
             prune_legacy(document, &dropping)?;
-            Ok(!present.is_empty())
+            Ok(())
         })
         .map_err(std::io::Error::from)
     }
@@ -120,17 +117,30 @@ impl DirectHostfileManager {
     }
 
     /// This manager's own section, as it is on disk.
+    ///
+    /// Tolerates a duplicated `KFTRAY_DIRECT_HOSTS_TAG` marker by reading
+    /// every copy instead of erroring: a caller reaching this on the
+    /// removal path (`HostfileManager::remove_host_entries`) would
+    /// otherwise fail here even though the very next step,
+    /// `remove_host_entries` below, already repairs the duplication via
+    /// `merge_duplicate_sections` before it writes.
     pub fn direct_section() -> std::io::Result<Vec<SectionEntry>> {
-        read_hosts(|document| document.section(KFTRAY_DIRECT_HOSTS_TAG))
+        read_hosts(|document| document.section_merging_duplicates(KFTRAY_DIRECT_HOSTS_TAG))
             .map_err(std::io::Error::from)
     }
 
     /// The privileged helper's section, as it is on disk.
     ///
     /// This manager cannot write there, so a caller that needs verified
-    /// cleanup has to look at what is actually left.
+    /// cleanup has to look at what is actually left. Tolerates a
+    /// duplicated `KFTRAY_HOSTS_TAG` marker the same way `direct_section`
+    /// does: this is a read used for verification, including on a stop's
+    /// failure path, where erroring outright over something a write
+    /// elsewhere already knows how to repair would turn a repairable state
+    /// into a hard failure.
     pub fn helper_section() -> std::io::Result<Vec<SectionEntry>> {
-        read_hosts(|document| document.section(KFTRAY_HOSTS_TAG)).map_err(std::io::Error::from)
+        read_hosts(|document| document.section_merging_duplicates(KFTRAY_HOSTS_TAG))
+            .map_err(std::io::Error::from)
     }
 
     /// Every owned alias in this manager's section.

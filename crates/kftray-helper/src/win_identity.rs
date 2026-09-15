@@ -165,7 +165,12 @@ fn sid_to_string(sid: PSID) -> Result<String, HelperError> {
 }
 
 /// The SID of the account running this process, as an `S-1-...` string.
-fn current_process_user_sid_string() -> Result<String, HelperError> {
+///
+/// `pub(crate)` so `client::installation` can call it from the unelevated
+/// process launching `install`, before UAC elevates a new process that may
+/// run as a different administrator account entirely; see
+/// `record_authorized_user_from_string`.
+pub(crate) fn current_process_user_sid_string() -> Result<String, HelperError> {
     let mut token = HANDLE::default();
     unsafe {
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
@@ -189,11 +194,13 @@ fn current_process_user_sid_string() -> Result<String, HelperError> {
     sid_to_string(buf.token_user().User.Sid)
 }
 
-/// Records the SID of the account running this process -- the installing
-/// user, elevated via UAC but the same account -- so the service can later
-/// verify a connecting pipe client is that same account, and so the pipe's
-/// DACL can be scoped to it instead of every local account.
-pub fn record_authorized_user() -> Result<(), HelperError> {
+/// Records the SID of the account running this process. Only a fallback
+/// for a direct, unelevated `install` invocation: the normal path through
+/// `client::installation::install_helper` supplies the caller's own SID
+/// via `record_authorized_user_from_string` instead, since by the time
+/// this process runs -- after `Start-Process -Verb RunAs` -- it may be
+/// running as a different administrator account than the one installing.
+pub(crate) fn record_authorized_user() -> Result<(), HelperError> {
     let sid = current_process_user_sid_string()?;
     record_authorized_user_at(&authorized_user_sid_path(), &sid)
 }
@@ -205,6 +212,17 @@ pub fn record_authorized_user() -> Result<(), HelperError> {
 pub(crate) fn record_authorized_user_sid(sid: PSID) -> Result<(), HelperError> {
     let sid_string = sid_to_string(sid)?;
     record_authorized_user_at(&authorized_user_sid_path(), &sid_string)
+}
+
+/// Records the SID given as text, the same as `record_authorized_user_sid`
+/// but for a SID received as a string: the unelevated process that
+/// launches `install`'s elevation computes its own SID with
+/// `current_process_user_sid_string` and passes it along, since the
+/// elevated process is not guaranteed to run as the same account.
+/// Parsing it here rejects a malformed value before it is persisted.
+pub(crate) fn record_authorized_user_from_string(sid: &str) -> Result<(), HelperError> {
+    let sid = parse_sid(sid)?;
+    record_authorized_user_sid(sid.0)
 }
 
 fn record_authorized_user_at(path: &Path, sid: &str) -> Result<(), HelperError> {
@@ -241,12 +259,22 @@ fn locked_down_security_attributes() -> Result<(SECURITY_ATTRIBUTES, OwnedDescri
 /// Creates `dir` scoped to SYSTEM and Administrators from the moment it
 /// exists, instead of with the ACL `CreateDirectoryW` would otherwise
 /// inherit from `ProgramData` and locking it down only afterward.
+///
+/// `ProgramData` grants `Authenticated Users` the right to create
+/// subdirectories by default, so an unprivileged process could have
+/// pre-created `dir` before install and left it with that permissive
+/// inherited ACL. The lockdown is applied even when `dir` already exists,
+/// rather than trusting whatever ACL it happens to carry.
 fn create_locked_down_dir(dir: &Path) -> Result<(), HelperError> {
+    let (attrs, descriptor) = locked_down_security_attributes()?;
+    let wide = HSTRING::from(dir.as_os_str());
     if dir.is_dir() {
+        let ok = unsafe { SetFileSecurityW(&wide, DACL_SECURITY_INFORMATION, descriptor.0) };
+        if !ok.as_bool() {
+            return Err(last_error(&format!("secure {}", dir.display())));
+        }
         return Ok(());
     }
-    let (attrs, _descriptor) = locked_down_security_attributes()?;
-    let wide = HSTRING::from(dir.as_os_str());
     unsafe { CreateDirectoryW(&wide, Some(&attrs)) }
         .map_err(|e| auth_err(&format!("create {}", dir.display()), e))
 }
@@ -278,7 +306,7 @@ const TRUSTED_OWNER_SIDS: [&str; 2] = ["S-1-5-18", "S-1-5-32-544"];
 
 /// The SID string this helper was told to trust at install, if one was
 /// recorded.
-pub fn read_authorized_user_sid() -> Option<String> {
+pub(crate) fn read_authorized_user_sid() -> Option<String> {
     read_authorized_user_sid_at(&authorized_user_sid_path())
 }
 
@@ -349,14 +377,21 @@ fn file_owner_sid_string(path: &Path) -> Result<String, HelperError> {
 /// Administrators, and the recorded authorized user, and nothing for anyone
 /// else -- an absent DACL entry denies access under NT semantics, so this
 /// also rejects every other local or network account.
-pub fn pipe_security_descriptor_sddl() -> String {
+pub(crate) fn pipe_security_descriptor_sddl() -> String {
     format_pipe_sddl(read_authorized_user_sid().as_deref())
 }
 
+/// When no SID has been recorded yet -- a fresh install, or an in-place
+/// upgrade from before this file existed -- the DACL additionally grants
+/// the Interactive Users group (`IU`, `S-1-5-4`) so the console-session
+/// fallback in `validate_windows_peer` is actually reachable: an absent ACE
+/// denies access at `CreateFile` time, before that fallback ever runs.
+/// Once a specific SID is recorded, access narrows to that account.
 fn format_pipe_sddl(authorized_sid: Option<&str>) -> String {
     let mut sddl = String::from("D:(A;;GA;;;SY)(A;;GA;;;BA)");
-    if let Some(sid) = authorized_sid {
-        sddl.push_str(&format!("(A;;GA;;;{sid})"));
+    match authorized_sid {
+        Some(sid) => sddl.push_str(&format!("(A;;GA;;;{sid})")),
+        None => sddl.push_str("(A;;GA;;;IU)"),
     }
     sddl
 }
@@ -384,9 +419,34 @@ mod tests {
     }
 
     #[test]
+    fn format_pipe_sddl_grants_interactive_users_when_no_sid_recorded() {
+        // Without this, an absent ACE denies access under NT semantics and
+        // `validate_windows_peer`'s console-session fallback is unreachable:
+        // the client is rejected by the kernel before it ever runs.
+        let sddl = format_pipe_sddl(None);
+        assert!(sddl.contains("(A;;GA;;;IU)"));
+    }
+
+    #[test]
+    fn format_pipe_sddl_narrows_to_the_recorded_sid_once_one_exists() {
+        let sddl = format_pipe_sddl(Some("S-1-5-21-1-2-3-1001"));
+        assert!(!sddl.contains("IU"));
+    }
+
+    #[test]
     fn format_pipe_sddl_adds_the_authorized_user_when_recorded() {
         let sddl = format_pipe_sddl(Some("S-1-5-21-1-2-3-1001"));
         assert!(sddl.contains("(A;;GA;;;S-1-5-21-1-2-3-1001)"));
+    }
+
+    #[test]
+    fn record_authorized_user_from_string_rejects_a_malformed_sid_before_persisting_it() {
+        // `install_helper` passes whatever `current_process_user_sid_string`
+        // returned as a plain CLI argument; a malformed value must be
+        // rejected here rather than written verbatim into
+        // `authorized_user.sid`.
+        let err = record_authorized_user_from_string("not-a-sid").unwrap_err();
+        assert!(err.to_string().contains("parse"), "unexpected error: {err}");
     }
 
     #[test]

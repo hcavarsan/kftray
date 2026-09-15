@@ -64,6 +64,12 @@ impl ConfigManager {
     async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str) {
         info!("Restarting {} {} port forwards", configs.len(), protocol);
 
+        let recovering: std::collections::HashSet<i64> = configs
+            .iter()
+            .filter_map(|config| config.id)
+            .filter(|&config_id| kftray_portforward::kube::recovery_in_progress(config_id))
+            .collect();
+
         let stop_tasks: Vec<_> = configs
             .iter()
             .filter_map(|config| {
@@ -95,23 +101,7 @@ impl ConfigManager {
         }
 
         if !proxy_configs.is_empty() {
-            // Filter out proxy configs that already have recovery in progress
-            let configs_to_restart: Vec<Config> = proxy_configs
-                .into_iter()
-                .filter(|config| {
-                    if let Some(config_id) = config.id
-                        && kftray_portforward::kube::recovery_in_progress(config_id)
-                    {
-                        info!(
-                            "Skipping network monitor restart for config {} \
-                             \u{2014} recovery already in progress",
-                            config_id
-                        );
-                        return false;
-                    }
-                    true
-                })
-                .collect();
+            let configs_to_restart = proxy_configs_to_restart(proxy_configs, &recovering);
 
             if !configs_to_restart.is_empty() {
                 match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
@@ -123,6 +113,31 @@ impl ConfigManager {
             }
         }
     }
+}
+
+/// Drops proxy configs whose recovery was in progress before this restart
+/// stopped them. `recovering` must be snapshotted before the stop pass runs,
+/// since `stop_config` unconditionally clears `RECOVERY_MANAGERS` and a
+/// live check here would always see it already gone.
+fn proxy_configs_to_restart(
+    proxy_configs: Vec<Config>, recovering: &std::collections::HashSet<i64>,
+) -> Vec<Config> {
+    proxy_configs
+        .into_iter()
+        .filter(|config| {
+            if let Some(config_id) = config.id
+                && recovering.contains(&config_id)
+            {
+                info!(
+                    "Skipping network monitor restart for config {} \
+                     \u{2014} recovery already in progress",
+                    config_id
+                );
+                return false;
+            }
+            true
+        })
+        .collect()
 }
 
 /// Splits a restart batch's responses into a restarted count, UDP "not ready
@@ -176,11 +191,21 @@ fn report_restart_outcome(
 /// error; a UDP batch whose every failure is the transient readiness wait is
 /// downgraded the same way its per-configuration responses would be.
 fn only_waiting_for_pods(error: &str, protocol: &str, downgrade_no_ready_pods: bool) -> bool {
-    downgrade_no_ready_pods
-        && protocol == "udp"
-        && error
-            .split("; ")
-            .all(|failure| failure.contains(NO_READY_PODS_ERROR))
+    if !(downgrade_no_ready_pods && protocol == "udp") {
+        return false;
+    }
+
+    let mut failures: Vec<&str> = Vec::new();
+    for part in error.split("; ") {
+        if part.starts_with("cleanup incomplete:") && !failures.is_empty() {
+            continue;
+        }
+        failures.push(part);
+    }
+
+    failures
+        .iter()
+        .all(|failure| failure.contains(NO_READY_PODS_ERROR))
 }
 
 fn report_restart_failure(error: &str, protocol: &str, kind: &str, downgrade_no_ready_pods: bool) {
@@ -207,6 +232,7 @@ mod tests {
         classify_restart_outcome,
         only_waiting_for_pods,
         partition_configs_by_workload,
+        proxy_configs_to_restart,
     };
 
     fn make_config(id: i64, workload_type: &str, protocol: &str) -> Config {
@@ -308,6 +334,23 @@ mod tests {
     }
 
     #[test]
+    fn a_config_recovering_before_the_stop_pass_is_skipped() {
+        // `recovering` must be captured before `stop_port_forward` runs, or
+        // every config would already be missing from `RECOVERY_MANAGERS` by
+        // the time this filter looks it up, and none would ever be skipped.
+        let recovering: std::collections::HashSet<i64> = [2].into_iter().collect();
+        let configs = vec![
+            make_config(1, "proxy", "tcp"),
+            make_config(2, "proxy", "tcp"),
+        ];
+
+        let restart = proxy_configs_to_restart(configs, &recovering);
+
+        let ids: Vec<i64> = restart.iter().filter_map(|c| c.id).collect();
+        assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
     fn an_all_failed_udp_batch_waiting_for_pods_is_only_a_warning() {
         let error = format!("{NO_READY_PODS_ERROR} 'a'; {NO_READY_PODS_ERROR} 'b'");
         assert!(only_waiting_for_pods(&error, "udp", true));
@@ -315,6 +358,20 @@ mod tests {
         assert!(!only_waiting_for_pods(&error, "tcp", true));
         let mixed = format!("{NO_READY_PODS_ERROR} 'a'; connection refused");
         assert!(!only_waiting_for_pods(&mixed, "udp", true));
+    }
+
+    #[test]
+    fn a_no_ready_pods_failure_with_a_failed_cleanup_note_is_still_only_a_warning() {
+        // `rollback_startup`/`rollback_local_resources` append
+        // "; cleanup incomplete: {error}" to the original reason, so a
+        // single no-ready-pods failure can itself contain "; " once its own
+        // cleanup also failed. That continuation must not be mistaken for
+        // an unrelated second failure once it is joined with other
+        // responses' stderr and re-split here.
+        let error = format!(
+            "{NO_READY_PODS_ERROR} 'a'; cleanup incomplete: address not allocated; {NO_READY_PODS_ERROR} 'b'"
+        );
+        assert!(only_waiting_for_pods(&error, "udp", true));
     }
 
     #[test]
@@ -363,7 +420,7 @@ mod tests {
         // downgrade_no_ready_pods=false: a "No ready pods available" failure
         // there must stay a real failure, not get demoted to a warning like
         // the non-proxy UDP branch does.
-        let response = make_response("No ready pods available to resolve port name 'foo'");
+        let response = make_response(&format!("{NO_READY_PODS_ERROR} to resolve port name 'foo'"));
         let (restarted, pending_pods, failures) =
             classify_restart_outcome(std::slice::from_ref(&response), "udp", false);
         assert_eq!(restarted, 0);

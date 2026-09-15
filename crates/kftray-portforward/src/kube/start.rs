@@ -146,53 +146,60 @@ async fn update_hosts_with_ssl(
         let written = add_ssl_host_entry(&id.to_string(), &alias, port, mode)
             .await
             .map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"));
-        let succeeded = written.is_ok();
         let _ = sender.send(written);
-        if !succeeded {
-            return;
-        }
         // The claim was deliberately left in place by the caller so this
         // deferred write's own cleanup, not a chance later start, is what
-        // releases it. Taking it here regardless of whether the process is
-        // still registered mirrors the non-deferred path, which releases it
-        // right after registration. A registered process is proof this
-        // write has a current owner; so is a claim a newer attempt has
-        // taken and not yet resolved, since that attempt's own deferred
-        // cleanup will decide these lines' fate once it finishes. Only when
-        // neither is true, whether this attempt is still the current claim
-        // holder or a newer one has since given up in turn, does nobody
-        // remain to manage the lines this write just landed.
-        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
-        let guard = lock.lock().await;
-        crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
-        let has_current_owner =
-            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
-        if !has_current_owner {
-            warn!(
-                "Removing HTTPS hosts entries for config {id} written after it was stopped or \
-                 superseded"
-            );
-            let in_use = crate::kube::stop::forwarding_configs(mode).await;
-            let removed =
-                crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
-                    .await;
-            match removed {
-                Ok(()) => {}
-                // Recorded so a later stop retries: the stop that removed the
-                // process has already run its cleanup and will not look again.
-                Err(error) => {
-                    warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
-                    crate::kube::stop::record_local_cleanup(id, snapshot, mode).await;
-                }
-            }
-        }
-        drop(guard);
-        drop(lock);
-        crate::kube::proxy_recovery::remove_recovery_lock(id);
+        // releases it, whether the write succeeded or failed: a failed
+        // write can still have landed partial lines, and either way
+        // nothing else will release this claim.
+        finish_deferred_ssl_write(id, hosts_claim, &snapshot, mode).await;
     });
     receiver
         .await
         .map_err(|_| "Hosts write ended unexpectedly".to_string())?
+}
+
+/// Releases this attempt's hosts claim once its deferred SSL write has
+/// settled, whether it succeeded or failed, and removes the lines it landed
+/// if nobody is left to own them.
+///
+/// Taking the claim here regardless of the write's outcome mirrors the
+/// non-deferred path, which releases it right after registration. A
+/// registered process is proof this write has a current owner; so is a
+/// claim a newer attempt has taken and not yet resolved, since that
+/// attempt's own deferred cleanup will decide these lines' fate once it
+/// finishes. Only when neither is true, whether this attempt is still the
+/// current claim holder or a newer one has since given up in turn, does
+/// nobody remain to manage the lines this write just landed.
+async fn finish_deferred_ssl_write(
+    id: i64, hosts_claim: u64, snapshot: &Config, mode: DatabaseMode,
+) {
+    let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+    let guard = lock.lock().await;
+    crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+    let has_current_owner =
+        CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+    if !has_current_owner {
+        warn!(
+            "Removing HTTPS hosts entries for config {id} written after it was stopped or \
+             superseded"
+        );
+        let in_use = crate::kube::stop::forwarding_configs(mode).await;
+        let removed =
+            crate::hostsfile::remove_config_host_entries(id, Some(snapshot), &in_use, mode).await;
+        match removed {
+            Ok(()) => {}
+            // Recorded so a later stop retries: the stop that removed the
+            // process has already run its cleanup and will not look again.
+            Err(error) => {
+                warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
+                crate::kube::stop::record_local_cleanup(id, snapshot.clone(), mode).await;
+            }
+        }
+    }
+    drop(guard);
+    drop(lock);
+    crate::kube::proxy_recovery::remove_recovery_lock(id);
 }
 
 fn workload_type_description(workload_type: Option<&str>) -> &'static str {
@@ -1368,7 +1375,9 @@ pub async fn start_port_forward_with_mode(
 /// assigned local ports of the configs that did start): a batch-level `Err`
 /// would discard those. Only a batch where every config failed is reported
 /// as `Err`.
-fn finish_start_batch(responses: Vec<CustomResponse>) -> Result<Vec<CustomResponse>, String> {
+pub(super) fn finish_start_batch(
+    responses: Vec<CustomResponse>,
+) -> Result<Vec<CustomResponse>, String> {
     if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
         let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
         return Err(errors.join("; "));
@@ -1709,6 +1718,46 @@ mod tests {
              guard on this early return, not left for the next start of this id to silently \
              overwrite"
         );
+    }
+
+    #[tokio::test]
+    async fn a_deferred_ssl_write_releases_its_hosts_claim_once_it_settles() {
+        // The real hosts file (and the machine's own installed hostfile
+        // helper) is out of reach for a deterministic test: forcing
+        // `add_ssl_host_entry` itself to fail would depend on which of the
+        // two writers this machine happens to route through. What must
+        // hold regardless of that outcome is the property `finish_deferred_
+        // ssl_write` was extracted to make directly testable: the deferred
+        // write's own cleanup always takes the claim once the write has
+        // settled, success or failure, rather than only on success.
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 918_273_648;
+        let hosts_claim = crate::kube::stop::claim_host_entries(id);
+        let config = Config {
+            id: Some(id),
+            ..setup_test_config()
+        };
+
+        // A registered process stands in for this attempt's real owner, so
+        // the orphan-cleanup branch (which would otherwise reach for the
+        // real hosts file) is not exercised here; only the claim release
+        // itself is under test.
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let process = crate::port_forward::PortForwardProcess::new(task, id.to_string());
+        CHILD_PROCESSES.insert(id, process);
+
+        finish_deferred_ssl_write(id, hosts_claim, &config, DatabaseMode::Memory).await;
+
+        assert!(
+            !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim),
+            "the deferred write's own cleanup must release its hosts claim once it settles, \
+             whether the write succeeded or failed, instead of returning before reaching this \
+             regardless of outcome"
+        );
+
+        if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
+            process.cleanup_and_abort().await;
+        }
     }
 
     #[test]

@@ -85,8 +85,8 @@ export interface TableProps {
   abortStartOperation: () => void
   abortStopOperation: () => void
   deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   openSettingsModal: () => void
@@ -96,10 +96,10 @@ export interface TableProps {
 export interface PortForwardRowProps {
   config: Config
   deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
   showContext?: boolean
-  onSelectionChange: (isSelected: boolean) => void
+  onSelectionChange: (id: number, isSelected: boolean) => void
   selected: boolean
   pendingAction: PendingConfigAction | null
   toggleConfigForward: (
@@ -204,9 +204,9 @@ export interface ContextsAccordionProps {
   contextConfigs: Config[]
   selectedConfigs: Config[]
   deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => void
-  handleDuplicateConfig: (id: number) => void
-  handleSelectionChange: (config: Config, isSelected: boolean) => void
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
+  handleSelectionChange: (id: number, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
   pendingConfigActions: Map<number, PendingConfigAction>

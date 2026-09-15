@@ -646,7 +646,26 @@ impl HostsDocument {
         let Some((begin, end)) = self.bounds(tag)? else {
             return Ok(Vec::new());
         };
-        Ok(self.lines[begin + 1..end]
+        Ok(self.entries_in(begin, end))
+    }
+
+    /// Every alias inside `tag`'s section(s), in file order, tolerating a
+    /// duplicated tag by reading and concatenating every section's body
+    /// instead of erroring the way `section` does through `bounds`.
+    ///
+    /// For a read-only caller that would otherwise have to fail outright on
+    /// a file a hand edit (or an older bug) left duplicated, before a later
+    /// write's own `merge_duplicate_sections` gets a chance to repair it.
+    pub fn section_merging_duplicates(&self, tag: &str) -> Result<Vec<SectionEntry>> {
+        Ok(self
+            .all_bounds(tag)?
+            .into_iter()
+            .flat_map(|(begin, end)| self.entries_in(begin, end))
+            .collect())
+    }
+
+    fn entries_in(&self, begin: usize, end: usize) -> Vec<SectionEntry> {
+        self.lines[begin + 1..end]
             .iter()
             .filter_map(|line| Self::parse_line(&line.text))
             .flat_map(|parsed| {
@@ -659,7 +678,7 @@ impl HostsDocument {
                         owner: parsed.owner.clone(),
                     })
             })
-            .collect())
+            .collect()
     }
 
     /// Replaces the body of `tag`'s section with `body`, creating the section
@@ -869,7 +888,7 @@ pub fn edit_hosts<T>(edit: impl FnOnce(&mut HostsDocument) -> Result<T>) -> Resu
 pub fn edit_hosts_at<T>(
     path: &Path, edit: impl FnOnce(&mut HostsDocument) -> Result<T>,
 ) -> Result<T> {
-    validate_hosts_path(path)?;
+    validate_hosts_target_path(path)?;
     with_hosts_lock(path, true, || {
         let mut document = HostsDocument::load(path)?;
         let outcome = edit(&mut document)?;
@@ -889,7 +908,7 @@ pub fn read_hosts<T>(read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T
 
 /// [`read_hosts`] against a specific file.
 pub fn read_hosts_at<T>(path: &Path, read: impl FnOnce(&HostsDocument) -> Result<T>) -> Result<T> {
-    validate_hosts_path(path)?;
+    validate_hosts_target_path(path)?;
     // A file that does not exist holds nothing, and a read must not be the
     // thing that creates it.
     if !path.exists() {
@@ -1199,13 +1218,17 @@ fn get_platform_hosts_path() -> Result<PathBuf> {
     }
 }
 
-/// Rejects a path this crate must not follow: a symlink/reparse point, whose
+/// Rejects a directory or a symlink at one of this crate's own pending or
+/// staging siblings (`.kftray-pending`, `.tmp`): those locations are never
+/// created ahead of time by anything but this crate, and a symlink/reparse
+/// point already there could only have been planted by another party. Its
 /// lexical parent being user-writable would let an unprivileged process
 /// plant one beside the real hosts file for a privileged recovery to
-/// traverse, or a directory.
+/// traverse, so it is refused outright rather than resolved.
 ///
 /// A missing path is not rejected: a custom path may still be created on
 /// first write, and a read of one reports an empty document.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn validate_hosts_path(path: &Path) -> Result<()> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -1223,6 +1246,32 @@ fn validate_hosts_path(path: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Validates the hosts file's own path (the argument to [`edit_hosts_at`] /
+/// [`read_hosts_at`]) before it is opened.
+///
+/// Unlike the pending/staging siblings [`validate_hosts_path`] guards, this
+/// path is not something this crate creates: platforms such as NixOS ship
+/// `/etc/hosts` as a symlink to a generated target, and container/managed
+/// images do the same, so rejecting a symlink outright here made every read
+/// and write fail on those systems. A symlink is followed and its resolved
+/// target validated instead; only a directory, lexically or through the
+/// link, is rejected. A dangling symlink resolves to "not found", the same
+/// as a missing path.
+fn validate_hosts_target_path(path: &Path) -> Result<()> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_dir() {
+                return Err(HostsFileError::InvalidPath(
+                    "Expected file path, got directory".to_string(),
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]
@@ -1365,16 +1414,39 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn a_symlink_hosts_path_is_rejected() {
+    fn a_symlinked_hosts_path_is_followed_to_its_target() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real-hosts");
         std::fs::write(&real, "127.0.0.1 real.local\n").unwrap();
         let link = dir.path().join("hosts-link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
+        // NixOS and similar managed systems ship `/etc/hosts` as a symlink
+        // to a generated target; a read through the link must resolve it
+        // rather than being rejected outright.
+        let lines: Vec<String> = read_hosts_at(&link, |document| {
+            Ok(document
+                .lines
+                .iter()
+                .map(|line| line.text.clone())
+                .collect())
+        })
+        .unwrap();
+        assert_eq!(lines, vec!["127.0.0.1 real.local".to_string()]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_hosts_path_resolving_to_a_directory_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_dir = dir.path().join("real-dir");
+        std::fs::create_dir(&target_dir).unwrap();
+        let link = dir.path().join("hosts-link");
+        std::os::unix::fs::symlink(&target_dir, &link).unwrap();
+
         let error = read_hosts_at(&link, |document| document.section("test"))
-            .expect_err("a symlink must never be followed as the hosts path");
-        assert!(error.to_string().contains("symlink"), "{error}");
+            .expect_err("a path resolving to a directory must be rejected, symlink or not");
+        assert!(error.to_string().contains("directory"), "{error}");
     }
 
     #[test]
@@ -1382,9 +1454,12 @@ mod tests {
     fn a_symlinked_pending_sibling_is_refused() {
         // Windows recovery (`open_locked`) and staging (`AtomicFileWriter`)
         // both check their `.kftray-pending`/`.tmp` sibling with
-        // `validate_hosts_path`, the same rejection the hosts path itself
-        // gets. This exercises that shared check on a `.kftray-pending`-named
-        // symlink without requiring a Windows target.
+        // `validate_hosts_path`, which stays strict about symlinks there
+        // even though the hosts path itself now resolves them: those
+        // locations are only ever created fresh by this crate, so a symlink
+        // found there was planted by someone else. This exercises that
+        // shared check on a `.kftray-pending`-named symlink without
+        // requiring a Windows target.
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real-hosts");
         std::fs::write(&real, "127.0.0.1 real.local\n").unwrap();

@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { InfoIcon, RepeatIcon } from 'lucide-react'
 
 import {
@@ -39,54 +39,6 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
       selectedConfigs.some(selected => selected.id === config.id),
     )
   }, [contextConfigs, selectedConfigs])
-
-  // `onSelectionChange` is handed to a memoized `PortForwardRow`; a fresh
-  // arrow function per render would defeat that memoization for every row
-  // even when nothing about the row changed. Cache one stable handler per
-  // config id instead, reading the current config through a ref so the
-  // cached function never closes over a stale value.
-  const handleSelectionChangeRef = useRef(handleSelectionChange)
-
-  useEffect(() => {
-    handleSelectionChangeRef.current = handleSelectionChange
-  }, [handleSelectionChange])
-
-  const selectionHandlersRef = useRef(
-    new Map<number, (isSelected: boolean) => void>(),
-  )
-
-  const contextConfigsRef = useRef(contextConfigs)
-
-  contextConfigsRef.current = contextConfigs
-
-  useEffect(() => {
-    const currentIds = new Set(contextConfigs.map(config => config.id))
-
-    for (const id of selectionHandlersRef.current.keys()) {
-      if (!currentIds.has(id)) {
-        selectionHandlersRef.current.delete(id)
-      }
-    }
-  }, [contextConfigs])
-
-  const getSelectionHandler = (configId: number) => {
-    let handler = selectionHandlersRef.current.get(configId)
-
-    if (!handler) {
-      handler = isSelected => {
-        const config = contextConfigsRef.current.find(
-          item => item.id === configId,
-        )
-
-        if (config) {
-          handleSelectionChangeRef.current(config, isSelected)
-        }
-      }
-      selectionHandlersRef.current.set(configId, handler)
-    }
-
-    return handler
-  }
 
   const contextRunningCount = contextConfigs.filter(
     config => config.is_running,
@@ -201,7 +153,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                   selected={selectedConfigs.some(
                     selectedConfig => selectedConfig.id === config.id,
                   )}
-                  onSelectionChange={getSelectionHandler(config.id)}
+                  onSelectionChange={handleSelectionChange}
                   pendingAction={pendingConfigActions.get(config.id) ?? null}
                   toggleConfigForward={toggleConfigForward}
                 />

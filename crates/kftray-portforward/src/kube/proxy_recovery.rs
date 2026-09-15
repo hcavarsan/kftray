@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use futures::TryStreamExt;
+use futures::StreamExt;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kube_runtime::WatchStreamExt;
@@ -707,11 +707,19 @@ pub async fn recover_deployment(
         kube_runtime::watcher::Config::default()
             .labels(&format!("app={hashed_name},{owner_selector}")),
     )
+    .default_backoff()
     .applied_objects();
     futures::pin_mut!(watcher);
     let customized = kftray_commons::utils::manifests::deployment_manifest_is_customized();
     tokio::time::timeout(Duration::from_secs(POD_READY_TIMEOUT_SECS), async {
-        while let Some(pod) = watcher.try_next().await? {
+        while let Some(event) = watcher.next().await {
+            let pod = match event {
+                Ok(pod) => pod,
+                Err(error) => {
+                    log::debug!("Retrying the recovery pod watch for config {config_id}: {error}");
+                    continue;
+                }
+            };
             if crate::kube::proxy::relay_started(Some(&pod), &container_name, customized) {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await;

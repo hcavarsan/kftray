@@ -482,12 +482,15 @@ impl App {
         );
         // Dropping the `JoinSet` (via `App`'s own drop, on process exit)
         // aborts everything it still tracks, so remove them from its
-        // bookkeeping and let them finish detached instead.
+        // bookkeeping and let them finish detached instead. `task_configs`
+        // is cleared too: every entry left in it belongs to a task that was
+        // just detached, never to be joined through this map again.
         let detached_ids = self
             .task_configs
             .values()
             .map(|info| info.config_id)
             .collect();
+        self.task_configs.clear();
         self.forwarding_tasks.detach_all();
         detached_ids
     }
@@ -779,23 +782,14 @@ impl App {
     }
 
     pub async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
-        use kftray_portforward::port_forward::CHILD_PROCESSES;
-
+        let active = kftray_portforward::port_forward::active_pods().await;
         for config_state in config_states {
-            if config_state.is_running {
-                let forwarder = CHILD_PROCESSES
-                    .get(&config_state.config_id)
-                    .and_then(|entry| entry.direct_forwarder.clone());
-
-                let active_pod = match forwarder {
-                    Some(forwarder) => forwarder.get_current_active_pod().await,
-                    None => None,
-                };
-
-                self.active_pods.insert(config_state.config_id, active_pod);
+            let active_pod = if config_state.is_running {
+                active.get(&config_state.config_id).cloned().flatten()
             } else {
-                self.active_pods.insert(config_state.config_id, None);
-            }
+                None
+            };
+            self.active_pods.insert(config_state.config_id, active_pod);
         }
     }
 
@@ -895,16 +889,33 @@ impl App {
             // Appending to a popup already open leaves the scroll offset
             // alone: the reader may be partway through the existing text and
             // a reset to 0 would yank them back to the top. Only a fresh
-            // popup starts scrolled to the beginning.
+            // popup starts scrolled to the beginning. The retained text is
+            // capped: the popup re-wraps the whole string every frame, and a
+            // long session can otherwise accumulate an unbounded number of
+            // reports (one per stall warning, dropped key press, or
+            // start/stop failure) into a single ever-growing string.
+            const MAX_ERROR_POPUP_LINES: usize = 500;
+            fn capped(message: String) -> String {
+                let total_lines = message.lines().count();
+                if total_lines <= MAX_ERROR_POPUP_LINES {
+                    return message;
+                }
+                let skip = total_lines - MAX_ERROR_POPUP_LINES;
+                let marker = format!("…{skip} earlier message line(s) omitted…");
+                std::iter::once(marker.as_str())
+                    .chain(message.lines().skip(skip))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
             match (
                 self.error_message.take(),
                 self.state == AppState::ShowErrorPopup,
             ) {
                 (Some(existing), true) => {
-                    self.error_message = Some(format!("{existing}\n{combined}"));
+                    self.error_message = Some(capped(format!("{existing}\n{combined}")));
                 }
                 _ => {
-                    self.error_message = Some(combined);
+                    self.error_message = Some(capped(combined));
                     self.error_scroll = 0;
                 }
             }

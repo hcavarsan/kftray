@@ -21,7 +21,9 @@ use windows_service::{
 
 use crate::error::HelperError;
 
-pub fn install_service(service_name: &str) -> Result<(), HelperError> {
+pub fn install_service(
+    service_name: &str, authorized_sid: Option<&str>,
+) -> Result<(), HelperError> {
     #[cfg(target_os = "windows")]
     {
         use windows_service::{
@@ -43,8 +45,22 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
 
         // Persisted so the running service -- LocalSystem, with no "current
         // user" of its own -- knows which account's named pipe connections
-        // to trust; see `crate::win_identity`.
-        crate::win_identity::record_authorized_user()?;
+        // to trust; see `crate::win_identity`. `authorized_sid`, when given,
+        // is the unelevated caller's own SID, computed before it re-launched
+        // itself via UAC: this process may be running as a different
+        // administrator account, so its own token is only a fallback.
+        // A failure here is not fatal: the pipe DACL still grants the
+        // Interactive Users group when no SID is recorded
+        // (`win_identity::format_pipe_sddl`), so `validate_windows_peer`'s
+        // console-session fallback keeps the installation usable and
+        // self-heals the record on the next connection.
+        let record_result = match authorized_sid {
+            Some(sid) => crate::win_identity::record_authorized_user_from_string(sid),
+            None => crate::win_identity::record_authorized_user(),
+        };
+        if let Err(e) = record_result {
+            log::warn!("Failed to record the authorized user for the helper pipe: {e}");
+        }
 
         let manager =
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)

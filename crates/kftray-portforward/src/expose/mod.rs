@@ -234,6 +234,22 @@ pub(crate) async fn start_single_expose(
     let ws_handle = tokio::spawn(async move {
         if let Err(e) = ws_client.start(ready_tx).await {
             error!("WebSocket client error: {}", e);
+            // The reconnect budget is exhausted and nothing else watches this
+            // task: `proxy_recovery` has no expose participation, so without
+            // this the config keeps reporting healthy while nothing forwards.
+            // Stopping from a detached task, not inline, matters here:
+            // `PortForwardProcess::cancel` aborts this very `JoinHandle`, and
+            // self-aborting partway through a stop would leave it half done.
+            tokio::spawn(async move {
+                if let Err(stop_error) =
+                    crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
+                {
+                    error!(
+                        "Failed to clean up config {config_id} after its reverse tunnel ended: \
+                         {stop_error}"
+                    );
+                }
+            });
         }
     });
     // Attach before awaiting readiness: dropping this startup future must abort

@@ -286,21 +286,23 @@ pub fn process_is_alive(pid: u32) -> bool {
         use windows::Win32::Foundation::{
             CloseHandle,
             ERROR_ACCESS_DENIED,
-            STILL_ACTIVE,
+            WAIT_TIMEOUT,
         };
         use windows::Win32::System::Threading::{
-            GetExitCodeProcess,
             OpenProcess,
             PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+            WaitForSingleObject,
         };
-        match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        match unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                pid,
+            )
+        } {
             Ok(handle) => {
-                // Opening succeeds for a process that has exited while some
-                // other handle to it is still held; only its exit code says
-                // whether it is running.
-                let mut code = 0u32;
-                let running = unsafe { GetExitCodeProcess(handle, &mut code) }.is_ok()
-                    && code == STILL_ACTIVE.0 as u32;
+                let running = unsafe { WaitForSingleObject(handle, 0) } == WAIT_TIMEOUT;
                 let _ = unsafe { CloseHandle(handle) };
                 running
             }
@@ -310,6 +312,10 @@ pub fn process_is_alive(pid: u32) -> bool {
             // unrelated COM `E_ACCESSDENIED` constant.
             Err(error) => error.code() == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0),
         }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        true
     }
 }
 

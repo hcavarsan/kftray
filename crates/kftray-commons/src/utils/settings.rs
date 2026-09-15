@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use log::info;
+use log::warn;
 use serde::{
     Deserialize,
     Serialize,
@@ -840,17 +841,15 @@ pub async fn establish_expose_history_baseline_at_init(
             .collect();
         let serialized =
             serde_json::to_string(&ids.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
-        // Persisting the allow-list is fatal for the snapshot path: an
-        // in-memory-only snapshot dies with this process, and a later
-        // process (or a later lazy call after this one crashes first) would
-        // find no persisted restriction and treat every row it now sees as
-        // unrestricted, wrongly marking rows inserted after this snapshot.
-        upsert_setting(pool, &expose_baseline_pending_ids_key(mode), &serialized)
-            .await
-            .map_err(|error| {
-                format!("failed to persist the expose baseline pending id allow-list: {error}")
-            })?;
         FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
+        if let Err(error) =
+            upsert_setting(pool, &expose_baseline_pending_ids_key(mode), &serialized).await
+        {
+            warn!(
+                "failed to persist the expose baseline pending id allow-list: {error}; \
+                 relying on the in-memory snapshot for this process only"
+            );
+        }
     }
     // If the snapshot query itself fails, no entry is recorded for `mode`:
     // the lazy path then treats every row it later sees as unrestricted,
@@ -863,6 +862,18 @@ pub async fn establish_expose_history_baseline(
     pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let baseline = expose_history_baseline_key(mode);
+    // The common case, on every expose start and stop once a baseline has
+    // been taken, is that the marker is already present: check it with a
+    // plain read against the pool first, so that case never pays for the
+    // exclusive write lock below.
+    if sqlx::query("SELECT 1 FROM settings WHERE key = ?")
+        .bind(&baseline)
+        .fetch_optional(pool)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
     // One write transaction from the check to the marker: two processes
     // sharing the file database can both initialise it, and a baseline taken
     // by the second after the first finished would mark rows inserted in
@@ -1272,6 +1283,76 @@ mod tests {
             DatabaseMode::Memory,
         )
         .await;
+        let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_is_recorded_in_memory_even_when_persisting_it_fails_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let pool = context.pool.clone();
+
+        crate::utils::config::delete_all_configs_with_pool(&pool)
+            .await
+            .unwrap();
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+
+        let existing_config = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let existing_id = crate::utils::config::insert_config_with_pool_and_mode(
+            existing_config,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        // `configs` is left intact so the fallback snapshot query still
+        // succeeds; only `settings` is gone, so both
+        // `establish_expose_history_baseline` and the allow-list persist
+        // attempt fail.
+        sqlx::query("DROP TABLE settings")
+            .execute(&*pool)
+            .await
+            .unwrap();
+
+        let init_result =
+            establish_expose_history_baseline_at_init(&pool, DatabaseMode::Memory).await;
+        assert!(
+            init_result.is_err(),
+            "every attempt must fail with no settings table"
+        );
+        assert_eq!(
+            FAILED_BASELINE_SNAPSHOT
+                .lock()
+                .unwrap()
+                .get(&DatabaseMode::Memory)
+                .cloned(),
+            Some(HashSet::from([existing_id])),
+            "the in-memory snapshot must be recorded even though persisting the allow-list \
+             failed"
+        );
+
+        // Recreate the schema, as `db::init` would on the next run.
+        crate::utils::db::create_db_table(&pool).await.unwrap();
+
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
         let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
     }
 

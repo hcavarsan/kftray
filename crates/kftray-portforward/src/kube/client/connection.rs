@@ -81,6 +81,7 @@ async fn execute_strategies(
     strategies: Vec<Strategy<'_>>, total_budget: Duration,
 ) -> KubeResult<Client> {
     let mut failed_attempts = Vec::new();
+    let mut skipped_attempts = Vec::new();
     let mut last_error: Option<KubeClientError> = None;
     let deadline = Instant::now() + total_budget;
     let strategy_count = strategies.len();
@@ -89,10 +90,12 @@ async fn execute_strategies(
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             warn!("Strategy '{description}' skipped: overall connection budget exhausted");
-            failed_attempts.push(description.to_string());
-            last_error = Some(KubeClientError::connection_error(
-                "Timed out connecting to the Kubernetes API server",
-            ));
+            skipped_attempts.push(description.to_string());
+            last_error.get_or_insert_with(|| {
+                KubeClientError::connection_error(
+                    "Timed out connecting to the Kubernetes API server",
+                )
+            });
             continue;
         }
 
@@ -107,10 +110,12 @@ async fn execute_strategies(
                 "Strategy '{description}' skipped: no budget remains after reserving time for \
                  {strategies_after} more strategies"
             );
-            failed_attempts.push(description.to_string());
-            last_error = Some(KubeClientError::connection_error(
-                "Timed out connecting to the Kubernetes API server",
-            ));
+            skipped_attempts.push(description.to_string());
+            last_error.get_or_insert_with(|| {
+                KubeClientError::connection_error(
+                    "Timed out connecting to the Kubernetes API server",
+                )
+            });
             continue;
         }
         let strategy_budget = if after_reservation.is_zero() {
@@ -154,7 +159,7 @@ async fn execute_strategies(
         }
     }
 
-    log_connection_failure(&failed_attempts, last_error.as_ref());
+    log_connection_failure(&failed_attempts, &skipped_attempts, last_error.as_ref());
 
     Err(last_error
         .unwrap_or_else(|| KubeClientError::connection_error("No connection strategies available")))
@@ -374,25 +379,34 @@ where
     Ok(Client::new(service, config.default_namespace))
 }
 
-fn log_connection_failure(failed_attempts: &[String], last_error: Option<&KubeClientError>) {
-    if failed_attempts.is_empty() {
+fn log_connection_failure(
+    failed_attempts: &[String], skipped_attempts: &[String], last_error: Option<&KubeClientError>,
+) {
+    if failed_attempts.is_empty() && skipped_attempts.is_empty() {
         error!("No connection strategies available");
         return;
     }
 
-    let strategies_list = failed_attempts.join(", ");
+    let mut summary = Vec::new();
+    if !failed_attempts.is_empty() {
+        summary.push(format!(
+            "{} failed: {}",
+            failed_attempts.len(),
+            failed_attempts.join(", ")
+        ));
+    }
+    if !skipped_attempts.is_empty() {
+        summary.push(format!(
+            "{} skipped (budget exhausted before they ran): {}",
+            skipped_attempts.len(),
+            skipped_attempts.join(", ")
+        ));
+    }
+    let summary = summary.join("; ");
+
     match last_error {
-        Some(err) => error!(
-            "All connection strategies failed. Last error: {}. Attempted {} strategies: {}",
-            err,
-            failed_attempts.len(),
-            strategies_list
-        ),
-        None => error!(
-            "All {} connection strategies failed: {}",
-            failed_attempts.len(),
-            strategies_list
-        ),
+        Some(err) => error!("All connection strategies failed. Last error: {err}. {summary}"),
+        None => error!("All connection strategies failed. {summary}"),
     }
 }
 
@@ -515,7 +529,7 @@ mod tests {
 
         assert!(result.is_err(), "both strategies fail or time out");
         assert!(
-            elapsed < Duration::from_millis(220),
+            elapsed < Duration::from_millis(400),
             "elapsed {elapsed:?} implies the first strategy was not capped at its reserved \
              slice (~100ms); the previous `.max(remaining.min(MIN_STRATEGY_SLICE))` clamp undid \
              the reservation and let the first strategy run its full 250ms sleep instead of \

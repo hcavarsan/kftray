@@ -261,8 +261,10 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         _ => {}
     }
 
-    app.error_scroll_max = max_error_scroll;
-    app.error_scroll = app.error_scroll.min(max_error_scroll);
+    if let AppState::ShowErrorPopup = app.state {
+        app.error_scroll_max = max_error_scroll;
+        app.error_scroll = app.error_scroll.min(max_error_scroll);
+    }
 }
 
 pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {

@@ -2,7 +2,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RefreshCw, X } from 'lucide-react'
 
-import { Box, Group } from '@chakra-ui/react'
+import { Box, chakra, Group } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -187,8 +187,9 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
 
           {isInitiating && (
             <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
-              <Box
-                as='button'
+              <chakra.button
+                type='button'
+                aria-label='Cancel'
                 display='inline-flex'
                 alignItems='center'
                 justifyContent='center'
@@ -201,7 +202,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                 onClick={() => abortStartOperation()}
               >
                 <Box as={X} width='10px' height='10px' color='red.300' />
-              </Box>
+              </chakra.button>
             </Tooltip>
           )}
 
@@ -280,8 +281,9 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
 
           {isStopping && (
             <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
-              <Box
-                as='button'
+              <chakra.button
+                type='button'
+                aria-label='Cancel'
                 display='inline-flex'
                 alignItems='center'
                 justifyContent='center'
@@ -294,7 +296,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                 onClick={() => abortStopOperation()}
               >
                 <Box as={X} width='10px' height='10px' color='red.300' />
-              </Box>
+              </chakra.button>
             </Tooltip>
           )}
         </Group>

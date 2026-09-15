@@ -86,20 +86,30 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
       return
     }
 
+    let cancelled = false
+
     const fetchInitialPod = async () => {
       try {
         const podName = await invoke<string | null>('get_active_pod_cmd', {
           configId: config.id.toString(),
         })
 
-        setActivePod(podName)
+        if (!cancelled) {
+          setActivePod(podName)
+        }
       } catch (error) {
         console.error('Error fetching initial active pod:', error)
-        setActivePod(null)
+        if (!cancelled) {
+          setActivePod(null)
+        }
       }
     }
 
     fetchInitialPod()
+
+    return () => {
+      cancelled = true
+    }
   }, [config.is_running, config.id])
 
   useEffect(() => {
@@ -488,7 +498,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                   size='xs'
                   checked={selected}
                   onCheckedChange={e => {
-                    onSelectionChange(e.checked === true)
+                    onSelectionChange(config.id, e.checked === true)
                   }}
                   className='checkbox'
                 />

@@ -236,6 +236,7 @@ mod tests {
     #[test]
     fn scrolling_past_the_bottom_does_not_bank_offsets() {
         let mut app = setup_app();
+        app.state = AppState::ShowErrorPopup;
         app.error_message = Some("many failures".to_string());
         // What the last render could actually show.
         app.error_scroll_max = 3;

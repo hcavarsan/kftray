@@ -92,6 +92,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     isFormValid: false,
     kubeConfig: 'default',
   })
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     if (formState.selectedWorkloadType?.value === 'expose') {
@@ -464,17 +465,25 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
-    const configToSave = trimConfigValues(newConfig)
-
-    const saved = await handleSaveConfig(configToSave)
-
-    if (!saved) {
+    if (isSaving) {
       return
     }
-    if (!isEdit) {
-      resetState()
+    const configToSave = trimConfigValues(newConfig)
+
+    setIsSaving(true)
+    try {
+      const saved = await handleSaveConfig(configToSave)
+
+      if (!saved) {
+        return
+      }
+      if (!isEdit) {
+        resetState()
+      }
+      closeModal()
+    } finally {
+      setIsSaving(false)
     }
-    closeModal()
   }
 
   const handleCancel = () => {
@@ -1342,10 +1351,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   bg='blue.500'
                   _hover={{ bg: 'blue.600' }}
                   type='submit'
-                  disabled={!uiState.isFormValid}
+                  disabled={!uiState.isFormValid || isSaving}
                   height='28px'
                 >
-                  {isEdit ? 'Save Changes' : 'Add Config'}
+                  {isEdit
+                    ? isSaving
+                      ? 'Saving...'
+                      : 'Save Changes'
+                    : isSaving
+                      ? 'Adding...'
+                      : 'Add Config'}
                 </Button>
               </Flex>
             </Dialog.Footer>

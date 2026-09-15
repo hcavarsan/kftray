@@ -16,6 +16,22 @@ use super::connection::create_client_with_config;
 
 static PATH_INIT: OnceCell<()> = OnceCell::const_new();
 
+/// Resolves and applies the process-wide `PATH` (and, on Windows,
+/// `PATHEXT`) this crate's Kubernetes client creation relies on, exactly
+/// once for the process. `env::set_var`/`env::remove_var` are unsafe
+/// because mutating the process environment while another thread reads it
+/// (`std::env::var`, a spawned `Command` inheriting env, an exec-credential
+/// plugin) is undefined behaviour; `init_path` is only ever called lazily
+/// from [`create_client_with_specific_context`], which can happen at an
+/// arbitrary point once the async runtime already has other tasks running.
+/// Callers that can run this during their own single-threaded startup —
+/// before spawning the runtime's other workers — should call this instead
+/// and await it there, so the one-time mutation happens with nothing else
+/// racing it.
+pub async fn warm_up_path_env() {
+    init_path().await;
+}
+
 async fn init_path() {
     PATH_INIT
         .get_or_init(|| async {

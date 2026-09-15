@@ -68,6 +68,34 @@ impl StartOutcome {
     }
 }
 
+/// Derives a stop batch's outcome directly from each response, tied to its
+/// own config id. Reconstructing failures by splitting the string
+/// `batch_failure` joins with "; " is lossy: a single response's `stderr`
+/// can itself contain "; " (multi-part errors from stop/cleanup are a
+/// realistic source), which would otherwise be split into bogus extra
+/// entries.
+fn stop_outcome_from_responses(
+    responses: &[kftray_commons::models::response::CustomResponse],
+) -> StartOutcome {
+    let started = responses.iter().filter(|r| r.status == 0).count();
+    let failures: Vec<String> = responses
+        .iter()
+        .filter(|r| r.failed())
+        .map(|r| {
+            let message = if r.stderr.trim().is_empty() {
+                "failed with no error message".to_owned()
+            } else {
+                r.stderr.clone()
+            };
+            match r.id {
+                Some(id) => format!("{id}: {message}"),
+                None => message,
+            }
+        })
+        .collect();
+    StartOutcome { started, failures }
+}
+
 /// Starts one configuration through the same workload/protocol dispatch the
 /// SSL certificate restart path uses.
 async fn start_one(config: &Config) -> Result<(), String> {
@@ -342,14 +370,7 @@ impl ActionHandler for StopAllPortForwardAction {
             .await
             .map_err(|error| error.to_string())
         {
-            Ok(responses) => {
-                let started = responses.iter().filter(|r| r.status == 0).count();
-                let failures = match kftray_commons::models::response::batch_failure(&responses) {
-                    Ok(()) => Vec::new(),
-                    Err(joined) => joined.split("; ").map(str::to_owned).collect(),
-                };
-                StartOutcome { started, failures }
-            }
+            Ok(responses) => stop_outcome_from_responses(&responses),
             Err(e) => StartOutcome {
                 started: 0,
                 failures: vec![e],
@@ -815,7 +836,59 @@ impl ActionHandler for TogglePortForwardAction {
 
 #[cfg(test)]
 mod tests {
-    use super::toggle_message;
+    use kftray_commons::models::response::CustomResponse;
+
+    use super::{
+        stop_outcome_from_responses,
+        toggle_message,
+    };
+
+    fn response(id: i64, status: i32, stderr: &str) -> CustomResponse {
+        CustomResponse {
+            id: Some(id),
+            service: String::new(),
+            namespace: String::new(),
+            local_port: 0,
+            remote_port: 0,
+            context: String::new(),
+            stdout: String::new(),
+            stderr: stderr.to_string(),
+            status,
+            protocol: String::new(),
+        }
+    }
+
+    #[test]
+    fn stop_outcome_keeps_a_multi_part_stderr_as_one_failure() {
+        // Regression: reconstructing failures by splitting the "; "-joined
+        // `batch_failure` message split a single stderr that itself
+        // contains "; " into several bogus entries, inflating the failure
+        // count reported to the user.
+        let responses = vec![
+            response(1, 0, ""),
+            response(2, 1, "stop failed; cleanup failed"),
+        ];
+
+        let outcome = stop_outcome_from_responses(&responses);
+
+        assert_eq!(outcome.started, 1);
+        assert_eq!(
+            outcome.failures,
+            vec!["2: stop failed; cleanup failed".to_string()]
+        );
+    }
+
+    #[test]
+    fn stop_outcome_labels_a_missing_stderr() {
+        let responses = vec![response(7, 1, "")];
+
+        let outcome = stop_outcome_from_responses(&responses);
+
+        assert_eq!(
+            outcome.failures,
+            vec!["7: failed with no error message".to_string()]
+        );
+    }
 
     #[test]
     fn stopped_only_with_failures_reports_stopped_not_started() {

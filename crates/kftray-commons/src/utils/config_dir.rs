@@ -106,10 +106,12 @@ const MEMORY_OWNER_DIGEST_PREFIX: char = 'h';
 /// The identity is a label value, so the whole derived form has to fit the
 /// 63-character limit with a full 128-bit session identifier after it; two
 /// sessions of one installation must not be able to collide on the resources
-/// they select by configuration id. A persisted id too long for that is
-/// replaced by a digest of the whole of it, so two long ids that share a
-/// prefix still derive different bases, and recognised through the same
-/// derivation, leaving file-mode ownership as it was.
+/// they select by configuration id. `load_or_create_installation_id` always
+/// persists a 32-character UUID, longer than `BASE_LEN`, so the digest below
+/// is the path every installation actually takes, not a rare fallback for
+/// unusually long ids: two installations whose digests collide would each
+/// recognise the other's memory-session resources as their own, so the
+/// digest is widened to use the rest of the `BASE_LEN` budget.
 fn memory_owner_base(installation: &str) -> std::borrow::Cow<'_, str> {
     const SUFFIX_LEN: usize = MEMORY_OWNER_SEPARATOR.len() + 32;
     const BASE_LEN: usize = 63 - SUFFIX_LEN;
@@ -128,14 +130,24 @@ fn memory_owner_base(installation: &str) -> std::borrow::Cow<'_, str> {
 /// A value derived from this can be written to disk, or into a label, by
 /// one process and read back by another built at a different time; it must
 /// not depend on whatever `DefaultHasher` happens to do for a given Rust
-/// version.
+/// version. Two independently-seeded passes are combined into 112 bits (28
+/// hex characters, the most `memory_owner_base`'s `BASE_LEN` budget can
+/// hold) rather than a single 64-bit hash, to keep a cross-installation
+/// collision implausible.
 pub(crate) fn fnv1a_hex(bytes: impl IntoIterator<Item = u8>) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
+    let data: Vec<u8> = bytes.into_iter().collect();
+    let low = fnv1a_u64(&data, 0xcbf2_9ce4_8422_2325);
+    let high = fnv1a_u64(&data, 0x9e37_79b9_7f4a_7c15);
+    format!("{low:016x}{:012x}", high & 0xffff_ffff_ffff)
+}
+
+fn fnv1a_u64(bytes: &[u8], offset_basis: u64) -> u64 {
+    let mut hash = offset_basis;
+    for &byte in bytes {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{hash:016x}")
+    hash
 }
 
 /// Whether an ownership label names this installation, directly or through
@@ -191,6 +203,12 @@ fn load_or_create_installation_id() -> Result<String, String> {
             }
 
             return Ok(stored);
+        }
+        if !stored.is_empty() {
+            log::warn!(
+                "Discarding an invalid installation identifier read from {}: {stored:?}",
+                path.display()
+            );
         }
         let generated = uuid::Uuid::new_v4().simple().to_string();
         publish_installation_id(&path, &generated)?;
@@ -484,6 +502,8 @@ pub(crate) fn unlock(file: &fs::File, region: LockRegion) {
     }
 }
 
+static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Writes `contents` to `path` via a temporary file in the same directory,
 /// fsyncing the file and the directory entry before returning, so a reader
 /// never observes the destination path empty or partially written.
@@ -500,7 +520,8 @@ pub(crate) fn write_file_durably(path: &std::path::Path, contents: &[u8]) -> std
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("file");
-    let temporary = dir.join(format!("{file_name}.{}.tmp", std::process::id()));
+    let unique = TEMP_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = dir.join(format!("{file_name}.{}.{unique}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
         file.write_all(contents)?;

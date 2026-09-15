@@ -10,6 +10,7 @@ use std::time::{
 };
 
 use dashmap::DashMap;
+use log::warn;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 
@@ -68,6 +69,15 @@ type CreationLock = Arc<(Mutex<()>, AtomicUsize)>;
 /// forever, pinning the entry so `cleanup_expired` could never reclaim it.
 /// Tying the release to `Drop` instead makes it run exactly once no matter
 /// how the caller's future exits, cancellation included.
+///
+/// The counter must already be incremented by the caller before
+/// constructing this guard (see `SharedClientManager::get_connection`,
+/// which increments it while still holding the `creation_locks` shard
+/// guard so a concurrent `release_creation_lock` cannot observe a
+/// zero count and reclaim the entry out from under a fresh interest).
+/// Incrementing here instead would reopen that race, and incrementing
+/// while still holding the shard guard from inside `Drop` would deadlock
+/// against it on a subsequent release.
 struct CreationLockInterest<'a> {
     manager: &'a SharedClientManager,
     key: ServiceClientKey,
@@ -75,8 +85,11 @@ struct CreationLockInterest<'a> {
 }
 
 impl<'a> CreationLockInterest<'a> {
-    fn new(manager: &'a SharedClientManager, key: ServiceClientKey, lock: CreationLock) -> Self {
-        lock.1.fetch_add(1, Ordering::SeqCst);
+    /// Wraps a lock whose interest the caller already registered
+    /// (`lock.1.fetch_add`) so `Drop` releases it exactly once.
+    fn already_registered(
+        manager: &'a SharedClientManager, key: ServiceClientKey, lock: CreationLock,
+    ) -> Self {
         Self { manager, key, lock }
     }
 }
@@ -148,12 +161,16 @@ impl SharedClientManager {
             self.clients.remove(&key);
         }
 
-        let lock = self
-            .creation_locks
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
-            .clone();
-        let _interest = CreationLockInterest::new(self, key.clone(), lock.clone());
+        let lock = {
+            let entry = self
+                .creation_locks
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))));
+            let lock = entry.clone();
+            lock.1.fetch_add(1, Ordering::SeqCst);
+            lock
+        };
+        let _interest = CreationLockInterest::already_registered(self, key.clone(), lock.clone());
 
         let guard = lock.0.lock().await;
 
@@ -192,19 +209,27 @@ impl SharedClientManager {
     ///
     /// The kubeconfig read + merge only happens on a cache miss: the
     /// resolved context is cached per kubeconfig path in
-    /// `resolved_contexts`, so a repeated cache-hit call never touches disk,
-    /// and the read itself runs on a blocking thread since it is synchronous
-    /// file IO. Resolving the paths and stating them (env var read plus one
-    /// stat per file) is cheap enough to redo on every call: it is what
-    /// lets a still-fresh TTL entry be treated as stale once the kubeconfig
-    /// it came from changed on disk, instead of only when the TTL expires.
+    /// `resolved_contexts`, so a repeated cache-hit call never touches disk
+    /// more than once. Resolving the paths and stating them (env var read
+    /// plus one stat per file) is redone on every call so a still-fresh TTL
+    /// entry can be treated as stale once the kubeconfig it came from
+    /// changed on disk, instead of only when the TTL expires; it runs on a
+    /// blocking thread like the merge below, since a kubeconfig on a
+    /// network/remote mount can make a stat take far longer than the
+    /// syscall normally implies, and that must not stall a runtime worker.
     async fn resolve_key(&self, key: ServiceClientKey) -> anyhow::Result<ServiceClientKey> {
         if key.context_name.is_some() {
             return Ok(key);
         }
 
-        let current_paths = get_kubeconfig_paths_from_option(key.kubeconfig_path.clone())?;
-        let current_signature = kubeconfig_signature(&current_paths);
+        let path_option = key.kubeconfig_path.clone();
+        let (current_paths, current_signature) = tokio::task::spawn_blocking(move || {
+            let current_paths = get_kubeconfig_paths_from_option(path_option)?;
+            let current_signature = kubeconfig_signature(&current_paths);
+            Ok::<_, anyhow::Error>((current_paths, current_signature))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("kubeconfig path resolution task panicked: {e}"))??;
 
         if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
             let (context_name, resolved_at, signature) = resolved.value();
@@ -219,22 +244,31 @@ impl SharedClientManager {
         let kubeconfig_path = key.kubeconfig_path.clone();
         let current_context = tokio::task::spawn_blocking(move || {
             let (kubeconfig, errors) = merge_kubeconfigs(&current_paths)?;
-            kubeconfig.current_context.ok_or_else(|| {
-                if errors.is_empty() {
-                    anyhow::anyhow!(
-                        "Kubernetes context is required (kubeconfig: {}) and it has no \
-                         current-context",
-                        kubeconfig_path.as_deref().unwrap_or("default")
-                    )
-                } else {
-                    anyhow::anyhow!(
-                        "Kubernetes context is required (kubeconfig: {}) and it has no \
-                         current-context; it also failed to read: {}",
-                        kubeconfig_path.as_deref().unwrap_or("default"),
-                        errors.join("; ")
-                    )
+            match kubeconfig.current_context {
+                Some(current_context) => {
+                    if !errors.is_empty() {
+                        warn!(
+                            "Resolved current-context for kubeconfig {} despite {} file(s) \
+                             failing to read or merge: {}",
+                            kubeconfig_path.as_deref().unwrap_or("default"),
+                            errors.len(),
+                            errors.join("; ")
+                        );
+                    }
+                    Ok(current_context)
                 }
-            })
+                None if errors.is_empty() => Err(anyhow::anyhow!(
+                    "Kubernetes context is required (kubeconfig: {}) and it has no \
+                     current-context",
+                    kubeconfig_path.as_deref().unwrap_or("default")
+                )),
+                None => Err(anyhow::anyhow!(
+                    "Kubernetes context is required (kubeconfig: {}) and it has no \
+                     current-context; it also failed to read: {}",
+                    kubeconfig_path.as_deref().unwrap_or("default"),
+                    errors.join("; ")
+                )),
+            }
         })
         .await
         .map_err(|e| anyhow::anyhow!("kubeconfig resolution task panicked: {e}"))??;
@@ -618,6 +652,48 @@ mod tests {
             !manager.creation_locks.contains_key(&key),
             "a failed creation with no other waiter must not leak its lock entry"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_get_connection_calls_never_leak_a_fresh_creation_lock_entry() {
+        let manager = Arc::new(SharedClientManager::new());
+        let key = ServiceClientKey::new(
+            Some("kftray-test-race-context".to_string()),
+            Some("/nonexistent/kftray-test-race-kubeconfig".to_string()),
+        );
+
+        // Many concurrent callers race the same never-cached key, each
+        // failing fast (nonexistent kubeconfig), so the creation-lock entry
+        // for this key is repeatedly created, contended, and reclaimed many
+        // times over real multi-core parallelism. Interest must be
+        // registered while the shard guard is still held: if it were
+        // registered afterwards (the pre-fix ordering), a concurrent
+        // `release_creation_lock` racing the gap between guard release and
+        // registration could remove the entry a caller just cloned, and the
+        // next caller would insert a second, different lock for the same
+        // key — surfacing here as a leaked/duplicated entry once every task
+        // has finished, or as a panic if the interest guard's `Drop` ever
+        // ran while the shard guard was still held.
+        for _ in 0..25 {
+            let mut handles = Vec::with_capacity(32);
+            for _ in 0..32 {
+                let manager = Arc::clone(&manager);
+                let key = key.clone();
+                handles.push(tokio::spawn(
+                    async move { manager.get_connection(key).await },
+                ));
+            }
+            for handle in handles {
+                let _ = handle
+                    .await
+                    .expect("a racing get_connection call must not panic");
+            }
+
+            assert!(
+                !manager.creation_locks.contains_key(&key),
+                "every caller failed and released; the creation-lock entry must not be leaked"
+            );
+        }
     }
 
     #[tokio::test]

@@ -219,11 +219,6 @@ mod tests {
 
     #[test]
     fn test_default_log_directory_uses_kftray_config() {
-        static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _lock = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
         let temp_dir = TempDir::new().unwrap();
         let _guard = kftray_commons::test_utils::EnvVarGuard::set(
             "KFTRAY_CONFIG",
