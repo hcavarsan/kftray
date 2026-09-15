@@ -2461,10 +2461,28 @@ async fn stop_config(
     } else {
         Err(nothing_forwarding_error(id))
     };
+    release_unused_clients();
     drop(guard);
     drop(lock);
     crate::kube::proxy_recovery::remove_recovery_lock(id);
     result
+}
+
+/// Drops the cached API clients no registered forward uses any more, so
+/// the keep-alive connections they pooled close with the forward instead of
+/// staying open for the cache TTL.
+fn release_unused_clients() {
+    let in_use: HashSet<ServiceClientKey> = CHILD_PROCESSES
+        .iter()
+        .filter_map(|entry| {
+            let config = entry.value().config()?;
+            Some(ServiceClientKey::new(
+                config.context.clone(),
+                config.kubeconfig.clone(),
+            ))
+        })
+        .collect();
+    SHARED_CLIENT_MANAGER.release_unused(&in_use);
 }
 
 fn stop_response(id: i64, config: Option<&Config>, error: Option<String>) -> CustomResponse {

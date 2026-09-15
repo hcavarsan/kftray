@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{
@@ -329,6 +330,17 @@ impl SharedClientManager {
                 .remove_if(&key.kubeconfig_path, |_, (resolved, _, _)| resolved == ctx);
         }
         self.clients.remove(key);
+    }
+
+    /// Drops every cached client no key in `in_use` still needs, so the
+    /// connections it pooled close now rather than when the TTL expires. A
+    /// key without a context keeps every client for its kubeconfig, since
+    /// the forward using it resolved through `resolved_contexts`.
+    pub fn release_unused(&self, in_use: &HashSet<ServiceClientKey>) {
+        self.clients.retain(|key, _| {
+            in_use.contains(key)
+                || in_use.contains(&ServiceClientKey::new(None, key.kubeconfig_path.clone()))
+        });
     }
 
     pub fn cleanup_expired(&self) {
@@ -816,6 +828,64 @@ mod tests {
         assert!(
             manager.clients.contains_key(&other_kubeconfig_key),
             "entries for a different kubeconfig path must be left untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_unused_keeps_clients_a_forward_still_needs() {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = Some("kftray-test-shared-kubeconfig".to_string());
+
+        let make_cached_client = || {
+            let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+            CachedClient::new(KubeConnection {
+                client: kube::Client::new(mock_service, "default"),
+                cluster_url: "https://example.invalid".parse().unwrap(),
+            })
+        };
+
+        let key_a = ServiceClientKey::new(Some("context-a".to_string()), kubeconfig_path.clone());
+        let key_b = ServiceClientKey::new(Some("context-b".to_string()), kubeconfig_path.clone());
+        let other_kubeconfig_key = ServiceClientKey::new(
+            Some("context-a".to_string()),
+            Some("kftray-test-other-kubeconfig".to_string()),
+        );
+
+        manager.clients.insert(key_a.clone(), make_cached_client());
+        manager.clients.insert(key_b.clone(), make_cached_client());
+        manager
+            .clients
+            .insert(other_kubeconfig_key.clone(), make_cached_client());
+
+        manager.release_unused(&HashSet::from([
+            key_b.clone(),
+            ServiceClientKey::new(None, other_kubeconfig_key.kubeconfig_path.clone()),
+        ]));
+
+        assert!(
+            !manager.clients.contains_key(&key_a),
+            "a client no forward uses must be dropped"
+        );
+        assert!(
+            manager.clients.contains_key(&key_b),
+            "a client a forward names by context must stay"
+        );
+        assert!(
+            manager.clients.contains_key(&other_kubeconfig_key),
+            "a forward without a context keeps every client for its kubeconfig"
+        );
+
+        manager.release_unused(&HashSet::new());
+        assert!(
+            manager.clients.is_empty(),
+            "with nothing forwarding, no client is kept"
         );
     }
 

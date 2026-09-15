@@ -41,6 +41,11 @@ type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
 const POOL_MAX_IDLE_PER_HOST: usize = 5;
 
+/// Idle keep-alive connections are only reaped when the pool has a timer
+/// (`pool_timer`, not `timer`); without one they stay open until the client
+/// itself is dropped.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Total budget for connecting to and probing the API server. Independent
 /// of `Config::read_timeout`, which governs already-established requests
 /// (e.g. watches) rather than how long a connection attempt may take.
@@ -236,8 +241,7 @@ async fn create_rustls_client(config: Config) -> KubeResult<Client> {
         KubeClientError::connection_error_with_source("Failed to create Rustls connector", e)
     })?;
 
-    let hyper_client =
-        hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector);
+    let hyper_client = create_hyper_client(connector);
     build_kube_client(config, hyper_client)
 }
 
@@ -309,8 +313,10 @@ where
 
     hyper_util::client::legacy::Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
         .retry_canceled_requests(true)
         .timer(TokioTimer::new())
+        .pool_timer(TokioTimer::new())
         .build(connector)
 }
 

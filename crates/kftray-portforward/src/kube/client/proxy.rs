@@ -1,7 +1,6 @@
 use hyper::Uri;
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
 use kube::Client;
 use kube::client::ConfigExt;
 use kube::config::Config;
@@ -73,8 +72,7 @@ async fn create_rustls_http_proxy(config: Config, proxy_url: &Uri) -> KubeResult
             )
         })?;
 
-    let hyper_client =
-        hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector);
+    let hyper_client = create_hyper_client(connector);
     build_kube_client(config, hyper_client)
 }
 
@@ -89,8 +87,7 @@ async fn create_rustls_socks5_proxy(config: Config, proxy_url: &Uri) -> KubeResu
             )
         })?;
 
-    let hyper_client =
-        hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector);
+    let hyper_client = create_hyper_client(connector);
     build_kube_client(config, hyper_client)
 }
 
