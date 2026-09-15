@@ -72,6 +72,9 @@ pub enum RecoverySignal {
     StreamFailed,
     /// Health check detected unhealthy state
     HealthCheckFailed,
+    /// The pod a pod-targeted relay dials is gone and a ready replacement
+    /// exists; the relay has to be re-deployed against the new address.
+    TargetChanged,
 }
 
 // ============================================================================
@@ -116,6 +119,12 @@ pub fn spawn_recovery_manager(
         tokio::spawn(async move {
             manager_for_task.run_recovery_loop_with_rx(rx).await;
         });
+        if manager.config.workload_type.as_deref() == Some("pod") {
+            let manager_for_watch = Arc::clone(&manager);
+            tokio::spawn(async move {
+                watch_relay_target(manager_for_watch).await;
+            });
+        }
         spawned = true;
         manager
     });
@@ -352,7 +361,7 @@ impl ProxyRecoveryManager {
                         all_attempts_exhausted = false;
                         break;
                     }
-                    result = self.do_recovery_attempt() => result,
+                    result = self.do_recovery_attempt(&signal) => result,
                 };
                 match result {
                     Ok(()) => {
@@ -415,10 +424,13 @@ impl ProxyRecoveryManager {
 
     /// Attempt a single recovery operation.
     ///
-    /// Dispatches to the appropriate recovery function based on [`ProxyType`]:
+    /// Dispatches on the signal and [`ProxyType`]:
+    /// - [`RecoverySignal::TargetChanged`] → full re-deployment via [`recover_bare_pod()`],
+    ///   whatever the proxy type: the relay's destination is baked into its manifest, so a new
+    ///   address needs a new relay
     /// - [`ProxyType::BarePod`] → full re-deployment via [`recover_bare_pod()`]
     /// - [`ProxyType::Deployment`] → stream reconnection via [`recover_deployment()`]
-    async fn do_recovery_attempt(&self) -> anyhow::Result<()> {
+    async fn do_recovery_attempt(&self, signal: &RecoverySignal) -> anyhow::Result<()> {
         // Under the same cross-process lock as a start, stop or delete, and
         // against the row as it is now: another instance can have stopped or
         // deleted this configuration since the last attempt, and recovering
@@ -472,29 +484,26 @@ impl ProxyRecoveryManager {
         }
         let client = connection.client.clone();
 
-        match self.proxy_type {
-            ProxyType::BarePod => {
-                recover_bare_pod(
-                    &self.config,
-                    &client,
-                    self.mode,
-                    self.ssl_override,
-                    &self.cancel_token,
-                    &self.destination,
-                )
-                .await
-            }
-            ProxyType::Deployment => {
-                recover_deployment(
-                    &self.config,
-                    &client,
-                    self.mode,
-                    self.ssl_override,
-                    &self.cancel_token,
-                    &self.destination,
-                )
-                .await
-            }
+        if *signal == RecoverySignal::TargetChanged || self.proxy_type == ProxyType::BarePod {
+            recover_bare_pod(
+                &self.config,
+                &client,
+                self.mode,
+                self.ssl_override,
+                &self.cancel_token,
+                &self.destination,
+            )
+            .await
+        } else {
+            recover_deployment(
+                &self.config,
+                &client,
+                self.mode,
+                self.ssl_override,
+                &self.cancel_token,
+                &self.destination,
+            )
+            .await
         }
     }
 
@@ -627,6 +636,125 @@ fn active_relay_name(config_id: i64) -> Option<String> {
     crate::port_forward::CHILD_PROCESSES
         .get(&config_id)
         .and_then(|process| process.config().and_then(|config| config.service.clone()))
+}
+
+/// The address the registered forward's relay was deployed to dial, as
+/// resolved when it started. Read from the registered process for the same
+/// reason as [`active_relay_name`].
+fn active_relay_target(config_id: i64) -> Option<String> {
+    crate::port_forward::CHILD_PROCESSES
+        .get(&config_id)
+        .and_then(|process| {
+            process
+                .config()
+                .and_then(|config| config.remote_address.clone())
+        })
+}
+
+/// Follows the pods behind a pod-targeted relay and asks for a re-deployment
+/// once the pod the running relay dials is no longer ready while another one
+/// is. A rollout replaces the pod and its IP, and the relay's destination is
+/// fixed in its manifest, so without this the forward would keep sending to
+/// an address nothing listens on.
+///
+/// Each stale address is reported once: the redeploy takes a few seconds, and
+/// the events that keep arriving meanwhile describe the same change. A
+/// replacement that is not ready yet is waited for rather than reported, so a
+/// rollout that briefly has no ready pod does not spend recovery attempts on
+/// a relay with nowhere to send.
+async fn watch_relay_target(manager: Arc<ProxyRecoveryManager>) {
+    let Some(selector) = manager
+        .config
+        .target
+        .clone()
+        .filter(|selector| !selector.trim().is_empty())
+    else {
+        return;
+    };
+    let config_id = manager.config_id;
+    let key = crate::kube::shared_client::ServiceClientKey::new(
+        manager.config.context.clone(),
+        manager.config.kubeconfig.clone(),
+    );
+    let connection = match crate::kube::shared_client::SHARED_CLIENT_MANAGER
+        .get_connection(key)
+        .await
+    {
+        Ok(connection) => connection,
+        Err(error) => {
+            log::warn!("Not watching the relay target for config {config_id}: {error}");
+            return;
+        }
+    };
+    let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
+        kube::Api::namespaced(connection.client.clone(), &manager.config.namespace);
+    let watcher = kube_runtime::watcher(
+        pods,
+        kube_runtime::watcher::Config::default().labels(&selector),
+    )
+    .default_backoff();
+    futures::pin_mut!(watcher);
+
+    let mut known: std::collections::HashMap<String, k8s_openapi::api::core::v1::Pod> =
+        std::collections::HashMap::new();
+    let mut listed = false;
+    let mut reported: Option<String> = None;
+    loop {
+        let event = tokio::select! {
+            biased;
+            _ = manager.cancel_token.cancelled() => return,
+            event = watcher.next() => match event {
+                Some(Ok(event)) => event,
+                Some(Err(error)) => {
+                    log::debug!("Retrying the relay target watch for config {config_id}: {error}");
+                    continue;
+                }
+                None => return,
+            },
+        };
+        match event {
+            kube_runtime::watcher::Event::Init => {
+                known.clear();
+                listed = false;
+            }
+            kube_runtime::watcher::Event::InitDone => listed = true,
+            kube_runtime::watcher::Event::InitApply(pod)
+            | kube_runtime::watcher::Event::Apply(pod) => {
+                if let Some(name) = pod.metadata.name.clone() {
+                    known.insert(name, pod);
+                }
+            }
+            kube_runtime::watcher::Event::Delete(pod) => {
+                if let Some(name) = pod.metadata.name.as_deref() {
+                    known.remove(name);
+                }
+            }
+        }
+        if !listed {
+            continue;
+        }
+        let Some(current) = active_relay_target(config_id) else {
+            continue;
+        };
+        if known
+            .values()
+            .any(|pod| crate::kube::proxy::ready_pod_ip(pod) == Some(current.as_str()))
+        {
+            reported = None;
+            continue;
+        }
+        if crate::kube::proxy::select_target_pod_ip(known.values()).is_none()
+            || reported.as_deref() == Some(current.as_str())
+        {
+            continue;
+        }
+        log::info!(
+            "Relay target {current} for config {config_id} is no longer ready; re-deploying the \
+             relay against its replacement"
+        );
+        reported = Some(current);
+        manager.signal_recovery(RecoverySignal::TargetChanged);
+    }
 }
 
 /// Recover a deployment-based proxy by waiting for K8s to restart the pod.

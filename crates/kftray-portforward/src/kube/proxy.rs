@@ -318,12 +318,26 @@ pub(super) async fn start_proxy_config(
         .id
         .map_or_else(|| "default".into(), |id| id.to_string());
 
-    let remote_address = config
-        .remote_address
-        .take()
-        .filter(|address| !address.is_empty())
-        .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
-        .ok_or("A proxy destination address or service is required")?;
+    // A pod configuration names its workload by label selector, which the
+    // relay cannot dial: it gets the IP of a ready pod behind that selector,
+    // resolved now and again on every re-deployment. `remote_address` records
+    // the address the running relay was given, so the target watch can tell
+    // when that pod is gone.
+    let remote_address = if config.workload_type.as_deref() == Some("pod") {
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err("Proxy startup cancelled".to_string()),
+            resolved = resolve_target_pod_ip(&pods, config.target.as_deref().unwrap_or_default()) => resolved?,
+        }
+    } else {
+        config
+            .remote_address
+            .take()
+            .filter(|address| !address.is_empty())
+            .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
+            .ok_or("A proxy destination address or service is required")?
+    };
     let remote_port = config
         .remote_port
         .filter(|port| *port > 0)
@@ -455,6 +469,58 @@ pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str, customized:
                             })
                         })
             })
+    })
+}
+
+/// The IP of `pod` when it can take traffic: running, not being deleted,
+/// and reporting the `Ready` condition.
+pub(crate) fn ready_pod_ip(pod: &Pod) -> Option<&str> {
+    if pod.metadata.deletion_timestamp.is_some() {
+        return None;
+    }
+    let status = pod.status.as_ref()?;
+    if status.phase.as_deref() != Some("Running") {
+        return None;
+    }
+    let ready = status.conditions.as_ref().is_some_and(|conditions| {
+        conditions
+            .iter()
+            .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+    });
+    if !ready {
+        return None;
+    }
+    status.pod_ip.as_deref().filter(|ip| !ip.is_empty())
+}
+
+/// Picks the pod a pod-targeted relay dials: the first ready pod among
+/// `pods`, by name, so repeated resolutions against an unchanged set of
+/// pods agree.
+pub(crate) fn select_target_pod_ip<'a>(pods: impl IntoIterator<Item = &'a Pod>) -> Option<String> {
+    let mut ready: Vec<(&str, &str)> = pods
+        .into_iter()
+        .filter_map(|pod| {
+            let ip = ready_pod_ip(pod)?;
+            Some((pod.metadata.name.as_deref().unwrap_or_default(), ip))
+        })
+        .collect();
+    ready.sort_unstable();
+    ready.first().map(|(_, ip)| (*ip).to_owned())
+}
+
+async fn resolve_target_pod_ip(pods: &Api<Pod>, label_selector: &str) -> Result<String, String> {
+    if label_selector.trim().is_empty() {
+        return Err("Pod configuration has no label selector".to_string());
+    }
+    let list = pods
+        .list(&kube::api::ListParams::default().labels(label_selector))
+        .await
+        .map_err(|error| format!("Failed to list pods matching '{label_selector}': {error}"))?;
+    select_target_pod_ip(&list.items).ok_or_else(|| {
+        format!(
+            "{} matching '{label_selector}'",
+            crate::kube::target::NO_READY_PODS_ERROR
+        )
     })
 }
 

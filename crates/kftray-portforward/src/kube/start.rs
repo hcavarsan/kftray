@@ -927,18 +927,12 @@ pub(super) async fn start_config_cancellable(
         clear_stopped_by_timeout(config_id);
     }
 
-    let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
-        (Some("pod"), "tcp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-        (Some("pod"), "udp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-        (Some("service"), "tcp") => {
-            TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
-        }
-        (Some("service"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "udp") => {
+    // Every UDP forward and every proxy runs through a relay the deploy step
+    // created and recorded in `service`, so all of them select the relay pod.
+    // Only a TCP pod or service forward talks to the workload directly.
+    let relay_backed = config.protocol == "udp" || config.workload_type.as_deref() == Some("proxy");
+    let selector = match (relay_backed, config.workload_type.as_deref()) {
+        (true, _) => {
             let owner_selector = crate::kube::proxy::proxy_owner_selector(
                 &config.id.unwrap_or_default().to_string(),
                 mode,
@@ -949,18 +943,8 @@ pub(super) async fn start_config_cancellable(
                 config.service.clone().unwrap_or_default()
             ))
         }
-        (Some("proxy"), "tcp") => {
-            let owner_selector = crate::kube::proxy::proxy_owner_selector(
-                &config.id.unwrap_or_default().to_string(),
-                mode,
-            )
-            .await?;
-            TargetSelector::PodLabel(format!(
-                "app={},{owner_selector}",
-                config.service.clone().unwrap_or_default()
-            ))
-        }
-        _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
+        (false, Some("pod")) => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        (false, _) => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
     let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
