@@ -318,7 +318,9 @@ impl UdpForwarder {
     /// peer is new or its previous tunnel has ended. The tunnel itself is
     /// opened inside the session task, so one slow handshake cannot stall the
     /// datagrams of every other client.
-    fn dispatch_datagram<U: UdpUpstream>(table: &mut SessionTable<U>, peer: SocketAddr, payload: &[u8]) {
+    fn dispatch_datagram<U: UdpUpstream>(
+        table: &mut SessionTable<U>, peer: SocketAddr, payload: &[u8],
+    ) {
         let SessionTable {
             sessions,
             replies,
