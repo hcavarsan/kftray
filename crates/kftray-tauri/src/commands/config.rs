@@ -292,30 +292,12 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
-    // Same guard as delete_config_cmd/delete_configs_cmd: without it this
-    // deleted every row unconditionally, including ones for forwards that
-    // are running, starting or still being cleaned up.
     let ids: Vec<i64> = get_configs()
         .await?
         .into_iter()
         .filter_map(|c| c.id)
         .collect();
-    let targets = ids.clone();
-    let result = kftray_portforward::kube::delete_configs_if_idle(
-        &targets,
-        kftray_commons::utils::db_mode::DatabaseMode::File,
-        || async move {
-            for id in &ids {
-                clear_stopped_by_timeout(*id);
-            }
-            delete_configs(ids).await
-        },
-    )
-    .await;
-    if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
-    }
-    result
+    delete_configs_cmd(ids).await
 }
 
 #[tauri::command]
@@ -503,43 +485,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_all_configs_cmd_only_deletes_enumerated_ids() {
+    async fn deleting_enumerated_configs_leaves_a_row_added_after_enumeration() {
         let _guard = TEST_MUTEX.lock().await;
         let _pool = setup_isolated_test_db().await;
 
-        let config1 = Config::default();
-        insert_config_cmd(config1)
+        insert_config_cmd(Config::default())
             .await
             .expect("Failed to insert test config");
-
-        // `delete_all_configs_cmd` used to run `delete_all_configs()`
-        // (DELETE FROM configs) instead of `delete_configs(ids)` with the
-        // ids it had just enumerated and validated as idle, so a config
-        // inserted after that enumeration but before the delete ran was
-        // wiped too.
-        let interloper = tokio::spawn(async {
-            tokio::task::yield_now().await;
-            kftray_commons::config::insert_config(Config {
-                service: Some("added-after-enumeration".to_string()),
-                ..Config::default()
-            })
+        let enumerated: Vec<i64> = get_configs_cmd()
             .await
-            .expect("Failed to insert interloper config")
-        });
+            .expect("Failed to enumerate configs")
+            .into_iter()
+            .filter_map(|c| c.id)
+            .collect();
+        insert_config_cmd(Config {
+            service: Some("added-after-enumeration".to_string()),
+            ..Config::default()
+        })
+        .await
+        .expect("Failed to insert the later config");
 
-        let result = delete_all_configs_cmd().await;
-        interloper.await.expect("interloper task panicked");
-
-        assert!(result.is_ok(), "Delete all configs command should succeed");
+        delete_configs_cmd(enumerated)
+            .await
+            .expect("Deleting the enumerated configs should succeed");
 
         let configs_after = get_configs_cmd()
             .await
             .expect("Failed to get configs after deletion");
-        assert!(
+        assert_eq!(
             configs_after
                 .iter()
-                .any(|c| c.service.as_deref() == Some("added-after-enumeration")),
-            "a config inserted after enumeration must survive delete_all_configs_cmd"
+                .filter_map(|c| c.service.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["added-after-enumeration"],
+            "only the enumerated rows may be deleted"
         );
     }
 
