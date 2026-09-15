@@ -407,7 +407,15 @@ fn prepare_relay_startup(
     Ok(container.name.clone())
 }
 
-pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
+/// Whether the relay container has started.
+///
+/// A customized manifest gets no startup probe (see [`prepare_relay_startup`]),
+/// and some kubelets omit `started` entirely rather than reporting it `Some(true)`
+/// once a container with no startup probe is running. Falling back to
+/// `Running` + container-ready only for that case avoids waiting forever on a
+/// field the kubelet never sets, without loosening the check for a manifest
+/// that does have a probe attached.
+pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str, customized: bool) -> bool {
     pod.is_some_and(|pod| {
         pod.metadata.deletion_timestamp.is_none()
             && pod.status.as_ref().is_some_and(|status| {
@@ -417,7 +425,14 @@ pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
                         .as_ref()
                         .is_some_and(|containers| {
                             containers.iter().any(|container| {
-                                container.name == container_name && container.started == Some(true)
+                                if container.name != container_name {
+                                    return false;
+                                }
+                                match container.started {
+                                    Some(started) => started,
+                                    None if customized => container.ready,
+                                    None => false,
+                                }
                             })
                         })
             })
@@ -425,15 +440,16 @@ pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
 }
 
 async fn wait_for_relay_startup(
-    pods: &Api<Pod>, pod_name: &str, container_name: &str, cancellation: &CancellationToken,
+    pods: &Api<Pod>, pod_name: &str, container_name: &str, customized: bool,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     tokio::select! {
         biased;
         _ = cancellation.cancelled() => Err("Proxy startup cancelled".to_string()),
         result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            kube_runtime::wait::await_condition(pods.clone(), pod_name, |pod: Option<&Pod>| {
-                relay_started(pod, container_name)
+            kube_runtime::wait::await_condition(pods.clone(), pod_name, move |pod: Option<&Pod>| {
+                relay_started(pod, container_name, customized)
             }),
         ) => result
             .map_err(|_| format!("Timed out waiting for proxy listener in pod {pod_name}"))?
@@ -469,12 +485,13 @@ async fn process_deployment_proxy(
         .as_mut()
         .and_then(|spec| spec.template.spec.as_mut())
         .ok_or("Proxy deployment must contain a pod specification")?;
+    let customized = kftray_commons::utils::manifests::deployment_manifest_is_customized();
     let container_name = prepare_relay_startup(
         spec,
         config
             .remote_port
             .ok_or("A proxy destination port is required")?,
-        kftray_commons::utils::manifests::deployment_manifest_is_customized(),
+        customized,
     )?;
     if options.cancellation.is_cancelled() {
         return Err("Proxy startup cancelled".to_string());
@@ -521,6 +538,7 @@ async fn process_deployment_proxy(
             &pods,
             &label_selector,
             &container_name,
+            customized,
             options.cancellation,
         )
         .await?;
@@ -617,7 +635,8 @@ where
 }
 
 async fn wait_for_relay_pod(
-    pods: &Api<Pod>, label_selector: &str, container_name: &str, cancellation: &CancellationToken,
+    pods: &Api<Pod>, label_selector: &str, container_name: &str, customized: bool,
+    cancellation: &CancellationToken,
 ) -> Result<String, String> {
     let watcher = kube_runtime::watcher(
         pods.clone(),
@@ -632,7 +651,7 @@ async fn wait_for_relay_pod(
             std::time::Duration::from_secs(120),
             async {
                 while let Some(pod) = watcher.try_next().await.map_err(|error| error.to_string())? {
-                    if relay_started(Some(&pod), container_name) {
+                    if relay_started(Some(&pod), container_name, customized) {
                         return pod
                             .metadata
                             .name
@@ -666,12 +685,13 @@ async fn process_pod_proxy(
         .spec
         .as_mut()
         .ok_or("Proxy pod must contain a pod specification")?;
+    let customized = pod_manifest_is_customized();
     let container_name = prepare_relay_startup(
         spec,
         config
             .remote_port
             .ok_or("A proxy destination port is required")?,
-        pod_manifest_is_customized(),
+        customized,
     )?;
     if options.cancellation.is_cancelled() {
         return Err("Proxy startup cancelled".to_string());
@@ -698,7 +718,14 @@ async fn process_pod_proxy(
         CreateOutcome::Unknown(error) => return Err(error),
     }
     let result: Result<CustomResponse, String> = async {
-        wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
+        wait_for_relay_startup(
+            &pods,
+            hashed_name,
+            &container_name,
+            customized,
+            options.cancellation,
+        )
+        .await?;
         config.service = Some(hashed_name.to_string());
         let response = super::start::start_config_cancellable(
             config.clone(),
@@ -976,7 +1003,7 @@ mod tests {
             }
         }))
         .unwrap();
-        assert!(!relay_started(Some(&pod), "relay"));
+        assert!(!relay_started(Some(&pod), "relay", false));
     }
 
     #[test]
@@ -995,7 +1022,46 @@ mod tests {
             }
         }))
         .unwrap();
-        assert!(relay_started(Some(&pod), "relay"));
+        assert!(relay_started(Some(&pod), "relay", false));
+    }
+
+    #[test]
+    fn a_customized_manifest_with_no_started_field_falls_back_to_readiness() {
+        let pod: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{
+                    "name": "relay", "ready": true,
+                    "restartCount": 0, "image": "relay", "imageID": "relay"
+                }]
+            }
+        }))
+        .unwrap();
+        // No startup probe was injected for a customized manifest, and some
+        // kubelets omit `started` entirely for a container that never had
+        // one to report on; a running, ready container still counts.
+        assert!(relay_started(Some(&pod), "relay", true));
+        assert!(
+            !relay_started(Some(&pod), "relay", false),
+            "a manifest that did get a startup probe must not skip waiting for `started`"
+        );
+    }
+
+    #[test]
+    fn a_customized_manifest_with_no_started_field_and_not_ready_keeps_waiting() {
+        let pod: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{
+                    "name": "relay", "ready": false,
+                    "restartCount": 0, "image": "relay", "imageID": "relay"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(!relay_started(Some(&pod), "relay", true));
     }
 
     #[tokio::test]
@@ -1017,9 +1083,9 @@ mod tests {
         let waiter = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             let _guard = guard;
             if listener_wait {
-                wait_for_relay_startup(&pods, "relay", "relay", &startup.cancellation).await
+                wait_for_relay_startup(&pods, "relay", "relay", false, &startup.cancellation).await
             } else {
-                wait_for_relay_pod(&pods, "app=relay", "relay", &startup.cancellation)
+                wait_for_relay_pod(&pods, "app=relay", "relay", false, &startup.cancellation)
                     .await
                     .map(|_| ())
             }
@@ -1088,7 +1154,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let selected = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            wait_for_relay_pod(&pods, "app=relay", "relay", &cancellation),
+            wait_for_relay_pod(&pods, "app=relay", "relay", false, &cancellation),
         )
         .await
         .unwrap()

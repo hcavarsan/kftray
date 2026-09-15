@@ -92,6 +92,7 @@ pub async fn run_tui(
     app.finish_forwarding().await;
     // Bounded like the reconciliation below: a stop waits on lifecycle locks
     // and hosts-file work, and a stalled one must not keep the process alive.
+    let mut teardown_failed = false;
     match tokio::time::timeout(
         CLEANUP_RECONCILE_TIMEOUT,
         kftray_portforward::kube::stop_all_port_forward_with_mode(mode),
@@ -102,11 +103,18 @@ pub async fn run_tui(
             for response in responses {
                 if response.status != 0 {
                     error!("Error stopping port forward: {:?}", response.stderr);
+                    teardown_failed = true;
                 }
             }
         }
-        Ok(Err(error)) => error!("Failed to stop port forwards: {error}"),
-        Err(_) => error!("Stopping port forwards did not finish within the shutdown budget"),
+        Ok(Err(error)) => {
+            error!("Failed to stop port forwards: {error}");
+            teardown_failed = true;
+        }
+        Err(_) => {
+            error!("Stopping port forwards did not finish within the shutdown budget");
+            teardown_failed = true;
+        }
     }
     // A create abandoned on the way out can surface after that first pass.
     let (still_owed, cleanup_result) =
@@ -116,9 +124,11 @@ pub async fn run_tui(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
              running and are retried on the next stop"
         );
+        teardown_failed = true;
     }
     if let Err(error) = cleanup_result {
         error!("Failed to clean up configuration states: {error}");
+        teardown_failed = true;
     }
 
     if let Err(err) = res {
@@ -126,6 +136,9 @@ pub async fn run_tui(
     }
     if let Some(error) = restored {
         return Err(error.into());
+    }
+    if teardown_failed {
+        return Err("shutdown left work outstanding".into());
     }
 
     Ok(())

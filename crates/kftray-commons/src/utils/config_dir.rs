@@ -116,14 +116,26 @@ fn memory_owner_base(installation: &str) -> std::borrow::Cow<'_, str> {
     if installation.len() <= BASE_LEN {
         return std::borrow::Cow::Borrowed(installation);
     }
-    // FNV-1a, fixed here: the value is written into labels that outlive this
-    // binary, so it must not follow whatever the standard hasher does.
+    std::borrow::Cow::Owned(format!(
+        "{MEMORY_OWNER_DIGEST_PREFIX}{}",
+        fnv1a_hex(installation.bytes())
+    ))
+}
+
+/// FNV-1a over `bytes`, fixed here rather than left to the standard
+/// hasher.
+///
+/// A value derived from this can be written to disk, or into a label, by
+/// one process and read back by another built at a different time; it must
+/// not depend on whatever `DefaultHasher` happens to do for a given Rust
+/// version.
+pub(crate) fn fnv1a_hex(bytes: impl IntoIterator<Item = u8>) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in installation.bytes() {
+    for byte in bytes {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    std::borrow::Cow::Owned(format!("{MEMORY_OWNER_DIGEST_PREFIX}{hash:016x}"))
+    format!("{hash:016x}")
 }
 
 /// Whether an ownership label names this installation, directly or through

@@ -17,7 +17,12 @@ import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
-import type { Config, PortForwardAction, PortForwardResponse } from '@/types'
+import type {
+  Config,
+  PortForwardAction,
+  PortForwardResponse,
+  PortForwardToggleAction,
+} from '@/types'
 
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
@@ -104,6 +109,12 @@ const KFTray = () => {
     Map<number, PortForwardAction>
   >(new Map())
   const configRefreshVersion = useRef(0)
+
+  const configsRef = useRef<Config[]>(configs)
+
+  useEffect(() => {
+    configsRef.current = configs
+  }, [configs])
 
   const markPending = useCallback((id: number, action: PortForwardAction) => {
     pendingConfigActionsRef.current.set(id, action)
@@ -424,9 +435,10 @@ const KFTray = () => {
   }
 
   const handleSaveConfig = async (_configToSave: Config) => {
-    const wasRunning = Boolean(
-      isEdit && configs.find(conf => conf.id === newConfig.id)?.is_running,
-    )
+    const runningConfig = isEdit
+      ? configsRef.current.find(conf => conf.id === newConfig.id)
+      : undefined
+    const wasRunning = Boolean(runningConfig?.is_running)
 
     if (isEdit && pendingConfigActionsRef.current.has(newConfig.id)) {
       toaster.error({
@@ -453,8 +465,11 @@ const KFTray = () => {
         id: isEdit ? newConfig.id : 0,
       }
 
-      if (wasRunning) {
-        await stopPortForwardingForConfig(newConfig)
+      // Stopped by its pre-edit identity: `newConfig` carries the edited
+      // service/namespace/port, and stopping with those would target the
+      // wrong running resource.
+      if (wasRunning && runningConfig) {
+        await stopPortForwardingForConfig(runningConfig)
       }
 
       if (isEdit) {
@@ -584,7 +599,7 @@ const KFTray = () => {
   }, [])
 
   const toggleConfigForward = useCallback(
-    async (config: Config, action: PortForwardAction) => {
+    async (config: Config, action: PortForwardToggleAction) => {
       if (pendingConfigActionsRef.current.has(config.id)) {
         return
       }
@@ -629,7 +644,7 @@ const KFTray = () => {
       description: 'Queued starts cancelled. Active starts will finish.',
       duration: 2000,
     })
-    updateConfigsWithState()
+    void updateConfigsWithState()
   }, [updateConfigsWithState])
 
   const abortStopOperation = useCallback(() => {
@@ -641,7 +656,7 @@ const KFTray = () => {
       description: 'Queued stops cancelled. Active stops will finish.',
       duration: 2000,
     })
-    updateConfigsWithState()
+    void updateConfigsWithState()
   }, [updateConfigsWithState])
 
   const runPortForwardBatch = useCallback(
@@ -729,10 +744,13 @@ const KFTray = () => {
 
       try {
         const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
-          if (controller.signal.aborted) {
+          queued.delete(config.id)
+          if (
+            controller.signal.aborted ||
+            !pendingConfigActionsRef.current.has(config.id)
+          ) {
             return
           }
-          queued.delete(config.id)
           try {
             if (action === 'starting') {
               await startPortForwardingForConfig(config)
@@ -751,7 +769,6 @@ const KFTray = () => {
           } finally {
             unresolved.delete(config.id)
             clearPending(config.id)
-            debouncedUpdateConfigs()
           }
         })
         // The handle is kept so the loser of the race can be cancelled: an
@@ -817,11 +834,16 @@ const KFTray = () => {
     },
     [
       clearPending,
-      debouncedUpdateConfigs,
       updateConfigsWithState,
       startPortForwardingForConfig,
       stopPortForwardingForConfig,
     ],
+  )
+
+  const initiatePortForwarding = useCallback(
+    (configsToStart: Config[]) =>
+      runPortForwardBatch(configsToStart, 'starting'),
+    [runPortForwardBatch],
   )
 
   const handleDeleteConfig = useCallback(async (id: number) => {
@@ -910,12 +932,17 @@ const KFTray = () => {
         duration: 1000,
       })
 
-      return
+      return false
     }
 
     // The same reservation, revalidation and refresh as a bulk delete.
-    await deleteConfigs([configToDelete])
-    setIsAlertOpen(false)
+    const success = await deleteConfigs([configToDelete])
+
+    if (success) {
+      setIsAlertOpen(false)
+    }
+
+    return success
   }, [configToDelete, deleteConfigs])
 
   const startSelectedPortForwarding = async () => {
@@ -1029,9 +1056,7 @@ const KFTray = () => {
           >
             <PortForwardTable
               configs={configs}
-              initiatePortForwarding={configsToStart =>
-                runPortForwardBatch(configsToStart, 'starting')
-              }
+              initiatePortForwarding={initiatePortForwarding}
               startSelectedPortForwarding={startSelectedPortForwarding}
               isInitiating={isInitiating}
               isStopping={isStopping}

@@ -513,14 +513,16 @@ impl UdpForwarder {
                     }
                 }
             }
-            // The session is over before the tunnel is closed down: the
-            // receiver goes so the listener stops queueing datagrams into a
-            // task that no longer forwards them, and the closing time is
-            // recorded so the cooldown counts from here, not from whenever a
-            // stalled shutdown finally returns. The shutdown itself is bounded
-            // for the same reason.
-            drop(queue);
+            // The closing time is recorded before the receiver goes: a
+            // concurrent `session_for()` call sees `packets.is_closed()` flip
+            // true the instant `queue` drops, so writing `closed_at` first
+            // ensures that check also observes the real closing time rather
+            // than the zeroed default, which would read as "closed when the
+            // tunnel opened" and let a session that lived past the cooldown
+            // be reopened immediately instead of waiting one out. The
+            // shutdown itself is bounded for the same reason.
             drop(_closed_marker);
+            drop(queue);
             let _ = tokio::time::timeout(Duration::from_secs(2), writer.shutdown()).await;
         });
 
@@ -1404,6 +1406,51 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_session_failing_after_a_long_life_still_honours_the_cooldown() {
+        let (upstream, mut opened) = SpawningUpstream::new(64);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            upstream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        // bind_and_forward's own startup probe already opened one tunnel;
+        // the first client's session reuses it.
+        let tunnel = opened.recv().await.unwrap();
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        client.send(b"open").await.unwrap();
+
+        // Let the session live well past the cooldown before its tunnel
+        // closes, so a `closed_at` still holding its zeroed default would
+        // compute an already-expired cooldown window.
+        tokio::time::sleep(TUNNEL_RETRY_COOLDOWN * 3).await;
+        drop(tunnel);
+
+        // Hammer datagrams immediately after the close, racing the instant
+        // `packets.is_closed()` flips true against the instant `closed_at`
+        // is written. A second tunnel opened before the real cooldown
+        // (measured from this failure, not from when the session started)
+        // elapses proves `closed_at` was read at its zeroed default.
+        let deadline = Instant::now() + TUNNEL_RETRY_COOLDOWN - Duration::from_millis(200);
+        while Instant::now() < deadline {
+            let _ = client.send(b"ping").await;
+        }
+        assert!(
+            opened.try_recv().is_err(),
+            "a session that already lived past the cooldown must not skip its own cooldown when it fails"
+        );
+
+        cancellation_token.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), owner).await;
     }
 
     #[tokio::test]

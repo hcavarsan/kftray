@@ -68,13 +68,15 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     create_db_table(&pool).await?;
     if let Err(error) =
-        crate::utils::settings::establish_expose_history_baseline(&pool, DatabaseMode::File).await
+        crate::utils::settings::establish_expose_history_baseline_at_init(&pool, DatabaseMode::File)
+            .await
     {
         // Bookkeeping only: expose::kubernetes::ensure_expose_history_baseline
-        // re-establishes it lazily, and a missing baseline fails safe (an
-        // exposure without one is treated as "history possibly missing"). A
-        // transient SQLITE_BUSY from another kftray process sharing this file
-        // database must not stop this one from starting.
+        // re-establishes it lazily, using the snapshot taken above of
+        // which config ids already existed, so a configuration inserted
+        // after this point is never mistaken for one that predates ingress
+        // history. A transient SQLITE_BUSY from another kftray process
+        // sharing this file database must not stop this one from starting.
         warn!("Failed to establish the expose history baseline: {error}");
     }
 

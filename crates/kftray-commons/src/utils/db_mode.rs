@@ -11,7 +11,7 @@ use crate::db::{
     get_db_pool,
 };
 
-#[derive(Debug, Clone, PartialEq, Default, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Copy)]
 pub enum DatabaseMode {
     #[default]
     File,
@@ -55,13 +55,14 @@ impl DatabaseManager {
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
                 if let Err(error) =
-                    crate::utils::settings::establish_expose_history_baseline(&pool, mode).await
+                    crate::utils::settings::establish_expose_history_baseline_at_init(&pool, mode)
+                        .await
                 {
                     // Bookkeeping only: expose::kubernetes::ensure_expose_history_baseline
-                    // re-establishes it lazily, and a missing baseline fails
-                    // safe. A transient SQLITE_BUSY must not stop this
-                    // database from initialising, or the pool below would
-                    // never be cached and every access would re-fail.
+                    // re-establishes it lazily, using the snapshot taken above
+                    // of which config ids already existed, so a
+                    // configuration inserted after this point is never
+                    // mistaken for one that predates ingress history.
                     log::warn!("Failed to establish the expose history baseline: {error}");
                 }
                 crate::utils::migration::migrate_configs(Some(&pool))

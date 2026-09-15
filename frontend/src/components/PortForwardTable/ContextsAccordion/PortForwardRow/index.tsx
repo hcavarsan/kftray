@@ -1,5 +1,5 @@
 import type React from 'react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import {
   ClipboardIcon,
   Copy,
@@ -61,9 +61,6 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
   const [activePod, setActivePod] = useState<string | null>(null)
   const isPending = pendingAction !== null
-  const isPendingRef = useRef(isPending)
-
-  isPendingRef.current = isPending
 
   useEffect(() => {
     const fallback = config.http_logs_enabled ?? false
@@ -84,24 +81,26 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   }, [config.id, config.http_logs_enabled])
 
   useEffect(() => {
-    if (!config.is_running && !isPendingRef.current) {
+    if (!config.is_running) {
       setActivePod(null)
-    } else if (config.is_running) {
-      const fetchInitialPod = async () => {
-        try {
-          const podName = await invoke<string | null>('get_active_pod_cmd', {
-            configId: config.id.toString(),
-          })
 
-          setActivePod(podName)
-        } catch (error) {
-          console.error('Error fetching initial active pod:', error)
-          setActivePod(null)
-        }
-      }
-
-      fetchInitialPod()
+      return
     }
+
+    const fetchInitialPod = async () => {
+      try {
+        const podName = await invoke<string | null>('get_active_pod_cmd', {
+          configId: config.id.toString(),
+        })
+
+        setActivePod(podName)
+      } catch (error) {
+        console.error('Error fetching initial active pod:', error)
+        setActivePod(null)
+      }
+    }
+
+    fetchInitialPod()
   }, [config.is_running, config.id])
 
   useEffect(() => {
@@ -508,7 +507,9 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
             <Switch
               size='sm'
               checked={config.is_running}
-              onCheckedChange={details => togglePortForwarding(details.checked)}
+              onCheckedChange={details =>
+                void togglePortForwarding(details.checked)
+              }
               disabled={isPending}
               data-loading={isPending ? '' : undefined}
               unstyled={true}
@@ -685,8 +686,13 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                 size='xs'
                 className='dialog-button dialog-button-primary'
                 onClick={() => {
-                  confirmDeleteConfig()
-                  setIsDeleteDialogOpen(false)
+                  void (async () => {
+                    const success = await confirmDeleteConfig()
+
+                    if (success) {
+                      setIsDeleteDialogOpen(false)
+                    }
+                  })()
                 }}
               >
                 Delete

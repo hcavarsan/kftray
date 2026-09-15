@@ -5,6 +5,7 @@ use kftray_commons::models::{
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
+    ActiveComponent,
     ActiveTable,
     App,
     AppState,
@@ -75,17 +76,21 @@ mod tests {
 
     async fn spawn_panicking_task(app: &mut App, config_id: i64) {
         let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
-        app.task_configs.insert(handle.id(), config_id);
+        app.task_configs.insert(
+            handle.id(),
+            crate::tui::input::TaskInfo::new(config_id, false, handle.clone()),
+        );
 
-        // Yield until the task has actually finished: a fixed sleep would make
-        // this pass or fail on scheduling rather than on the behaviour.
-        for _ in 0..200 {
-            if handle.is_finished() {
-                break;
+        // Bounded by a timeout rather than a fixed yield budget: the number
+        // of yields a scheduled task needs to finish is not a stable
+        // quantity a test should assume.
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !handle.is_finished() {
+                tokio::task::yield_now().await;
             }
-            tokio::task::yield_now().await;
-        }
-        assert!(handle.is_finished(), "the task must have panicked by now");
+        })
+        .await
+        .expect("the task must have panicked by now");
     }
 
     #[test]
@@ -240,6 +245,20 @@ mod tests {
     fn test_app_new_invariants() {
         let app = App::new(test_logger_state());
 
+        assert_eq!(app.state, AppState::Normal);
+        assert_eq!(app.active_table, ActiveTable::Stopped);
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+        assert!(app.stopped_configs.is_empty());
+        assert!(app.running_configs.is_empty());
+        assert!(app.filtered_stopped_configs.is_empty());
+        assert!(app.filtered_running_configs.is_empty());
+        assert!(app.selected_rows_stopped.is_empty());
+        assert!(app.selected_rows_running.is_empty());
+        assert_eq!(app.selected_row_stopped, 0);
+        assert_eq!(app.selected_row_running, 0);
+        assert_eq!(app.visible_rows, 0);
+        assert!(app.error_message.is_none());
+
         assert_eq!(
             app.forwarding_slots.available_permits(),
             crate::tui::input::FORWARD_DISPATCH_CONCURRENCY
@@ -257,6 +276,7 @@ mod tests {
     #[tokio::test]
     async fn dispatching_an_already_pending_config_does_not_spawn_a_second_task() {
         let mut app = App::new(test_logger_state());
+        let _guard = FORWARDING_GLOBALS.lock().await;
         app.stopped_configs = vec![create_test_config(1)];
         app.selected_row_stopped = 0;
         app.configs_being_processed.insert(
@@ -339,7 +359,7 @@ mod tests {
 
         let now = std::time::Instant::now();
         let stalled_at = now
-            .checked_sub(std::time::Duration::from_secs(31))
+            .checked_sub(crate::tui::input::PROCESSING_WATCHDOG + std::time::Duration::from_secs(1))
             .unwrap_or(now);
         queued.mark_running_at(stalled_at);
         app.update_configs(&[], &[]);
@@ -461,17 +481,38 @@ mod tests {
         .await
         .unwrap();
 
-        tokio::time::timeout(std::time::Duration::from_secs(2), app.drain_forwarding())
-            .await
-            .expect("the stop must run while every start permit is held");
-
+        // No cancellation and no `drain_forwarding` here: shutdown draining is
+        // a separate concern already covered by
+        // `finishing_cancels_queued_forwards_without_waiting_for_a_slot`.
+        // Waiting on the pending flag proves the task ran to completion; the
+        // error asserted below proves it was `stop_port_forwarding` itself
+        // that ran, not merely a task that returned early.
         let pending = app
             .configs_being_processed
             .get(&410_061)
-            .expect("the stop must still be tracked as pending until it settles");
+            .expect("the stop must still be tracked as pending until it settles")
+            .clone();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while pending.is_active() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the stop must run to completion while every start permit is held");
+
+        let receiver = app.error_receiver.as_mut().unwrap();
+        let reported = receiver
+            .try_recv()
+            .expect("stop_port_forwarding must have actually run and reported its outcome");
         assert!(
-            !pending.is_active(),
-            "draining must wait for the stop to actually finish, not just start"
+            reported.contains("410061"),
+            "the report must come from the real backend call for this config: {reported}"
+        );
+
+        assert_eq!(
+            app.forwarding_slots.available_permits(),
+            0,
+            "start permits must still be held while the stop completes"
         );
     }
 }

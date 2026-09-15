@@ -285,6 +285,7 @@ pub fn process_is_alive(pid: u32) -> bool {
     {
         use windows::Win32::Foundation::{
             CloseHandle,
+            ERROR_ACCESS_DENIED,
             STILL_ACTIVE,
         };
         use windows::Win32::System::Threading::{
@@ -303,8 +304,11 @@ pub fn process_is_alive(pid: u32) -> bool {
                 let _ = unsafe { CloseHandle(handle) };
                 running
             }
-            // Access denied still means the process exists.
-            Err(error) => error.code() == windows::Win32::Foundation::E_ACCESSDENIED,
+            // Access denied still means the process exists. `Error::code`
+            // wraps the Win32 status as an HRESULT, so it must be compared
+            // against `HRESULT::from_win32(ERROR_ACCESS_DENIED.0)`, not the
+            // unrelated COM `E_ACCESSDENIED` constant.
+            Err(error) => error.code() == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0),
         }
     }
 }

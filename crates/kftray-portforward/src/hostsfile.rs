@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use kftray_commons::models::hostfile::HostEntry;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::{
     debug,
     warn,
@@ -81,13 +82,23 @@ impl HostfileManager {
         self.direct_manager.add_host_entry(id, entry)
     }
 
-    /// Writes the HTTPS aliases for `config_id` and records their full ids
-    /// as written, so a later removal can tell an unrelated unmarked line
-    /// that merely shares the alias from one this run actually wrote.
-    pub fn add_ssl_host_entry(&self, config_id: &str, alias: &str) -> std::io::Result<()> {
+    /// Writes the HTTPS aliases for `config_id` as one pair and records their
+    /// full ids as written, so a later removal can tell an unrelated unmarked
+    /// line that merely shares the alias from one this run actually wrote.
+    ///
+    /// The pair is written together: if the second entry fails, the first is
+    /// rolled back rather than left on disk, and neither id is recorded. Once
+    /// both are on disk, both ids are also persisted to settings, so a
+    /// process restart still attributes and protects the aliases a stop
+    /// needs to verify.
+    pub fn add_ssl_host_entry(
+        &self, config_id: &str, alias: &str, mode: DatabaseMode,
+    ) -> std::io::Result<()> {
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
         let https_id = format!("{config_id}-https");
+        let https_local_id = format!("{config_id}-https-local");
+
         self.add_host_entry(
             https_id.clone(),
             HostEntry {
@@ -95,23 +106,32 @@ impl HostfileManager {
                 hostname: alias.to_string(),
             },
         )?;
-        self.ssl_ids_written
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(https_id);
 
-        let https_local_id = format!("{config_id}-https-local");
-        self.add_host_entry(
+        if let Err(error) = self.add_host_entry(
             https_local_id.clone(),
             HostEntry {
                 ip: loopback,
                 hostname: format!("{alias}.local"),
             },
-        )?;
-        self.ssl_ids_written
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(https_local_id);
+        ) {
+            if let Err(cleanup_error) = self.remove_host_entries(&[https_id.as_str()], &[], &[]) {
+                warn!("Failed to roll back {https_id} after SSL write failure: {cleanup_error}");
+            }
+            return Err(error);
+        }
+
+        {
+            let mut written = self
+                .ssl_ids_written
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            written.insert(https_id.clone());
+            written.insert(https_local_id.clone());
+        }
+        tokio::runtime::Handle::current().block_on(async {
+            persist_ssl_id_written(&https_id, mode).await;
+            persist_ssl_id_written(&https_local_id, mode).await;
+        });
 
         Ok(())
     }
@@ -304,6 +324,10 @@ impl HostfileManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|(owner, _)| !ids.contains(&owner.as_str()));
+        self.ssl_ids_written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|owner| !ids.contains(&owner.as_str()));
 
         Ok(())
     }
@@ -341,6 +365,20 @@ impl HostfileManager {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         Ok(())
+    }
+
+    /// This process's SSL ids plus whatever a run before a restart
+    /// persisted. `ssl_ids_written` alone starts empty after a restart, and
+    /// a configuration's HTTPS aliases are only ever claimed for ids this
+    /// set actually names.
+    fn ssl_ids_written_including_persisted(&self, mode: DatabaseMode) -> HashSet<String> {
+        let mut ids = self
+            .ssl_ids_written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        ids.extend(tokio::runtime::Handle::current().block_on(persisted_ssl_ids_written(mode)));
+        ids
     }
 }
 
@@ -435,6 +473,56 @@ fn config_host_entries(
     entries
 }
 
+const SSL_HOSTS_WRITTEN_PREFIX: &str = "ssl_hosts_written";
+
+fn ssl_hosts_written_key(full_id: &str, mode: DatabaseMode) -> String {
+    format!(
+        "{SSL_HOSTS_WRITTEN_PREFIX}:{}:{full_id}",
+        kftray_commons::utils::settings::mode_scope(mode)
+    )
+}
+
+/// Persists that `full_id` (`{config_id}-https` or `{config_id}-https-local`)
+/// was written, so a process restart still attributes and protects it.
+/// Best-effort: a failure here only costs the durability a restart would
+/// otherwise get, not the write itself.
+async fn persist_ssl_id_written(full_id: &str, mode: DatabaseMode) {
+    let key = ssl_hosts_written_key(full_id, mode);
+    if let Err(error) =
+        kftray_commons::utils::settings::set_setting_with_mode(&key, "1", mode).await
+    {
+        warn!("Failed to persist SSL host id {full_id} as written: {error}");
+    }
+}
+
+/// Forgets a durable record once its removal has been verified gone.
+async fn forget_ssl_id_written(full_id: &str, mode: DatabaseMode) {
+    let key = ssl_hosts_written_key(full_id, mode);
+    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(&key, mode).await
+    {
+        warn!("Failed to remove persisted SSL host id {full_id}: {error}");
+    }
+}
+
+/// Every full id a run before a restart recorded as written, for this
+/// database mode.
+async fn persisted_ssl_ids_written(mode: DatabaseMode) -> HashSet<String> {
+    let prefix = format!(
+        "{SSL_HOSTS_WRITTEN_PREFIX}:{}:",
+        kftray_commons::utils::settings::mode_scope(mode)
+    );
+    match kftray_commons::utils::settings::get_settings_with_prefix_and_mode(&prefix, mode).await {
+        Ok(entries) => entries
+            .into_iter()
+            .filter_map(|(key, _)| key.strip_prefix(&prefix).map(str::to_owned))
+            .collect(),
+        Err(error) => {
+            warn!("Failed to read persisted SSL host ids: {error}");
+            HashSet::new()
+        }
+    }
+}
+
 /// Removes every alias a configuration may have written, domain and SSL
 /// alike, with one reconciliation and one verification.
 ///
@@ -446,7 +534,7 @@ fn config_host_entries(
 /// tracked for retry when an alias could not be verified gone.
 pub fn remove_config_host_entries(
     id: i64, config: Option<&kftray_commons::models::config_model::Config>,
-    in_use: &[kftray_commons::models::config_model::Config],
+    in_use: &[kftray_commons::models::config_model::Config], mode: DatabaseMode,
 ) -> std::io::Result<()> {
     let ids = [
         id.to_string(),
@@ -454,11 +542,11 @@ pub fn remove_config_host_entries(
         format!("{id}-https-local"),
     ];
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
-    let ssl_ids_written = HOSTFILE_MANAGER
-        .ssl_ids_written
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
+    // Unioned with what a run before a restart persisted: `ssl_ids_written`
+    // alone starts empty after a restart, and without the persisted ids
+    // neither this configuration's own HTTPS aliases nor another still-
+    // forwarding configuration's would be attributable or protected.
+    let ssl_ids_written = HOSTFILE_MANAGER.ssl_ids_written_including_persisted(mode);
     let protected: Vec<HostEntry> = in_use
         .iter()
         .filter(|other| other.id != Some(id))
@@ -468,15 +556,26 @@ pub fn remove_config_host_entries(
         .map(|(_, entry)| entry)
         .collect();
     let expected = config_host_entries(id, config, &ssl_ids_written);
-    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)
+    HOSTFILE_MANAGER.remove_host_entries(&ids, &expected, &protected)?;
+
+    // Verified gone: forget the durable record so a future restart does not
+    // keep attributing lines this configuration no longer writes.
+    tokio::runtime::Handle::current().block_on(async {
+        forget_ssl_id_written(ids[1], mode).await;
+        forget_ssl_id_written(ids[2], mode).await;
+    });
+
+    Ok(())
 }
 
 pub fn remove_all_host_entries() -> std::io::Result<()> {
     HOSTFILE_MANAGER.remove_all_host_entries()
 }
 
-pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std::io::Result<()> {
-    HOSTFILE_MANAGER.add_ssl_host_entry(config_id, alias)
+pub fn add_ssl_host_entry(
+    config_id: &str, alias: &str, _https_port: u16, mode: DatabaseMode,
+) -> std::io::Result<()> {
+    HOSTFILE_MANAGER.add_ssl_host_entry(config_id, alias, mode)
 }
 
 #[cfg(test)]
@@ -617,5 +716,35 @@ mod tests {
             "the direct-fallback seam must not resolve a helper, whatever is installed on the \
              machine running the test"
         );
+    }
+
+    #[tokio::test]
+    async fn a_restart_still_attributes_persisted_https_ids() {
+        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        let mode = DatabaseMode::Memory;
+
+        // A prior run's `add_ssl_host_entry` persisted this id before the
+        // process exited; nothing about this test's in-memory state knows
+        // it.
+        persist_ssl_id_written("77-https", mode).await;
+
+        // A brand new manager, exactly what a restart leaves behind: its
+        // `ssl_ids_written` is empty.
+        let ids = tokio::task::spawn_blocking(move || {
+            let manager = HostfileManager::without_helper();
+            manager.ssl_ids_written_including_persisted(mode)
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            ids.contains("77-https"),
+            "a fresh manager instance must still attribute an HTTPS id a run before a restart \
+             persisted"
+        );
+
+        forget_ssl_id_written("77-https", mode).await;
     }
 }

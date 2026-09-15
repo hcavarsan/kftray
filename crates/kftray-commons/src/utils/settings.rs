@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 
 use log::info;
 use serde::{
@@ -775,20 +778,60 @@ pub fn expose_history_baseline_key(mode: DatabaseMode) -> String {
     format!("expose_history_baseline:{}", mode_scope(mode))
 }
 
-/// Marks every exposure that predates ingress history as one whose past cannot
-/// be reconstructed, once per database.
+/// Config ids seen at the moment this process gave up retrying the
+/// baseline, keyed by database mode.
 ///
-/// History is recorded before an ingress is created, so a configuration
-/// exposed publicly after this baseline always has a record. The ones from
-/// before it are the only ones for which a missing record proves nothing, and
-/// they are marked so cleanup cannot infer absence for them from a refusal to
-/// list ingresses. Taken at database initialisation, before any configuration
-/// can be inserted, so a row created afterwards is never mistaken for one
-/// from before.
+/// A later lazy call (from `ensure_expose_history_baseline`) uses this to
+/// mark only ids that already existed back then as having no recoverable
+/// history: without it, a row inserted after the failed init would be swept
+/// up by whatever the lazy call happens to see in the `configs` table and
+/// wrongly marked as predating ingress history.
+static FAILED_BASELINE_SNAPSHOT: LazyLock<Mutex<HashMap<DatabaseMode, HashSet<i64>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+const BASELINE_INIT_ATTEMPTS: u32 = 3;
+const BASELINE_INIT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Establishes the expose history baseline at database initialisation,
+/// retrying a transient failure (e.g. `SQLITE_BUSY` from another kftray
+/// process sharing the file database) a few times before giving up.
+///
+/// If every attempt fails, the ids of the configs that exist right now are
+/// snapshotted so a later lazy call marks only those ids as legacy, never
+/// one inserted afterwards.
+pub async fn establish_expose_history_baseline_at_init(
+    pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut last_error = None;
+    for attempt in 0..BASELINE_INIT_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(BASELINE_INIT_RETRY_DELAY * attempt).await;
+        }
+        match establish_expose_history_baseline(pool, mode).await {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    let ids: HashSet<i64> = sqlx::query("SELECT id FROM configs")
+        .fetch_all(pool)
+        .await
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.try_get("id").ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
+
+    Err(last_error.expect("loop runs at least once"))
+}
+
 pub async fn establish_expose_history_baseline(
     pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let baseline = expose_history_baseline_key(mode);
+    let allowed_ids = FAILED_BASELINE_SNAPSHOT.lock().unwrap().get(&mode).cloned();
     // One write transaction from the check to the marker: two processes
     // sharing the file database can both initialise it, and a baseline taken
     // by the second after the first finished would mark rows inserted in
@@ -799,13 +842,14 @@ pub async fn establish_expose_history_baseline(
     // commit, must not hand the pooled connection back with a write
     // transaction still open on it.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    take_expose_history_baseline(&mut tx, &baseline, mode).await?;
+    take_expose_history_baseline(&mut tx, &baseline, mode, allowed_ids.as_ref()).await?;
     tx.commit().await?;
     Ok(())
 }
 
 async fn take_expose_history_baseline(
     conn: &mut sqlx::SqliteConnection, baseline: &str, mode: DatabaseMode,
+    allowed_ids: Option<&HashSet<i64>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const UPSERT: &str = "INSERT INTO settings (key, value, updated_at) VALUES (?, '1', \
                           CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = \
@@ -823,6 +867,9 @@ async fn take_expose_history_baseline(
         .await?;
     for row in rows {
         let id: i64 = row.try_get("id")?;
+        if allowed_ids.is_some_and(|allowed| !allowed.contains(&id)) {
+            continue;
+        }
         let data: String = row.try_get("data")?;
         // Only the one field matters, read on its own: a row whose other
         // fields do not decode is still an exposure if this one says so, and
@@ -983,5 +1030,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(same_result, Some("memory_value".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_lazy_baseline_never_marks_row_created_after_failed_init_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let pool = context.pool.clone();
+
+        crate::utils::config::delete_all_configs_with_pool(&pool)
+            .await
+            .unwrap();
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+
+        let existing_config = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let existing_id = crate::utils::config::insert_config_with_pool_and_mode(
+            existing_config,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        // Simulate a process that failed every baseline retry at init: at
+        // that moment only `existing_id` existed.
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .insert(DatabaseMode::Memory, HashSet::from([existing_id]));
+
+        let created_after_failed_init = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let after_id = crate::utils::config::insert_config_with_pool_and_mode(
+            created_after_failed_init,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        establish_expose_history_baseline(&pool, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let existing_marked = get_setting_with_mode(
+            &expose_legacy_key(&existing_id.to_string(), DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            existing_marked.is_some(),
+            "a config that existed at the failed-init snapshot must be marked legacy"
+        );
+
+        let after_marked = get_setting_with_mode(
+            &expose_legacy_key(&after_id.to_string(), DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            after_marked.is_none(),
+            "a config created after the failed init must never be marked legacy"
+        );
+
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
     }
 }

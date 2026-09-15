@@ -38,7 +38,8 @@ pub trait PortOperations: Send + Sync {
         &self, configs: Vec<Config>, protocol: &str,
     ) -> Result<Vec<String>, String>;
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
-    /// Whether a forward for the configuration is registered in this process.
+    /// Whether a forward for the configuration is running or currently
+    /// starting (queued/pending) in this process.
     async fn is_forward_registered(&self, id: i64) -> bool;
 }
 
@@ -78,6 +79,7 @@ impl PortOperations for RealPortOperations {
 
     async fn is_forward_registered(&self, id: i64) -> bool {
         kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
+            || kftray_portforward::kube::is_start_pending(id)
     }
 }
 
@@ -230,9 +232,13 @@ async fn start_port_forwarding(
         .clone()
         .unwrap_or_else(|| format!("ID:{config_id}"));
 
-    let result = match config.workload_type.as_deref() {
-        Some("proxy") => port_ops.deploy_and_forward_pod(configs).await,
-        _ => port_ops.start_port_forward(configs, protocol).await,
+    let result = if crate::commands::portforward::is_direct_tcp_forward(
+        config.workload_type.as_deref(),
+        protocol,
+    ) {
+        port_ops.start_port_forward(configs, protocol).await
+    } else {
+        port_ops.deploy_and_forward_pod(configs).await
     };
 
     match result {
@@ -342,7 +348,7 @@ mod tests {
     async fn test_check_and_manage_ports_with_configs() {
         let mut mock = MockPortOperations::new();
         let config_states = vec![create_config_state(1, true)];
-        let config = create_test_config(1, 8080, "tcp", None);
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_get_configs_state()
             .times(1)
@@ -471,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_and_manage_port_zero_port() {
         let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 0, "tcp", None);
+        let config = create_test_config(1, 0, "tcp", Some("service"));
 
         mock.expect_find_process_by_port()
             .with(eq(0))
@@ -493,7 +499,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_port_forwarding_success() {
         let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 8080, "tcp", None);
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_start_port_forward()
             .times(1)
@@ -531,9 +537,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_start_port_forwarding_udp_service_uses_relay_dispatch() {
+        // Regression: auto-start used to send every non-proxy workload
+        // through `start_port_forward(..., protocol)` regardless of
+        // protocol, so a UDP service/pod config bypassed the relay pod
+        // dispatch that shortcuts and SSL restart use for UDP.
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "udp", Some("service"));
+
+        mock.expect_deploy_and_forward_pod()
+            .times(1)
+            .returning(|_| Ok(vec!["Relay pod deployed and forwarded".to_string()]));
+        mock.expect_start_port_forward().times(0);
+
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn a_start_that_lost_to_a_live_forward_leaves_its_state_alone() {
         let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 8080, "tcp", None);
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_start_port_forward()
             .times(1)
@@ -551,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_port_forwarding_failure() {
         let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 8080, "tcp", None);
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_start_port_forward()
             .times(1)
@@ -574,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_port_forwarding_update_state_error() {
         let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 8080, "tcp", None);
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_start_port_forward()
             .times(1)

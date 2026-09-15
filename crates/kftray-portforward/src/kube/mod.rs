@@ -50,3 +50,11 @@ pub use stop::{
     stop_port_forward_with_mode,
 };
 pub use target::NO_READY_PODS_ERROR;
+
+/// Whether a startup for `config_id` is currently registered, queued or
+/// running, regardless of workload type. Covers both the TCP-direct path in
+/// `start.rs` and the relay-pod path in `proxy.rs`, since both register
+/// through `proxy::register_start_batch`.
+pub fn is_start_pending(config_id: i64) -> bool {
+    proxy::STARTING_PROXIES.contains_key(&config_id)
+}

@@ -559,19 +559,35 @@ pub async fn recover_bare_pod(
         .map_err(anyhow::Error::msg)?;
     cleanup_child_processes_for_config(config_id).await;
 
+    // Registered in STARTING_PROXIES for the whole redeploy: between the
+    // CHILD_PROCESSES cleanup above and the fresh entry `start_proxy_config`
+    // inserts, nothing else marks this config active, and an idle-delete
+    // running in that window would remove a row recovery is about to
+    // recreate a relay for. This also keeps a concurrent manual start from
+    // racing a second relay into existence for the same config.
+    let (mut queued, mut rejected) = crate::kube::proxy::register_start_batch(vec![config.clone()]);
+    let Some((_, startup)) = queued.pop() else {
+        let error = rejected
+            .pop()
+            .map(|(_, error)| error)
+            .unwrap_or_else(|| "Failed to register recovery startup".to_string());
+        return Err(anyhow::anyhow!("Re-deployment failed: {error}"));
+    };
+
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
-    crate::kube::proxy::start_proxy_config(
+    let result = crate::kube::proxy::start_proxy_config(
         config.clone(),
         mode,
         ssl_override,
         cancellation,
         Some(destination),
     )
-    .await
-    .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
-
-    Ok(())
+    .await;
+    drop(startup);
+    result
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))
 }
 
 // ============================================================================
@@ -670,17 +686,32 @@ pub async fn recover_deployment(
     )
     .applied_objects();
     futures::pin_mut!(watcher);
+    let customized = kftray_commons::utils::manifests::deployment_manifest_is_customized();
     tokio::time::timeout(Duration::from_secs(POD_READY_TIMEOUT_SECS), async {
         while let Some(pod) = watcher.try_next().await? {
-            if crate::kube::proxy::relay_started(Some(&pod), &container_name) {
+            if crate::kube::proxy::relay_started(Some(&pod), &container_name, customized) {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await;
+                    // Registered for the whole restart: between the
+                    // CHILD_PROCESSES cleanup above and the fresh entry this
+                    // call inserts, nothing else marks this config active,
+                    // and it also keeps a concurrent manual start from
+                    // racing a second relay into existence for it.
+                    let (mut queued, mut rejected) =
+                        crate::kube::proxy::register_start_batch(vec![config.clone()]);
+                    let Some((_, startup)) = queued.pop() else {
+                        let error = rejected
+                            .pop()
+                            .map(|(_, error)| error)
+                            .unwrap_or_else(|| "Failed to register recovery startup".to_string());
+                        return Err(anyhow::anyhow!(error));
+                    };
                     let mut current_config = config.clone();
                     current_config.service = Some(hashed_name.clone());
                     // Pinned to the server the relay was recovered on: the
                     // listener resolves the context again, and the cached
                     // client can have expired since the check at the start.
-                    crate::kube::start::start_config_cancellable(
+                    let result = crate::kube::start::start_config_cancellable(
                         current_config,
                         "udp",
                         mode,
@@ -688,8 +719,9 @@ pub async fn recover_deployment(
                         Some(cancellation),
                         Some(destination.to_owned()),
                     )
-                    .await
-                    .map_err(anyhow::Error::msg)?;
+                    .await;
+                    drop(startup);
+                    result.map_err(anyhow::Error::msg)?;
                 }
                 return Ok::<_, anyhow::Error>(());
             }

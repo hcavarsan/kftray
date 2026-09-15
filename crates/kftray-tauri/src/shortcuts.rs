@@ -585,28 +585,34 @@ impl ActionHandler for StopPortForwardAction {
             return Ok(());
         }
 
-        let configs_count = configs_to_stop.len();
+        let mut outcome = StartOutcome {
+            started: 0,
+            failures: Vec::new(),
+        };
 
         for config in configs_to_stop {
+            let config_id = config.id.unwrap_or(0);
             let result = if config.workload_type.as_deref() == Some("expose")
                 || ((config.workload_type.as_deref() == Some("service")
                     || config.workload_type.as_deref() == Some("pod"))
                     && config.protocol == "tcp")
             {
-                stop_port_forward_cmd(config.id.unwrap_or(0).to_string(), self.app_handle.clone())
+                stop_port_forward_cmd(config_id.to_string(), self.app_handle.clone())
                     .await
+                    .map(|_| ())
             } else if config.workload_type.as_deref() == Some("proxy")
                 || ((config.workload_type.as_deref() == Some("service")
                     || config.workload_type.as_deref() == Some("pod"))
                     && config.protocol == "udp")
             {
                 stop_proxy_forward_cmd(
-                    config.id.unwrap_or(0).to_string(),
+                    config_id.to_string(),
                     &config.namespace,
                     config.service.unwrap_or_default(),
                     self.app_handle.clone(),
                 )
                 .await
+                .map(|_| ())
             } else {
                 Err(format!(
                     "Unsupported workload type: {:?}",
@@ -614,12 +620,15 @@ impl ActionHandler for StopPortForwardAction {
                 ))
             };
 
-            if let Err(e) = result {
-                error!(
-                    "Failed to stop port forward for config {}: {}",
-                    config.id.unwrap_or(0),
-                    e
-                );
+            match result {
+                Ok(()) => outcome.started += 1,
+                Err(e) => {
+                    error!(
+                        "Failed to stop port forward for config {}: {}",
+                        config_id, e
+                    );
+                    outcome.failures.push(format!("{config_id}: {e}"));
+                }
             }
         }
 
@@ -629,15 +638,16 @@ impl ActionHandler for StopPortForwardAction {
             .builder()
             .title("Port Forward")
             .body(format!(
-                "Stopped {} selected port forward{}",
-                configs_count,
-                if configs_count == 1 { "" } else { "s" }
+                "Stopped {} selected port forward{}{}",
+                outcome.started,
+                if outcome.started == 1 { "" } else { "s" },
+                outcome.failed_suffix()
             ))
             .show();
 
         let _ = self.app_handle.emit("port-forward-status-changed", ());
 
-        Ok(())
+        outcome.into_result_as("stop")
     }
 
     fn action_type(&self) -> &str {

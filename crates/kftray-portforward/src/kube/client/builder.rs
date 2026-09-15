@@ -2,6 +2,8 @@ use std::env;
 
 use anyhow::Result;
 use log::info;
+#[cfg(unix)]
+use log::warn;
 use tokio::sync::OnceCell;
 
 use super::KubeConnection;
@@ -48,7 +50,10 @@ async fn init_path() {
                     }
                 })
                 .await
-                .unwrap_or(current);
+                .unwrap_or_else(|e| {
+                    warn!("init_path: spawn_blocking failed ({e}), falling back to current PATH");
+                    current
+                });
                 unsafe { env::set_var("PATH", &resolved) };
             }
         })
@@ -58,11 +63,6 @@ async fn init_path() {
 #[cfg(unix)]
 fn shell_path() -> Option<String> {
     use std::path::Path;
-
-    use log::{
-        info,
-        warn,
-    };
 
     let home = env::var("HOME").ok()?;
 
@@ -75,6 +75,8 @@ fn shell_path() -> Option<String> {
         Some("/bin/bash"),
     ];
 
+    let mut collected = Vec::new();
+
     for (index, candidate) in shells_to_try.iter().enumerate() {
         let Some(shell) = *candidate else {
             continue;
@@ -84,12 +86,29 @@ fn shell_path() -> Option<String> {
         }
         if let Some(path) = try_shell_path(shell, &home) {
             info!("shell_path: {} returned {} chars", shell, path.len());
-            return Some(path);
+            collected.push(path);
         }
     }
 
-    warn!("shell_path: no shell returned valid PATH");
-    None
+    let merged = merge_shell_paths(&collected);
+    if merged.is_none() {
+        warn!("shell_path: no shell returned valid PATH");
+    }
+    merged
+}
+
+/// Merges PATH strings collected from every shell that answered, in the
+/// order they were tried, deduping entries while preserving each shell's
+/// first occurrence. Kept separate from `shell_path` so the merge logic is
+/// testable without spawning real shells.
+#[cfg(unix)]
+fn merge_shell_paths(paths: &[String]) -> Option<String> {
+    paths.iter().fold(None, |acc, path| {
+        Some(match acc {
+            Some(acc) => merge_paths(&acc, path),
+            None => path.clone(),
+        })
+    })
 }
 
 #[cfg(unix)]
@@ -289,4 +308,45 @@ pub async fn create_client_with_specific_context(
             .join("\n"),
         env_debug_info()
     ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_shell_paths_merges_and_dedupes_in_shell_order() {
+        let paths = vec![
+            "/opt/homebrew/bin:/usr/bin".to_string(),
+            "/usr/local/bin:/usr/bin".to_string(),
+            "/bin/zsh/extra:/opt/homebrew/bin".to_string(),
+        ];
+
+        let merged = merge_shell_paths(&paths).expect("at least one shell answered");
+
+        assert_eq!(
+            merged,
+            "/opt/homebrew/bin:/usr/bin:/usr/local/bin:/bin/zsh/extra"
+        );
+    }
+
+    #[test]
+    fn merge_shell_paths_returns_none_when_no_shell_answered() {
+        assert_eq!(merge_shell_paths(&[]), None);
+    }
+
+    #[test]
+    fn merge_shell_paths_single_shell_is_unchanged() {
+        let paths = vec!["/usr/local/bin:/usr/bin:/bin".to_string()];
+        assert_eq!(
+            merge_shell_paths(&paths),
+            Some("/usr/local/bin:/usr/bin:/bin".to_string())
+        );
+    }
+
+    #[test]
+    fn merge_paths_prefers_shell_entries_and_appends_new_process_entries() {
+        let merged = merge_paths("/opt/homebrew/bin:/usr/bin", "/usr/bin:/usr/local/sbin");
+        assert_eq!(merged, "/opt/homebrew/bin:/usr/bin:/usr/local/sbin");
+    }
 }

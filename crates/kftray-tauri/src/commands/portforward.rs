@@ -132,16 +132,21 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 const CLEANUP_RECONCILE_TIMEOUT: Duration =
     kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
 
-/// Starts one configuration through the dispatch its kind uses: expose and
-/// tcp service/pod configs go through a plain TCP port-forward, everything
-/// else (proxy, udp) is deployed and forwarded through a relay pod. Shared
-/// by the global shortcut handlers and the SSL certificate restart path so
-/// the two cannot silently diverge on which configs get which treatment.
+/// Whether a config is started as a plain TCP port-forward rather than
+/// deployed through a relay pod: expose and tcp service/pod configs take
+/// the direct path, everything else (proxy, udp service/pod) goes through
+/// the relay. Shared by `dispatch_start` and the auto-start check on launch
+/// so the two cannot silently diverge on which configs get which treatment.
+pub(crate) fn is_direct_tcp_forward(workload_type: Option<&str>, protocol: &str) -> bool {
+    workload_type == Some("expose")
+        || (matches!(workload_type, Some("service" | "pod")) && protocol == "tcp")
+}
+
+/// Starts one configuration through the dispatch its kind uses. Shared by
+/// the global shortcut handlers and the SSL certificate restart path so the
+/// two cannot silently diverge on which configs get which treatment.
 pub(crate) async fn dispatch_start(config: &Config) -> Result<Vec<CustomResponse>, String> {
-    let kind = config.workload_type.as_deref();
-    if kind == Some("expose")
-        || (matches!(kind, Some("service" | "pod")) && config.protocol == "tcp")
-    {
+    if is_direct_tcp_forward(config.workload_type.as_deref(), &config.protocol) {
         start_port_forward(vec![config.clone()], "tcp").await
     } else {
         deploy_and_forward_pod(vec![config.clone()]).await

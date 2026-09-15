@@ -131,11 +131,12 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     std::process::exit(i32::from(failed));
 }
 
-/// Reconciles any create still abandoned on the way out, then clears this
-/// process's own `config_state` rows for whatever remains outstanding so
-/// they do not stay marked `is_running` behind a dead pid. Returns the
-/// config ids still owed alongside the cleanup outcome so each shutdown
-/// path can report and choose its own exit code independently.
+/// Reconciles any create still abandoned on the way out, then marks every
+/// configuration this process was running as stopped, except the ones still
+/// owed: those keep their `is_running` state so the next run's stop-all
+/// enumerates and retries them, instead of leaving them behind a dead pid.
+/// Returns the config ids still owed alongside the cleanup outcome so each
+/// shutdown path can report and choose its own exit code independently.
 pub async fn reconcile_shutdown_cleanup(mode: DatabaseMode) -> (Vec<i64>, Result<(), String>) {
     let still_owed =
         reconcile_pending_cleanup(mode, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;

@@ -42,11 +42,22 @@ pub async fn start_expose(
 /// for the same configuration id, which is local to each database.
 async fn roll_back_exposure<T>(
     client: &kube::Client, config: &Config, resources: &models::ExposeResources,
+    location: &kubernetes::ExposeLocation, mode: DatabaseMode,
     guard: crate::kube::stop::ClusterResourceGuard, reason: String,
 ) -> Result<T, String> {
-    let (cleaned, message) =
-        kubernetes::rollback_created_resources(client, &config.namespace, &resources.owned, reason)
-            .await;
+    let config_id_str = config
+        .id
+        .map_or_else(|| "default".to_string(), |id| id.to_string());
+    let (cleaned, message) = kubernetes::rollback_created_resources(
+        client,
+        &config.namespace,
+        &resources.owned,
+        &config_id_str,
+        location,
+        mode,
+        reason,
+    )
+    .await;
     // The guard stays armed unless cleanup fully completed, which is what
     // keeps it retryable.
     if cleaned {
@@ -84,6 +95,11 @@ pub(crate) async fn start_single_expose(
         .await
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
     let client = connection.client.clone();
+    let location = kubernetes::ExposeLocation::resolve(&connection.cluster_url, &config.namespace);
+    // Normalized the way `delete_cluster_resources_inner` and the forwarder's
+    // own destination check compare it: a scheme/host case difference or an
+    // explicit default port must not read as the resources living elsewhere.
+    let destination = crate::kube::client::cluster_identity(&connection.cluster_url);
 
     info!("Creating expose resources for config {}", config_id);
     // Armed before creation so a dropped startup future, or a create whose
@@ -91,26 +107,30 @@ pub(crate) async fn start_single_expose(
     let mut guard = crate::kube::stop::ClusterResourceGuard::arm(
         config_id,
         config.clone(),
-        Some(connection.cluster_url.to_string()),
+        Some(destination.clone()),
         mode,
     )
     .await?;
-    let created = match cancellation {
-        Some(token) => tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                return Err(format!("Expose startup cancelled for config {config_id}"));
-            }
-            created = create_expose_resources(&connection, &config, mode) => created,
-        },
-        None => create_expose_resources(&connection, &config, mode).await,
-    };
+    // The create is never raced against cancellation: dropping it mid-flight
+    // would abandon a request whose outcome is unknown, including whether
+    // `create_ingress` reached its actual create call after recording that it
+    // might have. Letting it finish keeps every outcome definitive: an
+    // ambiguous one leaves the guard uncertain for a later reconciliation
+    // pass, and a confirmed one is rolled back below by UID.
+    let created = create_expose_resources(&connection, &config, mode).await;
     // Confirmed only when the outcome is definitive. A transport failure or a
     // server-side timeout can be answered while the object is still being
     // applied, and rollback cannot name a resource whose create never returned.
     let resources = match created {
         Ok(resources) => {
             guard.confirm();
+            if cancelled() {
+                let reason = format!("Expose startup cancelled for config {config_id}");
+                return roll_back_exposure(
+                    &client, &config, &resources, &location, mode, guard, reason,
+                )
+                .await;
+            }
             resources
         }
         Err(error) => {
@@ -154,7 +174,7 @@ pub(crate) async fn start_single_expose(
         config_id,
         "expose".to_string(),
     )
-    .expecting_destination(Some(connection.cluster_url.to_string()));
+    .expecting_destination(Some(destination.clone()));
 
     let started = match cancellation {
         Some(token) => tokio::select! {
@@ -168,7 +188,10 @@ pub(crate) async fn start_single_expose(
         Ok(started) => started,
         Err(error) => {
             let reason = format!("Failed to start port-forward: {error}");
-            return roll_back_exposure(&client, &config, &resources, guard, reason).await;
+            return roll_back_exposure(
+                &client, &config, &resources, &location, mode, guard, reason,
+            )
+            .await;
         }
     };
 
@@ -222,7 +245,8 @@ pub(crate) async fn start_single_expose(
     };
     if let Err(error) = startup {
         pf_process.cleanup_and_abort().await;
-        return roll_back_exposure(&client, &config, &resources, guard, error).await;
+        return roll_back_exposure(&client, &config, &resources, &location, mode, guard, error)
+            .await;
     }
 
     let config_state = ConfigState {
@@ -242,7 +266,8 @@ pub(crate) async fn start_single_expose(
     } {
         pf_process.cleanup_and_abort().await;
         kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
-        return roll_back_exposure(&client, &config, &resources, guard, error).await;
+        return roll_back_exposure(&client, &config, &resources, &location, mode, guard, error)
+            .await;
     }
     pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);

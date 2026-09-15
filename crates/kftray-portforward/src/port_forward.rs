@@ -212,6 +212,37 @@ fn pod_readiness_for(workload_type: &str) -> kube_portforward::PodReadiness {
     }
 }
 
+/// Outcome of [`PortForward::cleanup_resources`]. A privilege-unavailable
+/// address release is not retryable by trying again, so it must not keep
+/// the configuration recorded as needing cleanup forever; a hosts-file or
+/// retryable address failure must.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CleanupOutcome {
+    /// Nothing left to retry. Carries a privilege-unavailable notice, if
+    /// any, so the caller can still report it once.
+    Settled(Option<String>),
+    /// At least one release needs a retry.
+    Incomplete(String),
+}
+
+/// Combines what cleanup found into one outcome: a privilege-unavailable
+/// address release settles (retrying automatically will not help without
+/// user action), but any other failure, alone or alongside one, keeps the
+/// configuration recorded for a retry.
+fn merge_cleanup_outcome(unsatisfiable: Vec<String>, errors: Vec<String>) -> CleanupOutcome {
+    if errors.is_empty() {
+        if unsatisfiable.is_empty() {
+            CleanupOutcome::Settled(None)
+        } else {
+            CleanupOutcome::Settled(Some(unsatisfiable.join("; ")))
+        }
+    } else {
+        let mut incomplete = unsatisfiable;
+        incomplete.extend(errors);
+        CleanupOutcome::Incomplete(incomplete.join("; "))
+    }
+}
+
 impl PortForward {
     pub fn new(
         target: Target, local_port: impl Into<Option<u16>>,
@@ -253,8 +284,9 @@ impl PortForward {
     pub async fn cleanup_resources(
         &self, config: Option<&kftray_commons::models::config_model::Config>,
         mode: kftray_commons::utils::db_mode::DatabaseMode,
-    ) -> anyhow::Result<()> {
+    ) -> CleanupOutcome {
         let mut errors: Vec<String> = Vec::new();
+        let mut unsatisfiable: Vec<String> = Vec::new();
         // Routed through the ownership-safe release: two configurations of one
         // service can share an address, and removing it directly would take the
         // alias from under the other forward.
@@ -264,7 +296,11 @@ impl PortForward {
                 crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id), mode)
                     .await
         {
-            errors.push(error.to_string());
+            if error.is_unsatisfiable() {
+                unsatisfiable.push(error.to_string());
+            } else {
+                errors.push(error.to_string());
+            }
         }
         // Reported rather than swallowed: this runs when a startup failed or
         // was cancelled after adding an alias, and the caller keeps the config
@@ -278,6 +314,7 @@ impl PortForward {
                 config_id,
                 snapshot.as_ref(),
                 &in_use,
+                mode,
             ) {
                 Ok(()) => Vec::new(),
                 Err(error) => vec![error.to_string()],
@@ -288,11 +325,7 @@ impl PortForward {
             Ok(hosts_errors) => errors.extend(hosts_errors),
             Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(errors.join("; ")))
-        }
+        merge_cleanup_outcome(unsatisfiable, errors)
     }
 
     #[instrument(skip(self, tls_acceptor), fields(config_id = self.config_id))]
@@ -410,6 +443,43 @@ impl PortForward {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privilege_only_failure_settles_cleanup() {
+        let outcome = merge_cleanup_outcome(
+            vec!["needs elevated privileges that are not available right now".to_owned()],
+            Vec::new(),
+        );
+        assert_eq!(
+            outcome,
+            CleanupOutcome::Settled(Some(
+                "needs elevated privileges that are not available right now".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_retryable_failure_alongside_a_privilege_notice_stays_incomplete() {
+        let outcome = merge_cleanup_outcome(
+            vec!["needs elevated privileges that are not available right now".to_owned()],
+            vec!["hosts write failed".to_owned()],
+        );
+        assert_eq!(
+            outcome,
+            CleanupOutcome::Incomplete(
+                "needs elevated privileges that are not available right now; hosts write failed"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_left_settles_with_no_notice() {
+        assert_eq!(
+            merge_cleanup_outcome(Vec::new(), Vec::new()),
+            CleanupOutcome::Settled(None)
+        );
+    }
 
     fn dummy_handle() -> JoinHandle<anyhow::Result<()>> {
         tokio::spawn(async { Ok(()) })

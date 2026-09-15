@@ -228,23 +228,41 @@ fn pending_path(path: &Path) -> PathBuf {
 
 /// Where the copy goes when the hosts directory is not writable.
 ///
-/// The documented setup grants write access to the hosts file alone, not to
-/// its directory. The application's own configuration directory is always
-/// writable by it, so the copy goes there instead of being skipped: a rewrite
-/// that truncates the file is never done without something to complete it
-/// from.
+/// Both the unprivileged application and the elevated helper must resolve
+/// this to the same directory, or the recovery an interrupted rewrite
+/// depends on only ever sees whichever of them wrote it: `get_config_dir()`
+/// does not hold that guarantee, since it can differ with the home
+/// directory or a `KFTRAY_CONFIG` the elevated process does not inherit.
+/// `%ProgramData%` is machine-wide and both resolve it identically; the
+/// config dir is used only when it is unset.
+#[cfg(windows)]
+fn fallback_pending_dir() -> Result<PathBuf> {
+    match std::env::var_os("PROGRAMDATA") {
+        Some(program_data) if !program_data.is_empty() => {
+            let dir = PathBuf::from(program_data).join("kftray");
+            std::fs::create_dir_all(&dir)?;
+            Ok(dir)
+        }
+        _ => crate::utils::config_dir::get_config_dir().map_err(HostsFileError::Io),
+    }
+}
+
+/// The pending file's name for `path`, stable across processes and Rust
+/// versions.
+///
+/// Derived from the hosts path alone, with the same fixed FNV-1a
+/// `memory_owner_base` uses, rather than `DefaultHasher`: the app and the
+/// helper are built and upgraded independently of each other, and
+/// `DefaultHasher` is not guaranteed to hash the same bytes to the same
+/// value across Rust versions.
 #[cfg(windows)]
 fn fallback_pending_path(path: &Path) -> Result<PathBuf> {
-    use std::hash::{
-        Hash,
-        Hasher,
-    };
+    use std::os::windows::ffi::OsStrExt;
 
-    let config_dir = crate::utils::config_dir::get_config_dir().map_err(HostsFileError::Io)?;
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    canonical.hash(&mut hasher);
-    Ok(config_dir.join(format!("hosts-{:016x}.kftray-pending", hasher.finish())))
+    let name = crate::utils::config_dir::fnv1a_hex(
+        path.as_os_str().encode_wide().flat_map(u16::to_le_bytes),
+    );
+    Ok(fallback_pending_dir()?.join(format!("hosts-{name}.kftray-pending")))
 }
 
 /// Opens the hosts file read-only and takes its lock.
@@ -424,38 +442,34 @@ impl HostsDocument {
     fn all_bounds(&self, tag: &str) -> Result<Vec<(usize, usize)>> {
         let begin_marker = Self::begin_marker(tag);
         let end_marker = Self::end_marker(tag);
-        let begins: Vec<usize> = self
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| line.trim() == begin_marker)
-            .map(|(index, _)| index)
-            .collect();
-        let ends: Vec<usize> = self
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| line.trim() == end_marker)
-            .map(|(index, _)| index)
-            .collect();
-        if begins.len() != ends.len() {
+        // A stack pairs each END with the nearest BEGIN still open, so
+        // interleaved markers (BEGIN, BEGIN, END, END) nest rather than
+        // cross: the inner pair is folded into the outer one below instead
+        // of yielding two overlapping ranges a later drain could not apply
+        // safely.
+        let mut open: Vec<usize> = Vec::new();
+        let mut top_level: Vec<(usize, usize)> = Vec::new();
+        for (index, line) in self.lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed == begin_marker {
+                open.push(index);
+            } else if trimmed == end_marker {
+                let Some(begin) = open.pop() else {
+                    return Err(HostsFileError::InvalidData(format!(
+                        "Incomplete section markers for tag '{tag}'"
+                    )));
+                };
+                if open.is_empty() {
+                    top_level.push((begin, index));
+                }
+            }
+        }
+        if !open.is_empty() {
             return Err(HostsFileError::InvalidData(format!(
                 "Incomplete section markers for tag '{tag}'"
             )));
         }
-        begins
-            .into_iter()
-            .zip(ends)
-            .map(|(begin, end)| {
-                if begin < end {
-                    Ok((begin, end))
-                } else {
-                    Err(HostsFileError::InvalidData(format!(
-                        "Reversed section markers for tag '{tag}'"
-                    )))
-                }
-            })
-            .collect()
+        Ok(top_level)
     }
 
     /// Parses one line of a section. Comments and blank lines yield nothing.
@@ -1060,6 +1074,53 @@ mod tests {
         assert!(
             !remaining.contains("DO NOT EDIT test"),
             "clear_section must remove every matching section, not just the first: {remaining}"
+        );
+    }
+
+    #[test]
+    fn clear_section_handles_interleaved_markers_without_panicking() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        // BEGIN, BEGIN, END, END: what a hand edit that pasted one section
+        // inside another leaves behind. The two pairs nest rather than
+        // cross, so this must fold into one removal instead of the
+        // overlapping (0, 2) / (1, 3) ranges a naive index-order zip would
+        // produce, which `clear_section`'s high-to-low drain cannot apply
+        // safely.
+        let content = format!(
+            "{}\n{}\n127.0.0.1 a.local\n127.0.0.1 b.local\n{}\n{}\n",
+            HostsDocument::begin_marker("test"),
+            HostsDocument::begin_marker("test"),
+            HostsDocument::end_marker("test"),
+            HostsDocument::end_marker("test"),
+        );
+        std::fs::write(&temp_path, content).unwrap();
+
+        edit_hosts_at(&temp_path, |document| document.clear_section("test")).unwrap();
+
+        let remaining = std::fs::read_to_string(&temp_path).unwrap();
+        assert!(
+            !remaining.contains("DO NOT EDIT test"),
+            "clear_section must remove interleaved sections without panicking: {remaining}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn fallback_pending_path_is_stable_for_the_same_hosts_path() {
+        let path = Path::new(r"C:\Windows\System32\Drivers\Etc\hosts");
+
+        let first = fallback_pending_path(path).unwrap();
+        let second = fallback_pending_path(path).unwrap();
+
+        assert_eq!(
+            first, second,
+            "the same hosts path must derive the same pending file name every time"
+        );
+        assert_eq!(
+            first.file_name().and_then(|name| name.to_str()),
+            Some("hosts-ae8644124165b0df.kftray-pending"),
+            "the name must be the fixed FNV-1a digest of the path, not whatever \
+             `DefaultHasher` derives for this build"
         );
     }
 

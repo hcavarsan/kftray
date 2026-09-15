@@ -420,6 +420,70 @@ fn linux_alias_exists(addr: &str) -> Result<bool> {
         .any(|field| field == addr || field.starts_with(&format!("{addr}/"))))
 }
 
+/// Whether a failed `sudo -n <cmd>` exited because sudo itself refused the
+/// credentials (no cached ticket and no way to prompt for a password)
+/// rather than the wrapped command failing on its own after sudo let it
+/// run.
+///
+/// Kept independent of any process spawning so the classification itself is
+/// exercised directly: `sudo -n` reports a refusal as exit code 1 with a
+/// message on stderr, either the exact "a password is required" text or one
+/// beginning with sudo's own "sudo:" prefix (missing tty, unknown user,
+/// etc). Any other failure is `ip` (or another wrapped command) failing on
+/// its own, which a retry might resolve without new privileges.
+#[cfg(any(target_os = "linux", test))]
+fn is_sudo_privilege_refusal(exit_code: Option<i32>, stderr: &str) -> bool {
+    exit_code == Some(1) && (stderr.contains("a password is required") || stderr.contains("sudo:"))
+}
+
+#[cfg(target_os = "linux")]
+fn run_sudo_ip_addr_del(addr: &str) -> std::io::Result<std::process::Output> {
+    Command::new("sudo")
+        .args(["-n", "ip", "addr", "del", addr, "dev", "lo"])
+        .output()
+}
+
+/// Classifies the outcome of a non-root `sudo -n ip addr del`.
+///
+/// Every non-root failure used to map to [`LoopbackRelease::PrivilegeUnavailable`],
+/// which also swallowed `ip addr del` itself failing (missing binary, device
+/// busy, and the like) or a `sudo`/`ip` exec failure other than a real
+/// credentials refusal. Only a genuine sudo refusal is unsatisfiable without
+/// new privileges; anything else is worth retrying, so it is reported as
+/// [`LoopbackRelease::Failed`] once the alias is confirmed still present.
+#[cfg(target_os = "linux")]
+fn classify_sudo_ip_addr_del(
+    addr: &str, spawned: std::io::Result<std::process::Output>,
+) -> LoopbackRelease {
+    let output = match spawned {
+        Ok(output) => output,
+        Err(error) => {
+            return LoopbackRelease::PrivilegeUnavailable(format!(
+                "Removing loopback address {addr} needs a privileged `ip addr del`, and `sudo` \
+                 could not be executed: {error}"
+            ));
+        }
+    };
+    if output.status.success() {
+        return LoopbackRelease::Released;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if is_sudo_privilege_refusal(output.status.code(), &stderr) {
+        return LoopbackRelease::PrivilegeUnavailable(format!(
+            "Removing loopback address {addr} needs a privileged `ip addr del`, and `sudo -n` \
+             refused it (a password may be required): {stderr}"
+        ));
+    }
+    // `ip` itself failed rather than sudo refusing credentials. Re-query
+    // instead of assuming: the alias can already be gone despite the
+    // reported failure, and recording `Failed` for that would keep a
+    // cleanup that already succeeded stuck retrying forever.
+    match linux_alias_exists(addr) {
+        Ok(false) => LoopbackRelease::Released,
+        _ => LoopbackRelease::Failed(format!("`sudo -n ip addr del` failed: {stderr}")),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn configure_loopback_linux(addr: &str) -> Result<()> {
     if unsafe { libc::geteuid() } == 0 {
@@ -538,6 +602,111 @@ mod tests {
             remove_loopback_address("127.0.0.1").await.unwrap(),
             LoopbackRelease::AlreadyAbsent
         );
+    }
+
+    #[test]
+    fn a_non_interactive_sudo_password_refusal_is_a_privilege_refusal() {
+        assert!(is_sudo_privilege_refusal(
+            Some(1),
+            "sudo: a password is required"
+        ));
+    }
+
+    #[test]
+    fn any_sudo_prefixed_stderr_at_exit_one_is_a_privilege_refusal() {
+        // Covers sudo's own diagnostics beyond the password message: no tty,
+        // unknown user, policy denial, and the like all start with "sudo:".
+        assert!(is_sudo_privilege_refusal(
+            Some(1),
+            "sudo: no tty present and no askpass program specified"
+        ));
+    }
+
+    #[test]
+    fn ip_failing_on_its_own_is_not_a_privilege_refusal() {
+        // `ip` ran (sudo let it through) and failed for a reason a retry
+        // might resolve, not because sudo withheld credentials.
+        assert!(!is_sudo_privilege_refusal(
+            Some(1),
+            "Cannot find device \"lo\""
+        ));
+        assert!(!is_sudo_privilege_refusal(Some(2), ""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_successful_sudo_ip_addr_del_is_released() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        assert_eq!(
+            classify_sudo_ip_addr_del("127.0.0.5", Ok(output)),
+            LoopbackRelease::Released
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_sudo_credentials_refusal_is_privilege_unavailable() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: b"sudo: a password is required\n".to_vec(),
+        };
+        match classify_sudo_ip_addr_del("127.0.0.5", Ok(output)) {
+            LoopbackRelease::PrivilegeUnavailable(message) => {
+                assert!(message.contains("a password may be required"));
+            }
+            other => panic!("expected PrivilegeUnavailable, got {other:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sudo_failing_to_execute_is_privilege_unavailable() {
+        let error = std::io::Error::new(std::io::ErrorKind::NotFound, "sudo not found");
+        match classify_sudo_ip_addr_del("127.0.0.5", Err(error)) {
+            LoopbackRelease::PrivilegeUnavailable(message) => {
+                assert!(message.contains("could not be executed"));
+            }
+            other => panic!("expected PrivilegeUnavailable, got {other:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ip_addr_del_failing_for_its_own_reason_is_reported_as_failed() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // An address that is not on `lo` in the test environment: the
+        // re-query resolves the ambiguous failure to `Failed`, not
+        // `Released`, since the alias genuinely never went away.
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(2 << 8),
+            stdout: Vec::new(),
+            stderr: b"RTNETLINK answers: Cannot assign requested address".to_vec(),
+        };
+        match classify_sudo_ip_addr_del("127.0.0.253", Ok(output)) {
+            LoopbackRelease::Failed(message) => {
+                assert!(message.contains("sudo -n ip addr del"));
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn a_helper_failure_reports_privilege_unavailable_rather_than_already_absent() {
+        match remove_loopback_address("127.0.0.9").await.unwrap() {
+            LoopbackRelease::PrivilegeUnavailable(_) => {}
+            other => panic!("expected PrivilegeUnavailable without a helper, got {other:?}"),
+        }
     }
 
     #[cfg(test)]

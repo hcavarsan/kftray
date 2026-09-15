@@ -1,7 +1,10 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{
+    Duration,
+    Instant,
+};
 
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -51,34 +54,67 @@ static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
 });
 
 pub async fn create_client_with_config(config: &Config) -> KubeResult<Client> {
-    let strategies = if config.accept_invalid_certs {
-        info!("Creating insecure connection strategies for skip-tls-verify=true");
-        create_insecure_connection_strategies(config)
-    } else {
-        create_connection_strategies(config)
-    };
-
-    let probe_timeout = config
+    let mut config = config.clone();
+    if config.read_timeout.is_none() {
+        config.read_timeout = Some(DEFAULT_CONNECTION_TEST_TIMEOUT);
+    }
+    let total_budget = config
         .read_timeout
         .unwrap_or(DEFAULT_CONNECTION_TEST_TIMEOUT);
 
-    execute_strategies(strategies, probe_timeout).await
+    let strategies = if config.accept_invalid_certs {
+        info!("Creating insecure connection strategies for skip-tls-verify=true");
+        create_insecure_connection_strategies(&config)
+    } else {
+        create_connection_strategies(&config)
+    };
+
+    execute_strategies(strategies, total_budget).await
 }
 
+/// Runs every strategy against ONE overall deadline instead of giving each
+/// strategy its own full timeout: with 3-4 strategies a per-strategy budget
+/// would let a hung API server block the caller for 3-4x the intended
+/// timeout. Each strategy (connection + version probe) gets whatever budget
+/// remains from the overall deadline; a strategy is skipped once the budget
+/// is exhausted.
 async fn execute_strategies(
-    strategies: Vec<Strategy<'_>>, probe_timeout: Duration,
+    strategies: Vec<Strategy<'_>>, total_budget: Duration,
 ) -> KubeResult<Client> {
     let mut failed_attempts = Vec::new();
     let mut last_error: Option<KubeClientError> = None;
+    let deadline = Instant::now() + total_budget;
 
     for (description, strategy) in strategies {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            warn!("Strategy '{description}' skipped: overall connection budget exhausted");
+            failed_attempts.push(description.to_string());
+            last_error = Some(KubeClientError::connection_error(
+                "Timed out connecting to the Kubernetes API server",
+            ));
+            continue;
+        }
+
         info!("Attempting strategy: {description}");
 
-        let result = match strategy.await {
-            Ok(client) => test_client_connection(&client, probe_timeout)
-                .await
-                .map(|_| client),
-            Err(e) => Err(e),
+        let result = match tokio::time::timeout(remaining, strategy).await {
+            Ok(Ok(client)) => {
+                let probe_remaining = deadline.saturating_duration_since(Instant::now());
+                if probe_remaining.is_zero() {
+                    Err(KubeClientError::connection_error(
+                        "Timed out connecting to the Kubernetes API server",
+                    ))
+                } else {
+                    test_client_connection(&client, probe_remaining)
+                        .await
+                        .map(|_| client)
+                }
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(KubeClientError::connection_error(
+                "Timed out connecting to the Kubernetes API server",
+            )),
         };
 
         match result {
@@ -396,5 +432,35 @@ mod tests {
         let error = KubeClientError::connection_error("Test connection error");
         assert!(matches!(error, KubeClientError::ConnectionError { .. }));
         assert_eq!(error.to_string(), "Connection error: Test connection error");
+    }
+
+    #[tokio::test]
+    async fn execute_strategies_shares_one_budget_across_strategies() {
+        fn slow_strategy(description: &'static str) -> Strategy<'static> {
+            (
+                description,
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    Err(KubeClientError::connection_error("unreachable"))
+                }),
+            )
+        }
+
+        let strategies = vec![
+            slow_strategy("slow-1"),
+            slow_strategy("slow-2"),
+            slow_strategy("slow-3"),
+        ];
+
+        let start = Instant::now();
+        let result = execute_strategies(strategies, Duration::from_millis(100)).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "every strategy exceeds the shared budget");
+        assert!(
+            elapsed < Duration::from_millis(400),
+            "elapsed {elapsed:?} implies each strategy got its own timeout instead of \
+             sharing one overall budget (3 strategies x 200ms would be >= 600ms)"
+        );
     }
 }

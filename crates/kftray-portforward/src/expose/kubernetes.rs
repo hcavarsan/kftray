@@ -232,8 +232,16 @@ pub async fn create_expose_resources(
     }
     .await;
     if let Err(error) = result {
-        let (cleaned, message) =
-            rollback_created_resources(&client, &config.namespace, &created, error.message).await;
+        let (cleaned, message) = rollback_created_resources(
+            &client,
+            &config.namespace,
+            &created,
+            &config_id_str,
+            &location,
+            mode,
+            error.message,
+        )
+        .await;
         return Err(ExposeCreateError {
             message,
             ambiguous: error.ambiguous,
@@ -507,7 +515,8 @@ const ROLLBACK_DELETION_POLL: std::time::Duration = std::time::Duration::from_mi
 /// created resources were fully deleted, so a caller decides only what that
 /// means for its own cleanup guard.
 pub(crate) async fn rollback_created_resources(
-    client: &Client, namespace: &str, created: &[CreatedResource], reason: String,
+    client: &Client, namespace: &str, created: &[CreatedResource], config_id: &str,
+    location: &ExposeLocation, mode: DatabaseMode, reason: String,
 ) -> (bool, String) {
     // Comfortably above `ROLLBACK_DELETION_TIMEOUT`: the wait for resources to
     // disappear is only part of this deadline, alongside the delete requests
@@ -519,6 +528,18 @@ pub(crate) async fn rollback_created_resources(
         delete_created_resources(client, namespace, created),
     )
     .await;
+
+    // Confirmed by the UID-scoped delete above, not inferred from the current
+    // exposure type: the ingress history has to be cleared whenever this
+    // attempt's ingress is proven gone, or a later private start needs
+    // ingress-list rights it may not have just to rule this exposure out.
+    if matches!(cleaned, Ok(Ok(())))
+        && created
+            .iter()
+            .any(|r| matches!(r.kind, ResourceKind::Ingress))
+    {
+        forget_ingress_history(config_id, location, mode).await;
+    }
 
     match cleaned {
         Ok(Ok(())) => (true, reason),
@@ -848,10 +869,21 @@ async fn create_ingress(
     // switched to private must not infer from its new type that no ingress
     // exists. The record survives restarts, where nothing else does.
     remember_ingress_created(&config_id_str, location, mode).await?;
-    let created = create_bounded(&ingresses, ResourceKind::Ingress, &ingress).await?;
-
-    info!("Created ingress");
-    Ok(created)
+    match create_bounded(&ingresses, ResourceKind::Ingress, &ingress).await {
+        Ok(created) => {
+            info!("Created ingress");
+            Ok(created)
+        }
+        Err(error) => {
+            // A definitive rejection proves nothing was created despite the
+            // record above: clear it so a later private start does not need
+            // ingress-list rights to rule this exposure out.
+            if !error.ambiguous {
+                forget_ingress_history(&config_id_str, location, mode).await;
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Key under which a configuration's ingress history is kept.
@@ -1662,5 +1694,74 @@ mod tests {
         for id in [legacy, fresh] {
             let _ = kftray_commons::utils::config::delete_config_with_mode(id, mode).await;
         }
+    }
+    #[tokio::test]
+    async fn a_confirmed_ingress_rollback_clears_its_history() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_id = "2002";
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        remember_ingress_created(config_id, &location, mode)
+            .await
+            .unwrap();
+        assert!(ingress_was_created(config_id, &location, mode).await);
+
+        let created = vec![CreatedResource {
+            kind: ResourceKind::Ingress,
+            name: "myapp".to_owned(),
+            uid: Some("abc-uid".to_owned()),
+        }];
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::DELETE);
+            let status = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Success","code":200
+            });
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(Body::from(serde_json::to_vec(&status).unwrap()))
+                    .unwrap(),
+            );
+            // `still_present` confirms the delete: gone means the ingress
+            // history's obligation is actually settled, not just requested.
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::GET);
+            let not_found = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"NotFound","message":"myapp","code":404
+            });
+            send.send_response(
+                Response::builder()
+                    .status(404)
+                    .body(Body::from(serde_json::to_vec(&not_found).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let (cleaned, _message) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            rollback_created_resources(
+                &client,
+                "default",
+                &created,
+                config_id,
+                &location,
+                mode,
+                "reason".to_owned(),
+            ),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+        assert!(cleaned, "the mocked delete and confirmation both succeeded");
+        assert!(
+            !ingress_was_created(config_id, &location, mode).await,
+            "a confirmed UID-scoped delete proves no ingress is left, so a later private start \
+             must not need ingress-list rights just to rule this exposure out"
+        );
     }
 }

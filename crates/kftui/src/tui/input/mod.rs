@@ -293,7 +293,7 @@ pub struct App {
     pub throbber_state: throbber_widgets_tui::ThrobberState,
     pub configs_being_processed: PendingForwards,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
-    pub(crate) task_configs: std::collections::HashMap<tokio::task::Id, i64>,
+    pub(crate) task_configs: std::collections::HashMap<tokio::task::Id, TaskInfo>,
     pub forwarding_slots: Arc<tokio::sync::Semaphore>,
     pub stop_slots: Arc<tokio::sync::Semaphore>,
     pub forwarding_cancel: tokio_util::sync::CancellationToken,
@@ -427,11 +427,26 @@ impl App {
         self.forwarding_cancel.cancel();
         self.forwarding_slots.close();
         self.stop_slots.close();
-        let mut timed_out = self.drain_forwarding_tasks().await.is_err();
+        // Bounded by the same budget the backend's own create rollback uses:
+        // a create that has not yet recorded its obligation must survive long
+        // enough to do so before anything here can abort it.
+        let mut timed_out = self
+            .drain_forwarding_tasks(crate::tui::app::CLEANUP_RECONCILE_TIMEOUT)
+            .await
+            .is_err();
         if timed_out {
-            log::warn!("Forwarding tasks did not finish in time; aborting them");
-            self.forwarding_tasks.abort_all();
-            timed_out = self.drain_forwarding_tasks().await.is_err();
+            log::warn!("Forwarding tasks did not finish in time; aborting starts still in flight");
+            // Stops are never aborted: a dropped stop can leave a relay or an
+            // address claim behind with nothing left to release it.
+            for info in self.task_configs.values() {
+                if !info.is_stop {
+                    info.abort.abort();
+                }
+            }
+            timed_out = self
+                .drain_forwarding_tasks(FORWARD_SHUTDOWN_TIMEOUT)
+                .await
+                .is_err();
         }
         if timed_out {
             log::error!("Abandoning forwarding tasks that ignored abort");
@@ -457,11 +472,13 @@ impl App {
         reports
     }
 
-    /// Joins every forwarding task under the shutdown deadline, reporting the
+    /// Joins every forwarding task under the given deadline, reporting the
     /// ones that failed by the configuration they were working on. A task
     /// cancelled by this shutdown is not a failure.
-    async fn drain_forwarding_tasks(&mut self) -> Result<(), tokio::time::error::Elapsed> {
-        tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, async {
+    async fn drain_forwarding_tasks(
+        &mut self, deadline: std::time::Duration,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        tokio::time::timeout(deadline, async {
             while let Some(joined) = self.forwarding_tasks.join_next_with_id().await {
                 let error = match joined {
                     Ok((id, ())) => {
@@ -470,7 +487,10 @@ impl App {
                     }
                     Err(error) => error,
                 };
-                let config_id = self.task_configs.remove(&error.id());
+                let config_id = self
+                    .task_configs
+                    .remove(&error.id())
+                    .map(|info| info.config_id);
                 if error.is_cancelled() {
                     continue;
                 }
@@ -784,7 +804,10 @@ impl App {
                 }
                 Err(error) => error,
             };
-            let config_id = self.task_configs.remove(&error.id());
+            let config_id = self
+                .task_configs
+                .remove(&error.id())
+                .map(|info| info.config_id);
             if error.is_cancelled() && shutting_down {
                 continue;
             }
@@ -1541,7 +1564,7 @@ pub fn toggle_row_selection(app: &mut App) {
 
 pub(crate) const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
 const FORWARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Tracks one dispatched start/stop. The watchdog measures only the time the
 /// operation actually runs, so a config waiting behind the concurrency limit
@@ -1604,6 +1627,35 @@ impl PendingForward {
 }
 
 pub type PendingForwards = std::collections::HashMap<i64, Arc<PendingForward>>;
+
+/// Which forwarding task owns a `tokio::task::Id`, so shutdown can join every
+/// task while only ever aborting starts: a dropped stop can leave a relay or
+/// an address claim behind with nothing left to release it.
+pub(crate) struct TaskInfo {
+    pub(crate) config_id: i64,
+    pub(crate) is_stop: bool,
+    abort: tokio::task::AbortHandle,
+}
+
+impl TaskInfo {
+    pub(crate) fn new(config_id: i64, is_stop: bool, abort: tokio::task::AbortHandle) -> Self {
+        Self {
+            config_id,
+            is_stop,
+            abort,
+        }
+    }
+}
+
+/// Reports a dispatched operation that never reached the backend because
+/// shutdown cancelled it first. Logged only: an intentional shutdown
+/// cancellation is not a user-facing failure, but it must not be silent
+/// either, since the row it moved may still show the wrong table until the
+/// next state refresh.
+fn report_forward_cancelled(config_id: i64, is_starting: bool) {
+    let verb = if is_starting { "start" } else { "stop" };
+    log::debug!("Config {config_id} was cancelled before it could {verb}");
+}
 
 struct ProcessingFlag(Arc<PendingForward>);
 
@@ -1704,6 +1756,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         let slots = slots.clone();
         let cancel = cancel.clone();
         let task = pending.clone();
+        let config_id = pending.config_id;
         let handle = app.forwarding_tasks.spawn(async move {
             use crate::core::port_forward::{
                 start_port_forwarding,
@@ -1712,12 +1765,15 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
 
             let finished = ProcessingFlag(task);
             if cancel.is_cancelled() {
+                report_forward_cancelled(config_id, is_starting);
                 return;
             }
             let Ok(_permit) = slots.acquire_owned().await else {
+                report_forward_cancelled(config_id, is_starting);
                 return;
             };
             if cancel.is_cancelled() {
+                report_forward_cancelled(config_id, is_starting);
                 return;
             }
             finished.0.mark_running();
@@ -1740,7 +1796,9 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
 
             drop(finished);
         });
-        app.task_configs.insert(handle.id(), pending.config_id);
+        let task_id = handle.id();
+        app.task_configs
+            .insert(task_id, TaskInfo::new(config_id, !is_starting, handle));
     }
 
     match app.active_table {

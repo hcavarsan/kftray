@@ -131,13 +131,14 @@ async fn update_hosts_with_ssl(
     let snapshot = config.clone();
     tokio::spawn(async move {
         let _counted = counted;
-        let written =
-            tokio::task::spawn_blocking(move || add_ssl_host_entry(&id.to_string(), &alias, port))
-                .await
-                .map_err(|error| format!("Hosts write task failed: {error}"))
-                .and_then(|result| {
-                    result.map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"))
-                });
+        let written = tokio::task::spawn_blocking(move || {
+            add_ssl_host_entry(&id.to_string(), &alias, port, mode)
+        })
+        .await
+        .map_err(|error| format!("Hosts write task failed: {error}"))
+        .and_then(|result| {
+            result.map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"))
+        });
         let succeeded = written.is_ok();
         let _ = sender.send(written);
         if !succeeded {
@@ -151,7 +152,7 @@ async fn update_hosts_with_ssl(
         // registered is caught by the claim, not by `CHILD_PROCESSES` alone:
         // registration only happens at the very end of its startup.
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
-        let _guard = lock.lock().await;
+        let guard = lock.lock().await;
         if !CHILD_PROCESSES.contains_key(&id)
             && crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim)
         {
@@ -159,7 +160,9 @@ async fn update_hosts_with_ssl(
             let in_use = crate::kube::stop::forwarding_configs(mode).await;
             let removed = tokio::task::spawn_blocking({
                 let snapshot = snapshot.clone();
-                move || crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+                move || {
+                    crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
+                }
             })
             .await;
             match removed {
@@ -176,6 +179,9 @@ async fn update_hosts_with_ssl(
                 }
             }
         }
+        drop(guard);
+        drop(lock);
+        crate::kube::proxy_recovery::remove_recovery_lock(id);
     });
     receiver
         .await
@@ -217,7 +223,7 @@ async fn rollback_local_resources(
     let snapshot = config.clone();
     let in_use = crate::kube::stop::forwarding_configs(mode).await;
     let hosts = tokio::task::spawn_blocking(move || {
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
     })
     .await;
     match hosts {
@@ -251,13 +257,16 @@ async fn rollback_startup(
     port_forward: &PortForward, config: Config, reason: String, mode: DatabaseMode,
 ) -> String {
     match port_forward.cleanup_resources(Some(&config), mode).await {
-        Ok(()) => {
+        crate::port_forward::CleanupOutcome::Settled(unsatisfiable) => {
             if let Some(id) = config.id {
                 crate::kube::stop::settle_local_cleanup(id, &config);
             }
-            reason
+            match unsatisfiable {
+                Some(note) => format!("{reason}; {note}"),
+                None => reason,
+            }
         }
-        Err(error) => {
+        crate::port_forward::CleanupOutcome::Incomplete(error) => {
             if let Some(id) = config.id {
                 crate::kube::stop::record_local_cleanup(id, config);
             }
@@ -560,6 +569,10 @@ async fn allocate_and_claim(owned: &mut Config, mode: DatabaseMode) -> Allocated
         }
         warn!("Address {address} was reassigned while it was being claimed; moving to {confirmed}");
         drop(claim);
+        // Nothing will use this alias any more: the claim only protected it
+        // from a concurrent release, and dropping the claim does not release
+        // the alias itself.
+        release_stray_alias(owned, &address, mode).await;
         address = confirmed;
         // The alias the helper just handed out is bound whether or not another
         // attempt follows; an exhausted sequence must release this one, not
@@ -1103,6 +1116,11 @@ pub(super) async fn start_config_cancellable(
 
             handle.set_config(config.clone());
             CHILD_PROCESSES.insert(config_id, handle);
+            // Ownership of these hosts entries is now signified by the
+            // registered process, not the claim: nothing else is racing this
+            // id's entries, and leaving the claim in place after a successful
+            // start would only ever be cleared by chance, on the next start.
+            crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
             // The process now owns the local resources, so the record taken
             // when the address was allocated is no longer needed. Only the
             // local obligation goes: a cluster obligation left by an earlier

@@ -937,7 +937,7 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
     let snapshot = config.clone();
     let in_use = forwarding_configs(mode).await;
     let hosts = spawn_blocking(move || {
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use)
+        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
     })
     .await;
     match hosts {
@@ -977,13 +977,21 @@ async fn delete_cluster_resources(
     }
 }
 
+/// Whether `config` describes resources this installation may have created
+/// in the cluster: a public expose's Deployment/Service/Ingress, a proxy's
+/// relay, or the pod-side half of a UDP tunnel. A plain TCP service/pod
+/// forward never creates any, so nothing here ever needs cluster access.
+fn config_has_cluster_resources(config: &Config) -> bool {
+    matches!(
+        config.workload_type.as_deref(),
+        Some("expose") | Some("proxy")
+    ) || config.protocol == "udp"
+}
+
 async fn delete_cluster_resources_inner(
     id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
-    if config.workload_type.as_deref() != Some("expose")
-        && config.workload_type.as_deref() != Some("proxy")
-        && config.protocol != "udp"
-    {
+    if !config_has_cluster_resources(config) {
         return Ok(());
     }
     let key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
@@ -994,15 +1002,18 @@ async fn delete_cluster_resources_inner(
     // The context and kubeconfig can resolve to another server than the one
     // the resources were created on: a kubeconfig rewritten in place, or a
     // current-context that moved. Deleting there finds nothing and would
-    // settle an obligation whose resources still run elsewhere.
+    // settle an obligation whose resources still run elsewhere. Compared
+    // through the same normalization the destination was recorded with, so a
+    // scheme/host case difference or an explicit default port does not read
+    // as a different server.
+    let resolved = crate::kube::client::cluster_identity(&connection.cluster_url);
     if let Some(recorded) = destination
-        && recorded != connection.cluster_url
+        && recorded != resolved
     {
         return Err(format!(
             "The resources for config {id} were created on {recorded}, but the context now \
-             resolves to {}; restore that kubeconfig or remove them from the server resources \
-             screen",
-            connection.cluster_url
+             resolves to {resolved}; restore that kubeconfig or remove them from the server \
+             resources screen"
         ));
     }
     if config.workload_type.as_deref() == Some("expose") {
@@ -1428,6 +1439,7 @@ where
         .filter(|id| {
             CHILD_PROCESSES.contains_key(id)
                 || crate::kube::proxy::STARTING_PROXIES.contains_key(id)
+                || crate::kube::proxy_recovery::recovery_in_progress(*id)
                 || running_elsewhere.contains(id)
                 || PENDING_CLEANUP
                     .get(id)
@@ -1557,7 +1569,7 @@ async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
                 *entry.key(),
                 config.clone(),
                 None,
-                true,
+                config_has_cluster_resources(config),
                 true,
                 entry.value().destination(),
             );
@@ -1805,6 +1817,9 @@ async fn stop_config(
     if !CHILD_PROCESSES.contains_key(&id)
         && let Some(owner) = running_in_another_process(id, mode).await
     {
+        drop(guard);
+        drop(lock);
+        crate::kube::proxy_recovery::remove_recovery_lock(id);
         return Err(format!(
             "Config {id} is being forwarded by another kftray process ({owner}); stop it there"
         ));
@@ -1827,7 +1842,7 @@ async fn stop_config(
                 id,
                 config.clone(),
                 None,
-                true,
+                config_has_cluster_resources(config),
                 true,
                 retained_destination.clone(),
             );
@@ -1865,9 +1880,13 @@ async fn stop_config(
             uncertain_until: recorded.and_then(|target| target.uncertain_until),
             // A record for these resources describes what is left: an earlier
             // stop that deleted the Deployment and failed to release the
-            // address must not need cluster access again. Without one the
-            // configuration is still forwarding and owes both.
-            cluster: recorded.is_none_or(|target| target.cluster),
+            // address must not need cluster access again. Without one, the
+            // obligation is whatever this workload type can actually create:
+            // a plain TCP forward owes no cluster cleanup at all.
+            cluster: recorded.map_or_else(
+                || config_has_cluster_resources(config),
+                |target| target.cluster,
+            ),
             local: recorded.is_none_or(|target| target.local),
             destination: recorded
                 .and_then(|target| target.destination.clone())
@@ -2277,6 +2296,31 @@ mod tests {
              retries it"
         );
 
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn unresolved_cleanup_does_not_record_a_cluster_obligation_for_a_plain_forward() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_071;
+        PENDING_CLEANUP.remove(&id);
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(local_config(id));
+        CHILD_PROCESSES.insert(id, process);
+
+        unresolved_cleanup(DatabaseMode::Memory).await;
+
+        let targets = pending_cleanup_targets(id);
+        assert!(
+            targets.iter().any(|target| !target.cluster),
+            "a plain TCP forward never creates cluster resources, so it must not need cluster \
+             access to be considered idle: {targets:?}"
+        );
+
+        if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
+            process.cleanup_and_abort().await;
+        }
         PENDING_CLEANUP.remove(&id);
     }
 

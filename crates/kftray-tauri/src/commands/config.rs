@@ -74,30 +74,37 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
     Ok(())
 }
 
-async fn restart_ssl_proxies_if_running() -> Result<(), String> {
+async fn restart_ssl_proxies_if_running(target_ids: Option<&[i64]>) -> Result<Vec<i64>, String> {
     use kftray_commons::utils::config_state::get_configs_state;
     use kftray_portforward::kube::stop_port_forward;
 
     info!("=== Starting SSL proxy restart process ===");
 
-    // Get all currently running configs
-    let config_states = get_configs_state()
-        .await
-        .map_err(|e| format!("Failed to get config states: {}", e))?;
+    // On a retry, restart exactly the configs that failed last time: a
+    // config that failed to restart typically no longer shows as running
+    // in config_state, so re-deriving the candidate set from "currently
+    // running" would drop it and keep re-restarting whatever DID succeed.
+    let running_config_ids: Vec<i64> = if let Some(ids) = target_ids {
+        ids.to_vec()
+    } else {
+        let config_states = get_configs_state()
+            .await
+            .map_err(|e| format!("Failed to get config states: {}", e))?;
 
-    info!("Found {} total config states", config_states.len());
+        info!("Found {} total config states", config_states.len());
 
-    let running_config_ids: Vec<i64> = config_states
-        .iter()
-        .filter(|state| state.is_running)
-        .map(|state| state.config_id)
-        .collect();
+        config_states
+            .iter()
+            .filter(|state| state.is_running)
+            .map(|state| state.config_id)
+            .collect()
+    };
 
-    info!("Running config IDs: {:?}", running_config_ids);
+    info!("Candidate config IDs: {:?}", running_config_ids);
 
     if running_config_ids.is_empty() {
-        info!("No running configs found, no SSL proxies to restart");
-        return Ok(());
+        info!("No candidate configs found, no SSL proxies to restart");
+        return Ok(Vec::new());
     }
 
     // Get all configs to filter for SSL-enabled ones
@@ -110,27 +117,27 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     let ssl_configs: Vec<Config> = all_configs
         .into_iter()
         .filter(|config| {
-            let is_running = config.id.is_some_and(|id| running_config_ids.contains(&id));
+            let is_candidate = config.id.is_some_and(|id| running_config_ids.contains(&id));
             let is_ssl_enabled = config.domain_enabled.unwrap_or(false);
             info!(
-                "Config {}: running={}, ssl_enabled={}, alias={:?}",
+                "Config {}: candidate={}, ssl_enabled={}, alias={:?}",
                 config.id.unwrap_or(-1),
-                is_running,
+                is_candidate,
                 is_ssl_enabled,
                 config.alias
             );
-            is_running && is_ssl_enabled
+            is_candidate && is_ssl_enabled
         })
         .collect();
 
     info!(
-        "Filtered to {} SSL-enabled running configs",
+        "Filtered to {} SSL-enabled candidate configs",
         ssl_configs.len()
     );
 
     if ssl_configs.is_empty() {
-        info!("No running SSL-enabled configs found, no SSL proxies to restart");
-        return Ok(());
+        info!("No SSL-enabled candidate configs found, no SSL proxies to restart");
+        return Ok(Vec::new());
     }
 
     info!("Found {} SSL-enabled configs to restart", ssl_configs.len());
@@ -139,9 +146,10 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     // workload/protocol dispatch the global shortcuts use: a proxy or udp
     // config restarted through a plain tcp port-forward would come back on
     // the wrong forwarding path.
-    let mut failures: Vec<String> = Vec::new();
+    let mut failed_ids: Vec<i64> = Vec::new();
     for config in &ssl_configs {
-        let config_id = config.id.unwrap().to_string();
+        let id = config.id.unwrap();
+        let config_id = id.to_string();
         info!(
             "Restarting SSL proxy for config {} ({})",
             config_id,
@@ -154,7 +162,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
                 "Failed to stop port forward for config {}: {}",
                 config_id, e
             );
-            failures.push(format!("config {config_id}: failed to stop: {e}"));
+            failed_ids.push(id);
             continue;
         }
 
@@ -168,7 +176,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
                         "Failed to restart port forward for config {}: {}",
                         config_id, e
                     );
-                    failures.push(format!("config {config_id}: {e}"));
+                    failed_ids.push(id);
                 } else {
                     info!("Successfully restarted SSL proxy for config {}", config_id);
                 }
@@ -178,22 +186,19 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
                     "Failed to restart port forward for config {}: {}",
                     config_id, e
                 );
-                failures.push(format!("config {config_id}: {e}"));
+                failed_ids.push(id);
             }
         }
     }
 
     info!("Completed SSL proxy restart process");
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
+    Ok(failed_ids)
 }
 
 async fn restart_ssl_proxies_with_retry() {
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
+    let mut target_ids: Option<Vec<i64>> = None;
 
     for (attempt, delay) in delays.iter().enumerate() {
         info!(
@@ -203,13 +208,22 @@ async fn restart_ssl_proxies_with_retry() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
 
-        match restart_ssl_proxies_if_running().await {
-            Ok(()) => {
+        match restart_ssl_proxies_if_running(target_ids.as_deref()).await {
+            Ok(failed_ids) if failed_ids.is_empty() => {
                 info!(
                     "SSL proxy restart attempt {} completed successfully",
                     attempt + 1
                 );
                 return;
+            }
+            Ok(failed_ids) => {
+                warn!(
+                    "SSL proxy restart attempt {} left {} config(s) failing: {:?}",
+                    attempt + 1,
+                    failed_ids.len(),
+                    failed_ids
+                );
+                target_ids = Some(failed_ids);
             }
             Err(e) => {
                 warn!("SSL proxy restart attempt {} failed: {}", attempt + 1, e);
@@ -270,8 +284,7 @@ pub async fn delete_all_configs_cmd() -> Result<(), String> {
     // deleted every row unconditionally, including ones for forwards that
     // are running, starting or still being cleaned up.
     let ids: Vec<i64> = get_configs()
-        .await
-        .unwrap_or_default()
+        .await?
         .into_iter()
         .filter_map(|c| c.id)
         .collect();
@@ -474,6 +487,61 @@ mod tests {
         assert!(
             configs_after.is_empty(),
             "All configs should have been deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_configs_cmd_propagates_get_configs_error() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        // `delete_all_configs_cmd` used to call `get_configs().unwrap_or_default()`,
+        // so a DB read failure enumerated zero ids and `delete_all_configs()`
+        // still wiped every row unconditionally.
+        let good_config = Config::default();
+        insert_config_cmd(good_config)
+            .await
+            .expect("Failed to insert good config");
+
+        let pool = kftray_commons::utils::db::get_db_pool()
+            .await
+            .expect("Failed to get db pool");
+
+        // A row whose `data` column is not valid JSON makes `get_configs()`
+        // fail without touching the pool itself, unlike closing it.
+        sqlx::query("INSERT INTO configs (data) VALUES (?)")
+            .bind("not json")
+            .execute(&*pool)
+            .await
+            .expect("Failed to insert malformed row");
+
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM configs")
+            .fetch_one(&*pool)
+            .await
+            .expect("Failed to count rows before delete");
+
+        let result = delete_all_configs_cmd().await;
+
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM configs")
+            .fetch_one(&*pool)
+            .await
+            .expect("Failed to count rows after delete");
+
+        // Clean up the malformed row unconditionally so it cannot poison
+        // later tests that share this process-global DB pool.
+        sqlx::query("DELETE FROM configs")
+            .execute(&*pool)
+            .await
+            .expect("cleanup failed");
+
+        assert!(
+            result.is_err(),
+            "delete_all_configs_cmd must propagate a get_configs failure instead of \
+             silently deleting"
+        );
+        assert_eq!(
+            count_before, count_after,
+            "no rows should be deleted when config ids cannot be enumerated"
         );
     }
 

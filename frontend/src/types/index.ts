@@ -26,6 +26,8 @@ export interface Config {
 
 export type PortForwardAction = 'starting' | 'stopping' | 'saving' | 'deleting'
 
+export type PortForwardToggleAction = 'starting' | 'stopping'
+
 export interface PortForwardResponse {
   id: number | null
   service: string
@@ -68,7 +70,7 @@ export interface TableProps {
   pendingConfigActions: Map<number, PortForwardAction>
   toggleConfigForward: (
     config: Config,
-    action: PortForwardAction,
+    action: PortForwardToggleAction,
   ) => Promise<void>
   initiatePortForwarding: (configs: Config[]) => Promise<void>
   startSelectedPortForwarding: () => Promise<void>
@@ -76,7 +78,7 @@ export interface TableProps {
   stopAllPortForwarding: () => Promise<void>
   abortStartOperation: () => void
   abortStopOperation: () => void
-  confirmDeleteConfig: () => void
+  confirmDeleteConfig: () => Promise<boolean>
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
@@ -90,7 +92,7 @@ export interface TableProps {
 
 export interface PortForwardRowProps {
   config: Config
-  confirmDeleteConfig: () => void
+  confirmDeleteConfig: () => Promise<boolean>
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
@@ -102,7 +104,7 @@ export interface PortForwardRowProps {
   pendingAction: PortForwardAction | null
   toggleConfigForward: (
     config: Config,
-    action: PortForwardAction,
+    action: PortForwardToggleAction,
   ) => Promise<void>
 }
 
@@ -206,7 +208,7 @@ export interface ContextsAccordionProps {
   contextConfigs: Config[]
   selectedConfigs: Config[]
   handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: () => void
+  confirmDeleteConfig: () => Promise<boolean>
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
   isAlertOpen: boolean
@@ -217,7 +219,7 @@ export interface ContextsAccordionProps {
   pendingConfigActions: Map<number, PortForwardAction>
   toggleConfigForward: (
     config: Config,
-    action: PortForwardAction,
+    action: PortForwardToggleAction,
   ) => Promise<void>
 }
 

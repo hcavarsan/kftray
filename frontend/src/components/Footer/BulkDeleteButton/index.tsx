@@ -85,7 +85,7 @@ const DeleteDialog = ({
               size='xs'
               bg='blue.500'
               _hover={{ bg: 'blue.600' }}
-              onClick={onConfirm}
+              onClick={() => void onConfirm()}
               height='28px'
             >
               Delete

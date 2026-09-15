@@ -194,7 +194,9 @@ impl PortForwardRunner {
     async fn wait_for_shutdown_signal(
         configs: &[Config], mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        signal::ctrl_c().await?;
+        if let Err(error) = signal::ctrl_c().await {
+            warn!("Failed to install Ctrl+C handler: {error}");
+        }
         println!("\nStopping port forwards");
         Self::stop_all_port_forwards(configs, mode).await
     }

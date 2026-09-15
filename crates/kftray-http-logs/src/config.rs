@@ -236,6 +236,6 @@ mod tests {
         }
 
         let log_dir = result.expect("default_log_directory should resolve");
-        assert!(log_dir.ends_with("http_logs"));
+        assert_eq!(log_dir, temp_dir.path().join("http_logs"));
     }
 }

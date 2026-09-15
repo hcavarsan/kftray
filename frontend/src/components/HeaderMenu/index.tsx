@@ -106,7 +106,19 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               size='xs'
               variant='ghost'
               disabled={
-                !isInitiating &&
+                isInitiating ||
+                (selectedConfigs.length > 0
+                  ? selectedConfigs.every(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
+
+                      return currentConfig?.is_running
+                    })
+                  : configs.every(config => config.is_running))
+              }
+              aria-disabled={
+                isInitiating ||
                 (selectedConfigs.length > 0
                   ? selectedConfigs.every(selected => {
                       const currentConfig = configs.find(
@@ -121,13 +133,14 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                 isInitiating
                   ? undefined
                   : selectedConfigs.length > 0
-                    ? startSelectedPortForwarding
+                    ? () => void startSelectedPortForwarding()
                     : () =>
-                        initiatePortForwarding(
+                        void initiatePortForwarding(
                           configs.filter(config => !config.is_running),
                         )
               }
               _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
+              _disabled={{ cursor: 'not-allowed' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
@@ -151,29 +164,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Starting...</span>
-                  <Tooltip
-                    content='Cancel'
-                    portalled
-                    contentProps={{ zIndex: 101 }}
-                  >
-                    <Box
-                      as='span'
-                      display='inline-flex'
-                      alignItems='center'
-                      justifyContent='center'
-                      marginLeft={1.5}
-                      padding='2px'
-                      borderRadius='sm'
-                      cursor='pointer'
-                      _hover={{ bg: 'red.700' }}
-                      onClick={e => {
-                        e.stopPropagation()
-                        abortStartOperation()
-                      }}
-                    >
-                      <Box as={X} width='10px' height='10px' color='red.300' />
-                    </Box>
-                  </Tooltip>
                 </>
               ) : (
                 <>
@@ -200,6 +190,26 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             </Button>
           </Tooltip>
 
+          {isInitiating && (
+            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+              <Box
+                as='button'
+                display='inline-flex'
+                alignItems='center'
+                justifyContent='center'
+                padding='6px'
+                borderRadius='sm'
+                cursor='pointer'
+                bg='transparent'
+                border='none'
+                _hover={{ bg: 'red.700' }}
+                onClick={() => abortStartOperation()}
+              >
+                <Box as={X} width='10px' height='10px' color='red.300' />
+              </Box>
+            </Tooltip>
+          )}
+
           <Tooltip
             content={
               isStopping
@@ -222,7 +232,19 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               size='xs'
               variant='ghost'
               disabled={
-                !isStopping &&
+                isStopping ||
+                (selectedConfigs.length > 0
+                  ? selectedConfigs.every(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
+
+                      return currentConfig && !currentConfig.is_running
+                    })
+                  : configs.every(config => !config.is_running))
+              }
+              aria-disabled={
+                isStopping ||
                 (selectedConfigs.length > 0
                   ? selectedConfigs.every(selected => {
                       const currentConfig = configs.find(
@@ -237,10 +259,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                 isStopping
                   ? undefined
                   : selectedConfigs.length > 0
-                    ? stopSelectedPortForwarding
-                    : stopAllPortForwarding
+                    ? () => void stopSelectedPortForwarding()
+                    : () => void stopAllPortForwarding()
               }
               _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
+              _disabled={{ cursor: 'not-allowed' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
@@ -264,29 +287,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Stopping...</span>
-                  <Tooltip
-                    content='Cancel'
-                    portalled
-                    contentProps={{ zIndex: 101 }}
-                  >
-                    <Box
-                      as='span'
-                      display='inline-flex'
-                      alignItems='center'
-                      justifyContent='center'
-                      marginLeft={1.5}
-                      padding='2px'
-                      borderRadius='sm'
-                      cursor='pointer'
-                      _hover={{ bg: 'red.700' }}
-                      onClick={e => {
-                        e.stopPropagation()
-                        abortStopOperation()
-                      }}
-                    >
-                      <Box as={X} width='10px' height='10px' color='red.300' />
-                    </Box>
-                  </Tooltip>
                 </>
               ) : (
                 <>
@@ -307,6 +307,26 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               )}
             </Button>
           </Tooltip>
+
+          {isStopping && (
+            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+              <Box
+                as='button'
+                display='inline-flex'
+                alignItems='center'
+                justifyContent='center'
+                padding='6px'
+                borderRadius='sm'
+                cursor='pointer'
+                bg='transparent'
+                border='none'
+                _hover={{ bg: 'red.700' }}
+                onClick={() => abortStopOperation()}
+              >
+                <Box as={X} width='10px' height='10px' color='red.300' />
+              </Box>
+            </Tooltip>
+          )}
         </Group>
       </Group>
 
