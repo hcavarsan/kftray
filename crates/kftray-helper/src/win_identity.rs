@@ -464,8 +464,41 @@ mod tests {
         assert_eq!(read_authorized_user_sid_at(&path), None);
     }
 
+    /// Whether this process runs with an elevated token. The ACL
+    /// `record_authorized_user_at` applies grants SYSTEM and Administrators
+    /// only, and an unelevated token has no effective Administrators
+    /// membership, so the file write under it is denied.
+    fn process_is_elevated() -> bool {
+        use windows::Win32::Security::{
+            TOKEN_ELEVATION,
+            TokenElevation,
+        };
+
+        let mut token = HANDLE::default();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+            return false;
+        }
+        let token = OwnedHandle(token);
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        let queried = unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenElevation,
+                Some((&raw mut elevation).cast()),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned,
+            )
+        };
+        queried.is_ok() && elevation.TokenIsElevated != 0
+    }
+
     #[test]
     fn record_then_read_round_trips_through_the_file() {
+        if !process_is_elevated() {
+            eprintln!("skipped: writing under the SYSTEM/Administrators ACL needs elevation");
+            return;
+        }
         let path = std::env::temp_dir()
             .join(format!(
                 "kftray-sid-test-{}-{}",

@@ -170,7 +170,9 @@ pub(crate) async fn dispatch_stop(config: &Config) -> Result<CustomResponse, Str
 /// clears its rows from `config_state` so the next launch does not see them
 /// as still running. Mirrors kftui's shutdown sequence. `exclude` names
 /// configs whose stop is still running past the shutdown deadline: they are
-/// left out of this pass rather than raced by a second stop attempt.
+/// left out of the reconcile pass rather than raced by a second stop
+/// attempt, and keep their row and running snapshot so the next launch
+/// retries them instead of treating the abandoned stop as complete.
 async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
     let still_owed =
         reconcile_pending_cleanup(DatabaseMode::File, CLEANUP_RECONCILE_TIMEOUT, exclude).await;
@@ -180,8 +182,15 @@ async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
              running and are retried on the next stop"
         );
     }
+    let keep_running: Vec<i64> = still_owed
+        .iter()
+        .chain(exclude.iter())
+        .copied()
+        .collect::<HashSet<i64>>()
+        .into_iter()
+        .collect();
     if let Err(e) =
-        cleanup_current_process_config_states_with_mode(DatabaseMode::File, &still_owed).await
+        cleanup_current_process_config_states_with_mode(DatabaseMode::File, &keep_running).await
     {
         error!("Failed to cleanup config states: {e}");
     }
