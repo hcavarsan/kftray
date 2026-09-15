@@ -247,7 +247,7 @@ impl PortForwardRunner {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let dispatched_ids: HashSet<i64> = configs.iter().filter_map(|config| config.id).collect();
 
-        let mut tasks = stream::iter(dispatched_ids.iter().copied())
+        let tasks = stream::iter(dispatched_ids.iter().copied())
             .map(|config_id| async move {
                 let result = Self::stop_single_port_forward(config_id, mode)
                     .await
@@ -256,30 +256,27 @@ impl PortForwardRunner {
             })
             .buffer_unordered(16);
 
-        let mut stop_errors = Vec::new();
-        let mut stopped_count = 0;
-        let mut completed_ids: HashSet<i64> = HashSet::new();
-
         // Bounded like the reconciliation pass below: a stuck stop must not
         // keep this process alive forever, so anything still in flight past
         // the budget is left running for the next stop-all to retry.
-        let drained = tokio::time::timeout(crate::tui::app::CLEANUP_RECONCILE_TIMEOUT, async {
-            while let Some((config_id, result)) = tasks.next().await {
-                completed_ids.insert(config_id);
-                match result {
-                    Ok(()) => stopped_count += 1,
-                    Err(e) => stop_errors.push(e),
-                }
+        let (results, completed_ids, drained_ok) =
+            Self::drain_stop_tasks(tasks, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;
+
+        let mut stop_errors = Vec::new();
+        let mut stopped_count = 0;
+        for (_, result) in results {
+            match result {
+                Ok(()) => stopped_count += 1,
+                Err(e) => stop_errors.push(e),
             }
-        })
-        .await;
+        }
 
         println!("Stopped {stopped_count} port forward(s)");
 
         let mut failures: Vec<String> = Vec::new();
-        if stop_errors.is_empty() {
+        if stop_errors.is_empty() && drained_ok {
             println!("Port forwards stopped");
-        } else {
+        } else if !stop_errors.is_empty() {
             eprintln!("Warning: Some port forwards failed to stop properly");
             for error in &stop_errors {
                 eprintln!("  {error}");
@@ -287,7 +284,7 @@ impl PortForwardRunner {
             failures.extend(stop_errors);
         }
 
-        if drained.is_err() {
+        if !drained_ok {
             let still_owed: Vec<i64> = dispatched_ids.difference(&completed_ids).copied().collect();
             let message = format!(
                 "stop for configuration(s) {still_owed:?} did not finish within the shutdown \
@@ -331,6 +328,30 @@ impl PortForwardRunner {
             .await
             .map(|_| ())
             .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
+    }
+
+    /// Drains `tasks` under `deadline` and returns before doing anything
+    /// else. `tasks` is owned by this function, so if `deadline` elapses
+    /// while stops are still buffered inside it, they are dropped the
+    /// moment this function returns rather than staying alive (holding
+    /// whatever they hold, e.g. a per-config recovery lock) through the
+    /// caller's own later, unrelated cleanup.
+    pub(crate) async fn drain_stop_tasks<S>(
+        mut tasks: S, deadline: std::time::Duration,
+    ) -> (Vec<(i64, Result<(), String>)>, HashSet<i64>, bool)
+    where
+        S: futures::stream::Stream<Item = (i64, Result<(), String>)> + Unpin,
+    {
+        let mut results = Vec::new();
+        let mut completed_ids: HashSet<i64> = HashSet::new();
+        let drained = tokio::time::timeout(deadline, async {
+            while let Some(item) = tasks.next().await {
+                completed_ids.insert(item.0);
+                results.push(item);
+            }
+        })
+        .await;
+        (results, completed_ids, drained.is_ok())
     }
 
     async fn ensure_ssl_setup_with_configs(

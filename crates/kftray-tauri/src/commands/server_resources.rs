@@ -60,19 +60,6 @@ pub async fn list_all_kftray_resources(
     let client = connection.client;
     let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
-    let username = whoami::username()
-        .unwrap_or_else(|_| "unknown".to_string())
-        .to_lowercase();
-    let clean_username: String = username
-        .chars()
-        .filter(|c: &char| c.is_alphanumeric())
-        .collect();
-
-    info!(
-        "Filtering kftray resources for user: {} in context: {}",
-        clean_username, context_name
-    );
-
     let configs = kftray_commons::config::get_configs()
         .await
         .unwrap_or_default();
@@ -112,26 +99,15 @@ pub async fn list_all_kftray_resources(
         let mut resources = Vec::new();
 
         resources.extend(
-            list_pods_in_namespace(
-                &client,
-                &namespace,
-                &clean_username,
-                &config_ids,
-                installation_id,
-            )
-            .await
-            .unwrap_or_default(),
+            list_pods_in_namespace(&client, &namespace, &config_ids, installation_id)
+                .await
+                .unwrap_or_default(),
         );
 
-        let user_deployments = list_deployments_in_namespace(
-            &client,
-            &namespace,
-            &clean_username,
-            &config_ids,
-            installation_id,
-        )
-        .await
-        .unwrap_or_default();
+        let user_deployments =
+            list_deployments_in_namespace(&client, &namespace, &config_ids, installation_id)
+                .await
+                .unwrap_or_default();
 
         let deployment_config_ids: Vec<String> = user_deployments
             .iter()
@@ -144,7 +120,6 @@ pub async fn list_all_kftray_resources(
             list_services_in_namespace(
                 &client,
                 &namespace,
-                &clean_username,
                 &deployment_config_ids,
                 &config_ids,
                 installation_id,
@@ -156,7 +131,6 @@ pub async fn list_all_kftray_resources(
             list_ingresses_in_namespace(
                 &client,
                 &namespace,
-                &clean_username,
                 &deployment_config_ids,
                 &config_ids,
                 installation_id,
@@ -214,36 +188,29 @@ fn owned_by(owner: &str, installation_id: &str) -> bool {
 /// resources that predate the label, by name.
 ///
 /// The label is the positive evidence: a customized manifest can carry any
-/// name, and the username the prefix was derived from can change, and the
-/// label still says the resource is ours. Name matching only covers what was
-/// created before the label existed.
+/// name, and the label still says the resource is ours. Name matching only
+/// covers what was created before the label existed.
 fn is_ours(
-    name: &str, labels: &std::collections::BTreeMap<String, String>, username: &str,
-    installation_id: &str,
+    name: &str, labels: &std::collections::BTreeMap<String, String>, installation_id: &str,
 ) -> bool {
     match labels.get(kftray_portforward::kube::INSTALLATION_LABEL) {
         Some(owner) => owned_by(owner, installation_id),
-        None => is_forward_name(name, username) || is_expose_name(name, username),
+        None => is_forward_name(name) || is_expose_name(name),
     }
 }
 
-/// Whether `name` is a relay this application could have created for the
-/// current user, under the current naming rule or the one before it.
-///
-/// The current prefix truncates the username to keep the value valid as a
-/// label; relays from before that carry the full sanitized username and
-/// would otherwise vanish from the one screen meant to remove them by hand.
-fn is_forward_name(name: &str, username: &str) -> bool {
+/// Whether `name` is a relay this application could have created, by the
+/// same prefix `proxy_resource_prefix` gives new resources: that helper is
+/// the sole source of the naming rule, so a separately hand-rolled username
+/// sanitization here can never drift from what it actually produces.
+fn is_forward_name(name: &str) -> bool {
     name.starts_with(&kftray_portforward::kube::proxy_resource_prefix())
-        || name.starts_with(&format!("kftray-forward-{username}-"))
 }
 
-/// Whether `name` is an exposure this application could have created for the
-/// current user, under the current naming rule or the one before it. Mirrors
-/// `is_forward_name`.
-fn is_expose_name(name: &str, username: &str) -> bool {
+/// Whether `name` is an exposure this application could have created.
+/// Mirrors `is_forward_name`.
+fn is_expose_name(name: &str) -> bool {
     name.starts_with(&kftray_portforward::expose::kubernetes::expose_resource_prefix())
-        || name.starts_with(&format!("kftray-expose-{username}"))
 }
 
 /// Whether a service or ingress belongs to this installation: by label, by a
@@ -253,19 +220,20 @@ fn is_expose_name(name: &str, username: &str) -> bool {
 /// ours.
 fn is_ours_dependent(
     name: &str, labels: &std::collections::BTreeMap<String, String>, config_id: Option<&str>,
-    deployment_config_ids: &[String], username: &str, installation_id: &str,
+    deployment_config_ids: &[String], installation_id: &str,
 ) -> bool {
     match labels.get(kftray_portforward::kube::INSTALLATION_LABEL) {
         Some(owner) => owned_by(owner, installation_id),
         None => {
-            is_expose_name(name, username)
+            is_forward_name(name)
+                || is_expose_name(name)
                 || config_id.is_some_and(|id| deployment_config_ids.contains(&id.to_string()))
         }
     }
 }
 
 async fn list_pods_in_namespace(
-    client: &Client, namespace: &str, username: &str, config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
@@ -280,7 +248,7 @@ async fn list_pods_in_namespace(
         .filter_map(|pod| {
             let pod_name = pod.name_any();
 
-            if !is_ours(&pod_name, pod.labels(), username, installation_id) {
+            if !is_ours(&pod_name, pod.labels(), installation_id) {
                 return None;
             }
 
@@ -319,7 +287,7 @@ async fn list_pods_in_namespace(
 }
 
 async fn list_deployments_in_namespace(
-    client: &Client, namespace: &str, username: &str, config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, config_ids: &[String], installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
@@ -339,7 +307,7 @@ async fn list_deployments_in_namespace(
         .into_iter()
         .filter(|deployment| {
             let name = deployment.name_any();
-            is_ours(&name, deployment.labels(), username, installation_id)
+            is_ours(&name, deployment.labels(), installation_id)
         })
         .map(|deployment| {
             let config_id = deployment.labels().get("config_id").map(|s| s.to_string());
@@ -381,8 +349,8 @@ async fn list_deployments_in_namespace(
 }
 
 async fn list_services_in_namespace(
-    client: &Client, namespace: &str, username: &str, deployment_config_ids: &[String],
-    config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
+    installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let services_api: Api<Service> = Api::namespaced(client.clone(), namespace);
 
@@ -405,7 +373,6 @@ async fn list_services_in_namespace(
                 service.labels(),
                 config_id.as_deref(),
                 deployment_config_ids,
-                username,
                 installation_id,
             ) {
                 return None;
@@ -447,8 +414,8 @@ async fn list_services_in_namespace(
 }
 
 async fn list_ingresses_in_namespace(
-    client: &Client, namespace: &str, username: &str, deployment_config_ids: &[String],
-    config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
+    installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let ingresses_api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
@@ -470,7 +437,6 @@ async fn list_ingresses_in_namespace(
                 ingress.labels(),
                 config_id.as_deref(),
                 deployment_config_ids,
-                username,
                 installation_id,
             ) {
                 return None;
@@ -574,6 +540,61 @@ pub async fn delete_kftray_resource(
         installation_id: &'a str,
         namespace: &'a str,
         destination: &'a str,
+        client: &'a Client,
+    }
+
+    /// Whether any resource carrying `config_id` and this installation's
+    /// label still exists in the namespace, checked across every kind the
+    /// screen lists. A single resource just deleted by hand may be only one
+    /// of several this installation created for the same config (a proxy's
+    /// relay Deployment, Service and Pod, say), so the cluster obligation is
+    /// only settled once none of them remain.
+    async fn any_sibling_resources_remain(
+        client: &Client, namespace: &str, id: i64, installation_id: &str,
+    ) -> Result<bool, String> {
+        let target = id.to_string();
+        let matches = |resources: &[ServerResource]| {
+            resources
+                .iter()
+                .any(|resource| resource.config_id.as_deref() == Some(target.as_str()))
+        };
+
+        let pods = list_pods_in_namespace(client, namespace, &[], installation_id).await?;
+        if matches(&pods) {
+            return Ok(true);
+        }
+
+        let deployments =
+            list_deployments_in_namespace(client, namespace, &[], installation_id).await?;
+        if matches(&deployments) {
+            return Ok(true);
+        }
+        let deployment_config_ids: Vec<String> = deployments
+            .iter()
+            .filter_map(|d| d.config_id.clone())
+            .collect();
+
+        let services = list_services_in_namespace(
+            client,
+            namespace,
+            &deployment_config_ids,
+            &[],
+            installation_id,
+        )
+        .await?;
+        if matches(&services) {
+            return Ok(true);
+        }
+
+        let ingresses = list_ingresses_in_namespace(
+            client,
+            namespace,
+            &deployment_config_ids,
+            &[],
+            installation_id,
+        )
+        .await?;
+        Ok(matches(&ingresses))
     }
 
     async fn delete_kube_resource<K>(
@@ -588,7 +609,9 @@ pub async fn delete_kftray_resource(
             installation_id,
             namespace,
             destination,
+            client,
         } = *scope;
+
         let object = match api.get_opt(name).await {
             Ok(Some(object)) => object,
             Ok(None) => return Ok(()),
@@ -664,17 +687,37 @@ pub async fn delete_kftray_resource(
             Err(e) => Err(format!("Failed to delete {kind}: {e}")),
         };
 
-        // A labelled resource this installation just deleted by hand is
-        // exactly the manual cleanup the recorded cluster obligation is
-        // waiting for; settle it so stop-all and delete-if-idle stop
-        // refusing the row. A no-op when there is no matching record, e.g.
-        // the obligation was already settled or never existed.
+        // A labelled resource this installation just deleted by hand may be
+        // only one of several sharing this config_id (a proxy's relay
+        // Deployment, Service and Pod, say); settle the recorded cluster
+        // obligation only once none of them remain, so stop-all and
+        // delete-if-idle stop refusing the row exactly when the cluster
+        // footprint is actually gone. A no-op when there is no matching
+        // record, e.g. the obligation was already settled or never existed.
         if result.is_ok()
             && labels.contains_key(kftray_portforward::kube::INSTALLATION_LABEL)
             && let Some(config_id_str) = config_id
             && let Ok(id) = config_id_str.parse::<i64>()
         {
-            kftray_portforward::kube::settle_cluster_obligation(id, destination);
+            match any_sibling_resources_remain(client, namespace, id, installation_id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(e) =
+                        kftray_portforward::kube::settle_cluster_obligation(id, destination).await
+                    {
+                        error!(
+                            "Failed to settle cluster obligation for config {id} after manual \
+                             delete: {e}"
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to check for remaining resources for config {id} before \
+                         settling its cluster obligation: {e}"
+                    );
+                }
+            }
         }
 
         result
@@ -686,12 +729,13 @@ pub async fn delete_kftray_resource(
         installation_id,
         namespace,
         destination: &destination,
+        client: &client,
     };
 
     match resource_type {
         "pod" => {
             delete_kube_resource(
-                Api::<Pod>::namespaced(client, namespace),
+                Api::<Pod>::namespaced(client.clone(), namespace),
                 resource_name,
                 "pod",
                 &scope,
@@ -700,7 +744,7 @@ pub async fn delete_kftray_resource(
         }
         "deployment" => {
             delete_kube_resource(
-                Api::<Deployment>::namespaced(client, namespace),
+                Api::<Deployment>::namespaced(client.clone(), namespace),
                 resource_name,
                 "deployment",
                 &scope,
@@ -709,7 +753,7 @@ pub async fn delete_kftray_resource(
         }
         "service" => {
             delete_kube_resource(
-                Api::<Service>::namespaced(client, namespace),
+                Api::<Service>::namespaced(client.clone(), namespace),
                 resource_name,
                 "service",
                 &scope,
@@ -718,7 +762,7 @@ pub async fn delete_kftray_resource(
         }
         "ingress" => {
             delete_kube_resource(
-                Api::<Ingress>::namespaced(client, namespace),
+                Api::<Ingress>::namespaced(client.clone(), namespace),
                 resource_name,
                 "ingress",
                 &scope,

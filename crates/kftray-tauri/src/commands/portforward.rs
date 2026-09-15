@@ -135,11 +135,13 @@ const CLEANUP_RECONCILE_TIMEOUT: Duration =
 /// Whether a config is started as a plain TCP port-forward rather than
 /// deployed through a relay pod: expose and tcp service/pod configs take
 /// the direct path, everything else (proxy, udp service/pod) goes through
-/// the relay. Shared by `dispatch_start` and the auto-start check on launch
-/// so the two cannot silently diverge on which configs get which treatment.
+/// the relay. A missing workload type is treated like `service`/`pod`,
+/// matching kftui and the old auto-start check. Shared by `dispatch_start`
+/// and the auto-start check on launch so the two cannot silently diverge on
+/// which configs get which treatment.
 pub(crate) fn is_direct_tcp_forward(workload_type: Option<&str>, protocol: &str) -> bool {
     workload_type == Some("expose")
-        || (matches!(workload_type, Some("service" | "pod")) && protocol == "tcp")
+        || (matches!(workload_type, None | Some("service" | "pod")) && protocol == "tcp")
 }
 
 /// Starts one configuration through the dispatch its kind uses. Shared by
@@ -151,6 +153,15 @@ pub(crate) async fn dispatch_start(config: &Config) -> Result<Vec<CustomResponse
     } else {
         deploy_and_forward_pod(vec![config.clone()]).await
     }
+}
+
+/// Stops one configuration, regardless of its kind: `stop_port_forward` looks
+/// the row up by id and unwinds whatever it started (direct forward, proxy
+/// relay, or expose), so callers no longer need to branch on workload type
+/// to pick a stop command. Shared by the global shortcut handlers so stop
+/// and toggle cannot silently diverge from that.
+pub(crate) async fn dispatch_stop(config: &Config) -> Result<CustomResponse, String> {
+    stop_port_forward(config.id.unwrap_or(0).to_string()).await
 }
 
 /// Reconciles anything this process still owes a cluster delete for, then
@@ -430,5 +441,40 @@ mod tests {
             Some(config_states[1].config_id),
             "Config ID should match ConfigState config_id"
         );
+    }
+
+    #[test]
+    fn none_workload_type_dispatches_like_service_or_pod() {
+        // Regression: a config with no workload_type (the common case for
+        // configs created before the field existed, and for every kftui
+        // config) used to be treated as a relay deploy for both protocols,
+        // while kftui and the old auto-start check treated it like
+        // `service`/`pod`: a direct TCP forward, a relay for UDP.
+        assert!(
+            is_direct_tcp_forward(None, "tcp"),
+            "a None workload type with tcp must take the direct forward path, like service/pod"
+        );
+        assert!(
+            !is_direct_tcp_forward(None, "udp"),
+            "a None workload type with udp must still go through the relay, like service/pod"
+        );
+    }
+
+    #[test]
+    fn service_and_pod_workload_types_match_none() {
+        assert_eq!(
+            is_direct_tcp_forward(Some("service"), "tcp"),
+            is_direct_tcp_forward(None, "tcp")
+        );
+        assert_eq!(
+            is_direct_tcp_forward(Some("pod"), "udp"),
+            is_direct_tcp_forward(None, "udp")
+        );
+    }
+
+    #[test]
+    fn expose_is_always_direct_and_proxy_never_is() {
+        assert!(is_direct_tcp_forward(Some("expose"), "udp"));
+        assert!(!is_direct_tcp_forward(Some("proxy"), "tcp"));
     }
 }

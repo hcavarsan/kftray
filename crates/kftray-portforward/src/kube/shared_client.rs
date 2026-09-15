@@ -90,6 +90,11 @@ pub struct SharedClientManager {
     clients: DashMap<ServiceClientKey, CachedClient>,
     client_ttl: Duration,
     creation_locks: DashMap<ServiceClientKey, CreationLock>,
+    /// Resolved current-context per kubeconfig path, so a `None`-context
+    /// `get_connection`/`resolve_key` call only reads and merges the
+    /// kubeconfig on the first miss; later calls reuse the recorded
+    /// context instead of touching disk again.
+    resolved_contexts: DashMap<Option<String>, String>,
 }
 
 impl SharedClientManager {
@@ -98,13 +103,14 @@ impl SharedClientManager {
             clients: DashMap::new(),
             client_ttl: Duration::from_secs(3600),
             creation_locks: DashMap::new(),
+            resolved_contexts: DashMap::new(),
         }
     }
 
     pub async fn get_connection(
         &self, key: ServiceClientKey,
     ) -> anyhow::Result<Arc<KubeConnection>> {
-        let key = self.resolve_key(key)?;
+        let key = self.resolve_key(key).await?;
         let context_name = key
             .context_name
             .as_deref()
@@ -159,28 +165,50 @@ impl SharedClientManager {
     /// would use. The resolved name is folded into the key so the client
     /// cache and creation lock are keyed by the actual context, never by the
     /// absence of one.
-    fn resolve_key(&self, key: ServiceClientKey) -> anyhow::Result<ServiceClientKey> {
+    ///
+    /// The kubeconfig read + merge only happens on a cache miss: the
+    /// resolved context is cached per kubeconfig path in
+    /// `resolved_contexts`, so a repeated cache-hit call never touches disk,
+    /// and the read itself runs on a blocking thread since it is synchronous
+    /// file IO.
+    async fn resolve_key(&self, key: ServiceClientKey) -> anyhow::Result<ServiceClientKey> {
         if key.context_name.is_some() {
             return Ok(key);
         }
 
-        let paths = get_kubeconfig_paths_from_option(key.kubeconfig_path.clone())?;
-        let (kubeconfig, errors) = merge_kubeconfigs(&paths)?;
-        let current_context = kubeconfig.current_context.ok_or_else(|| {
-            if errors.is_empty() {
-                anyhow::anyhow!(
-                    "Kubernetes context is required (kubeconfig: {}) and it has no current-context",
-                    key.kubeconfig_path.as_deref().unwrap_or("default")
-                )
-            } else {
-                anyhow::anyhow!(
-                    "Kubernetes context is required (kubeconfig: {}) and it has no current-context; \
-                     it also failed to read: {}",
-                    key.kubeconfig_path.as_deref().unwrap_or("default"),
-                    errors.join("; ")
-                )
-            }
-        })?;
+        if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
+            return Ok(ServiceClientKey {
+                context_name: Some(resolved.clone()),
+                kubeconfig_path: key.kubeconfig_path,
+            });
+        }
+
+        let kubeconfig_path = key.kubeconfig_path.clone();
+        let current_context = tokio::task::spawn_blocking(move || {
+            let paths = get_kubeconfig_paths_from_option(kubeconfig_path.clone())?;
+            let (kubeconfig, errors) = merge_kubeconfigs(&paths)?;
+            kubeconfig.current_context.ok_or_else(|| {
+                if errors.is_empty() {
+                    anyhow::anyhow!(
+                        "Kubernetes context is required (kubeconfig: {}) and it has no \
+                         current-context",
+                        kubeconfig_path.as_deref().unwrap_or("default")
+                    )
+                } else {
+                    anyhow::anyhow!(
+                        "Kubernetes context is required (kubeconfig: {}) and it has no \
+                         current-context; it also failed to read: {}",
+                        kubeconfig_path.as_deref().unwrap_or("default"),
+                        errors.join("; ")
+                    )
+                }
+            })
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("kubeconfig resolution task panicked: {e}"))??;
+
+        self.resolved_contexts
+            .insert(key.kubeconfig_path.clone(), current_context.clone());
 
         Ok(ServiceClientKey {
             context_name: Some(current_context),
@@ -202,13 +230,21 @@ impl SharedClientManager {
 
     /// Invalidates the cached client(s) for `key`. A `None` context means
     /// the caller does not know (or no longer trusts) which context is
-    /// current for this kubeconfig; re-resolving current-context at
-    /// invalidation time would miss entries cached under a context that was
-    /// current when they were created but has since changed, leaving a
-    /// broken client cached. Drop every entry for the kubeconfig path
-    /// instead.
+    /// current for this kubeconfig. If a context was already resolved for
+    /// this kubeconfig path (see `resolved_contexts`), only that exact
+    /// entry is evicted; otherwise fall back to dropping every entry for
+    /// the kubeconfig path, since there is no recorded context to target.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
         if key.context_name.is_none() {
+            if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
+                let resolved_key = ServiceClientKey {
+                    context_name: Some(resolved.clone()),
+                    kubeconfig_path: key.kubeconfig_path.clone(),
+                };
+                drop(resolved);
+                self.clients.remove(&resolved_key);
+                return;
+            }
             self.clients
                 .retain(|cached_key, _| cached_key.kubeconfig_path != key.kubeconfig_path);
             return;
@@ -236,6 +272,22 @@ pub static SHARED_CLIENT_MANAGER: Lazy<SharedClientManager> = Lazy::new(SharedCl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Polls until the creation lock's interest counter reaches `expected`,
+    /// instead of sleeping a fixed duration and hoping the other task got
+    /// scheduled in time.
+    async fn wait_for_interest_count(lock: &CreationLock, expected: usize) {
+        for _ in 0..500 {
+            if lock.1.load(Ordering::SeqCst) == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!(
+            "creation lock interest count did not reach {expected} in time (last seen {})",
+            lock.1.load(Ordering::SeqCst)
+        );
+    }
 
     #[tokio::test]
     async fn get_connection_errors_when_kubeconfig_has_no_current_context() {
@@ -305,6 +357,109 @@ mod tests {
             !err.to_string().contains("Kubernetes context is required"),
             "resolving a None context via the kubeconfig's current-context must not fail with \
              a missing-context error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_key_with_none_context_is_cached_and_skips_kubeconfig_on_hit() {
+        use std::io::Write;
+
+        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        write!(
+            kubeconfig_file,
+            "apiVersion: v1\n\
+             kind: Config\n\
+             current-context: kftray-test-cache-hit-context\n\
+             contexts:\n\
+             - name: kftray-test-cache-hit-context\n  \
+               context:\n    \
+                 cluster: kftray-test-cluster\n    \
+                 user: kftray-test-user\n\
+             clusters:\n\
+             - name: kftray-test-cluster\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: kftray-test-user\n  \
+               user: {{}}\n"
+        )
+        .expect("write temp kubeconfig");
+
+        let manager = SharedClientManager::new();
+        let key = ServiceClientKey::new(
+            None,
+            Some(kubeconfig_file.path().to_string_lossy().to_string()),
+        );
+
+        let first_resolved = manager
+            .resolve_key(key.clone())
+            .await
+            .expect("a kubeconfig with a current-context must resolve");
+        assert_eq!(
+            first_resolved.context_name.as_deref(),
+            Some("kftray-test-cache-hit-context")
+        );
+
+        kubeconfig_file
+            .close()
+            .expect("delete the kubeconfig so a second disk read would fail resolution");
+
+        let second_resolved = manager
+            .resolve_key(key)
+            .await
+            .expect("a cache hit must resolve without reading the now-deleted kubeconfig");
+        assert_eq!(
+            second_resolved.context_name.as_deref(),
+            Some("kftray-test-cache-hit-context"),
+            "a cache hit must reuse the recorded resolved context"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_client_with_none_context_uses_recorded_resolved_context_only() {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = Some("kftray-test-recorded-context-kubeconfig".to_string());
+
+        let make_cached_client = || {
+            let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+            CachedClient::new(KubeConnection {
+                client: kube::Client::new(mock_service, "default"),
+                cluster_url: "https://example.invalid".parse().unwrap(),
+            })
+        };
+
+        let recorded_key =
+            ServiceClientKey::new(Some("recorded-ctx".to_string()), kubeconfig_path.clone());
+        let other_key =
+            ServiceClientKey::new(Some("other-ctx".to_string()), kubeconfig_path.clone());
+
+        manager
+            .clients
+            .insert(recorded_key.clone(), make_cached_client());
+        manager
+            .clients
+            .insert(other_key.clone(), make_cached_client());
+        manager
+            .resolved_contexts
+            .insert(kubeconfig_path.clone(), "recorded-ctx".to_string());
+
+        manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path));
+
+        assert!(
+            !manager.clients.contains_key(&recorded_key),
+            "the recorded resolved-context entry must be evicted"
+        );
+        assert!(
+            manager.clients.contains_key(&other_key),
+            "invalidation with a recorded resolved context must hit only that exact key, not \
+             sweep every entry for the kubeconfig path"
         );
     }
 
@@ -455,7 +610,7 @@ mod tests {
         let handle = tokio::spawn(async move { waiter_manager.get_connection(waiter_key).await });
 
         // Let the waiter register interest and block on the held mutex.
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        wait_for_interest_count(&lock, 1).await;
         assert_eq!(
             lock.1.load(Ordering::SeqCst),
             1,
@@ -550,7 +705,7 @@ mod tests {
         // Let the waiter's pre-lock cache check (a miss) run and block it
         // on the still-held creation lock, mirroring a real race where a
         // second caller arrives while the first is still creating a client.
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        wait_for_interest_count(&lock, 2).await;
 
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
         let connection = KubeConnection {

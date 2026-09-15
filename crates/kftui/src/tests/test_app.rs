@@ -335,6 +335,10 @@ mod tests {
             Some("first failure\nsecond failure")
         );
         assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert_eq!(
+            app.error_scroll, 0,
+            "a freshly opened popup starts at the top"
+        );
 
         app.error_scroll = 5;
         sender.send("third failure".to_string()).unwrap();
@@ -345,8 +349,9 @@ mod tests {
             Some("first failure\nsecond failure\nthird failure")
         );
         assert_eq!(
-            app.error_scroll, 0,
-            "a newly appended failure must be visible, not hidden below a stale scroll offset"
+            app.error_scroll, 5,
+            "appending to a popup already open must leave the scroll offset alone, so a \
+             reader partway through the existing text is not yanked back to the top"
         );
     }
 
@@ -376,12 +381,15 @@ mod tests {
         );
         assert!(app.error_message.is_none());
 
-        let now = std::time::Instant::now();
-        let stalled_at = now
-            .checked_sub(crate::tui::input::PROCESSING_WATCHDOG + std::time::Duration::from_secs(1))
-            .expect("Instant::now() must be far enough past the epoch to subtract the watchdog");
-        queued.mark_running_at(stalled_at);
-        app.update_configs(&[], &[]);
+        // `now` is derived by adding the watchdog to `started`, instead of
+        // subtracting the watchdog from `Instant::now()`: the subtraction can
+        // underflow on a CI agent whose monotonic clock has not been up long
+        // enough to represent an `Instant` that far in the past.
+        let started = std::time::Instant::now();
+        queued.mark_running_at(started);
+        let past_watchdog =
+            started + crate::tui::input::PROCESSING_WATCHDOG + std::time::Duration::from_secs(1);
+        app.update_configs_at(&[], &[], past_watchdog);
         assert!(
             app.configs_being_processed.contains_key(&1),
             "a stalled operation must keep running so its own rollback can finish"
@@ -390,7 +398,7 @@ mod tests {
         assert!(reported.contains("still working"), "{reported}");
 
         app.error_message = None;
-        app.update_configs(&[], &[]);
+        app.update_configs_at(&[], &[], past_watchdog);
         assert!(
             app.error_message.is_none(),
             "the stall must be reported once, not on every redraw"
@@ -399,6 +407,16 @@ mod tests {
         queued.finish();
         app.update_configs(&[], &[]);
         assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[test]
+    fn pending_forward_stalled_for_checks_the_watchdog_threshold() {
+        assert!(!crate::tui::input::PendingForward::stalled_for(
+            crate::tui::input::PROCESSING_WATCHDOG
+        ));
+        assert!(crate::tui::input::PendingForward::stalled_for(
+            crate::tui::input::PROCESSING_WATCHDOG + std::time::Duration::from_millis(1)
+        ));
     }
 
     #[tokio::test]
@@ -480,13 +498,20 @@ mod tests {
         app.task_configs
             .insert(abort.id(), crate::tui::input::TaskInfo::new(1, true, abort));
 
-        app.drain_forwarding().await;
+        let detached_stop_ids = app.drain_forwarding().await;
 
         assert_eq!(
             app.forwarding_tasks.len(),
             0,
             "a stop task ignored by both budgets must be removed from the \
              JoinSet so dropping it later cannot abort the stop"
+        );
+        assert_eq!(
+            detached_stop_ids,
+            std::collections::HashSet::from([1]),
+            "the caller must learn which config ids still have a stop running \
+             detached, so it can skip re-stopping or reconciling them and \
+             contending for their recovery lock"
         );
         release_tx
             .send(())

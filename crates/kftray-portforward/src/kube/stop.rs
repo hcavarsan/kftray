@@ -547,34 +547,30 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config, destination: Opti
 /// is only cleared by naming that destination, so an obligation for a server
 /// the resource was not deleted from stays in place.
 ///
-/// Synchronous, so a caller already holding an async lock can call it
-/// directly. The in-memory record is what `delete_configs_if_idle` and
-/// stop-all actually consult, and is cleared before returning; a durable
-/// record left over from an unanswered create is also cleared, best-effort,
-/// in the background, since `restore_uncertain_targets` would otherwise
-/// resurrect the obligation this call just settled on the next restart.
-pub fn settle_cluster_obligation(config_id: i64, destination: &str) {
+/// Awaits the durable delete before clearing the in-memory record, so a
+/// failed durable delete leaves the obligation in place instead of letting
+/// `restore_uncertain_targets` resurrect it after the in-memory record was
+/// already cleared. The in-memory record is what `delete_configs_if_idle`
+/// and stop-all actually consult.
+pub async fn settle_cluster_obligation(config_id: i64, destination: &str) -> Result<(), String> {
     let matching: Vec<PendingTarget> = pending_cleanup_targets(config_id)
         .into_iter()
         .filter(|target| target.cluster && target.destination.as_deref() == Some(destination))
         .collect();
-    for target in &matching {
-        set_target_obligations(config_id, target, None, false, target.local);
-    }
     for target in matching {
-        tokio::spawn(async move {
-            if let Err(error) = forget_uncertain_target(
-                config_id,
-                &target.config,
-                target.destination.as_deref(),
-                DatabaseMode::File,
-            )
-            .await
-            {
-                warn!("Failed to clear the durable cleanup record for config {config_id}: {error}");
-            }
-        });
+        forget_uncertain_target(
+            config_id,
+            &target.config,
+            target.destination.as_deref(),
+            DatabaseMode::File,
+        )
+        .await
+        .map_err(|error| {
+            format!("Failed to clear the durable cleanup record for config {config_id}: {error}")
+        })?;
+        set_target_obligations(config_id, &target, None, false, target.local);
     }
+    Ok(())
 }
 
 /// Records what this pass left undone, replacing the entry's obligations
@@ -1660,6 +1656,16 @@ async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
+    stop_all_port_forward_with_mode_excluding(mode, &HashSet::new()).await
+}
+
+/// Same as [`stop_all_port_forward_with_mode`], but skips every id in
+/// `exclude`. Lets a caller that has already detached its own stop tasks for
+/// those ids keep this pass from contending with them for the per-config
+/// recovery lock those tasks still hold.
+pub async fn stop_all_port_forward_with_mode_excluding(
+    mode: DatabaseMode, exclude: &HashSet<i64>,
+) -> Result<Vec<CustomResponse>, String> {
     // Creates abandoned by an earlier run exist only on disk: the desktop
     // application never calls the reconciliation pass, so without this its
     // stop-all cannot find a relay left behind by a crash.
@@ -1695,6 +1701,10 @@ pub async fn stop_all_port_forward_with_mode(
         }
     }
     ids.extend(registry_only.iter().copied());
+    if !exclude.is_empty() {
+        ids.retain(|id| !exclude.contains(id));
+        registry_only.retain(|id| !exclude.contains(id));
+    }
 
     let configs_result = read_configs_with_mode(mode).await;
     let states_result = get_configs_state_with_mode(mode).await;
@@ -2590,6 +2600,10 @@ mod tests {
         let config_dir = tempfile::tempdir().unwrap();
         let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
         unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        // `settle_cluster_obligation` always deletes through the file-mode
+        // database regardless of the caller's own mode, so the isolated
+        // config dir needs its schema before the durable delete can succeed.
+        kftray_commons::utils::db::init().await.unwrap();
 
         let config = Config {
             id: Some(910_501),
@@ -2620,10 +2634,7 @@ mod tests {
             Some("https://b".to_string()),
         );
 
-        settle_cluster_obligation(id, "https://a");
-        // Lets the best-effort clear of any durable record run before this
-        // test's KFTRAY_CONFIG override is torn down.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        settle_cluster_obligation(id, "https://a").await.unwrap();
 
         if let Some(original) = original_config_dir {
             unsafe { std::env::set_var("KFTRAY_CONFIG", original) };

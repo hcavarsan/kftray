@@ -40,6 +40,7 @@ const initialId = 0
 
 const CONCURRENCY_LIMIT = 8
 const BATCH_DEADLINE_MS = 180_000
+const DEADLINE_GRACE_MS = 30_000
 
 async function runWithLimit<T, R>(
   items: T[],
@@ -444,7 +445,7 @@ const KFTray = () => {
     }
   }
 
-  const handleSaveConfig = async (configToSave: Config) => {
+  const handleSaveConfig = async (configToSave: Config): Promise<boolean> => {
     const runningConfig = isEdit
       ? configsRef.current.find(conf => conf.id === configToSave.id)
       : undefined
@@ -457,7 +458,7 @@ const KFTray = () => {
         duration: 1000,
       })
 
-      return
+      return false
     }
 
     // Reserved for the whole transaction, not only when a restart is needed:
@@ -485,7 +486,7 @@ const KFTray = () => {
       // service/namespace/port, and stopping with those would target the
       // wrong running resource.
       if (wasRunning && runningConfig) {
-        await stopPortForwardingForConfig(runningConfig)
+        await stopPortForwardingForConfig(runningConfig, pendingToken)
         wasStopped = true
       }
 
@@ -501,7 +502,7 @@ const KFTray = () => {
       configSaved = true
       if (wasRunning) {
         pendingToken = markPending(configToSave.id, 'starting')
-        await startPortForwardingForConfig(updatedConfigToSave)
+        await startPortForwardingForConfig(updatedConfigToSave, pendingToken)
       }
 
       toaster.success({
@@ -509,7 +510,8 @@ const KFTray = () => {
         description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
         duration: 1000,
       })
-      closeModal()
+
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
 
@@ -523,7 +525,8 @@ const KFTray = () => {
           description: `Configuration updated, but restarting the port forward failed: ${message}`,
           duration: 2000,
         })
-        closeModal()
+
+        return true
       } else if (wasStopped) {
         console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
         toaster.error({
@@ -531,6 +534,8 @@ const KFTray = () => {
           description: `The forward was stopped but the save failed. ${message}`,
           duration: 2000,
         })
+
+        return false
       } else {
         console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
         toaster.error({
@@ -538,6 +543,8 @@ const KFTray = () => {
           description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
           duration: 1000,
         })
+
+        return false
       }
     } finally {
       if (isEdit && pendingToken !== undefined) {
@@ -549,78 +556,102 @@ const KFTray = () => {
     }
   }
 
-  const stopPortForwardingForConfig = useCallback(async (config: Config) => {
-    if (
-      config.workload_type === 'expose' ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'tcp')
-    ) {
-      await invoke('stop_port_forward_cmd', {
-        serviceName: config.service,
-        configId: config.id.toString(),
-      })
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'udp')
-    ) {
-      await invoke('stop_proxy_forward_cmd', {
-        configId: config.id.toString(),
-        namespace: config.namespace,
-        serviceName: config.service,
-        localPort: config.local_port,
-        remoteAddress: config.remote_address,
-        protocol: 'tcp',
-      })
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
-    }
-    configRefreshVersion.current += 1
-    setConfigs(current =>
-      current.map(item =>
-        item.id === config.id ? { ...item, is_running: false } : item,
-      ),
-    )
-  }, [])
+  const stopPortForwardingForConfig = useCallback(
+    async (config: Config, token?: number) => {
+      if (
+        config.workload_type === 'expose' ||
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'tcp')
+      ) {
+        await invoke('stop_port_forward_cmd', {
+          serviceName: config.service,
+          configId: config.id.toString(),
+        })
+      } else if (
+        config.workload_type.startsWith('proxy') ||
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'udp')
+      ) {
+        await invoke('stop_proxy_forward_cmd', {
+          configId: config.id.toString(),
+          namespace: config.namespace,
+          serviceName: config.service,
+          localPort: config.local_port,
+          remoteAddress: config.remote_address,
+          protocol: 'tcp',
+        })
+      } else {
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      }
+      configRefreshVersion.current += 1
+      // Skipped when a later reservation already owns this id: the versioned
+      // refresh recovers the authoritative state instead.
+      if (
+        token === undefined ||
+        pendingConfigActionsRef.current.get(config.id)?.token === token
+      ) {
+        setConfigs(current =>
+          current.map(item =>
+            item.id === config.id ? { ...item, is_running: false } : item,
+          ),
+        )
+      }
+    },
+    [],
+  )
 
-  const startPortForwardingForConfig = useCallback(async (config: Config) => {
-    let responses: PortForwardResponse[]
+  const startPortForwardingForConfig = useCallback(
+    async (config: Config, token?: number) => {
+      let responses: PortForwardResponse[]
 
-    if (
-      config.workload_type === 'expose' ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'tcp')
-    ) {
-      responses = await invoke<PortForwardResponse[]>(
-        'start_port_forward_tcp_cmd',
-        { configs: [config] },
-      )
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'udp')
-    ) {
-      responses = await invoke<PortForwardResponse[]>(
-        'deploy_and_forward_pod_cmd',
-        { configs: [config] },
-      )
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
-    }
+      if (
+        config.workload_type === 'expose' ||
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'tcp')
+      ) {
+        responses = await invoke<PortForwardResponse[]>(
+          'start_port_forward_tcp_cmd',
+          { configs: [config] },
+        )
+      } else if (
+        config.workload_type.startsWith('proxy') ||
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'udp')
+      ) {
+        responses = await invoke<PortForwardResponse[]>(
+          'deploy_and_forward_pod_cmd',
+          { configs: [config] },
+        )
+      } else {
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      }
 
-    const failure = responses.find(response => response.status !== 0)
+      const failure = responses.find(response => response.status !== 0)
 
-    if (failure) {
-      throw new Error(failure.stderr || 'Failed to start port forwarding.')
-    }
+      if (failure) {
+        throw new Error(failure.stderr || 'Failed to start port forwarding.')
+      }
 
-    configRefreshVersion.current += 1
-    setConfigs(current =>
-      current.map(item =>
-        item.id === config.id ? { ...item, is_running: true } : item,
-      ),
-    )
-  }, [])
+      configRefreshVersion.current += 1
+      // Skipped when a later reservation already owns this id: the versioned
+      // refresh recovers the authoritative state instead.
+      if (
+        token === undefined ||
+        pendingConfigActionsRef.current.get(config.id)?.token === token
+      ) {
+        setConfigs(current =>
+          current.map(item =>
+            item.id === config.id ? { ...item, is_running: true } : item,
+          ),
+        )
+      }
+    },
+    [],
+  )
 
   const toggleConfigForward = useCallback(
     async (config: Config, action: PortForwardToggleAction) => {
@@ -636,9 +667,9 @@ const KFTray = () => {
       const token = markPending(config.id, action)
       try {
         if (action === 'starting') {
-          await startPortForwardingForConfig(config)
+          await startPortForwardingForConfig(config, token)
         } else {
-          await stopPortForwardingForConfig(config)
+          await stopPortForwardingForConfig(config, token)
         }
       } catch (error) {
         await updateConfigsWithState()
@@ -800,9 +831,9 @@ const KFTray = () => {
           }
           try {
             if (action === 'starting') {
-              await startPortForwardingForConfig(config)
+              await startPortForwardingForConfig(config, token)
             } else {
-              await stopPortForwardingForConfig(config)
+              await stopPortForwardingForConfig(config, token)
             }
           } catch (error) {
             const failure = { id: config.id, error }
@@ -838,7 +869,10 @@ const KFTray = () => {
           // kept (rows stay busy) instead of being cleared out from under a
           // running invoke(); each worker's own finally releases its token
           // once it actually settles. Releasing the batch controller below
-          // is what lets a new batch start in the meantime.
+          // is what lets a new batch start in the meantime. A worker that
+          // never settles (a truly hung invoke) would otherwise keep its row
+          // busy forever, so a grace timeout force-clears whatever is still
+          // unresolved once it elapses.
           const stillUnresolved = unresolved.size
 
           reportFailures()
@@ -847,6 +881,25 @@ const KFTray = () => {
             description: `${stillUnresolved} configuration(s) did not finish within the timeout. Their status will refresh shortly.`,
             duration: 3000,
           })
+
+          setTimeout(() => {
+            let forcedClear = false
+
+            for (const id of unresolved) {
+              if (
+                pendingConfigActionsRef.current.get(id)?.token ===
+                tokens.get(id)
+              ) {
+                pendingConfigActionsRef.current.delete(id)
+                forcedClear = true
+              }
+            }
+            unresolved.clear()
+            if (forcedClear) {
+              setPendingConfigActions(new Map(pendingConfigActionsRef.current))
+              void updateConfigsWithState()
+            }
+          }, DEADLINE_GRACE_MS)
 
           return
         }

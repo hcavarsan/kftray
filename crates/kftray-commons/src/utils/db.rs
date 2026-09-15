@@ -29,6 +29,7 @@ use crate::utils::manifests::{
     expose_deployment_manifest_exists,
     expose_ingress_manifest_exists,
     expose_service_manifest_exists,
+    migrate_expose_deployment_manifest_if_previous_default,
     migrate_pod_manifest_if_previous_default,
     migrate_proxy_deployment_manifest_if_previous_default,
     proxy_deployment_manifest_exists,
@@ -59,6 +60,8 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !expose_deployment_manifest_exists() {
         info!("Creating expose deployment manifest");
         create_expose_deployment_manifest()?;
+    } else {
+        migrate_expose_deployment_manifest_if_previous_default()?;
     }
 
     if !expose_service_manifest_exists() {

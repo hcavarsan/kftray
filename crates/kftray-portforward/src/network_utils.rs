@@ -190,6 +190,21 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
     }
 }
 
+/// Whether an error from `remove_loopback_with_helper` means the helper
+/// itself is unreachable (not installed, not running, or its socket gone)
+/// rather than the removal request itself failing.
+///
+/// Only unreachability is unsatisfiable without a privilege change: any
+/// other failure (a serialization error, a broken pipe mid-request, a
+/// malformed response) is a transient IPC problem that a retry can still
+/// resolve once the alias is confirmed present.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn helper_is_unavailable(error: &str) -> bool {
+    error.contains("Helper service is not available")
+        || error.contains("Connection refused")
+        || error.contains("No such file or directory")
+}
+
 /// Outcome of attempting to release a loopback alias.
 ///
 /// A caller cannot treat every non-removal the same way: one where the
@@ -220,6 +235,22 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
 
     if addr == "127.0.0.1" {
         return Ok(LoopbackRelease::AlreadyAbsent);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // kftray never actually configures a Windows interface alias for a
+        // loopback address (`configure_loopback_windows` is a no-op), and
+        // the whole 127.0.0.0/8 range is bindable without one, so there is
+        // nothing for the helper to remove and no reason to call it.
+        if let Ok(IpAddr::V4(v4)) = addr.parse::<IpAddr>()
+            && v4.octets()[0] == 127
+        {
+            debug!(
+                "No interface alias is ever configured for {addr} on Windows; nothing to remove"
+            );
+
+            return Ok(LoopbackRelease::AlreadyAbsent);
+        }
     }
 
     debug!("Removing loopback address: {}", addr);
@@ -252,14 +283,27 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
         }
 
         // The helper is the only non-blocking removal path on macOS, so its
-        // absence is a privilege problem, not a transient one: nothing this
-        // process retries on its own will remove the alias.
-        warn!(
-            "Could not remove loopback address {} via helper, and the osascript fallback would block.",
-            addr
-        );
-        Ok(LoopbackRelease::PrivilegeUnavailable(format!(
-            "Loopback address {addr} is still configured: removing it needs the helper"
+        // unreachability is a privilege problem: nothing this process
+        // retries on its own will make it reachable. Any other helper
+        // failure (a timed-out request, a malformed response) is not a
+        // privilege problem and is worth retrying once the alias is
+        // confirmed present.
+        let message = helper_result.unwrap_err().to_string();
+        if helper_is_unavailable(&message) {
+            warn!(
+                "Could not remove loopback address {} via helper, and the osascript fallback would block.",
+                addr
+            );
+
+            return Ok(LoopbackRelease::PrivilegeUnavailable(format!(
+                "Loopback address {addr} is still configured: removing it needs the helper"
+            )));
+        }
+
+        warn!("Helper failed to remove loopback address {addr}: {message}");
+
+        Ok(LoopbackRelease::Failed(format!(
+            "Loopback address {addr} is still configured: {message}"
         )))
     }
 
@@ -301,10 +345,12 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
     #[cfg(target_os = "windows")]
     {
         info!("Using Windows-specific method for loopback removal");
-        // Windows has no non-blocking removal path outside the helper, so a
-        // failed helper call leaves the alias configured and unreachable
-        // without new privileges, not already gone.
-        Ok(LoopbackRelease::PrivilegeUnavailable(format!(
+        // Only a non-127.0.0.0/8 address (the IPv6 loopback) reaches here:
+        // 127.0.0.0/8 addresses already returned above without calling the
+        // helper. Unlike that range, this address is not guaranteed
+        // reachable without an alias, but a helper failure is still not
+        // proof that new privileges are needed, so it is worth retrying.
+        Ok(LoopbackRelease::Failed(format!(
             "Loopback address {addr} is still configured: removing it needs the helper"
         )))
     }
@@ -753,12 +799,55 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn helper_unavailable_from_the_availability_check_is_privilege_unavailable() {
+        assert!(helper_is_unavailable("Helper service is not available"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_connection_is_privilege_unavailable() {
+        assert!(helper_is_unavailable(
+            "Helper failed to remove loopback address: Communication error: Failed to connect to Unix socket: Connection refused (os error 61)"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_socket_file_is_privilege_unavailable() {
+        assert!(helper_is_unavailable(
+            "Helper failed to remove loopback address: Communication error: Failed to connect to Unix socket: No such file or directory (os error 2)"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_transient_write_failure_is_not_privilege_unavailable() {
+        assert!(!helper_is_unavailable(
+            "Helper failed to remove loopback address: Communication error: Failed to write request: Broken pipe (os error 32)"
+        ));
+    }
+
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    async fn a_helper_failure_reports_privilege_unavailable_rather_than_already_absent() {
-        match remove_loopback_address("127.0.0.9").await.unwrap() {
-            LoopbackRelease::PrivilegeUnavailable(_) => {}
-            other => panic!("expected PrivilegeUnavailable without a helper, got {other:?}"),
+    async fn a_127_range_address_is_already_absent_without_calling_the_helper() {
+        // kftray never configures a Windows interface alias for a loopback
+        // address (`configure_loopback_windows` is a no-op), and the whole
+        // 127.0.0.0/8 range binds without one, so there is nothing to
+        // remove and no reason to call the helper.
+        assert_eq!(
+            remove_loopback_address("127.0.0.9").await.unwrap(),
+            LoopbackRelease::AlreadyAbsent
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn a_helper_failure_outside_the_127_range_is_retryable_not_privilege_unavailable() {
+        match remove_loopback_address("::1").await.unwrap() {
+            LoopbackRelease::Failed(_) => {}
+            other => panic!("expected Failed without a helper, got {other:?}"),
         }
     }
 

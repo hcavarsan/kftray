@@ -729,20 +729,45 @@ pub async fn recover_deployment(
                             .unwrap_or_else(|| "Failed to register recovery startup".to_string());
                         return Err(anyhow::anyhow!(error));
                     };
+
+                    // Re-run the same duplicate / already-running / other-process /
+                    // existence checks a normal start goes through: recovery
+                    // re-enters the start path outside
+                    // `process_single_proxy_config` and would otherwise race a
+                    // second relay into existence for a config another process,
+                    // or another start, already owns.
+                    if let Err(error) =
+                        crate::kube::proxy::verify_start_preconditions(config_id, mode).await
+                    {
+                        drop(startup);
+                        return Err(anyhow::anyhow!(error));
+                    }
+
                     let mut current_config = config.clone();
                     current_config.service = Some(hashed_name.clone());
                     // Pinned to the server the relay was recovered on: the
                     // listener resolves the context again, and the cached
                     // client can have expired since the check at the start.
-                    let result = crate::kube::start::start_config_cancellable(
-                        current_config,
-                        "udp",
-                        mode,
-                        ssl_override,
-                        Some(cancellation),
-                        Some(destination.to_owned()),
-                    )
-                    .await;
+                    //
+                    // Also races the freshly registered PendingStart's own
+                    // cancellation: stop-all and a per-config stop cancel every
+                    // `STARTING_PROXIES` entry, and this restart must abort on
+                    // that signal even if it ever runs without the recovery
+                    // manager's own token also firing.
+                    let result = tokio::select! {
+                        biased;
+                        _ = startup.cancellation().cancelled() => {
+                            Err(format!("Re-deployment cancelled for config {config_id}"))
+                        }
+                        result = crate::kube::start::start_config_cancellable(
+                            current_config,
+                            "udp",
+                            mode,
+                            ssl_override,
+                            Some(cancellation),
+                            Some(destination.to_owned()),
+                        ) => result,
+                    };
                     drop(startup);
                     result.map_err(anyhow::Error::msg)?;
                 }

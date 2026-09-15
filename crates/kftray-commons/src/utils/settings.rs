@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use log::info;
+use log::warn;
 use serde::{
     Deserialize,
     Serialize,
@@ -476,11 +477,17 @@ pub async fn increment_setting_with_mode(
          ON CONFLICT(key) DO UPDATE SET
          value = CAST(value AS INTEGER) + 1,
          updated_at = CURRENT_TIMESTAMP
+         WHERE value GLOB '[0-9]*'
          RETURNING value",
     )
     .bind(key)
-    .fetch_one(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
+    let Some(row) = row else {
+        return Err(
+            format!("setting {key} holds a non-numeric value and cannot be incremented").into(),
+        );
+    };
     let value: String = row.get("value");
     Ok(value.parse()?)
 }
@@ -778,6 +785,15 @@ pub fn expose_history_baseline_key(mode: DatabaseMode) -> String {
     format!("expose_history_baseline:{}", mode_scope(mode))
 }
 
+/// Key under which the ids snapshotted by a failed init baseline attempt are
+/// persisted, so a lazy baseline establishment in a later process restarted
+/// on this database still restricts itself to configs that existed before
+/// the failed attempt, instead of the in-memory snapshot being lost with the
+/// process and every currently existing row being treated as unrestricted.
+fn expose_baseline_pending_ids_key(mode: DatabaseMode) -> String {
+    format!("expose_baseline_pending_ids:{}", mode_scope(mode))
+}
+
 /// Config ids seen at the moment this process gave up retrying the
 /// baseline, keyed by database mode.
 ///
@@ -818,6 +834,13 @@ pub async fn establish_expose_history_baseline_at_init(
             .iter()
             .filter_map(|row| row.try_get("id").ok())
             .collect();
+        let serialized =
+            serde_json::to_string(&ids.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
+        if let Err(error) =
+            upsert_setting(pool, &expose_baseline_pending_ids_key(mode), &serialized).await
+        {
+            warn!("Failed to persist the expose baseline pending id allow-list: {error}");
+        }
         FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
     }
     // If the snapshot query itself fails, no entry is recorded for `mode`:
@@ -831,7 +854,6 @@ pub async fn establish_expose_history_baseline(
     pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let baseline = expose_history_baseline_key(mode);
-    let allowed_ids = FAILED_BASELINE_SNAPSHOT.lock().unwrap().get(&mode).cloned();
     // One write transaction from the check to the marker: two processes
     // sharing the file database can both initialise it, and a baseline taken
     // by the second after the first finished would mark rows inserted in
@@ -842,8 +864,46 @@ pub async fn establish_expose_history_baseline(
     // commit, must not hand the pooled connection back with a write
     // transaction still open on it.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let in_memory_snapshot = FAILED_BASELINE_SNAPSHOT.lock().unwrap().get(&mode).cloned();
+    let allowed_ids = match in_memory_snapshot {
+        Some(ids) => Some(ids),
+        // The in-memory snapshot only survives within the process that took
+        // it; a process restarted after a failed init still needs the
+        // allow-list it persisted, or it would treat every row it now sees
+        // as unrestricted and mark rows created after the failed attempt.
+        None => read_pending_baseline_ids(&mut tx, mode).await?,
+    };
     take_expose_history_baseline(&mut tx, &baseline, mode, allowed_ids.as_ref()).await?;
+    clear_pending_baseline_ids(&mut tx, mode).await?;
     tx.commit().await?;
+    Ok(())
+}
+
+async fn read_pending_baseline_ids(
+    conn: &mut sqlx::SqliteConnection, mode: DatabaseMode,
+) -> Result<Option<HashSet<i64>>, Box<dyn std::error::Error + Send + Sync>> {
+    let row = sqlx::query("SELECT value FROM settings WHERE key = ?")
+        .bind(expose_baseline_pending_ids_key(mode))
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let value: String = row.try_get("value")?;
+    let ids: Vec<i64> = serde_json::from_str(&value).unwrap_or_default();
+    Ok(Some(ids.into_iter().collect()))
+}
+
+/// Deletes the persisted allow-list once the baseline marker has been
+/// written (or was already present), so it never lingers to restrict a
+/// baseline this database will never take again.
+async fn clear_pending_baseline_ids(
+    conn: &mut sqlx::SqliteConnection, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(expose_baseline_pending_ids_key(mode))
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
@@ -1204,5 +1264,175 @@ mod tests {
         )
         .await;
         let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn test_persisted_baseline_allow_list_survives_a_restart_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let pool = context.pool.clone();
+
+        crate::utils::config::delete_all_configs_with_pool(&pool)
+            .await
+            .unwrap();
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        let _ = delete_setting_with_mode(
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+
+        let existing_config = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let existing_id = crate::utils::config::insert_config_with_pool_and_mode(
+            existing_config,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        // A process that failed every baseline retry at init persists the
+        // ids it saw to settings, on top of the in-memory snapshot.
+        upsert_setting(
+            &pool,
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            &serde_json::to_string(&[existing_id]).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Simulate a restart: a new process starts with an empty static, so
+        // only the persisted settings key carries the allow-list forward.
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+
+        let created_after_failed_init = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let after_id = crate::utils::config::insert_config_with_pool_and_mode(
+            created_after_failed_init,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        establish_expose_history_baseline(&pool, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let existing_marked = get_setting_with_mode(
+            &expose_legacy_key(&existing_id.to_string(), DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            existing_marked.is_some(),
+            "a config recorded in the persisted allow-list must be marked legacy after a restart"
+        );
+
+        let after_marked = get_setting_with_mode(
+            &expose_legacy_key(&after_id.to_string(), DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            after_marked.is_none(),
+            "a config created after the failed init must never be marked legacy, even after a \
+             restart lost the in-memory snapshot"
+        );
+
+        let pending_after = get_setting_with_mode(
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            pending_after.is_none(),
+            "the persisted allow-list must be deleted once the baseline marker is written"
+        );
+
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn test_increment_setting_with_mode_errors_on_a_non_numeric_value_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let key = "junk_counter_test:memory";
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        upsert_setting(&context.pool, key, "not-a-number")
+            .await
+            .unwrap();
+
+        let result = increment_setting_with_mode(key, DatabaseMode::Memory).await;
+        assert!(
+            result.is_err(),
+            "a junk counter value must error instead of silently incrementing from a CAST-to-0"
+        );
+
+        let value = get_setting_with_mode(key, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            Some("not-a-number".to_string()),
+            "a rejected increment must leave the junk value untouched"
+        );
+
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+    }
+
+    #[tokio::test]
+    async fn test_increment_setting_with_mode_increments_a_numeric_value_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let key = "numeric_counter_test:memory";
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+
+        let first = increment_setting_with_mode(key, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(first, 1);
+
+        let second = increment_setting_with_mode(key, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(second, 2);
+
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
     }
 }

@@ -79,7 +79,7 @@ pub struct SectionEntry {
 ///
 /// Ids are plain tokens (`42`, `42-https-local`), so anything outside that
 /// alphabet is a mistake or an injection, never a real owner.
-fn validate_owner(owner: &str) -> Result<()> {
+pub fn validate_owner(owner: &str) -> Result<()> {
     if owner.is_empty()
         || !owner
             .chars()
@@ -93,7 +93,7 @@ fn validate_owner(owner: &str) -> Result<()> {
 }
 
 /// Rejects a hostname that would not stay on its own line.
-fn validate_hostname(hostname: &str) -> Result<()> {
+pub fn validate_hostname(hostname: &str) -> Result<()> {
     if hostname.is_empty() || hostname.chars().any(|c| c.is_whitespace() || c == '#') {
         return Err(HostsFileError::InvalidData(format!(
             "Invalid hostname {hostname:?}"
@@ -124,10 +124,14 @@ fn with_hosts_lock<T>(path: &Path, recover: bool, work: impl FnOnce() -> Result<
         unlock,
     };
 
-    let file = open_locked(path, recover)?;
-    let result = work();
-    unlock(&file, LockRegion::PendingByte);
-    result
+    match open_locked(path, recover)? {
+        Some(file) => {
+            let result = work();
+            unlock(&file, LockRegion::PendingByte);
+            result
+        }
+        None => work(),
+    }
 }
 
 /// Opens the hosts file read-only and takes its lock.
@@ -135,23 +139,32 @@ fn with_hosts_lock<T>(path: &Path, recover: bool, work: impl FnOnce() -> Result<
 /// On Unix the lock is retaken until the locked descriptor and the path name
 /// the same inode, which is what excludes a holder whose lock is on a file a
 /// rename just retired.
-/// Opens the hosts file read-only, creating it first when a custom path names
-/// a file that does not exist yet.
+/// Opens the hosts file read-only, creating it first when `create` is set
+/// and a custom path names a file that does not exist yet.
 ///
 /// The system file is never created here: a missing one is an error the
 /// caller reports before reaching this. A custom path, as the legacy
 /// per-configuration cleanup and tests use, starts empty. `create(true)`
 /// tolerates another process winning the creation, so two writers starting
-/// on the same fresh path both end up locking the one file.
-fn open_for_lock(path: &Path) -> Result<std::fs::File> {
+/// on the same fresh path both end up locking the one file. A read passes
+/// `create: false` and promises never to create the file: a path that does
+/// not exist yields `Ok(None)` instead of one.
+fn open_for_lock(path: &Path, create: bool) -> Result<Option<std::fs::File>> {
     match OpenOptions::new().read(true).open(path) {
-        Ok(file) => Ok(file),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)?),
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if !create {
+                return Ok(None);
+            }
+            Ok(Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(path)?,
+            ))
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -179,8 +192,13 @@ fn retry_bounded<T>(
     )))
 }
 
+/// Opens the hosts file's lock, or reports that there is nothing to lock.
+///
+/// `recover` doubles as "this is a write": only a write may create a
+/// missing file, so a read that finds nothing yields `Ok(None)` instead of
+/// creating one and locking it.
 #[cfg(unix)]
-fn open_locked(path: &Path, _recover: bool) -> Result<std::fs::File> {
+fn open_locked(path: &Path, recover: bool) -> Result<Option<std::fs::File>> {
     use std::os::unix::fs::MetadataExt;
 
     use crate::utils::config_dir::{
@@ -191,18 +209,24 @@ fn open_locked(path: &Path, _recover: bool) -> Result<std::fs::File> {
 
     let what = path.display().to_string();
     retry_bounded(&what, 50, std::time::Duration::from_millis(20), || {
-        let file = open_for_lock(path)?;
+        let Some(file) = open_for_lock(path, recover)? else {
+            return Ok(Some(None));
+        };
         wait_for_exclusive_lock(&file, LockRegion::PendingByte, &what)
             .map_err(HostsFileError::Io)?;
 
         let locked = file.metadata()?;
         match std::fs::metadata(path) {
             Ok(current) if current.dev() == locked.dev() && current.ino() == locked.ino() => {
-                Ok(Some(file))
+                Ok(Some(Some(file)))
             }
             Ok(_) => {
                 unlock(&file, LockRegion::PendingByte);
                 Ok(None)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !recover => {
+                unlock(&file, LockRegion::PendingByte);
+                Ok(Some(None))
             }
             Err(error) => {
                 unlock(&file, LockRegion::PendingByte);
@@ -236,21 +260,53 @@ fn pending_path(path: &Path) -> PathBuf {
     PathBuf::from(pending)
 }
 
-/// Opens the hosts file read-only and takes its lock.
+/// Confirms that `path`, when it lexically names the platform hosts file,
+/// still resolves to it once reparse points in its ancestry are followed.
+///
+/// Recovery below trusts `path` completely: it applies a pending rewrite to
+/// whatever it opens without re-deriving the location. A directory in the
+/// hosts file's ancestry replaced by a junction would not show up on
+/// `validate_hosts_path`'s check of the file itself, so it would otherwise
+/// survive to make recovery apply a planted pending copy to whatever the
+/// junction actually points at. A custom path, which never equals the
+/// platform path lexically, has no fixed location to compare against and is
+/// left alone.
+#[cfg(windows)]
+fn verify_platform_hosts_path(path: &Path) -> Result<()> {
+    let platform = get_platform_hosts_path()?;
+    if platform != path {
+        return Ok(());
+    }
+    if path.canonicalize()? != platform.canonicalize()? {
+        return Err(HostsFileError::InvalidPath(
+            "Hosts path does not resolve to the platform hosts file".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Opens the hosts file read-only and takes its lock, or reports that there
+/// is nothing to lock.
 ///
 /// The writer rewrites the file in place on Windows, so the locked handle
-/// stays the current file and no identity check is needed. A rewrite that
-/// did not complete is completed here, under the lock, when `recover` is
-/// set: the edit path repairs it before writing again, while a read leaves
-/// it in place and reads the pending copy directly instead.
+/// stays the current file and no identity check is needed there. A rewrite
+/// that did not complete is completed here, under the lock, when `recover`
+/// is set: the edit path repairs it before writing again, while a read
+/// leaves it in place, never creates the file, and reads the pending copy
+/// directly instead.
 #[cfg(windows)]
-fn open_locked(path: &Path, recover: bool) -> Result<std::fs::File> {
+fn open_locked(path: &Path, recover: bool) -> Result<Option<std::fs::File>> {
     use crate::utils::config_dir::{
         LockRegion,
         wait_for_exclusive_lock,
     };
 
-    let file = open_for_lock(path)?;
+    if recover {
+        verify_platform_hosts_path(path)?;
+    }
+    let Some(file) = open_for_lock(path, recover)? else {
+        return Ok(None);
+    };
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
     if recover {
@@ -273,7 +329,7 @@ fn open_locked(path: &Path, recover: bool) -> Result<std::fs::File> {
             }
         }
     }
-    Ok(file)
+    Ok(Some(file))
 }
 
 /// The hosts file as raw lines, edited under one lock and written once.
@@ -441,6 +497,37 @@ impl HostsDocument {
         Ok(top_level)
     }
 
+    /// Folds every section for `tag` into one, in file order, when there is
+    /// more than one.
+    ///
+    /// `bounds` refuses a duplicated tag outright because an in-place edit
+    /// would not know which copy to touch. A destructive rewrite
+    /// (`reconcile_owners`, `retain`) is not so constrained: it can fall
+    /// back to merging every copy's body into the first one's place before
+    /// it goes on to do its own work through `bounds`, rather than failing
+    /// the whole operation over a file a hand edit left duplicated.
+    fn merge_duplicate_sections(&mut self, tag: &str) -> Result<()> {
+        let sections = self.all_bounds(tag)?;
+        if sections.len() <= 1 {
+            return Ok(());
+        }
+        let mut body: Vec<String> = Vec::new();
+        for &(begin, end) in &sections {
+            body.extend(self.lines[begin + 1..end].iter().cloned());
+        }
+        for &(begin, end) in sections.iter().rev() {
+            self.lines.drain(begin..=end);
+            if begin > 0
+                && begin <= self.lines.len()
+                && self.lines[begin - 1].is_empty()
+                && self.lines.get(begin).is_none_or(String::is_empty)
+            {
+                self.lines.remove(begin - 1);
+            }
+        }
+        self.set_body(tag, body)
+    }
+
     /// Parses one line of a section. Comments and blank lines yield nothing.
     fn parse_line(line: &str) -> Option<ParsedLine> {
         // Everything from the first `#` is a comment. Ownership counts only
@@ -590,6 +677,7 @@ impl HostsDocument {
                 validate_owner(owner)?;
             }
         }
+        self.merge_duplicate_sections(tag)?;
         let mut present = HashSet::new();
         let mut body: Vec<String> = match self.bounds(tag)? {
             Some((begin, end)) => self.lines[begin + 1..end]
@@ -623,6 +711,7 @@ impl HostsDocument {
     /// A line none of whose aliases is rejected is preserved byte for byte;
     /// one with some rejected is rewritten with the rest.
     pub fn retain(&mut self, tag: &str, keep: impl Fn(&SectionEntry) -> bool) -> Result<()> {
+        self.merge_duplicate_sections(tag)?;
         let Some((begin, end)) = self.bounds(tag)? else {
             return Ok(());
         };
@@ -876,6 +965,20 @@ impl<'a> AtomicFileWriter<'a> {
         staged.write_all(content)?;
         staged.sync_all()?;
         drop(staged);
+        // A leftover pending copy can already be here from an earlier write
+        // that crashed between publishing it and removing it, or whose
+        // removal merely failed and was only logged. `rename` needs the
+        // destination clear; clearing it here treats that leftover as
+        // ordinary recovery debris rather than letting it break every write
+        // that follows.
+        if let Err(error) = std::fs::remove_file(&pending)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            log::warn!(
+                "Removing a leftover pending hosts rewrite at {}: {error}",
+                pending.display()
+            );
+        }
         std::fs::rename(&staging, &pending)?;
         self.write_directly(content)?;
         OpenOptions::new()
@@ -981,14 +1084,30 @@ fn get_platform_hosts_path() -> Result<PathBuf> {
     }
 }
 
+/// Rejects a path this crate must not follow: a symlink/reparse point, whose
+/// lexical parent being user-writable would let an unprivileged process
+/// plant one beside the real hosts file for a privileged recovery to
+/// traverse, or a directory.
+///
+/// A missing path is not rejected: a custom path may still be created on
+/// first write, and a read of one reports an empty document.
 fn validate_hosts_path(path: &Path) -> Result<()> {
-    if path.is_dir() {
-        Err(HostsFileError::InvalidPath(
-            "Expected file path, got directory".to_string(),
-        ))
-    } else {
-        Ok(())
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(HostsFileError::InvalidPath(
+            "Hosts path must not be a symlink".to_string(),
+        ));
     }
+    if metadata.is_dir() {
+        return Err(HostsFileError::InvalidPath(
+            "Expected file path, got directory".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1061,6 +1180,85 @@ mod tests {
         assert!(
             !remaining.contains("DO NOT EDIT test"),
             "clear_section must remove interleaved sections without panicking: {remaining}"
+        );
+    }
+
+    #[test]
+    fn reconciling_owners_merges_duplicated_sections_instead_of_failing() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        let mut file = HostsFile::new("test");
+        file.add_owned_entry([127, 0, 0, 1].into(), "a.local", "1")
+            .unwrap();
+        file.write_to(&temp_path).unwrap();
+        // A copy of the whole section pasted below it, as a hand edit could;
+        // `bounds` refuses this, but a destructive rewrite must fall back to
+        // merging instead of failing the whole stop.
+        let content = std::fs::read_to_string(&temp_path).unwrap();
+        std::fs::write(&temp_path, format!("{content}{content}")).unwrap();
+
+        let mut next = HostsFile::new("test");
+        next.add_owned_entry([127, 0, 0, 2].into(), "b.local", "2")
+            .unwrap();
+        let present = next.reconcile_owners_in(&temp_path, &["1"]).unwrap();
+        assert_eq!(present, HashSet::from(["1".to_owned()]));
+
+        let remaining = std::fs::read_to_string(&temp_path).unwrap();
+        assert_eq!(
+            remaining.matches("DO NOT EDIT test BEGIN").count(),
+            1,
+            "the duplicated sections must be merged into one: {remaining}"
+        );
+        assert!(!remaining.contains("a.local"), "{remaining}");
+        assert!(remaining.contains("b.local"), "{remaining}");
+    }
+
+    #[test]
+    fn a_read_style_lock_never_creates_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts");
+
+        with_hosts_lock(&path, false, || Ok(())).unwrap();
+
+        assert!(
+            !path.exists(),
+            "a read-style lock must never create the hosts file it did not find"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_hosts_path_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real-hosts");
+        std::fs::write(&real, "127.0.0.1 real.local\n").unwrap();
+        let link = dir.path().join("hosts-link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let error = read_hosts_at(&link, |document| document.section("test"))
+            .expect_err("a symlink must never be followed as the hosts path");
+        assert!(error.to_string().contains("symlink"), "{error}");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_leftover_pending_file_does_not_break_the_next_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts");
+        std::fs::write(&path, "original\n").unwrap();
+        // As if an earlier write crashed after publishing its pending copy
+        // but before removing it, or the removal merely failed and was
+        // only logged.
+        std::fs::write(pending_path(&path), "stale-pending\n").unwrap();
+
+        AtomicFileWriter::new(&path)
+            .write_content(b"fresh\n")
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fresh\n");
+        assert!(
+            !pending_path(&path).exists(),
+            "the write's own pending copy must be cleaned up: {}",
+            pending_path(&path).display()
         );
     }
 

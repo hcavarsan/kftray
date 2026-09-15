@@ -405,21 +405,31 @@ impl App {
 
     /// Cancels in-flight forwarding work and drains it under a deadline, so a
     /// stalled operation cannot hold the terminal in raw mode on exit.
-    pub async fn finish_forwarding(&mut self) {
-        self.drain_forwarding().await;
+    ///
+    /// Returns whatever reached the error channel and was never shown, plus
+    /// the config ids of any stop task that outran both drain budgets and
+    /// had to be left running detached: their per-config recovery lock is
+    /// still held, so a caller that immediately re-stops or reconciles
+    /// every running config must skip these ids instead of contending for
+    /// the same lock.
+    pub async fn finish_forwarding(&mut self) -> (Vec<String>, HashSet<i64>) {
+        let detached_stop_ids = self.drain_forwarding().await;
 
         // The event loop is over, so nothing draws a popup any more: whatever
         // reached the error channel and was never shown goes to the log and to
         // the terminal, which is back in its normal mode by now.
-        for report in self.take_shutdown_reports() {
+        let reports = self.take_shutdown_reports();
+        for report in &reports {
             log::error!("{report}");
             eprintln!("{report}");
         }
+        (reports, detached_stop_ids)
     }
 
     /// Cancels and joins every forwarding task, leaving whatever they had to
-    /// report in the error channel.
-    pub async fn drain_forwarding(&mut self) {
+    /// report in the error channel. Returns the config ids of any stop task
+    /// still running when it had to be detached instead of joined.
+    pub async fn drain_forwarding(&mut self) -> HashSet<i64> {
         // Signalled before draining: an in-flight startup observes cancellation
         // at its own safe points and runs its own rollback, instead of being
         // dropped mid-create when the abort deadline below expires.
@@ -448,15 +458,23 @@ impl App {
                 .await
                 .is_err();
         }
-        if timed_out {
-            log::error!("Abandoning forwarding tasks that ignored abort");
-            // Whatever is still in `forwarding_tasks` at this point is either
-            // an abort-ignoring start or a stop that must be left running:
-            // dropping the `JoinSet` (via `App`'s own drop, on process exit)
-            // aborts everything it still tracks, so remove them from its
-            // bookkeeping and let them finish detached instead.
-            self.forwarding_tasks.detach_all();
+        if !timed_out {
+            return HashSet::new();
         }
+        log::error!("Abandoning forwarding tasks that ignored abort");
+        // Whatever is still in `forwarding_tasks` at this point is either
+        // an abort-ignoring start or a stop that must be left running:
+        // dropping the `JoinSet` (via `App`'s own drop, on process exit)
+        // aborts everything it still tracks, so remove them from its
+        // bookkeeping and let them finish detached instead.
+        let detached_stop_ids = self
+            .task_configs
+            .values()
+            .filter(|info| info.is_stop)
+            .map(|info| info.config_id)
+            .collect();
+        self.forwarding_tasks.detach_all();
+        detached_stop_ids
     }
 
     /// Everything queued for the error popup that was never shown, and the
@@ -771,6 +789,16 @@ impl App {
     }
 
     pub fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
+        self.update_configs_at(configs, config_states, std::time::Instant::now());
+    }
+
+    /// Same as `update_configs`, but with `now` injectable so tests can drive
+    /// the stall watchdog without subtracting from `Instant::now()`, which
+    /// can underflow on a CI agent whose monotonic clock has not been up
+    /// long enough to represent an `Instant` that far in the past.
+    pub(crate) fn update_configs_at(
+        &mut self, configs: &[Config], config_states: &[ConfigState], now: std::time::Instant,
+    ) {
         let running_ids: HashSet<_> = config_states
             .iter()
             .filter(|state| state.is_running)
@@ -788,7 +816,6 @@ impl App {
 
         self.update_filtered_configs();
 
-        let now = std::time::Instant::now();
         let mut reports = Vec::new();
         self.configs_being_processed.retain(|_, pending| {
             if !pending.is_active() {
@@ -850,15 +877,23 @@ impl App {
 
         if !new_errors.is_empty() {
             let combined = new_errors.join("\n");
-            self.error_message = match (
+            // Appending to a popup already open leaves the scroll offset
+            // alone: the reader may be partway through the existing text and
+            // a reset to 0 would yank them back to the top. Only a fresh
+            // popup starts scrolled to the beginning.
+            match (
                 self.error_message.take(),
                 self.state == AppState::ShowErrorPopup,
             ) {
-                (Some(existing), true) => Some(format!("{existing}\n{combined}")),
-                _ => Some(combined),
-            };
+                (Some(existing), true) => {
+                    self.error_message = Some(format!("{existing}\n{combined}"));
+                }
+                _ => {
+                    self.error_message = Some(combined);
+                    self.error_scroll = 0;
+                }
+            }
             self.state = AppState::ShowErrorPopup;
-            self.error_scroll = 0;
         }
     }
 
@@ -1611,6 +1646,15 @@ impl PendingForward {
         self.mark_running_at(std::time::Instant::now());
     }
 
+    /// Whether an operation that has been running for `elapsed` has outrun
+    /// the watchdog window. Split out from `stall_warning` so the threshold
+    /// itself is testable with an explicit `Duration`, instead of a test
+    /// having to subtract from `Instant::now()` to fabricate an old start
+    /// time.
+    pub(crate) fn stalled_for(elapsed: std::time::Duration) -> bool {
+        elapsed > PROCESSING_WATCHDOG
+    }
+
     /// Reports an operation that has outrun the watchdog window, once. It is
     /// deliberately not aborted: the backend rolls back its own cluster
     /// resources after its own timeouts, and dropping it mid-flight would
@@ -1621,7 +1665,7 @@ impl PendingForward {
             .lock()
             .ok()
             .and_then(|running_since| *running_since)
-            .is_some_and(|started| now.duration_since(started) > PROCESSING_WATCHDOG);
+            .is_some_and(|started| Self::stalled_for(now.duration_since(started)));
         if !stalled || self.warned.swap(true, Ordering::Relaxed) {
             return None;
         }

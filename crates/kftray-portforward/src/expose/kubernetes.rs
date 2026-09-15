@@ -33,6 +33,7 @@ use kube_runtime::WatchStreamExt;
 use log::{
     debug,
     info,
+    warn,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -627,6 +628,7 @@ async fn still_present(
 /// readiness probe on the relay container, Kubernetes still requires every
 /// *other* container in the pod to report ready before the pod condition
 /// flips, which has nothing to do with the relay actually listening.
+#[derive(Debug)]
 struct RelayProbe {
     container_name: Option<String>,
     readiness_probe_present: bool,
@@ -715,10 +717,16 @@ async fn create_deployment(
     if let Some(container) = relay {
         relay_probe.container_name = Some(container.name.clone());
         if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
-            relay_probe.websocket_port = u16::try_from(websocket_port).unwrap_or(9999);
+            let websocket_port = u16::try_from(websocket_port).map_err(|_| {
+                format!(
+                    "WEBSOCKET_PORT {websocket_port} is not a valid port (must be between 1 \
+                     and 65535)"
+                )
+            })?;
+            relay_probe.websocket_port = websocket_port;
             container.startup_probe.get_or_insert_with(|| Probe {
                 tcp_socket: Some(TCPSocketAction {
-                    port: IntOrString::Int(websocket_port),
+                    port: IntOrString::Int(websocket_port as i32),
                     ..Default::default()
                 }),
                 period_seconds: Some(1),
@@ -728,9 +736,12 @@ async fn create_deployment(
             });
         }
         if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
+            let http_port = u16::try_from(http_port).map_err(|_| {
+                format!("HTTP_PORT {http_port} is not a valid port (must be between 1 and 65535)")
+            })?;
             container.readiness_probe.get_or_insert_with(|| Probe {
                 tcp_socket: Some(TCPSocketAction {
-                    port: IntOrString::Int(http_port),
+                    port: IntOrString::Int(http_port as i32),
                     ..Default::default()
                 }),
                 period_seconds: Some(1),
@@ -976,15 +987,79 @@ async fn create_ingress(
             Ok(created)
         }
         Err(error) => {
-            // A definitive rejection proves nothing was created despite the
-            // record above: clear it so a later private start does not need
-            // ingress-list rights to rule this exposure out.
             if !error.ambiguous {
+                // A definitive rejection proves nothing was created despite
+                // the record above: clear it so a later private start does
+                // not need ingress-list rights to rule this exposure out.
                 forget_ingress_history(&config_id_str, location, mode).await;
+                return Err(error);
             }
-            Err(error)
+            // An unanswered create may or may not have landed. Check for the
+            // object this attempt would have named: if it is missing, or
+            // present but owned by someone else, the create did not happen
+            // (or happened for a different owner) and the history is stale.
+            // If it is ours, adopt it so the caller's rollback tracks it like
+            // any other resource this attempt created, instead of leaving a
+            // history record with nothing to roll back.
+            match resolve_ambiguous_ingress_create(
+                &ingresses,
+                ingress_name,
+                &config_id_str,
+                location,
+                mode,
+            )
+            .await
+            {
+                Ok(Some(adopted)) => Ok(adopted),
+                Ok(None) => Err(error),
+                Err(verify_error) => {
+                    warn!(
+                        "Failed to verify ambiguous ingress create for config \
+                         {config_id_str}: {verify_error}"
+                    );
+                    Err(error)
+                }
+            }
         }
     }
+}
+
+/// Resolves an unanswered ingress create by checking who, if anyone, owns
+/// the object it would have named.
+///
+/// Returns the adopted resource when the object exists and carries this
+/// installation's labels, so the caller can treat the create as succeeded
+/// and track it for rollback. Returns `None` when the object is missing or
+/// belongs to someone else, so the caller clears the stale history record.
+async fn resolve_ambiguous_ingress_create(
+    ingresses: &Api<Ingress>, ingress_name: &str, config_id: &str, location: &ExposeLocation,
+    mode: DatabaseMode,
+) -> Result<Option<CreatedResource>, String> {
+    let found = ingresses
+        .get_opt(ingress_name)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(ingress) = found else {
+        forget_ingress_history(config_id, location, mode).await;
+        return Ok(None);
+    };
+    let owner_identity = kftray_commons::utils::config_dir::owner_identity(mode).await?;
+    let owned = ingress.metadata.labels.as_ref().is_some_and(|labels| {
+        labels.get("config_id").map(String::as_str) == Some(config_id)
+            && labels
+                .get(crate::kube::proxy::INSTALLATION_LABEL)
+                .map(String::as_str)
+                == Some(owner_identity.as_str())
+    });
+    if !owned {
+        forget_ingress_history(config_id, location, mode).await;
+        return Ok(None);
+    }
+    Ok(Some(CreatedResource {
+        kind: ResourceKind::Ingress,
+        name: ingress.metadata.name.clone().unwrap_or_default(),
+        uid: ingress.metadata.uid,
+    }))
 }
 
 /// Key under which a configuration's ingress history is kept.
@@ -1556,6 +1631,93 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_out_of_range_websocket_port_fails_the_deployment_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+
+        // A customized template whose WEBSOCKET_PORT does not fit in a u16:
+        // `container_env_port` still parses it as an i32, so only the u16
+        // conversion before probe injection can catch it.
+        let manifest_path =
+            kftray_commons::utils::config_dir::get_expose_deployment_manifest_path().unwrap();
+        let manifest = r#"{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "{deployment_name}",
+    "namespace": "{namespace}",
+    "labels": {"app": "kftray-expose", "config_id": "{config_id}"}
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {"matchLabels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+    "template": {
+      "metadata": {"labels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+      "spec": {
+        "terminationGracePeriodSeconds": 10,
+        "containers": [{
+          "name": "kftray-server",
+          "image": "ghcr.io/hcavarsan/kftray-server:latest",
+          "env": [
+            {"name": "PROXY_TYPE", "value": "reverse_http"},
+            {"name": "HTTP_PORT", "value": "8080"},
+            {"name": "WEBSOCKET_PORT", "value": "70000"},
+            {"name": "REMOTE_ADDRESS", "value": "localhost"},
+            {"name": "REMOTE_PORT", "value": "{local_port}"},
+            {"name": "LOCAL_PORT", "value": "{local_port}"},
+            {"name": "RUST_LOG", "value": "DEBUG"}
+          ],
+          "ports": [
+            {"containerPort": 8080, "name": "http"},
+            {"containerPort": 9999, "name": "websocket"}
+          ]
+        }]
+      }
+    }
+  }
+}"#;
+        std::fs::write(&manifest_path, manifest).unwrap();
+
+        let config = Config {
+            id: Some(4001),
+            namespace: "default".to_owned(),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        // Never contacted: the invalid port must be rejected before any
+        // request is sent.
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let result =
+            create_deployment(&client, "default", "myapp-deploy", "4001", &config, mode).await;
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error = result.expect_err(
+            "a WEBSOCKET_PORT outside u16 range must fail the create before any request is sent",
+        );
+        assert!(
+            error.message.contains("WEBSOCKET_PORT"),
+            "the error must name the offending variable: {}",
+            error.message
+        );
+        assert!(
+            !error.ambiguous,
+            "a template validation failure happens before any request, so it is a definitive \
+             rejection"
+        );
+    }
+
     #[test]
     fn expose_location_stores_the_canonical_cluster_identity() {
         // `Uri::to_string()` keeps an explicit default port and drops IPv6
@@ -2050,6 +2212,91 @@ mod tests {
             ingress_was_created(config_id, &location, mode).await,
             "a 409 must not wipe the ingress history: the object it names may be the one this \
              attempt itself is responsible for"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_ingress_create_forgets_history_when_nothing_landed() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        kftray_commons::utils::manifests::create_expose_ingress_manifest().unwrap();
+
+        let config_id = "3004";
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        let config = Config {
+            id: Some(3004),
+            namespace: "default".to_owned(),
+            alias: Some("myapp2.example.com".to_owned()),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::POST);
+            let unavailable = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"ServiceUnavailable","message":"etcd timeout","code":503
+            });
+            send.send_response(
+                Response::builder()
+                    .status(503)
+                    .body(Body::from(serde_json::to_vec(&unavailable).unwrap()))
+                    .unwrap(),
+            );
+
+            // The ambiguous create must be resolved against the object it
+            // would have named, not just its own response.
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::GET);
+            let not_found = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"NotFound","message":"myapp2","code":404
+            });
+            send.send_response(
+                Response::builder()
+                    .status(404)
+                    .body(Body::from(serde_json::to_vec(&not_found).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            create_ingress(
+                &client,
+                "default",
+                "myapp2",
+                "myapp2-svc",
+                &config,
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error =
+            result.expect_err("nothing landed, so this must still be reported as a failure");
+        assert!(
+            error.ambiguous,
+            "the create itself was never definitively rejected"
+        );
+        assert!(
+            !ingress_was_created(config_id, &location, mode).await,
+            "the GET proved nothing was created, so the stale history record must be forgotten"
         );
     }
 

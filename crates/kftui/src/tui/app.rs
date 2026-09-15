@@ -89,13 +89,21 @@ pub async fn run_tui(
     .into_iter()
     .find_map(Result::err);
 
-    app.finish_forwarding().await;
+    let mut failures: Vec<String> = Vec::new();
+    let (shutdown_reports, detached_stop_ids) = app.finish_forwarding().await;
+    failures.extend(shutdown_reports);
     // Bounded like the reconciliation below: a stop waits on lifecycle locks
     // and hosts-file work, and a stalled one must not keep the process alive.
-    let mut failures: Vec<String> = Vec::new();
+    // Ids kftui just detached are excluded: their stop is still running in
+    // the background holding the per-config recovery lock, so re-stopping
+    // them here would only contend for the same lock instead of finishing
+    // sooner.
     match tokio::time::timeout(
         CLEANUP_RECONCILE_TIMEOUT,
-        kftray_portforward::kube::stop_all_port_forward_with_mode(mode),
+        kftray_portforward::kube::stop_all_port_forward_with_mode_excluding(
+            mode,
+            &detached_stop_ids,
+        ),
     )
     .await
     {

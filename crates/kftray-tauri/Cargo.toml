@@ -54,7 +54,6 @@ tauri-plugin-shell = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
-whoami = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

@@ -41,10 +41,15 @@ type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
 const POOL_MAX_IDLE_PER_HOST: usize = 5;
 
-/// Fallback deadline for the API-server version probe when the config
-/// carries no `read_timeout` (e.g. exec credential plugins that can take
-/// longer than a fixed short timeout).
-const DEFAULT_CONNECTION_TEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Total budget for connecting to and probing the API server. Independent
+/// of `Config::read_timeout`, which governs already-established requests
+/// (e.g. watches) rather than how long a connection attempt may take.
+const CONNECTION_BUDGET: Duration = Duration::from_secs(30);
+
+/// Minimum time reserved for each strategy still to come, so a slow first
+/// strategy cannot exhaust the whole budget before later strategies get a
+/// chance to run.
+const MIN_STRATEGY_SLICE: Duration = Duration::from_secs(5);
 
 static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
     let mut connector = HttpConnector::new();
@@ -55,9 +60,6 @@ static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
 
 pub async fn create_client_with_config(config: &Config) -> KubeResult<Client> {
     let config = config.clone();
-    let total_budget = config
-        .read_timeout
-        .unwrap_or(DEFAULT_CONNECTION_TEST_TIMEOUT);
 
     let strategies = if config.accept_invalid_certs {
         info!("Creating insecure connection strategies for skip-tls-verify=true");
@@ -66,7 +68,7 @@ pub async fn create_client_with_config(config: &Config) -> KubeResult<Client> {
         create_connection_strategies(&config)
     };
 
-    execute_strategies(strategies, total_budget).await
+    execute_strategies(strategies, CONNECTION_BUDGET).await
 }
 
 /// Runs every strategy against ONE overall deadline instead of giving each
@@ -81,8 +83,9 @@ async fn execute_strategies(
     let mut failed_attempts = Vec::new();
     let mut last_error: Option<KubeClientError> = None;
     let deadline = Instant::now() + total_budget;
+    let strategy_count = strategies.len();
 
-    for (description, strategy) in strategies {
+    for (index, (description, strategy)) in strategies.into_iter().enumerate() {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             warn!("Strategy '{description}' skipped: overall connection budget exhausted");
@@ -93,11 +96,18 @@ async fn execute_strategies(
             continue;
         }
 
+        let strategies_after = (strategy_count - index - 1) as u32;
+        let reserved_for_rest = MIN_STRATEGY_SLICE.saturating_mul(strategies_after);
+        let strategy_budget = remaining
+            .saturating_sub(reserved_for_rest)
+            .max(remaining.min(MIN_STRATEGY_SLICE));
+        let strategy_deadline = Instant::now() + strategy_budget;
+
         info!("Attempting strategy: {description}");
 
-        let result = match tokio::time::timeout(remaining, strategy).await {
+        let result = match tokio::time::timeout(strategy_budget, strategy).await {
             Ok(Ok(client)) => {
-                let probe_remaining = deadline.saturating_duration_since(Instant::now());
+                let probe_remaining = strategy_deadline.saturating_duration_since(Instant::now());
                 if probe_remaining.is_zero() {
                     Err(KubeClientError::connection_error(
                         "Timed out connecting to the Kubernetes API server",

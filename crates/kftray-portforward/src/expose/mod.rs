@@ -157,7 +157,14 @@ pub(crate) async fn start_single_expose(
 
     // Installation-scoped: the tunnel must reach this installation's relay, not
     // another one that happens to share the locally assigned configuration id.
-    let label_selector = kubernetes::expose_owner_selector(&config_id.to_string(), mode).await?;
+    let label_selector = match kubernetes::expose_owner_selector(&config_id.to_string(), mode).await
+    {
+        Ok(selector) => selector,
+        Err(error) => {
+            return roll_back_exposure(&client, &config, &resources, &location, mode, guard, error)
+                .await;
+        }
+    };
     let target = Target {
         selector: TargetSelector::PodLabel(label_selector),
         port: Port::Number(i32::from(resources.websocket_port)),
@@ -179,14 +186,12 @@ pub(crate) async fn start_single_expose(
     )
     .expecting_destination(Some(destination.clone()));
 
-    let started = match cancellation {
-        Some(token) => tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
-            started = port_forward.port_forward_tcp(None) => started,
-        },
-        None => port_forward.port_forward_tcp(None).await,
-    };
+    // Never raced against cancellation: dropping this future mid-flight would
+    // abandon a listener task `PortForwarder` has no `Drop` to stop, leaking
+    // it. Instead this always runs to completion, and a cancellation that
+    // arrived while it was starting is applied after, by aborting the
+    // process it just handed back.
+    let started = port_forward.port_forward_tcp(None).await;
     let (websocket_port, mut pf_process) = match started {
         Ok(started) => started,
         Err(error) => {
@@ -197,6 +202,12 @@ pub(crate) async fn start_single_expose(
             .await;
         }
     };
+    if cancelled() {
+        let reason = format!("Expose startup cancelled for config {config_id}");
+        pf_process.cleanup_and_abort().await;
+        return roll_back_exposure(&client, &config, &resources, &location, mode, guard, reason)
+            .await;
+    }
 
     info!(
         "Port-forward established: localhost:{} → pod:{}",

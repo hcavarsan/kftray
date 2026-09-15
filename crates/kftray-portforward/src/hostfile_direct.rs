@@ -126,21 +126,6 @@ impl DirectHostfileManager {
         read_hosts(|document| document.section(KFTRAY_HOSTS_TAG)).map_err(std::io::Error::from)
     }
 
-    /// Removes both sections whole, unowned lines included.
-    ///
-    /// Entries written by a version that shared the helper's section belong to
-    /// this application too, and a purge that left them would report complete
-    /// cleanup with aliases still resolving.
-    pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
-        debug!("Removing all host entries");
-
-        edit_hosts(|document| {
-            document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
-            document.clear_section(KFTRAY_HOSTS_TAG)
-        })
-        .map_err(std::io::Error::from)
-    }
-
     /// Every owned alias in this manager's section.
     pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
         Ok(

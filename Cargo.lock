@@ -3738,7 +3738,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
- "whoami",
  "windows 0.62.2",
 ]
 

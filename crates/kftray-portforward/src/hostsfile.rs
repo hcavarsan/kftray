@@ -291,42 +291,61 @@ impl HostfileManager {
         // the aliases the configuration says are its own, and the upgraded
         // helper removes exactly those.
         if !stranded.is_empty() {
-            let legacy: Vec<HostEntry> = handed
-                .iter()
-                .filter(|(id, _)| stranded.contains(&id.as_str()))
-                .map(|(_, entry)| entry.clone())
-                .collect();
-            let removed = match self.helper() {
-                Some(helper) => helper
-                    .remove_unowned_host_entries(legacy)
-                    .map_err(|e| e.to_string()),
-                // Without a helper the same attributed unmarked lines are
-                // pruned here, and so are the stranded ids' own marked lines:
-                // the helper's section is not privileged at the OS level,
-                // only by convention, and a process that can write the hosts
-                // file at all can take a line out of it whether the line is
-                // marked for the helper or not.
-                None => {
-                    let mappings: Vec<(std::net::IpAddr, String)> = legacy
-                        .into_iter()
-                        .map(|entry| (entry.ip, entry.hostname))
-                        .collect();
-                    self.direct_manager
-                        .prune_legacy_entries(&mappings)
-                        .and_then(|_| {
-                            self.direct_manager
-                                .remove_owned_from_helper_section(&stranded)
-                        })
-                        .map_err(|e| e.to_string())
+            if let Some(helper) = self.helper() {
+                let legacy: Vec<HostEntry> = handed
+                    .iter()
+                    .filter(|(id, _)| stranded.contains(&id.as_str()))
+                    .map(|(_, entry)| entry.clone())
+                    .collect();
+                if let Err(e) = helper.remove_unowned_host_entries(legacy) {
+                    warn!("Could not remove unmarked host entries via helper: {e}");
                 }
-            };
-            match removed {
-                Ok(()) => {
-                    let section = DirectHostfileManager::helper_section()?;
-                    stranded =
-                        DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
+                let section = DirectHostfileManager::helper_section()?;
+                stranded =
+                    DirectHostfileManager::stranded_in_helper_section(&section, ids, &handed);
+            }
+
+            // Marked lines a helper's per-id removal failed to take out (only
+            // warned, never surfaced) are still stranded here, RemoveUnowned
+            // having reached only the unmarked legacy copies it was asked
+            // about. Fall back to what this process can write itself, the
+            // same as when no helper is installed at all: the helper's
+            // section is not privileged at the OS level, only by convention,
+            // and a process that can write the hosts file at all can take a
+            // line out of it whether the line is marked for the helper or
+            // not.
+            if !stranded.is_empty() {
+                let legacy: Vec<HostEntry> = handed
+                    .iter()
+                    .filter(|(id, _)| stranded.contains(&id.as_str()))
+                    .map(|(_, entry)| entry.clone())
+                    .collect();
+                let mappings: Vec<(std::net::IpAddr, String)> = legacy
+                    .into_iter()
+                    .map(|entry| (entry.ip, entry.hostname))
+                    .collect();
+                let direct_result = self
+                    .direct_manager
+                    .prune_legacy_entries(&mappings)
+                    .and_then(|_| {
+                        self.direct_manager
+                            .remove_owned_from_helper_section(&stranded)
+                    });
+                match stranded_fallback_outcome(&direct_result) {
+                    StrandedFallbackOutcome::Resolved => {
+                        let section = DirectHostfileManager::helper_section()?;
+                        stranded = DirectHostfileManager::stranded_in_helper_section(
+                            &section, ids, &handed,
+                        );
+                    }
+                    // This process cannot write the hosts file itself
+                    // either; nothing more to try, the earlier report
+                    // stands.
+                    StrandedFallbackOutcome::Sticky => {}
+                    StrandedFallbackOutcome::Retryable(e) => {
+                        warn!("Could not remove unmarked host entries directly: {e}");
+                    }
                 }
-                Err(e) => warn!("Could not remove unmarked host entries: {e}"),
             }
         }
         if !stranded.is_empty() {
@@ -348,59 +367,45 @@ impl HostfileManager {
         Ok(())
     }
 
-    /// Clears every alias this application wrote, through either writer.
-    ///
-    /// The helper clears only its own section, so the direct one is cleared
-    /// here regardless. A failure from either is reported unless what is
-    /// actually left on disk says otherwise: the direct clear above already
-    /// reaches both sections when this process can write the hosts file
-    /// itself, so a helper IPC failure alongside a successful direct clear
-    /// must not be reported as an incomplete remove-all.
-    pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
-        let mut errors = Vec::new();
-        if let Some(helper) = self.helper() {
-            match helper.remove_all_host_entries() {
-                Ok(_) => debug!("Successfully removed all host entries via helper"),
-                Err(e) => errors.push(format!("helper: {e}")),
-            }
-        }
-        if let Err(e) = self.direct_manager.remove_all_host_entries() {
-            errors.push(format!("direct: {e}"));
-        }
-
-        if !errors.is_empty() {
-            let direct_section = DirectHostfileManager::direct_section()?;
-            let helper_section = DirectHostfileManager::helper_section()?;
-            if !remove_all_verified_despite(&errors, &direct_section, &helper_section) {
-                // The attribution stays: an unmarked line an older helper left
-                // behind can only be tied to its id through what was handed over,
-                // and a later per-id removal would otherwise pass verification with
-                // the alias still resolving.
-                return Err(std::io::Error::other(errors.join("; ")));
-            }
-        }
-        self.handed_to_helper
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.ssl_ids_written
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        Ok(())
-    }
-
     /// This process's SSL ids plus whatever a run before a restart
-    /// persisted. `ssl_ids_written` alone starts empty after a restart, and
-    /// a configuration's HTTPS aliases are only ever claimed for ids this
-    /// set actually names.
+    /// persisted and this process can still verify on disk.
+    /// `ssl_ids_written` alone starts empty after a restart, and a
+    /// configuration's HTTPS aliases are only ever claimed for ids this set
+    /// actually names.
+    ///
+    /// A crash between `add_ssl_host_entry` persisting an id and its write
+    /// landing leaves a persisted record with no line behind it: keeping it
+    /// would let a later removal prune an unrelated line that merely shares
+    /// the alias, so a persisted id is only kept once a matching line is
+    /// verified on disk. A stale record is forgotten right here rather than
+    /// left for the next restart to trip over again.
     async fn ssl_ids_written_including_persisted(&self, mode: DatabaseMode) -> HashSet<String> {
         let mut ids = self
             .ssl_ids_written
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        ids.extend(persisted_ssl_ids_written(mode).await);
+        let persisted = persisted_ssl_ids_written(mode).await;
+        if persisted.is_empty() {
+            return ids;
+        }
+        match (
+            DirectHostfileManager::helper_section(),
+            DirectHostfileManager::direct_section(),
+        ) {
+            (Ok(helper_section), Ok(direct_section)) => {
+                let (verified, stale) =
+                    persisted_ids_verified_on_disk(persisted, &helper_section, &direct_section);
+                for full_id in stale {
+                    forget_ssl_id_written(&full_id, mode).await;
+                }
+                ids.extend(verified);
+            }
+            // A read failure means what is on disk cannot be told, so every
+            // persisted id stays attributable rather than risk dropping
+            // protection for a line that is actually there.
+            _ => ids.extend(persisted),
+        }
         ids
     }
 }
@@ -415,25 +420,43 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
     HOSTFILE_MANAGER.add_host_entry(id, entry)
 }
 
-/// Whether errors from `remove_all_host_entries` still count as complete
-/// cleanup.
-///
-/// The direct clear reaches both sections whenever this process can write
-/// the hosts file itself, so what is actually left on disk decides,
-/// not which writer reported trouble getting there: a helper IPC failure
-/// alongside sections that are verified empty is not a leftover alias.
-fn remove_all_verified_despite(
-    errors: &[String], direct_section: &[kftray_commons::utils::hostsfile::SectionEntry],
-    helper_section: &[kftray_commons::utils::hostsfile::SectionEntry],
-) -> bool {
-    let verified = direct_section.is_empty() && helper_section.is_empty();
-    if verified {
-        warn!(
-            "remove_all_host_entries reported errors but both sections are already empty: {}",
-            errors.join("; ")
-        );
+/// What to do after a direct-write fallback for stranded helper-section
+/// lines, once the write has had its turn.
+#[derive(Debug, PartialEq, Eq)]
+enum StrandedFallbackOutcome {
+    /// The write succeeded; the caller re-checks what is left on disk.
+    Resolved,
+    /// This process cannot write the hosts file at all. Retrying would not
+    /// help, so an earlier report stands rather than being treated as a
+    /// fresh failure.
+    Sticky,
+    /// Something else went wrong; worth reporting, but not conclusive.
+    Retryable(String),
+}
+
+fn stranded_fallback_outcome(result: &std::io::Result<()>) -> StrandedFallbackOutcome {
+    match result {
+        Ok(()) => StrandedFallbackOutcome::Resolved,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            StrandedFallbackOutcome::Sticky
+        }
+        Err(e) => StrandedFallbackOutcome::Retryable(e.to_string()),
     }
-    verified
+}
+
+/// Splits a set of persisted SSL host ids into those a matching line on
+/// disk still verifies, and those a crash between persisting the id and
+/// the write landing left with nothing behind them.
+fn persisted_ids_verified_on_disk(
+    persisted: HashSet<String>, helper_section: &[kftray_commons::utils::hostsfile::SectionEntry],
+    direct_section: &[kftray_commons::utils::hostsfile::SectionEntry],
+) -> (HashSet<String>, HashSet<String>) {
+    persisted.into_iter().partition(|full_id| {
+        helper_section
+            .iter()
+            .chain(direct_section)
+            .any(|entry| entry.owner.as_deref() == Some(full_id.as_str()))
+    })
 }
 
 /// The unmarked lines a removal may attribute to the ids it is removing: what
@@ -630,10 +653,6 @@ pub async fn remove_config_host_entries(
     Ok(())
 }
 
-pub fn remove_all_host_entries() -> std::io::Result<()> {
-    HOSTFILE_MANAGER.remove_all_host_entries()
-}
-
 pub async fn add_ssl_host_entry(
     config_id: &str, alias: &str, _https_port: u16, mode: DatabaseMode,
 ) -> std::io::Result<()> {
@@ -804,29 +823,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_restart_still_attributes_persisted_https_ids() {
+    async fn a_restart_forgets_a_persisted_id_that_never_reached_disk() {
         let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
             .lock()
             .await;
         let mode = DatabaseMode::Memory;
 
-        // A prior run's `add_ssl_host_entry` persisted this id before the
-        // process exited; nothing about this test's in-memory state knows
-        // it.
+        // A crash between `add_ssl_host_entry` persisting the id and its
+        // write landing: the durable record exists, but nothing on the real
+        // hosts file backs it.
         persist_ssl_id_written("77-https", mode).await;
 
-        // A brand new manager, exactly what a restart leaves behind: its
-        // `ssl_ids_written` is empty.
         let manager = HostfileManager::without_helper();
         let ids = manager.ssl_ids_written_including_persisted(mode).await;
 
         assert!(
-            ids.contains("77-https"),
-            "a fresh manager instance must still attribute an HTTPS id a run before a restart \
-             persisted"
+            !ids.contains("77-https"),
+            "a persisted id with no matching line on disk must not be attributed"
         );
+        assert!(
+            !persisted_ssl_ids_written(mode).await.contains("77-https"),
+            "a stale persisted id must be forgotten once it fails on-disk verification"
+        );
+    }
 
-        forget_ssl_id_written("77-https", mode).await;
+    #[test]
+    fn persisted_ssl_ids_are_kept_only_when_a_matching_line_is_actually_on_disk() {
+        use kftray_commons::utils::hostsfile::SectionEntry;
+
+        let helper_section = vec![SectionEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "app.local".to_owned(),
+            owner: Some("41-https".to_owned()),
+        }];
+        let direct_section = vec![SectionEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "app.local.local".to_owned(),
+            owner: Some("41-https-local".to_owned()),
+        }];
+        let persisted = HashSet::from([
+            "41-https".to_owned(),
+            "41-https-local".to_owned(),
+            "99-https".to_owned(),
+        ]);
+
+        let (verified, stale) =
+            persisted_ids_verified_on_disk(persisted, &helper_section, &direct_section);
+
+        assert_eq!(
+            verified,
+            HashSet::from(["41-https".to_owned(), "41-https-local".to_owned()])
+        );
+        assert_eq!(stale, HashSet::from(["99-https".to_owned()]));
     }
 
     #[tokio::test]
@@ -848,8 +896,7 @@ mod tests {
         // leftover.
         settle_ssl_write_failure("81-https", "81-https-local", true, mode).await;
 
-        let manager = HostfileManager::without_helper();
-        let ids = manager.ssl_ids_written_including_persisted(mode).await;
+        let ids = persisted_ssl_ids_written(mode).await;
         assert!(
             ids.contains("81-https") && ids.contains("81-https-local"),
             "a leftover that could not be rolled back must stay attributable so a later stop \
@@ -874,8 +921,7 @@ mod tests {
         // persisted record is no longer needed.
         settle_ssl_write_failure("82-https", "82-https-local", false, mode).await;
 
-        let manager = HostfileManager::without_helper();
-        let ids = manager.ssl_ids_written_including_persisted(mode).await;
+        let ids = persisted_ssl_ids_written(mode).await;
         assert!(
             !ids.contains("82-https") && !ids.contains("82-https-local"),
             "a verified rollback must not leave a durable record behind"
@@ -883,27 +929,23 @@ mod tests {
     }
 
     #[test]
-    fn remove_all_is_ok_when_both_sections_are_already_gone_despite_a_helper_error() {
-        let errors = vec!["helper: not available".to_owned()];
-        assert!(
-            remove_all_verified_despite(&errors, &[], &[]),
-            "the direct clear already reached both sections; a helper IPC failure alone must \
-             not fail the call"
+    fn stranded_fallback_only_stays_sticky_on_permission_denied() {
+        assert_eq!(
+            stranded_fallback_outcome(&Ok(())),
+            StrandedFallbackOutcome::Resolved
         );
-    }
-
-    #[test]
-    fn remove_all_still_fails_when_a_line_actually_survives() {
-        let errors = vec!["helper: not available".to_owned()];
-        let leftover = vec![kftray_commons::utils::hostsfile::SectionEntry {
-            ip: "127.0.0.1".parse().unwrap(),
-            hostname: "still-here.local".to_owned(),
-            owner: Some("7".to_owned()),
-        }];
-        assert!(
-            !remove_all_verified_despite(&errors, &leftover, &[]),
-            "a line still on disk must fail the call, not just an error being reported"
+        assert_eq!(
+            stranded_fallback_outcome(&Err(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied
+            ))),
+            StrandedFallbackOutcome::Sticky,
+            "a process that truly cannot write the hosts file must not be retried"
         );
-        assert!(!remove_all_verified_despite(&errors, &[], &leftover));
+        match stranded_fallback_outcome(&Err(std::io::Error::other("disk full"))) {
+            StrandedFallbackOutcome::Retryable(message) => {
+                assert!(message.contains("disk full"))
+            }
+            other => panic!("expected Retryable, got {other:?}"),
+        }
     }
 }

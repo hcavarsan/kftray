@@ -282,23 +282,36 @@ async fn start_port_forwarding(
             // The guard above only covers this process. A concurrent start
             // can also be owned by another live kftray/kftui process, whose
             // config_state row already reflects that ownership; clearing it
-            // here would wipe that process's row out from under it.
-            if let Ok(states) = port_ops.get_configs_state().await
-                && let Some(state) = states.iter().find(|s| s.config_id == config_id)
-                && state.is_running
-                && state
-                    .process_id
-                    .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
-            {
-                debug!(
-                    "Config {config_id} is owned by another live process (pid {:?}); leaving its \
-                     state as it is",
-                    state.process_id
-                );
-                return Err(error_msg);
+            // here would wipe that process's row out from under it. A row
+            // that cannot be read at all is left untouched too: a read
+            // failure says nothing about who owns the config, and clearing
+            // it on that guess could erase another process's ownership just
+            // as wrongly as skipping the check entirely would.
+            match port_ops.get_configs_state().await {
+                Ok(states) => {
+                    if let Some(state) = states.iter().find(|s| s.config_id == config_id)
+                        && state.is_running
+                        && state
+                            .process_id
+                            .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
+                    {
+                        debug!(
+                            "Config {config_id} is owned by another live process (pid {:?}); \
+                             leaving its state as it is",
+                            state.process_id
+                        );
+                        return Err(error_msg);
+                    }
+                    let config_state = ConfigState::new_without_process(config_id, false);
+                    port_ops.update_config_state(&config_state).await?;
+                }
+                Err(e) => {
+                    debug!(
+                        "Could not read config states while handling the start failure for \
+                         {config_id}: {e}; leaving its state as it is"
+                    );
+                }
             }
-            let config_state = ConfigState::new_without_process(config_id, false);
-            port_ops.update_config_state(&config_state).await?;
 
             Err(error_msg)
         }
@@ -638,6 +651,30 @@ mod tests {
             }))
             .times(1)
             .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_state_read_error_while_handling_a_start_failure_does_not_clear_the_row() {
+        // Regression: falling through the `if let Ok(states) = ...` guard on
+        // a state-read error used to reach the unconditional clear below it,
+        // marking the config stopped on a read failure that says nothing
+        // about who owns it.
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _| Err("Port forwarding failed".to_string()));
+        mock.expect_is_forward_registered()
+            .times(1)
+            .returning(|_| false);
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(|| Err("database is locked".to_string()));
+        mock.expect_update_config_state().times(0);
 
         let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_err());

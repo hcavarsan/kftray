@@ -1,20 +1,21 @@
 use kftray_commons::models::hostfile::HostEntry;
 use kftray_commons::utils::hostsfile::{
-    HostsDocument,
     SectionEntry,
     edit_hosts,
     read_hosts,
+    validate_hostname,
+    validate_owner,
 };
-use log::{
-    debug,
-    info,
-};
+use log::debug;
 use thiserror::Error;
 
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
 /// Section the application writes when it does not go through this helper.
 const KFTRAY_DIRECT_HOSTS_TAG: &str = "kftray-hosts-direct";
-
+/// A well-behaved application never asks to remove zero entries, or more
+/// than a handful at once; a payload outside that range is a mistake or an
+/// injection, never a real request.
+const MAX_REMOVAL_ENTRIES: usize = 256;
 #[derive(Error, Debug)]
 pub enum HostfileError {
     #[error("IO error: {0}")]
@@ -41,27 +42,63 @@ impl From<kftray_commons::utils::hostsfile::HostsFileError> for HostfileError {
 #[derive(Default)]
 pub struct HostfileManager;
 
-/// Whether a line stays when unmarked copies of `entries` are removed.
-///
-/// A line the helper marked is some configuration's, however similar its
-/// alias, and only an unmarked line that matches one of the given aliases can
-/// be tied to the configuration asking for the removal.
 fn survives_legacy_removal(line: &SectionEntry, entries: &[HostEntry]) -> bool {
-    line.owner.is_some()
-        || !entries
+    match &line.owner {
+        Some(_) => true,
+        None => !entries
             .iter()
-            .any(|entry| entry.ip == line.ip && entry.hostname == line.hostname)
+            .any(|entry| entry.ip == line.ip && entry.hostname == line.hostname),
+    }
 }
 
-/// Clears both hosts sections whole, matching
-/// `DirectHostfileManager::remove_all_host_entries`: a remove-all is only
-/// complete once neither the helper's own section nor the application's
-/// direct fallback section still resolves.
-fn clear_all_sections(
-    document: &mut HostsDocument,
-) -> kftray_commons::utils::hostsfile::Result<()> {
-    document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
-    document.clear_section(KFTRAY_HOSTS_TAG)
+/// Validates a list of hosts entries an unauthenticated local client asked
+/// this privileged helper to remove.
+///
+/// `allow_empty` distinguishes `RemoveUnowned`, which always names at least
+/// one alias, from `RemoveDirectOwned`'s `legacy` field, which legitimately
+/// carries nothing to prune.
+fn validate_removal_entries(entries: &[HostEntry], allow_empty: bool) -> Result<(), HostfileError> {
+    if (!allow_empty && entries.is_empty()) || entries.len() > MAX_REMOVAL_ENTRIES {
+        return Err(HostfileError::HostsFile(format!(
+            "expected {}-{MAX_REMOVAL_ENTRIES} host entries, got {}",
+            usize::from(!allow_empty),
+            entries.len()
+        )));
+    }
+    for entry in entries {
+        validate_hostname(&entry.hostname)?;
+    }
+    Ok(())
+}
+
+/// Whether `id` looks like a configuration id (`42`, `42-https`,
+/// `42-https-local`): the only ids a well-behaved application ever asks the
+/// helper to remove.
+fn looks_like_config_id(id: &str) -> bool {
+    let digits = id.split('-').next().unwrap_or_default();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    matches!(&id[digits.len()..], "" | "-https" | "-https-local")
+}
+
+/// Validates the ids a `RemoveDirectOwned` request names.
+fn validate_config_ids(ids: &[String]) -> Result<(), HostfileError> {
+    if ids.is_empty() || ids.len() > MAX_REMOVAL_ENTRIES {
+        return Err(HostfileError::HostsFile(format!(
+            "expected 1-{MAX_REMOVAL_ENTRIES} ids, got {}",
+            ids.len()
+        )));
+    }
+    for id in ids {
+        validate_owner(id)?;
+        if !looks_like_config_id(id) {
+            return Err(HostfileError::HostsFile(format!(
+                "id {id:?} does not look like a configuration id"
+            )));
+        }
+    }
+    Ok(())
 }
 
 impl HostfileManager {
@@ -105,6 +142,7 @@ impl HostfileManager {
     /// Removes unmarked lines matching `entries`, leaving every owned line and
     /// every other unmarked alias where it is.
     pub fn remove_unowned_matching(&self, entries: &[HostEntry]) -> Result<(), HostfileError> {
+        validate_removal_entries(entries, false)?;
         debug!("Removing {} unmarked legacy host entries", entries.len());
 
         edit_hosts(|document| {
@@ -120,6 +158,8 @@ impl HostfileManager {
     pub fn remove_direct_owned(
         &self, ids: &[String], legacy: &[HostEntry],
     ) -> Result<(), HostfileError> {
+        validate_config_ids(ids)?;
+        validate_removal_entries(legacy, true)?;
         debug!("Removing direct host entries for IDs {ids:?}");
 
         let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -129,18 +169,6 @@ impl HostfileManager {
                 survives_legacy_removal(line, legacy)
             })
         })?;
-        Ok(())
-    }
-
-    /// Removes both sections whole, unmarked lines included.
-    ///
-    /// The app falls back to `RemoveDirectOwned` (kftray-hosts-direct) when it
-    /// cannot write the hosts file itself, so a helper-mediated remove-all
-    /// must clear that section too, or its aliases outlive the purge.
-    pub fn remove_all_entries(&self) -> Result<(), HostfileError> {
-        info!("Removing all host entries");
-
-        edit_hosts(clear_all_sections)?;
         Ok(())
     }
 
@@ -194,35 +222,62 @@ mod tests {
     }
 
     #[test]
-    fn remove_all_entries_clears_both_sections() {
-        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
-
-        kftray_commons::utils::hostsfile::HostsFile::new(KFTRAY_HOSTS_TAG)
-            .add_owned_entry([127, 0, 0, 1].into(), "helper.local", "7")
-            .unwrap()
-            .write_to(&temp_path)
-            .unwrap();
-        kftray_commons::utils::hostsfile::HostsFile::new(KFTRAY_DIRECT_HOSTS_TAG)
-            .add_owned_entry([127, 0, 0, 1].into(), "direct.local", "9")
-            .unwrap()
-            .write_to(&temp_path)
-            .unwrap();
-
-        kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, clear_all_sections).unwrap();
-
-        let helper_left = kftray_commons::utils::hostsfile::read_hosts_at(&temp_path, |document| {
-            document.section(KFTRAY_HOSTS_TAG)
-        })
-        .unwrap();
-        let direct_left = kftray_commons::utils::hostsfile::read_hosts_at(&temp_path, |document| {
-            document.section(KFTRAY_DIRECT_HOSTS_TAG)
-        })
-        .unwrap();
-
-        assert!(helper_left.is_empty(), "kftray-hosts must be cleared too");
+    fn removal_entries_reject_an_empty_or_oversized_list() {
         assert!(
-            direct_left.is_empty(),
-            "remove-all must also clear kftray-hosts-direct, matching DirectHostfileManager"
+            validate_removal_entries(&[], false).is_err(),
+            "RemoveUnowned always names at least one alias"
         );
+        assert!(
+            validate_removal_entries(&[], true).is_ok(),
+            "RemoveDirectOwned's legacy field legitimately carries nothing to prune"
+        );
+        let oversized: Vec<HostEntry> = (0..=MAX_REMOVAL_ENTRIES)
+            .map(|i| entry(&format!("svc-{i}.local")))
+            .collect();
+        assert!(validate_removal_entries(&oversized, false).is_err());
+        assert!(validate_removal_entries(&[entry("svc.local")], false).is_ok());
+    }
+
+    #[test]
+    fn remove_unowned_matching_rejects_a_hostname_that_would_not_stay_on_its_own_line() {
+        let bad = HostEntry {
+            ip: [127, 0, 0, 1].into(),
+            hostname: "svc.local\n# injected".to_owned(),
+        };
+        assert!(
+            HostfileManager::new()
+                .remove_unowned_matching(&[bad])
+                .is_err(),
+            "a hostname carrying a newline or comment marker must never reach the write"
+        );
+    }
+
+    #[test]
+    fn config_ids_reject_a_bad_owner_or_a_shape_that_is_not_a_configuration_id() {
+        assert!(
+            validate_config_ids(&[]).is_err(),
+            "an empty id list is never legitimate"
+        );
+        assert!(
+            validate_config_ids(&["../etc/passwd".to_owned()]).is_err(),
+            "an id outside the plain-token owner alphabet must be rejected"
+        );
+        assert!(
+            validate_config_ids(&["7-bogus".to_owned()]).is_err(),
+            "a valid owner token that is not a configuration id shape must still be rejected"
+        );
+        assert!(validate_config_ids(&["7".to_owned()]).is_ok());
+        assert!(validate_config_ids(&["7-https".to_owned()]).is_ok());
+        assert!(validate_config_ids(&["7-https-local".to_owned()]).is_ok());
+        let oversized: Vec<String> = (0..=MAX_REMOVAL_ENTRIES).map(|i| i.to_string()).collect();
+        assert!(validate_config_ids(&oversized).is_err());
+    }
+
+    #[test]
+    fn remove_direct_owned_rejects_a_bad_id_before_touching_disk() {
+        let err = HostfileManager::new()
+            .remove_direct_owned(&["not-a-config-id!".to_owned()], &[])
+            .unwrap_err();
+        assert!(matches!(err, HostfileError::HostsFile(_)));
     }
 }

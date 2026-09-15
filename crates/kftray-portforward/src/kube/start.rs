@@ -170,7 +170,7 @@ async fn update_hosts_with_ssl(
         let guard = lock.lock().await;
         let claim_was_current =
             crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
-        if !claim_was_current || !CHILD_PROCESSES.contains_key(&id) {
+        if claim_was_current && !CHILD_PROCESSES.contains_key(&id) {
             warn!(
                 "Removing HTTPS hosts entries for config {id} written after it was stopped or \
                  superseded"
@@ -326,6 +326,11 @@ async fn add_host_entry_owned(
     let address = address.to_owned();
     tokio::spawn(async move {
         let _counted = counted;
+        if !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim) {
+            debug!("Config {id} was claimed by a newer attempt; skipping its deferred hosts write");
+            let _ = sender.send(Ok(()));
+            return;
+        }
         let written = tokio::task::spawn_blocking({
             let entry_id = entry_id.clone();
             move || add_host_entry(entry_id, entry)
@@ -929,16 +934,28 @@ pub(super) async fn start_config_cancellable(
             config.service.clone().unwrap_or_default(),
             config.id.unwrap_or_default()
         )),
-        (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
+        (Some("proxy"), "udp") => {
+            let owner_selector = crate::kube::proxy::proxy_owner_selector(
+                &config.id.unwrap_or_default().to_string(),
+                mode,
+            )
+            .await?;
+            TargetSelector::PodLabel(format!(
+                "app={},{owner_selector}",
+                config.service.clone().unwrap_or_default()
+            ))
+        }
+        (Some("proxy"), "tcp") => {
+            let owner_selector = crate::kube::proxy::proxy_owner_selector(
+                &config.id.unwrap_or_default().to_string(),
+                mode,
+            )
+            .await?;
+            TargetSelector::PodLabel(format!(
+                "app={},{owner_selector}",
+                config.service.clone().unwrap_or_default()
+            ))
+        }
         _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
@@ -1605,5 +1622,41 @@ mod tests {
             .await
             .unwrap();
         let _listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    }
+
+    #[test]
+    fn a_superseded_ssl_write_leaves_the_newer_attempts_lines() {
+        let id = 918_273_645;
+        // Token A: the attempt whose deferred SSL hosts write is still
+        // queued. Token B: a newer attempt that starts before A's write
+        // lands and takes over the claim, mirroring `claim_host_entries`
+        // being called again for the same id at the top of a fresh startup.
+        let stale_token = crate::kube::stop::claim_host_entries(id);
+        let current_token = crate::kube::stop::claim_host_entries(id);
+
+        // `update_hosts_with_ssl`'s deferred cleanup task takes the claim
+        // under its own token before deciding whether to remove anything.
+        let claim_was_current =
+            crate::kube::stop::take_host_entry_claim_if_current(id, stale_token);
+        assert!(
+            !claim_was_current,
+            "the newer attempt's claim must supersede the stale attempt's token"
+        );
+        // Mirrors the removal gate: only a claim that is still current, with
+        // no process registered, removes the hosts entries. A superseded
+        // claim must never remove them, regardless of `CHILD_PROCESSES`.
+        let would_remove = claim_was_current && !CHILD_PROCESSES.contains_key(&id);
+        assert!(
+            !would_remove,
+            "a superseded attempt must leave the newer attempt's HTTPS hosts lines alone"
+        );
+        // The newer attempt's own claim is untouched: taking the stale token
+        // above only clears the entry it actually matched.
+        assert!(crate::kube::stop::host_entry_claim_is_current(
+            id,
+            current_token
+        ));
+
+        crate::kube::stop::take_host_entry_claim_if_current(id, current_token);
     }
 }

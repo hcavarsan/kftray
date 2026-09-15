@@ -26,11 +26,7 @@ use tokio::sync::{
 use crate::commands::{
     config::get_configs_cmd,
     config_state::get_config_states,
-    portforward::{
-        stop_all_port_forward_cmd,
-        stop_port_forward_cmd,
-        stop_proxy_forward_cmd,
-    },
+    portforward::stop_all_port_forward_cmd,
 };
 
 fn start_error(
@@ -76,6 +72,14 @@ impl StartOutcome {
 /// SSL certificate restart path uses.
 async fn start_one(config: &Config) -> Result<(), String> {
     start_error(crate::commands::portforward::dispatch_start(config).await)
+}
+
+/// Stops one configuration through the same dispatch the stop and toggle
+/// action handlers use, regardless of its workload type.
+async fn stop_one(config: &Config) -> Result<(), String> {
+    crate::commands::portforward::dispatch_stop(config)
+        .await
+        .map(|_| ())
 }
 
 /// Starts each configuration in turn and counts what actually started: a
@@ -592,33 +596,7 @@ impl ActionHandler for StopPortForwardAction {
 
         for config in configs_to_stop {
             let config_id = config.id.unwrap_or(0);
-            let result = if config.workload_type.as_deref() == Some("expose")
-                || ((config.workload_type.as_deref() == Some("service")
-                    || config.workload_type.as_deref() == Some("pod"))
-                    && config.protocol == "tcp")
-            {
-                stop_port_forward_cmd(config_id.to_string(), self.app_handle.clone())
-                    .await
-                    .map(|_| ())
-            } else if config.workload_type.as_deref() == Some("proxy")
-                || ((config.workload_type.as_deref() == Some("service")
-                    || config.workload_type.as_deref() == Some("pod"))
-                    && config.protocol == "udp")
-            {
-                stop_proxy_forward_cmd(
-                    config_id.to_string(),
-                    &config.namespace,
-                    config.service.unwrap_or_default(),
-                    self.app_handle.clone(),
-                )
-                .await
-                .map(|_| ())
-            } else {
-                Err(format!(
-                    "Unsupported workload type: {:?}",
-                    config.workload_type
-                ))
-            };
+            let result = stop_one(&config).await;
 
             match result {
                 Ok(()) => outcome.started += 1,
@@ -773,34 +751,7 @@ impl ActionHandler for TogglePortForwardAction {
             let is_running = running_config_ids.contains(&config.id.unwrap_or(0));
 
             if is_running {
-                let result = if config.workload_type.as_deref() == Some("expose")
-                    || ((config.workload_type.as_deref() == Some("service")
-                        || config.workload_type.as_deref() == Some("pod"))
-                        && config.protocol == "tcp")
-                {
-                    stop_port_forward_cmd(
-                        config.id.unwrap_or(0).to_string(),
-                        self.app_handle.clone(),
-                    )
-                    .await
-                } else if config.workload_type.as_deref() == Some("proxy")
-                    || ((config.workload_type.as_deref() == Some("service")
-                        || config.workload_type.as_deref() == Some("pod"))
-                        && config.protocol == "udp")
-                {
-                    stop_proxy_forward_cmd(
-                        config.id.unwrap_or(0).to_string(),
-                        &config.namespace,
-                        config.service.unwrap_or_default(),
-                        self.app_handle.clone(),
-                    )
-                    .await
-                } else {
-                    Err(format!(
-                        "Unsupported workload type for stopping: {:?}",
-                        config.workload_type
-                    ))
-                };
+                let result = stop_one(&config).await;
 
                 if let Err(e) = result {
                     error!(

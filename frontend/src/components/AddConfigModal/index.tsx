@@ -466,7 +466,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     event.preventDefault()
     const configToSave = trimConfigValues(newConfig)
 
-    await handleSaveConfig(configToSave)
+    const saved = await handleSaveConfig(configToSave)
+
+    if (!saved) {
+      return
+    }
     if (!isEdit) {
       resetState()
     }

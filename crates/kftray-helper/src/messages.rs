@@ -88,7 +88,6 @@ pub enum HostCommand {
         #[serde(default)]
         legacy: Vec<HostEntry>,
     },
-    RemoveAll,
     List,
 }
 

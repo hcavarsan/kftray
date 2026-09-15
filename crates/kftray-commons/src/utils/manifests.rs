@@ -164,6 +164,58 @@ const DEFAULT_EXPOSE_DEPLOYMENT: &str = r#"{
   }
 }"#;
 
+/// Body of [`DEFAULT_EXPOSE_DEPLOYMENT`] before `terminationGracePeriodSeconds`
+/// was added. Kept so an existing install's unmodified manifest is not
+/// reported as customized, and so `db::init` can migrate it forward.
+const PREVIOUS_DEFAULT_EXPOSE_DEPLOYMENT: &str = r#"{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "{deployment_name}",
+    "namespace": "{namespace}",
+    "labels": {
+      "app": "kftray-expose",
+      "config_id": "{config_id}"
+    }
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "kftray-expose",
+        "config_id": "{config_id}"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "kftray-expose",
+          "config_id": "{config_id}"
+        }
+      },
+      "spec": {
+        "containers": [{
+          "name": "kftray-server",
+          "image": "ghcr.io/hcavarsan/kftray-server:latest",
+          "env": [
+            {"name": "PROXY_TYPE", "value": "reverse_http"},
+            {"name": "HTTP_PORT", "value": "8080"},
+            {"name": "WEBSOCKET_PORT", "value": "9999"},
+            {"name": "REMOTE_ADDRESS", "value": "localhost"},
+            {"name": "REMOTE_PORT", "value": "{local_port}"},
+            {"name": "LOCAL_PORT", "value": "{local_port}"},
+            {"name": "RUST_LOG", "value": "DEBUG"}
+          ],
+          "ports": [
+            {"containerPort": 8080, "name": "http"},
+            {"containerPort": 9999, "name": "websocket"}
+          ]
+        }]
+      }
+    }
+  }
+}"#;
+
 /// Default expose service manifest template
 /// Placeholders: {service_name}, {namespace}, {config_id}, {local_port}
 const DEFAULT_EXPOSE_SERVICE: &str = r#"{
@@ -377,6 +429,19 @@ pub fn migrate_proxy_deployment_manifest_if_previous_default() -> std::io::Resul
     std::fs::write(path, DEFAULT_PROXY_DEPLOYMENT)
 }
 
+pub fn migrate_expose_deployment_manifest_if_previous_default() -> std::io::Result<()> {
+    let path = get_expose_deployment_manifest_path().map_err(std::io::Error::other)?;
+    let Ok(previous) =
+        serde_json::from_str::<serde_json::Value>(PREVIOUS_DEFAULT_EXPOSE_DEPLOYMENT)
+    else {
+        return Ok(());
+    };
+    if !manifest_matches(&path, &previous) {
+        return Ok(());
+    }
+    std::fs::write(path, DEFAULT_EXPOSE_DEPLOYMENT)
+}
+
 fn manifest_matches(path: &std::path::Path, expected: &serde_json::Value) -> bool {
     match std::fs::read_to_string(path) {
         Ok(contents) => matches!(
@@ -480,6 +545,7 @@ mod tests {
 
     use super::*;
     use crate::utils::config_dir::{
+        get_expose_deployment_manifest_path,
         get_pod_manifest_path,
         get_proxy_deployment_manifest_path,
     };
@@ -537,6 +603,9 @@ mod tests {
         let deployment_path = get_proxy_deployment_manifest_path().unwrap();
         std::fs::write(&deployment_path, PREVIOUS_DEFAULT_PROXY_DEPLOYMENT).unwrap();
 
+        let expose_deployment_path = get_expose_deployment_manifest_path().unwrap();
+        std::fs::write(&expose_deployment_path, PREVIOUS_DEFAULT_EXPOSE_DEPLOYMENT).unwrap();
+
         assert!(
             !pod_manifest_is_customized(),
             "a Pod manifest equal to the previous default must not be reported as customized"
@@ -549,6 +618,7 @@ mod tests {
 
         migrate_pod_manifest_if_previous_default().unwrap();
         migrate_proxy_deployment_manifest_if_previous_default().unwrap();
+        migrate_expose_deployment_manifest_if_previous_default().unwrap();
 
         let migrated_pod: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&pod_path).unwrap()).unwrap();
@@ -564,6 +634,15 @@ mod tests {
             migrated_deployment,
             serde_json::from_str::<serde_json::Value>(DEFAULT_PROXY_DEPLOYMENT).unwrap(),
             "init's migration must rewrite the Deployment manifest to the current default"
+        );
+
+        let migrated_expose_deployment: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&expose_deployment_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            migrated_expose_deployment,
+            serde_json::from_str::<serde_json::Value>(DEFAULT_EXPOSE_DEPLOYMENT).unwrap(),
+            "init's migration must rewrite the expose Deployment manifest to the current default"
         );
 
         assert!(!pod_manifest_is_customized());

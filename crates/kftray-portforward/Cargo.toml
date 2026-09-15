@@ -36,7 +36,6 @@ kube = { workspace = true }
 kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }
 lazy_static = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 once_cell = { workspace = true }
 openssl = { workspace = true }
@@ -69,6 +68,7 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus-secret-service-keyring-store = { workspace = true }
 linux-keyutils-keyring-store = { workspace = true }
+libc = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7.0"

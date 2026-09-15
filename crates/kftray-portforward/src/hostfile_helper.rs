@@ -129,16 +129,6 @@ impl HostfileHelperClient {
         self.send_unit(command)
     }
 
-    pub fn remove_all_host_entries(&self) -> Result<(), HostfileHelperError> {
-        debug!("Removing all host entries via helper");
-
-        self.send_unit(kftray_helper::messages::RequestCommand::Host(
-            kftray_helper::messages::HostCommand::RemoveAll,
-        ))
-        .inspect(|_| debug!("Successfully removed all host entries"))
-        .inspect_err(|e| error!("Failed to remove all host entries via helper: {e}"))
-    }
-
     pub fn list_host_entries(&self) -> Result<Vec<(String, HostEntry)>, HostfileHelperError> {
         debug!("Listing host entries via helper");
 

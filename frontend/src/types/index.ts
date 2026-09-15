@@ -158,7 +158,7 @@ export interface CustomConfigProps {
   closeModal: () => void
   newConfig: Config
   handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  handleSaveConfig: (config: Config) => Promise<void>
+  handleSaveConfig: (config: Config) => Promise<boolean>
   handleEditSubmit: (e: React.FormEvent) => Promise<void>
   isEdit: boolean
   cancelRef: React.RefObject<HTMLElement>

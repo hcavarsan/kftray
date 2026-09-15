@@ -599,7 +599,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='duplicate'
-                onClick={() => handleDuplicateConfig(config.id)}
+                onClick={() => void handleDuplicateConfig(config.id)}
               >
                 <Box as={Copy} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>

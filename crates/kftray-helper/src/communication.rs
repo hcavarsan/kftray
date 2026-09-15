@@ -503,11 +503,21 @@ async fn handle_connection(
     let mut buffer = Vec::new();
     let mut tmp_buf = [0u8; 4096];
     let mut waited_for_first_byte = false;
+    let timeout = Duration::from_secs(30);
+    let start_time = std::time::Instant::now();
 
     // Completeness is judged by whether the buffer parses, not by the size
     // of a single read: a message can arrive in reads of any size, and a
     // large batch legitimately spans more than one.
     let request = loop {
+        if start_time.elapsed() > timeout {
+            warn!(
+                "Read operation timed out after {} seconds",
+                timeout.as_secs()
+            );
+            return respond_with_parse_error(&mut stream, &buffer);
+        }
+
         match stream.read(&mut tmp_buf) {
             Ok(0) => {
                 if buffer.is_empty() {
@@ -529,14 +539,15 @@ async fn handle_connection(
                     break req;
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                debug!("Socket would block, waiting briefly");
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                debug!("Socket read interrupted, continuing");
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            // With a socket read timeout set (SO_RCVTIMEO), a timed-out read
+            // surfaces as WouldBlock rather than TimedOut on macOS, so an idle
+            // client must fail fast the same way on both: one grace wait for a
+            // slow client's first byte, then the same fail-fast the Windows
+            // path uses.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 if buffer.is_empty() && !waited_for_first_byte {
                     waited_for_first_byte = true;
                     debug!("No data yet, waiting briefly for a slow client");
@@ -545,6 +556,9 @@ async fn handle_connection(
                 }
                 debug!("Socket read timed out, ending read loop");
                 return respond_with_parse_error(&mut stream, &buffer);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                debug!("Socket read interrupted, continuing");
             }
             Err(e) => {
                 error!("Error reading from client: {e}");
@@ -648,17 +662,18 @@ fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<()
     let request_id = parse_error_request_id(buffer);
     error!("{message}");
 
-    match serde_json::to_vec(&HelperResponse::error(request_id, message)) {
-        Ok(bytes) => {
-            if let Err(e) = stream.write_all(&bytes) {
-                warn!("Failed to write parse-error response: {e}");
-            } else if let Err(e) = stream.flush() {
-                warn!("Failed to flush parse-error response: {e}");
-            }
-        }
-        Err(e) => warn!("Failed to serialize parse-error response: {e}"),
-    }
-    Ok(())
+    let bytes = serde_json::to_vec(&HelperResponse::error(request_id, message)).map_err(|e| {
+        warn!("Failed to serialize parse-error response: {e}");
+        HelperError::Communication(format!("Failed to serialize parse-error response: {e}"))
+    })?;
+    stream.write_all(&bytes).map_err(|e| {
+        warn!("Failed to write parse-error response: {e}");
+        HelperError::Communication(format!("Failed to write parse-error response: {e}"))
+    })?;
+    stream.flush().map_err(|e| {
+        warn!("Failed to flush parse-error response: {e}");
+        HelperError::Communication(format!("Failed to flush parse-error response: {e}"))
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -926,17 +941,18 @@ async fn respond_with_parse_error(
     let request_id = parse_error_request_id(buffer);
     error!("{}", message);
 
-    match serde_json::to_vec(&HelperResponse::error(request_id, message)) {
-        Ok(bytes) => {
-            if let Err(e) = pipe.write_all(&bytes).await {
-                warn!("Failed to write parse-error response: {}", e);
-            } else if let Err(e) = pipe.flush().await {
-                warn!("Failed to flush parse-error response: {}", e);
-            }
-        }
-        Err(e) => warn!("Failed to serialize parse-error response: {}", e),
-    }
-    Ok(())
+    let bytes = serde_json::to_vec(&HelperResponse::error(request_id, message)).map_err(|e| {
+        warn!("Failed to serialize parse-error response: {}", e);
+        HelperError::Communication(format!("Failed to serialize parse-error response: {}", e))
+    })?;
+    pipe.write_all(&bytes).await.map_err(|e| {
+        warn!("Failed to write parse-error response: {}", e);
+        HelperError::Communication(format!("Failed to write parse-error response: {}", e))
+    })?;
+    pipe.flush().await.map_err(|e| {
+        warn!("Failed to flush parse-error response: {}", e);
+        HelperError::Communication(format!("Failed to flush parse-error response: {}", e))
+    })
 }
 
 async fn process_request(
@@ -1232,15 +1248,6 @@ fn handle_host_command(
                 &request_id,
                 "RemoveDirectOwned",
                 hostfile_manager.remove_direct_owned(&ids, &legacy),
-                |rid, _| HelperResponse::success(rid),
-            )
-        }
-        HostCommand::RemoveAll => {
-            debug!("Processing Host RemoveAll request");
-            reply(
-                &request_id,
-                "RemoveAll",
-                hostfile_manager.remove_all_entries(),
                 |rid, _| HelperResponse::success(rid),
             )
         }

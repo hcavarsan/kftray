@@ -16,7 +16,7 @@ use kftray_portforward::kube::{
     deploy_and_forward_pod_with_mode,
     reconcile_pending_cleanup,
     start_port_forward_with_mode as kube_start_port_forward,
-    stop_all_port_forward_with_mode,
+    stop_all_port_forward_with_mode_excluding,
     stop_port_forward_with_mode,
 };
 use log::error;
@@ -80,13 +80,20 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
     let _ = std::io::stdout().flush();
 
-    app.finish_forwarding().await;
+    let mut failed = false;
+    let (shutdown_reports, detached_stop_ids) = app.finish_forwarding().await;
     // Reported on stderr and through the exit code: the alternate screen is
     // already gone by the time this runs, so nothing drawn here would be seen.
-    let mut failed = false;
+    if !shutdown_reports.is_empty() {
+        failed = true;
+    }
+    // Ids kftui just detached are excluded: their stop is still running in
+    // the background holding the per-config recovery lock, so re-stopping
+    // them here would only contend for the same lock instead of finishing
+    // sooner.
     match tokio::time::timeout(
         crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
-        stop_all_port_forward_with_mode(mode),
+        stop_all_port_forward_with_mode_excluding(mode, &detached_stop_ids),
     )
     .await
     .unwrap_or_else(|_| Err("shutdown budget elapsed".to_owned()))
