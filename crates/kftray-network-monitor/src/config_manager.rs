@@ -90,7 +90,7 @@ impl ConfigManager {
                 Ok(responses) => {
                     report_restart_outcome(&responses, protocol, "port forwards", true)
                 }
-                Err(e) => error!("Failed to restart {protocol} port forwards: {e}"),
+                Err(e) => report_restart_failure(&e, protocol, "port forwards", true),
             }
         }
 
@@ -118,7 +118,7 @@ impl ConfigManager {
                     Ok(responses) => {
                         report_restart_outcome(&responses, protocol, "proxy port forwards", false)
                     }
-                    Err(e) => error!("Failed to restart {protocol} proxy port forwards: {e}"),
+                    Err(e) => report_restart_failure(&e, protocol, "proxy port forwards", false),
                 }
             }
         }
@@ -172,6 +172,25 @@ fn report_restart_outcome(
     }
 }
 
+/// A batch in which every configuration failed comes back as one joined
+/// error; a UDP batch whose every failure is the transient readiness wait is
+/// downgraded the same way its per-configuration responses would be.
+fn only_waiting_for_pods(error: &str, protocol: &str, downgrade_no_ready_pods: bool) -> bool {
+    downgrade_no_ready_pods
+        && protocol == "udp"
+        && error
+            .split("; ")
+            .all(|failure| failure.contains(NO_READY_PODS_ERROR))
+}
+
+fn report_restart_failure(error: &str, protocol: &str, kind: &str, downgrade_no_ready_pods: bool) {
+    if only_waiting_for_pods(error, protocol, downgrade_no_ready_pods) {
+        log::warn!("Skipped UDP {kind} with no ready pods: {error}");
+    } else {
+        error!("Failed to restart {protocol} {kind}: {error}");
+    }
+}
+
 fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
     configs
         .into_iter()
@@ -184,7 +203,9 @@ mod tests {
     use kftray_commons::models::response::CustomResponse;
 
     use super::{
+        NO_READY_PODS_ERROR,
         classify_restart_outcome,
+        only_waiting_for_pods,
         partition_configs_by_workload,
     };
 
@@ -284,6 +305,16 @@ mod tests {
 
         assert!(proxy.is_empty());
         assert_eq!(other.len(), 1);
+    }
+
+    #[test]
+    fn an_all_failed_udp_batch_waiting_for_pods_is_only_a_warning() {
+        let error = format!("{NO_READY_PODS_ERROR} 'a'; {NO_READY_PODS_ERROR} 'b'");
+        assert!(only_waiting_for_pods(&error, "udp", true));
+        assert!(!only_waiting_for_pods(&error, "udp", false));
+        assert!(!only_waiting_for_pods(&error, "tcp", true));
+        let mixed = format!("{NO_READY_PODS_ERROR} 'a'; connection refused");
+        assert!(!only_waiting_for_pods(&mixed, "udp", true));
     }
 
     #[test]
