@@ -26,6 +26,45 @@ const MAX_ALLOCATION_AGE: Duration = Duration::from_secs(3600 * 24 * 7);
 struct AddressAllocation {
     service_name: String,
     last_refreshed: SystemTime,
+    /// The pid that requested this address, from peer credentials on the
+    /// connection that allocated or last refreshed it. Absent for an
+    /// allocation a helper from before this field existed persisted.
+    #[serde(default)]
+    owner_pid: Option<u32>,
+}
+
+/// Whether `pid` names a process still running.
+///
+/// A dead recorded owner is no owner at all: the process that could have
+/// disputed a release is gone, so there is nothing left to protect.
+#[cfg(unix)]
+fn is_pid_alive(pid: u32) -> bool {
+    // Signal 0 sends nothing; it only validates the pid. `ESRCH` means the
+    // process is gone. Any other failure (`EPERM`, owned by someone else)
+    // still means it exists.
+    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(windows)]
+fn is_pid_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +88,17 @@ impl AddressPoolManager {
         };
 
         Ok(manager)
+    }
+
+    /// A manager over `storage_path` instead of the real `~/.kftray`
+    /// location, so a test's allocations never touch the machine's shared
+    /// address pool file.
+    #[cfg(test)]
+    fn for_test(storage_path: PathBuf) -> Self {
+        Self {
+            allocations: Arc::new(RwLock::new(HashMap::new())),
+            storage_path,
+        }
     }
 
     fn get_storage_path() -> Result<PathBuf, HelperError> {
@@ -94,7 +144,12 @@ impl AddressPoolManager {
         Ok(())
     }
 
-    pub async fn allocate_address(&self, service_name: &str) -> Result<String, HelperError> {
+    /// `caller_pid` becomes the recorded owner of a newly allocated address,
+    /// and is refreshed on the owner's own re-allocation of an address it
+    /// already holds.
+    pub async fn allocate_address(
+        &self, service_name: &str, caller_pid: Option<u32>,
+    ) -> Result<String, HelperError> {
         self.cleanup_stale_allocations().await?;
 
         let mut allocations = self.allocations.write().await;
@@ -108,6 +163,7 @@ impl AddressPoolManager {
             if let Some(alloc) = allocations.get(&addr).cloned() {
                 let mut updated_alloc = alloc;
                 updated_alloc.last_refreshed = SystemTime::now();
+                updated_alloc.owner_pid = caller_pid;
                 allocations.insert(addr.clone(), updated_alloc);
             }
 
@@ -122,6 +178,7 @@ impl AddressPoolManager {
         let allocation = AddressAllocation {
             service_name: service_name.to_string(),
             last_refreshed: SystemTime::now(),
+            owner_pid: caller_pid,
         };
 
         allocations.insert(address.clone(), allocation);
@@ -132,14 +189,34 @@ impl AddressPoolManager {
         Ok(address)
     }
 
-    pub async fn release_address(&self, address: &str) -> Result<(), HelperError> {
+    /// Releases `address`, refusing when a different, still-live process
+    /// owns it.
+    ///
+    /// A recorded owner that no longer differs from `caller_pid`, has none
+    /// recorded (an allocation from before ownership tracking, or one this
+    /// call itself does not know the caller for), or is no longer alive is
+    /// not a conflict: the address is released either way.
+    pub async fn release_address(
+        &self, address: &str, caller_pid: Option<u32>,
+    ) -> Result<(), HelperError> {
         let mut allocations = self.allocations.write().await;
 
-        if allocations.remove(address).is_none() {
+        let Some(allocation) = allocations.get(address) else {
             return Err(HelperError::AddressPool(format!(
                 "Address {address} is not allocated"
             )));
+        };
+
+        if let Some(owner_pid) = allocation.owner_pid
+            && Some(owner_pid) != caller_pid
+            && is_pid_alive(owner_pid)
+        {
+            return Err(HelperError::AddressPool(format!(
+                "Address {address} is owned by another live process (pid {owner_pid})"
+            )));
         }
+
+        allocations.remove(address);
 
         drop(allocations);
         self.save_allocations().await?;
@@ -188,5 +265,87 @@ impl AddressPoolManager {
         Err(HelperError::AddressPool(
             "No more addresses available in the pool".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager() -> AddressPoolManager {
+        let path = std::env::temp_dir().join(format!(
+            "kftray-address-pool-test-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        AddressPoolManager::for_test(path)
+    }
+
+    /// A pid that has already exited: spawning and waiting on a child
+    /// guarantees it is gone rather than relying on an arbitrary unused
+    /// number that might collide with something alive.
+    fn dead_pid() -> u32 {
+        let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+            .args(if cfg!(windows) {
+                &["/C", "exit 0"][..]
+            } else {
+                &[][..]
+            })
+            .spawn()
+            .expect("spawn a short-lived child process");
+        let pid = child.id();
+        child.wait().expect("wait for the child to exit");
+        pid
+    }
+
+    #[tokio::test]
+    async fn release_is_refused_when_the_recorded_owner_is_a_different_live_process() {
+        let pool = manager();
+        let owner_pid = std::process::id();
+        let address = pool
+            .allocate_address("svc-a", Some(owner_pid))
+            .await
+            .unwrap();
+
+        let err = pool
+            .release_address(&address, Some(owner_pid + 1))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("owned by another live process"),
+            "unexpected error: {err}"
+        );
+
+        // The owner itself can still release it.
+        pool.release_address(&address, Some(owner_pid))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn release_succeeds_when_the_recorded_owner_is_dead() {
+        let pool = manager();
+        let owner_pid = dead_pid();
+        let address = pool
+            .allocate_address("svc-b", Some(owner_pid))
+            .await
+            .unwrap();
+
+        pool.release_address(&address, Some(owner_pid + 1))
+            .await
+            .expect("a dead recorded owner must not block release");
+    }
+
+    #[tokio::test]
+    async fn release_succeeds_when_no_owner_was_recorded() {
+        let pool = manager();
+        let address = pool.allocate_address("svc-c", None).await.unwrap();
+
+        pool.release_address(&address, Some(std::process::id()))
+            .await
+            .expect("an allocation with no recorded owner must not block release");
     }
 }

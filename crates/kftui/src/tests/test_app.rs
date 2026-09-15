@@ -338,6 +338,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_id_less_config_is_rejected_before_the_optimistic_move() {
+        let mut app = App::new(test_logger_state());
+        let _guard = lock_forwarding_globals().await;
+        let mut config = create_test_config(1);
+        config.id = None;
+        app.stopped_configs = vec![config.clone()];
+        app.selected_row_stopped = 0;
+
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.stopped_configs,
+            vec![config],
+            "a config with no id can never be dispatched, so it must stay in its \
+             original table instead of moving to running optimistically"
+        );
+        assert!(app.running_configs.is_empty());
+        assert_eq!(
+            app.forwarding_tasks.len(),
+            0,
+            "an id-less config must never be dispatched"
+        );
+
+        let receiver = app.error_receiver.as_mut().unwrap();
+        let reported = receiver
+            .try_recv()
+            .expect("the id-less config must be reported instead of silently dropped");
+        assert!(
+            reported.contains("no id"),
+            "the report must explain why the config was rejected: {reported}"
+        );
+    }
+
     #[test]
     fn update_configs_aggregates_channel_errors_and_appends_to_an_open_popup() {
         let mut app = App::new(test_logger_state());

@@ -1011,12 +1011,14 @@ async fn create_ingress(
                 return Err(error);
             }
             // An unanswered create may or may not have landed. Check for the
-            // object this attempt would have named: if it is missing, or
-            // present but owned by someone else, the create did not happen
-            // (or happened for a different owner) and the history is stale.
-            // If it is ours, adopt it so the caller's rollback tracks it like
-            // any other resource this attempt created, instead of leaving a
-            // history record with nothing to roll back.
+            // object this attempt would have named: if it is missing, the
+            // history is unresolved and the original error stays ambiguous
+            // for a later check to retry. If it is present but owned by
+            // someone else, that is proof this attempt's create did not land
+            // for it, a definitive outcome. If it is ours, adopt it so the
+            // caller's rollback tracks it like any other resource this
+            // attempt created, instead of leaving a history record with
+            // nothing to roll back.
             match resolve_ambiguous_ingress_create(
                 &ingresses,
                 ingress_name,
@@ -1026,8 +1028,13 @@ async fn create_ingress(
             )
             .await
             {
-                Ok(Some(adopted)) => Ok(adopted),
-                Ok(None) => Err(error),
+                Ok(IngressCreateResolution::Adopted(adopted)) => Ok(adopted),
+                Ok(IngressCreateResolution::StillAmbiguous) => Err(error),
+                Ok(IngressCreateResolution::OwnedByOther) => Err(ExposeCreateError {
+                    message: error.message,
+                    ambiguous: false,
+                    rolled_back: error.rolled_back,
+                }),
                 Err(verify_error) => {
                     warn!(
                         "Failed to verify ambiguous ingress create for config \
@@ -1043,24 +1050,31 @@ async fn create_ingress(
 /// Resolves an unanswered ingress create by checking who, if anyone, owns
 /// the object it would have named.
 ///
-/// Returns the adopted resource when the object exists and carries this
-/// installation's labels, so the caller can treat the create as succeeded
-/// and track it for rollback. Returns `None` and clears the history record
-/// only when the object exists and belongs to someone else: that is proof
-/// this attempt's create did not land. A missing object is not the same
-/// proof — eventual consistency and a stale read both look identical from
-/// here — so the history stays and a later check gets another chance to
-/// resolve it.
+/// Adopted when the object exists and carries this installation's labels,
+/// so the caller can treat the create as succeeded and track it for
+/// rollback. OwnedByOther, and the history record cleared, only when the
+/// object exists and belongs to someone else: that is proof this attempt's
+/// create did not land, a definitive outcome the caller can use to settle
+/// cleanup instead of leaving it ambiguous. StillAmbiguous when the object
+/// is missing — eventual consistency and a stale read both look identical
+/// from here — so the history stays and a later check gets another chance
+/// to resolve it.
+enum IngressCreateResolution {
+    Adopted(CreatedResource),
+    OwnedByOther,
+    StillAmbiguous,
+}
+
 async fn resolve_ambiguous_ingress_create(
     ingresses: &Api<Ingress>, ingress_name: &str, config_id: &str, location: &ExposeLocation,
     mode: DatabaseMode,
-) -> Result<Option<CreatedResource>, String> {
+) -> Result<IngressCreateResolution, String> {
     let found = ingresses
         .get_opt(ingress_name)
         .await
         .map_err(|error| error.to_string())?;
     let Some(ingress) = found else {
-        return Ok(None);
+        return Ok(IngressCreateResolution::StillAmbiguous);
     };
     let owner_identity = kftray_commons::utils::config_dir::owner_identity(mode).await?;
     let owned = ingress.metadata.labels.as_ref().is_some_and(|labels| {
@@ -1072,9 +1086,9 @@ async fn resolve_ambiguous_ingress_create(
     });
     if !owned {
         forget_ingress_history(config_id, location, mode).await;
-        return Ok(None);
+        return Ok(IngressCreateResolution::OwnedByOther);
     }
-    Ok(Some(CreatedResource {
+    Ok(IngressCreateResolution::Adopted(CreatedResource {
         kind: ResourceKind::Ingress,
         name: ingress.metadata.name.clone().unwrap_or_default(),
         uid: ingress.metadata.uid,
@@ -2550,6 +2564,101 @@ mod tests {
             ingress_was_created(config_id, &location, mode).await,
             "a NotFound after an ambiguous create is not proof nothing was created (eventual \
              consistency, a stale read), so the history must stay for a later check to resolve"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_ingress_create_owned_by_another_installation_is_definitive() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        kftray_commons::utils::manifests::create_expose_ingress_manifest().unwrap();
+
+        let config_id = "3005";
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        let config = Config {
+            id: Some(3005),
+            namespace: "default".to_owned(),
+            alias: Some("myapp3.example.com".to_owned()),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::POST);
+            let unavailable = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"ServiceUnavailable","message":"etcd timeout","code":503
+            });
+            send.send_response(
+                Response::builder()
+                    .status(503)
+                    .body(Body::from(serde_json::to_vec(&unavailable).unwrap()))
+                    .unwrap(),
+            );
+
+            // The ambiguous create is resolved against the object it would
+            // have named: this one exists, but belongs to another
+            // installation's config id.
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::GET);
+            let owned_by_other = serde_json::json!({
+                "apiVersion":"networking.k8s.io/v1","kind":"Ingress",
+                "metadata":{
+                    "name":"myapp3",
+                    "uid":"other-owner-uid",
+                    "labels":{
+                        "app":"kftray-expose",
+                        "config_id":"9999",
+                        "installation_id":"someone-else"
+                    }
+                }
+            });
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(Body::from(serde_json::to_vec(&owned_by_other).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            create_ingress(
+                &client,
+                "default",
+                "myapp3",
+                "myapp3-svc",
+                &config,
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error = result.expect_err("an object owned by another installation was not adopted");
+        assert!(
+            !error.ambiguous,
+            "an object that exists and belongs to someone else is proof this attempt's create \
+             did not land for it; the guard must be able to settle instead of staying uncertain \
+             forever"
+        );
+        assert!(
+            !ingress_was_created(config_id, &location, mode).await,
+            "the history is cleared once ownership is definitively resolved against someone else"
         );
     }
 

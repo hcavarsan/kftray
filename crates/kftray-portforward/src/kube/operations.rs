@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use k8s_openapi::api::core::v1::{
     Namespace,
@@ -18,10 +21,7 @@ use super::client::error::{
     KubeClientError,
     KubeResult,
 };
-use super::client::{
-    get_kubeconfig_paths_from_option,
-    merge_kubeconfigs,
-};
+use super::client::get_kubeconfig_paths_from_option;
 use crate::kube::models::KubeContextInfo;
 
 pub type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
@@ -111,8 +111,25 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
 
     let contexts = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
         let paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-        let (merged, errors) = merge_kubeconfigs(&paths)?;
-        let contexts = list_contexts(&merged);
+        // Each readable kubeconfig contributes its own contexts directly,
+        // rather than going through a single merged `Kubeconfig`: a name
+        // collision or other merge failure in one file would otherwise drop
+        // every context from that file, not just the conflicting one.
+        let mut contexts = Vec::new();
+        let mut seen = HashSet::new();
+        let mut errors = Vec::new();
+        for path in &paths {
+            match Kubeconfig::read_from(path) {
+                Ok(parsed) => {
+                    for name in list_contexts(&parsed) {
+                        if seen.insert(name.clone()) {
+                            contexts.push(name);
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("Failed to read kubeconfig from {path:?}: {e}")),
+            }
+        }
         if contexts.is_empty() && !errors.is_empty() {
             anyhow::bail!(errors.join("\n"));
         }
@@ -320,6 +337,81 @@ mod tests {
                     .expect("kubeconfig path must have a file name")
             ),
             "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_keeps_other_files_contexts_when_one_fails_to_merge() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path_a = temp_dir.path().join("kubeconfig-a");
+        let path_b = temp_dir.path().join("kubeconfig-b");
+
+        std::fs::write(
+            &path_a,
+            "apiVersion: v1\n\
+             kind: Config\n\
+             current-context: context-a\n\
+             contexts:\n\
+             - name: context-a\n  \
+               context:\n    \
+                 cluster: cluster-a\n    \
+                 user: user-a\n\
+             clusters:\n\
+             - name: cluster-a\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: user-a\n  \
+               user: {}\n",
+        )
+        .unwrap();
+
+        // A different apiVersion makes `Kubeconfig::merge` fail with
+        // `ApiVersionMismatch` when combining this file with `path_a`; with
+        // the old whole-object merge, that error dropped every context from
+        // this file, not just the conflicting field.
+        std::fs::write(
+            &path_b,
+            "apiVersion: v1beta1\n\
+             kind: Config\n\
+             current-context: context-b\n\
+             contexts:\n\
+             - name: context-b\n  \
+               context:\n    \
+                 cluster: cluster-b\n    \
+                 user: user-b\n\
+             clusters:\n\
+             - name: cluster-b\n  \
+               cluster:\n    \
+                 server: https://127.0.0.1:1\n\
+             users:\n\
+             - name: user-b\n  \
+               user: {}\n",
+        )
+        .unwrap();
+
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        let combined = format!(
+            "{}{separator}{}",
+            path_a.to_string_lossy(),
+            path_b.to_string_lossy()
+        );
+
+        let result = list_kube_contexts(Some(combined))
+            .await
+            .expect("both files parse individually and must contribute their contexts");
+        let names: Vec<_> = result.into_iter().map(|ctx| ctx.name).collect();
+
+        assert!(
+            names.contains(&"context-a".to_string()),
+            "expected context-a in {names:?}"
+        );
+        assert!(
+            names.contains(&"context-b".to_string()),
+            "a merge failure between the two files must not hide context-b's own context: \
+             {names:?}"
         );
     }
 }

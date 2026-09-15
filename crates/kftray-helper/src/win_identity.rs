@@ -10,25 +10,39 @@
 //! (`create_secure_pipe`) and its client check (`validate_windows_peer`)
 //! trust the same identity.
 
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
+use log::warn;
 use windows::Win32::Foundation::{
     CloseHandle,
+    GetLastError,
     HANDLE,
     HLOCAL,
     LocalFree,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW,
     ConvertStringSidToSidW,
 };
 use windows::Win32::Security::{
+    DACL_SECURITY_INFORMATION,
+    GetFileSecurityW,
+    GetSecurityDescriptorOwner,
     GetTokenInformation,
+    OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR,
     PSID,
+    SECURITY_ATTRIBUTES,
+    SetFileSecurityW,
     TOKEN_QUERY,
     TOKEN_USER,
     TokenUser,
 };
+use windows::Win32::Storage::FileSystem::CreateDirectoryW;
 use windows::Win32::System::Threading::{
     GetCurrentProcess,
     OpenProcessToken,
@@ -43,6 +57,40 @@ use crate::error::HelperError;
 /// A SID is at most 68 bytes; `TokenUser` returns that SID plus one
 /// pointer-sized header, comfortably inside this buffer.
 const TOKEN_USER_BUF_LEN: usize = 256;
+
+/// Same bytes as `[u8; TOKEN_USER_BUF_LEN]`, but aligned to a pointer
+/// boundary so it can be cast to `*const TOKEN_USER`: a plain byte array
+/// only guarantees 1-byte alignment, and `TOKEN_USER`'s embedded `PSID`
+/// pointer needs pointer alignment on every architecture this helper runs
+/// on.
+#[repr(C)]
+pub(crate) struct AlignedTokenUserBuf {
+    _align: [usize; 0],
+    bytes: [u8; TOKEN_USER_BUF_LEN],
+}
+
+impl AlignedTokenUserBuf {
+    pub(crate) const LEN: usize = TOKEN_USER_BUF_LEN;
+
+    pub(crate) fn new() -> Self {
+        Self {
+            _align: [],
+            bytes: [0u8; TOKEN_USER_BUF_LEN],
+        }
+    }
+
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.bytes.as_mut_ptr()
+    }
+
+    /// The `TOKEN_USER` a prior `GetTokenInformation` call into this buffer
+    /// wrote, `Sid` included: `GetTokenInformation` appends the SID's bytes
+    /// immediately after the header in the same buffer and points `Sid` at
+    /// them, so the returned reference must not outlive `self`.
+    pub(crate) fn token_user(&self) -> &TOKEN_USER {
+        unsafe { &*self.bytes.as_ptr().cast::<TOKEN_USER>() }
+    }
+}
 
 struct OwnedHandle(HANDLE);
 
@@ -70,6 +118,21 @@ impl Drop for OwnedSid {
     }
 }
 
+/// A security descriptor allocated by
+/// `ConvertStringSecurityDescriptorToSecurityDescriptorW`, freed with
+/// `LocalFree` on drop.
+struct OwnedDescriptor(PSECURITY_DESCRIPTOR);
+
+impl Drop for OwnedDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = LocalFree(Some(HLOCAL(self.0.0)));
+            }
+        }
+    }
+}
+
 fn authorized_user_sid_path() -> PathBuf {
     let base = std::env::var_os("ProgramData")
         .map(PathBuf::from)
@@ -81,6 +144,26 @@ fn auth_err(what: &str, e: windows::core::Error) -> HelperError {
     HelperError::PlatformService(format!("Failed to {what}: {e}"))
 }
 
+fn last_error(what: &str) -> HelperError {
+    let code = unsafe { GetLastError() };
+    HelperError::PlatformService(format!("Failed to {what}: OS error {}", code.0))
+}
+
+/// The string form of a `PSID`, freeing the string `ConvertSidToStringSidW`
+/// allocates once converted.
+fn sid_to_string(sid: PSID) -> Result<String, HelperError> {
+    let mut sid_string = PWSTR::null();
+    unsafe {
+        ConvertSidToStringSidW(sid, &mut sid_string).map_err(|e| auth_err("stringify a SID", e))?;
+    }
+    let result = unsafe { sid_string.to_string() }
+        .map_err(|e| HelperError::PlatformService(format!("SID was not valid UTF-16: {e}")));
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(sid_string.as_ptr().cast())));
+    }
+    result
+}
+
 /// The SID of the account running this process, as an `S-1-...` string.
 fn current_process_user_sid_string() -> Result<String, HelperError> {
     let mut token = HANDLE::default();
@@ -90,31 +173,20 @@ fn current_process_user_sid_string() -> Result<String, HelperError> {
     }
     let token = OwnedHandle(token);
 
-    let mut buf = [0u8; TOKEN_USER_BUF_LEN];
+    let mut buf = AlignedTokenUserBuf::new();
     let mut returned = 0u32;
     unsafe {
         GetTokenInformation(
             token.0,
             TokenUser,
             Some(buf.as_mut_ptr().cast()),
-            buf.len() as u32,
+            AlignedTokenUserBuf::LEN as u32,
             &mut returned,
         )
         .map_err(|e| auth_err("read the current process token SID", e))?;
     }
-    let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
 
-    let mut sid_string = PWSTR::null();
-    unsafe {
-        ConvertSidToStringSidW(sid, &mut sid_string)
-            .map_err(|e| auth_err("stringify the current process SID", e))?;
-    }
-    let result = unsafe { sid_string.to_string() }
-        .map_err(|e| HelperError::PlatformService(format!("SID was not valid UTF-16: {e}")));
-    unsafe {
-        let _ = LocalFree(Some(HLOCAL(sid_string.as_ptr().cast())));
-    }
-    result
+    sid_to_string(buf.token_user().User.Sid)
 }
 
 /// Records the SID of the account running this process -- the installing
@@ -126,16 +198,83 @@ pub fn record_authorized_user() -> Result<(), HelperError> {
     record_authorized_user_at(&authorized_user_sid_path(), &sid)
 }
 
-fn record_authorized_user_at(path: &std::path::Path, sid: &str) -> Result<(), HelperError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            HelperError::PlatformService(format!("Failed to create {}: {e}", parent.display()))
-        })?;
-    }
-    std::fs::write(path, sid).map_err(|e| {
-        HelperError::PlatformService(format!("Failed to write {}: {e}", path.display()))
-    })
+/// Records `sid` as the authorized user, the same as `record_authorized_user`
+/// but for a SID obtained elsewhere: `validate_windows_peer`'s fallback to
+/// the active console session, used when an in-place upgrade left no SID
+/// recorded yet.
+pub(crate) fn record_authorized_user_sid(sid: PSID) -> Result<(), HelperError> {
+    let sid_string = sid_to_string(sid)?;
+    record_authorized_user_at(&authorized_user_sid_path(), &sid_string)
 }
+
+fn record_authorized_user_at(path: &Path, sid: &str) -> Result<(), HelperError> {
+    if let Some(parent) = path.parent() {
+        create_locked_down_dir(parent)?;
+    }
+    write_locked_down_file(path, sid.as_bytes())
+}
+
+/// SDDL granting full control to SYSTEM and Administrators only, and
+/// nothing to any other account: an absent DACL entry denies access under
+/// NT semantics. The leading `P` marks the DACL protected, so the object
+/// does not additionally inherit whatever ACEs its parent directory carries
+/// -- `ProgramData` grants far more than this.
+const SYSTEM_ADMIN_ONLY_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+
+fn locked_down_security_attributes() -> Result<(SECURITY_ATTRIBUTES, OwnedDescriptor), HelperError>
+{
+    let sddl = HSTRING::from(SYSTEM_ADMIN_ONLY_SDDL);
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(&sddl, 1, &mut descriptor, None)
+    }
+    .map_err(|e| auth_err("build the SYSTEM/Administrators security descriptor", e))?;
+
+    let attrs = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: false.into(),
+    };
+    Ok((attrs, OwnedDescriptor(descriptor)))
+}
+
+/// Creates `dir` scoped to SYSTEM and Administrators from the moment it
+/// exists, instead of with the ACL `CreateDirectoryW` would otherwise
+/// inherit from `ProgramData` and locking it down only afterward.
+fn create_locked_down_dir(dir: &Path) -> Result<(), HelperError> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    let (attrs, _descriptor) = locked_down_security_attributes()?;
+    let wide = HSTRING::from(dir.as_os_str());
+    unsafe { CreateDirectoryW(&wide, Some(&attrs)) }
+        .map_err(|e| auth_err(&format!("create {}", dir.display()), e))
+}
+
+/// Writes `contents` to `path`, then narrows its DACL to SYSTEM and
+/// Administrators. The file must exist before `SetFileSecurityW` can act on
+/// it, so `std::fs::write` runs first; the directory it lands in is already
+/// locked down, so the brief window before the DACL narrows still grants
+/// nothing beyond SYSTEM and Administrators.
+fn write_locked_down_file(path: &Path, contents: &[u8]) -> Result<(), HelperError> {
+    std::fs::write(path, contents).map_err(|e| {
+        HelperError::PlatformService(format!("Failed to write {}: {e}", path.display()))
+    })?;
+
+    let (_attrs, descriptor) = locked_down_security_attributes()?;
+    let wide = HSTRING::from(path.as_os_str());
+    let ok = unsafe { SetFileSecurityW(&wide, DACL_SECURITY_INFORMATION, descriptor.0) };
+    if !ok.as_bool() {
+        return Err(last_error(&format!("secure {}", path.display())));
+    }
+    Ok(())
+}
+
+/// The owner SIDs `record_authorized_user_at` is allowed to have left on the
+/// file: `LocalSystem`, and `Administrators`, which Windows assigns as the
+/// default owner for objects an elevated (UAC split-token) process creates
+/// instead of the specific signed-in account.
+const TRUSTED_OWNER_SIDS: [&str; 2] = ["S-1-5-18", "S-1-5-32-544"];
 
 /// The SID string this helper was told to trust at install, if one was
 /// recorded.
@@ -143,11 +282,67 @@ pub fn read_authorized_user_sid() -> Option<String> {
     read_authorized_user_sid_at(&authorized_user_sid_path())
 }
 
-fn read_authorized_user_sid_at(path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(path)
+fn read_authorized_user_sid_at(path: &Path) -> Option<String> {
+    let sid = std::fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty())?;
+
+    match file_owner_sid_string(path) {
+        Ok(owner) if TRUSTED_OWNER_SIDS.contains(&owner.as_str()) => Some(sid),
+        Ok(owner) => {
+            warn!(
+                "Refusing to trust {}: owned by {owner}, not SYSTEM or Administrators",
+                path.display()
+            );
+            None
+        }
+        Err(e) => {
+            warn!("Could not verify the owner of {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// The SID string of `path`'s owner, read straight from the filesystem
+/// rather than assumed from how `record_authorized_user_at` wrote it: a
+/// file dropped under `ProgramData\kftray` by some other means gains
+/// nothing unless it is actually owned by SYSTEM or Administrators.
+fn file_owner_sid_string(path: &Path) -> Result<String, HelperError> {
+    let wide = HSTRING::from(path.as_os_str());
+
+    let mut needed = 0u32;
+    unsafe {
+        let _ = GetFileSecurityW(&wide, OWNER_SECURITY_INFORMATION.0, None, 0, &mut needed);
+    }
+    if needed == 0 {
+        return Err(last_error("query the owner security descriptor size"));
+    }
+
+    let mut buf = vec![0u8; needed as usize];
+    let descriptor = PSECURITY_DESCRIPTOR(buf.as_mut_ptr().cast());
+    let mut returned = 0u32;
+    let ok = unsafe {
+        GetFileSecurityW(
+            &wide,
+            OWNER_SECURITY_INFORMATION.0,
+            Some(descriptor),
+            needed,
+            &mut returned,
+        )
+    };
+    if !ok.as_bool() {
+        return Err(last_error("read the owner security descriptor"));
+    }
+
+    let mut owner = PSID::default();
+    let mut owner_defaulted = windows::core::BOOL(0);
+    unsafe {
+        GetSecurityDescriptorOwner(descriptor, &mut owner, &mut owner_defaulted)
+            .map_err(|e| auth_err("read the security descriptor owner", e))?;
+    }
+
+    sid_to_string(owner)
 }
 
 /// The SDDL for the pipe's security descriptor: `Generic All` for SYSTEM,
@@ -223,11 +418,25 @@ mod tests {
             .join("authorized_user.sid");
 
         record_authorized_user_at(&path, "S-1-5-21-1-2-3-1001").unwrap();
-        let read_back = read_authorized_user_sid_at(&path);
+
+        // `read_authorized_user_sid_at` additionally requires the file be
+        // owned by SYSTEM or Administrators, which a non-elevated test
+        // process's own account is not: verified separately below, against
+        // `TRUSTED_OWNER_SIDS`, without depending on the account the test
+        // runner happens to use. The raw content still round-trips exactly
+        // what was written.
+        let read_back = std::fs::read_to_string(&path).unwrap();
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
 
-        assert_eq!(read_back.as_deref(), Some("S-1-5-21-1-2-3-1001"));
+        assert_eq!(read_back.trim(), "S-1-5-21-1-2-3-1001");
+    }
+
+    #[test]
+    fn only_system_and_administrators_are_trusted_owners() {
+        assert!(TRUSTED_OWNER_SIDS.contains(&"S-1-5-18"));
+        assert!(TRUSTED_OWNER_SIDS.contains(&"S-1-5-32-544"));
+        assert!(!TRUSTED_OWNER_SIDS.contains(&"S-1-5-21-1-2-3-1001"));
     }
 
     #[test]

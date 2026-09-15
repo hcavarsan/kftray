@@ -192,8 +192,8 @@ fn load_or_create_installation_id() -> Result<String, String> {
 
             return Ok(stored);
         }
-        let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-        publish_installation_id(&config_dir, &path, &generated)?;
+        let generated = uuid::Uuid::new_v4().simple().to_string();
+        publish_installation_id(&path, &generated)?;
         Ok(generated)
     })
 }
@@ -484,28 +484,43 @@ pub(crate) fn unlock(file: &fs::File, region: LockRegion) {
     }
 }
 
-/// Writes the identifier in full to a temporary file and moves it into place,
-/// so the published path is never visible empty.
-fn publish_installation_id(
-    config_dir: &std::path::Path, path: &std::path::Path, id: &str,
-) -> Result<(), String> {
+/// Writes `contents` to `path` via a temporary file in the same directory,
+/// fsyncing the file and the directory entry before returning, so a reader
+/// never observes the destination path empty or partially written.
+pub(crate) fn write_file_durably(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
-    let temporary = config_dir.join(format!("installation_id.{}.tmp", std::process::id()));
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path has no parent directory",
+        )
+    })?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    let temporary = dir.join(format!("{file_name}.{}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
-        file.write_all(id.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()?;
         durable_rename(&temporary, path)?;
-        // The rename itself has to reach disk before the identifier is used to
-        // label cluster resources: losing the directory entry would make the
-        // next launch generate a different one and stop matching them.
-        sync_directory(config_dir)
+        // The rename itself has to reach disk before a reader can observe
+        // the new contents: losing the directory entry would leave the
+        // previous file in place, or none at all.
+        sync_directory(dir)
     })();
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    written.map_err(|error| {
+    written
+}
+
+/// Writes the installation identifier in full via [`write_file_durably`], so
+/// the published path is never visible empty.
+fn publish_installation_id(path: &std::path::Path, id: &str) -> Result<(), String> {
+    write_file_durably(path, id.as_bytes()).map_err(|error| {
         format!(
             "Failed to persist the installation identifier at {}: {error}",
             path.display()
@@ -686,6 +701,21 @@ mod tests {
     }
 
     #[test]
+    fn a_memory_session_of_a_full_length_generated_installation_id_fits_under_63_chars() {
+        // What `load_or_create_installation_id` actually persists: a full
+        // 32-hex-character UUID, not a truncated prefix of one.
+        let installation = uuid::Uuid::new_v4().simple().to_string();
+        assert_eq!(installation.len(), 32);
+        let session = uuid::Uuid::new_v4().simple().to_string();
+        let owner = format!("{}-m{session}", memory_owner_base(&installation));
+        assert!(
+            owner.len() <= 63,
+            "a full-length installation id's memory owner must still fit a label value: {owner}"
+        );
+        assert!(owned_by_installation(&owner, &installation));
+    }
+
+    #[test]
     fn a_session_that_is_not_hex_is_not_recognised_even_at_the_right_length() {
         let installation = "abc123abc123".to_string();
         // Same length as a real session (32 chars), but not hex.
@@ -741,6 +771,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.path().join("installation_id")).unwrap(),
             ids[0]
+        );
+    }
+
+    #[test]
+    fn a_generated_installation_id_is_the_full_uuid_and_round_trips() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+
+        let generated = load_or_create_installation_id().expect("identifier");
+        assert_eq!(
+            generated.len(),
+            32,
+            "the full 32-hex-character uuid must be persisted, not a truncated prefix: \
+             {generated}"
+        );
+        assert!(is_valid_installation_id(&generated), "{generated}");
+
+        let reloaded = load_or_create_installation_id().expect("identifier reload");
+        assert_eq!(
+            reloaded, generated,
+            "a second load must read back the exact same identifier"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installation_id")).unwrap(),
+            generated
         );
     }
 

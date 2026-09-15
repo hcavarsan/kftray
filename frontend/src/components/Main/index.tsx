@@ -939,8 +939,10 @@ const KFTray = () => {
           // once it actually settles. Releasing the batch controller below
           // is what lets a new batch start in the meantime. A worker that
           // never settles (a truly hung invoke) would otherwise keep its row
-          // busy forever, so a grace timeout force-clears whatever is still
-          // unresolved once it elapses.
+          // looking like it is still actively starting/stopping forever, so a
+          // grace timeout instead marks whatever is still unresolved as
+          // timed out; the row stays busy/disabled and only flips once the
+          // invoke actually settles.
           const stillUnresolved = unresolved.size
 
           reportFailures()
@@ -951,23 +953,22 @@ const KFTray = () => {
           })
 
           setTimeout(() => {
-            let forcedClear = false
+            let markedTimedOut = false
 
             for (const id of unresolved) {
               const token = tokens.get(id)
+              const pending = pendingConfigActionsRef.current.get(id)
 
-              if (pendingConfigActionsRef.current.get(id)?.token === token) {
-                pendingConfigActionsRef.current.delete(id)
-                forcedClear = true
-              }
-              if (inFlightRef.current.get(id) === token) {
-                inFlightRef.current.delete(id)
+              if (pending && pending.token === token && !pending.timedOut) {
+                pendingConfigActionsRef.current.set(id, {
+                  ...pending,
+                  timedOut: true,
+                })
+                markedTimedOut = true
               }
             }
-            unresolved.clear()
-            if (forcedClear) {
+            if (markedTimedOut) {
               setPendingConfigActions(new Map(pendingConfigActionsRef.current))
-              void updateConfigsWithState()
             }
           }, DEADLINE_GRACE_MS)
 
@@ -1036,6 +1037,19 @@ const KFTray = () => {
         // dialog opening and its confirmation, and deleting only removes the
         // database row, leaving the tunnel running with no way to stop it.
         const current = await fetchConfigsWithState()
+        const currentIds = new Set(current.map(config => config.id))
+        const missing = ids.filter(id => !currentIds.has(id))
+
+        if (missing.length) {
+          toaster.error({
+            title: 'Error',
+            description: `${missing.length} selected configuration(s) could not be verified. Try again.`,
+            duration: 2000,
+          })
+          await updateConfigsWithState()
+
+          return false
+        }
         const running = current.filter(
           config => ids.includes(config.id) && config.is_running,
         )

@@ -102,9 +102,13 @@ pub async fn resolve_target_port_for_pod(
                         )
                     })?;
 
-                let pod = match pod_api.get(&pod_name).await {
-                    Ok(pod) => pod,
-                    Err(kube::Error::Api(response)) if response.code == 404 => {
+                let remaining_for_get =
+                    deadline.saturating_duration_since(tokio::time::Instant::now());
+                let pod = match tokio::time::timeout(remaining_for_get, pod_api.get(&pod_name))
+                    .await
+                {
+                    Ok(Ok(pod)) => pod,
+                    Ok(Err(kube::Error::Api(response))) if response.code == 404 => {
                         let backoff = Duration::from_millis(200)
                             .saturating_mul(attempt + 1)
                             .min(Duration::from_secs(2));
@@ -128,8 +132,15 @@ pub async fn resolve_target_port_for_pod(
                         tokio::time::sleep(backoff).await;
                         continue;
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         return Err(anyhow::anyhow!("Failed to fetch pod '{}': {}", pod_name, e));
+                    }
+                    Err(_elapsed) => {
+                        return Err(anyhow::anyhow!(
+                            "Timed out fetching pod '{}' while resolving port '{}'",
+                            pod_name,
+                            port_name
+                        ));
                     }
                 };
 
@@ -435,6 +446,89 @@ mod tests {
         assert!(
             !message.contains(NO_READY_PODS_ERROR),
             "a pod found retired must report that, not the generic no-ready-pods error: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_target_port_for_pod_bounds_the_pod_get_by_the_remaining_deadline() {
+        let pod_name = "stalled-get-pod";
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let driver = tokio::spawn({
+            let pod_name = pod_name.to_string();
+            async move {
+                let mut listed_once = false;
+                let mut held_pending = Vec::new();
+                while let Some((_request, send)) = handle.next_request().await {
+                    if !listed_once {
+                        listed_once = true;
+                        let body = serde_json::json!({
+                            "apiVersion": "v1",
+                            "kind": "PodList",
+                            "metadata": { "resourceVersion": "1" },
+                            "items": [ready_pod_json(&pod_name)],
+                        });
+                        send.send_response(
+                            Response::builder()
+                                .status(200)
+                                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                                .unwrap(),
+                        );
+                    } else {
+                        // The single-pod GET (and any reflector watch) is
+                        // left open: the API server never answers, so the
+                        // deadline is the only thing that can end the call.
+                        held_pending.push(send);
+                    }
+                }
+            }
+        });
+
+        let forwarder = kube_portforward::Forwarder::builder(
+            client.clone(),
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_string()))
+        .build()
+        .await
+        .expect("forwarder should build without contacting the apiserver");
+
+        let pod_api: Api<Pod> = Api::namespaced(client, "default");
+        let target = Target::new(
+            TargetSelector::PodLabel("app=web".to_string()),
+            "http",
+            "default",
+        );
+
+        let start = std::time::Instant::now();
+        // The outer timeout is only a safety net so a regression hangs the
+        // test with a clear failure instead of the runner's own deadline;
+        // the assertion on `elapsed` is what actually proves the pod GET
+        // was bounded by `resolve_target_port_for_pod`'s own deadline.
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolve_target_port_for_pod(&forwarder, &pod_api, &target, Duration::from_millis(200)),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        driver.abort();
+        let _ = driver.await;
+
+        let result = result.expect(
+            "resolve_target_port_for_pod must respect its own deadline instead of hanging on \
+             a stalled pod GET forever",
+        );
+        let err = result.expect_err("a pod GET that never answers must not resolve a port");
+        assert!(
+            err.to_string().contains("Timed out fetching pod"),
+            "error should explain the pod fetch timed out: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "elapsed {elapsed:?} implies the pod GET was not bounded by the remaining deadline"
         );
     }
 }

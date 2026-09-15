@@ -132,10 +132,16 @@ impl HostfileManager {
                 hostname: format!("{alias}.local"),
             },
         ) {
-            let rollback = self.remove_host_entries(&[https_id.as_str()], &[], &[]);
+            // The second write may have partially landed even though the
+            // client saw an error (a reply lost after the helper's write
+            // succeeded): both ids are rolled back, not just the first.
+            let rollback =
+                self.remove_host_entries(&[https_id.as_str(), https_local_id.as_str()], &[], &[]);
             let left_on_disk = rollback.is_err();
             if let Err(cleanup_error) = rollback {
-                warn!("Failed to roll back {https_id} after SSL write failure: {cleanup_error}");
+                warn!(
+                    "Failed to roll back {https_id}/{https_local_id} after SSL write failure: {cleanup_error}"
+                );
             }
             return Err(SslWriteError {
                 error,

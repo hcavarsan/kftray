@@ -8,7 +8,7 @@ use kftray_portforward::kube::{
     deploy_and_forward_pod_with_mode,
     reconcile_pending_cleanup,
     start_port_forward_with_mode as kube_start_port_forward,
-    stop_all_port_forward_with_mode_excluding,
+    stop_all_port_forward_with_deadline,
     stop_port_forward_with_mode,
 };
 use log::error;
@@ -78,14 +78,19 @@ pub async fn shutdown_port_forwarding(app: &mut App, mode: DatabaseMode) -> Vec<
     // Ids kftui just detached are excluded: a start or stop still running in
     // the background holds the per-config recovery lock, so re-stopping or
     // reconciling them here would only contend for the same lock instead of
-    // finishing sooner.
-    match tokio::time::timeout(
+    // finishing sooner. Each stop below runs as its own spawned task bounded
+    // by the same deadline; one still running past it keeps running detached
+    // in the background instead of being cancelled mid-cleanup, and its id
+    // comes back as unfinished instead of being silently dropped.
+    let mut unfinished_ids: HashSet<i64> = detached_ids.clone();
+    match stop_all_port_forward_with_deadline(
+        mode,
+        &detached_ids,
         crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
-        stop_all_port_forward_with_mode_excluding(mode, &detached_ids),
     )
     .await
     {
-        Ok(Ok(responses)) => {
+        Ok((responses, unfinished)) => {
             for response in responses {
                 if response.status != 0 {
                     let message = format!("Error stopping port forward: {:?}", response.stderr);
@@ -94,16 +99,20 @@ pub async fn shutdown_port_forwarding(app: &mut App, mode: DatabaseMode) -> Vec<
                     failures.push(message);
                 }
             }
+            if !unfinished.is_empty() {
+                let message = format!(
+                    "Stopping port forward(s) {unfinished:?} did not finish within the \
+                     shutdown budget; they stay marked running and are retried on the next \
+                     stop"
+                );
+                error!("{message}");
+                eprintln!("{message}");
+                failures.push(message);
+                unfinished_ids.extend(unfinished);
+            }
         }
-        Ok(Err(error)) => {
+        Err(error) => {
             let message = format!("Failed to stop port forwards: {error}");
-            error!("{message}");
-            eprintln!("{message}");
-            failures.push(message);
-        }
-        Err(_) => {
-            let message =
-                "Stopping port forwards did not finish within the shutdown budget".to_owned();
             error!("{message}");
             eprintln!("{message}");
             failures.push(message);
@@ -111,8 +120,11 @@ pub async fn shutdown_port_forwarding(app: &mut App, mode: DatabaseMode) -> Vec<
     }
 
     // A create abandoned on the way out can surface after that first pass, and
-    // the registry that tracks it lives only in this process.
-    let (still_owed, cleanup_result) = reconcile_shutdown_cleanup(mode, &detached_ids).await;
+    // the registry that tracks it lives only in this process. Ids still
+    // mid-stop above are excluded here too: they are running detached and
+    // still hold their per-config recovery lock.
+    let (still_owed, cleanup_result) = reconcile_shutdown_cleanup(mode, &unfinished_ids).await;
+
     if !still_owed.is_empty() {
         let message = format!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \

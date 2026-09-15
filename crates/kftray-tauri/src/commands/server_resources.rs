@@ -36,6 +36,12 @@ pub struct ServerResource {
     pub is_orphaned: bool,
     pub age: String,
     pub status: String,
+    /// Whether the object carries a `deletionTimestamp`. Not sent to the
+    /// frontend: only used to keep a resource still finalizing out of the
+    /// sibling check that decides whether a config's cluster obligation can
+    /// be settled.
+    #[serde(skip)]
+    pub terminating: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -217,6 +223,17 @@ fn is_ours_dependent(
     }
 }
 
+/// The `config_id` used for attribution, the stop decision and the settle
+/// decision is always the fetched object's own label, never the value the
+/// caller passed alongside the delete request: a caller-supplied id can
+/// name a different config than the object currently carries (relabeled
+/// since the caller last listed it, or simply wrong), and trusting it would
+/// let attribution, the stop and the settle decision reason about the
+/// wrong config.
+fn label_config_id(labels: &std::collections::BTreeMap<String, String>) -> Option<String> {
+    labels.get("config_id").cloned()
+}
+
 /// Whether `kind` may treat `name` as attributable to this installation on
 /// this delete screen. `kind` selects which attribution helper applies: a
 /// pod or deployment keeps its own name, while a service or ingress can be
@@ -291,6 +308,7 @@ async fn list_pods_in_namespace(
                 is_orphaned,
                 age,
                 status,
+                terminating: pod.metadata.deletion_timestamp.is_some(),
             })
         })
         .collect())
@@ -353,6 +371,7 @@ async fn list_deployments_in_namespace(
                 is_orphaned,
                 age,
                 status: format!("{}/{} replicas", available_replicas, replicas),
+                terminating: deployment.metadata.deletion_timestamp.is_some(),
             }
         })
         .collect())
@@ -418,6 +437,7 @@ async fn list_services_in_namespace(
                 is_orphaned,
                 age,
                 status: cluster_ip,
+                terminating: service.metadata.deletion_timestamp.is_some(),
             })
         })
         .collect())
@@ -488,6 +508,7 @@ async fn list_ingresses_in_namespace(
                 is_orphaned,
                 age,
                 status: hosts,
+                terminating: ingress.metadata.deletion_timestamp.is_some(),
             })
         })
         .collect())
@@ -564,7 +585,6 @@ pub async fn delete_kftray_resource(
     // with no label that cannot be attributed either way, is left alone
     // entirely: neither stopped nor deleted.
     struct DeleteScope<'a> {
-        config_id: &'a Option<String>,
         params: &'a DeleteParams,
         installation_id: &'a str,
         namespace: &'a str,
@@ -575,26 +595,38 @@ pub async fn delete_kftray_resource(
 
     /// Whether any resource carrying `config_id` and this installation's
     /// label still exists anywhere in the context, checked across every
-    /// namespace the context's configs currently use and every kind the
-    /// screen lists. A config's resources normally live in its own
-    /// namespace, but one edited to point elsewhere after creation leaves
-    /// old resources behind in the previous namespace, so every namespace
-    /// is checked rather than only the just-deleted resource's own. A
-    /// single resource just deleted by hand may be only one of several this
-    /// installation created for the same config (a proxy's relay
-    /// Deployment, Service and Pod, say), so the cluster obligation is only
-    /// settled once none of them remain.
+    /// namespace the context's configs currently use plus the just-deleted
+    /// resource's own namespace, and every kind the screen lists. A
+    /// config's resources normally live in its own namespace, but one
+    /// edited to point elsewhere after creation leaves old resources behind
+    /// in the previous namespace, so every namespace is checked rather than
+    /// only the just-deleted resource's own; that namespace is still always
+    /// included because a config whose row was itself removed, or whose
+    /// current namespace no longer matches, would otherwise never be
+    /// checked there. A single resource just deleted by hand may be only
+    /// one of several this installation created for the same config (a
+    /// proxy's relay Deployment, Service and Pod, say), so the cluster
+    /// obligation is only settled once none of them remain; a sibling still
+    /// carrying a `deletionTimestamp` is already on its way out and does
+    /// not count, or a just-deleted object stuck finalizing would block
+    /// settling indefinitely.
     async fn any_sibling_resources_remain(
-        client: &Client, context_name: &str, id: i64, installation_id: &str,
+        client: &Client, context_name: &str, just_deleted_namespace: &str, id: i64,
+        installation_id: &str,
     ) -> Result<bool, String> {
         let target = id.to_string();
         let matches = |resources: &[ServerResource]| {
-            resources
-                .iter()
-                .any(|resource| resource.config_id.as_deref() == Some(target.as_str()))
+            resources.iter().any(|resource| {
+                !resource.terminating && resource.config_id.as_deref() == Some(target.as_str())
+            })
         };
 
-        for namespace in namespaces_for_context(context_name).await {
+        let mut namespaces = namespaces_for_context(context_name).await;
+        if !namespaces.iter().any(|ns| ns == just_deleted_namespace) {
+            namespaces.push(just_deleted_namespace.to_string());
+        }
+
+        for namespace in namespaces {
             let pods = list_pods_in_namespace(client, &namespace, &[], installation_id).await?;
             if matches(&pods) {
                 return Ok(true);
@@ -645,7 +677,6 @@ pub async fn delete_kftray_resource(
         K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
     {
         let DeleteScope {
-            config_id,
             params,
             installation_id,
             namespace,
@@ -660,6 +691,7 @@ pub async fn delete_kftray_resource(
             Err(e) => return Err(format!("Failed to read {kind}: {e}")),
         };
         let labels = object.meta().labels.clone().unwrap_or_default();
+        let object_config_id = label_config_id(&labels);
         let deployment_config_ids: Vec<String> = if matches!(kind, "service" | "ingress") {
             list_deployments_in_namespace(client, namespace, &[], installation_id)
                 .await?
@@ -673,7 +705,7 @@ pub async fn delete_kftray_resource(
             kind,
             name,
             &labels,
-            config_id.as_deref(),
+            object_config_id.as_deref(),
             &deployment_config_ids,
             installation_id,
         );
@@ -700,7 +732,7 @@ pub async fn delete_kftray_resource(
             .is_some_and(|owner| owner == installation_id);
 
         if is_exact_installation_owner
-            && let Some(config_id_str) = config_id
+            && let Some(config_id_str) = object_config_id.as_ref()
             && let Ok(id) = config_id_str.parse::<i64>()
             && let Ok(config) = kftray_commons::config::get_config(id).await
         {
@@ -761,10 +793,12 @@ pub async fn delete_kftray_resource(
         // record, e.g. the obligation was already settled or never existed.
         if result.is_ok()
             && is_exact_installation_owner
-            && let Some(config_id_str) = config_id
+            && let Some(config_id_str) = object_config_id.as_ref()
             && let Ok(id) = config_id_str.parse::<i64>()
         {
-            match any_sibling_resources_remain(client, context_name, id, installation_id).await {
+            match any_sibling_resources_remain(client, context_name, namespace, id, installation_id)
+                .await
+            {
                 Ok(true) => {}
                 Ok(false) => {
                     if let Err(e) =
@@ -789,7 +823,6 @@ pub async fn delete_kftray_resource(
     }
 
     let scope = DeleteScope {
-        config_id: &config_id,
         params: &delete_params,
         installation_id,
         namespace,
@@ -1032,5 +1065,58 @@ mod tests {
                  of its name"
             );
         }
+    }
+
+    /// The `config_id` fed into attribution, stop and settle decisions must
+    /// come from the fetched object's own label, never a value supplied
+    /// alongside the request: `label_config_id` only ever reads the label
+    /// map.
+    #[test]
+    fn label_config_id_reads_only_the_objects_own_label() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("config_id".to_string(), "7".to_string());
+        assert_eq!(label_config_id(&labels), Some("7".to_string()));
+
+        let unlabeled = std::collections::BTreeMap::new();
+        assert_eq!(label_config_id(&unlabeled), None);
+    }
+
+    /// Regression for the caller-supplied `config_id` path: a value naming
+    /// no known deployment must not be attributable even though some
+    /// `config_id` was supplied, while the object's own label, read via
+    /// `label_config_id`, does attribute it. Attribution must be driven by
+    /// the label, not by whatever id happened to arrive with the request.
+    #[test]
+    fn attribution_uses_the_objects_own_config_id_label_not_a_caller_supplied_one() {
+        let labels = std::collections::BTreeMap::new();
+        let mut object_labels = std::collections::BTreeMap::new();
+        object_labels.insert("config_id".to_string(), "7".to_string());
+        let deployment_config_ids = vec!["7".to_string()];
+
+        assert!(
+            attribution_for_delete(
+                "service",
+                "renamed-subdomain",
+                &labels,
+                label_config_id(&object_labels).as_deref(),
+                &deployment_config_ids,
+                "test-installation-id",
+            ),
+            "a config_id read from the object's own label naming a known deployment must \
+             attribute it"
+        );
+
+        assert!(
+            !attribution_for_delete(
+                "service",
+                "renamed-subdomain",
+                &labels,
+                Some("99"),
+                &deployment_config_ids,
+                "test-installation-id",
+            ),
+            "a config_id naming no known deployment must not attribute the resource, even \
+             though some config_id was supplied"
+        );
     }
 }

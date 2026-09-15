@@ -31,6 +31,7 @@ export type PortForwardToggleAction = 'starting' | 'stopping'
 export interface PendingConfigAction {
   action: PortForwardAction
   token: number
+  timedOut?: boolean
 }
 
 export interface PortForwardResponse {

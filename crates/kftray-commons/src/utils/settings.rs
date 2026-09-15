@@ -5,7 +5,6 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use log::info;
-use log::warn;
 use serde::{
     Deserialize,
     Serialize,
@@ -465,7 +464,10 @@ pub async fn set_setting_with_mode(
 ///
 /// The read, increment and write happen in a single statement, so concurrent
 /// callers each observe a distinct result instead of racing a separate get
-/// and set.
+/// and set. A value that is not numeric, or that is already at `u32::MAX`,
+/// is rejected without mutating the row: incrementing past `u32::MAX` would
+/// store a value that no longer round-trips through `u32::parse`, wedging
+/// every future increment.
 pub async fn increment_setting_with_mode(
     key: &str, mode: DatabaseMode,
 ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
@@ -477,16 +479,18 @@ pub async fn increment_setting_with_mode(
          ON CONFLICT(key) DO UPDATE SET
          value = CAST(value AS INTEGER) + 1,
          updated_at = CURRENT_TIMESTAMP
-         WHERE value NOT GLOB '*[^0-9]*' AND value != ''
+         WHERE value NOT GLOB '*[^0-9]*' AND value != '' AND CAST(value AS INTEGER) < 4294967295
          RETURNING value",
     )
     .bind(key)
     .fetch_optional(&mut *conn)
     .await?;
     let Some(row) = row else {
-        return Err(
-            format!("setting {key} holds a non-numeric value and cannot be incremented").into(),
-        );
+        return Err(format!(
+            "setting {key} holds a non-numeric value, or is already at its maximum, and cannot \
+             be incremented"
+        )
+        .into());
     };
     let value: String = row.get("value");
     Ok(value.parse()?)
@@ -836,11 +840,16 @@ pub async fn establish_expose_history_baseline_at_init(
             .collect();
         let serialized =
             serde_json::to_string(&ids.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
-        if let Err(error) =
-            upsert_setting(pool, &expose_baseline_pending_ids_key(mode), &serialized).await
-        {
-            warn!("Failed to persist the expose baseline pending id allow-list: {error}");
-        }
+        // Persisting the allow-list is fatal for the snapshot path: an
+        // in-memory-only snapshot dies with this process, and a later
+        // process (or a later lazy call after this one crashes first) would
+        // find no persisted restriction and treat every row it now sees as
+        // unrestricted, wrongly marking rows inserted after this snapshot.
+        upsert_setting(pool, &expose_baseline_pending_ids_key(mode), &serialized)
+            .await
+            .map_err(|error| {
+                format!("failed to persist the expose baseline pending id allow-list: {error}")
+            })?;
         FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
     }
     // If the snapshot query itself fails, no entry is recorded for `mode`:
@@ -890,7 +899,7 @@ async fn read_pending_baseline_ids(
         return Ok(None);
     };
     let value: String = row.try_get("value")?;
-    let ids: Vec<i64> = serde_json::from_str(&value).unwrap_or_default();
+    let ids: Vec<i64> = serde_json::from_str(&value)?;
     Ok(Some(ids.into_iter().collect()))
 }
 
@@ -1385,6 +1394,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_malformed_persisted_allow_list_errors_and_leaves_the_pending_key_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let pool = context.pool.clone();
+
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        let _ = delete_setting_with_mode(
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+
+        // Not valid JSON: what a corrupted or hand-edited settings row
+        // leaves behind.
+        upsert_setting(
+            &pool,
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            "not json",
+        )
+        .await
+        .unwrap();
+
+        let result = establish_expose_history_baseline(&pool, DatabaseMode::Memory).await;
+        assert!(
+            result.is_err(),
+            "a malformed persisted allow-list must error instead of silently becoming an empty \
+             list"
+        );
+
+        let pending = get_setting_with_mode(
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            pending,
+            Some("not json".to_string()),
+            "a rejected malformed allow-list must be left in place, not cleared"
+        );
+
+        let baseline_taken = get_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            baseline_taken.is_none(),
+            "the baseline marker must not be written when the allow-list read failed"
+        );
+
+        let _ = delete_setting_with_mode(
+            &expose_baseline_pending_ids_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn test_increment_setting_with_mode_errors_on_a_non_numeric_value_memory_mode() {
         let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
 
@@ -1432,6 +1512,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second, 2);
+
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+    }
+
+    #[tokio::test]
+    async fn test_increment_setting_with_mode_rejects_an_already_maxed_counter_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let key = "maxed_counter_test:memory";
+        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        upsert_setting(&context.pool, key, &u32::MAX.to_string())
+            .await
+            .unwrap();
+
+        let result = increment_setting_with_mode(key, DatabaseMode::Memory).await;
+        assert!(
+            result.is_err(),
+            "a counter already at u32::MAX must be rejected instead of overflowing on increment"
+        );
+
+        let value = get_setting_with_mode(key, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(
+            value,
+            Some(u32::MAX.to_string()),
+            "a rejected increment must leave the maxed counter untouched"
+        );
 
         let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
     }

@@ -297,6 +297,19 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   }
 
   const getStatusInfo = () => {
+    if (pendingAction?.timedOut) {
+      return {
+        color: 'rgba(217, 119, 6, 0.7)',
+        status: 'Unresponsive',
+        description:
+          pendingAction.action === 'starting'
+            ? 'Start is taking longer than expected...'
+            : pendingAction.action === 'stopping'
+              ? 'Stop is taking longer than expected...'
+              : 'This action is taking longer than expected...',
+      }
+    }
+
     if (pendingAction?.action === 'starting') {
       return {
         color: 'rgba(59, 130, 246, 0.8)',

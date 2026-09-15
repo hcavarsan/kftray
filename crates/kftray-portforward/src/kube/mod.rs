@@ -46,6 +46,7 @@ pub use stop::{
     reconcile_pending_cleanup,
     settle_cluster_obligation,
     stop_all_port_forward,
+    stop_all_port_forward_with_deadline,
     stop_all_port_forward_with_mode,
     stop_all_port_forward_with_mode_excluding,
     stop_port_forward,

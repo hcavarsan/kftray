@@ -182,7 +182,7 @@ async fn update_hosts_with_ssl(
                 // process has already run its cleanup and will not look again.
                 Err(error) => {
                     warn!("Failed to remove HTTPS hosts entries for config {id}: {error}");
-                    crate::kube::stop::record_local_cleanup(id, snapshot);
+                    crate::kube::stop::record_local_cleanup(id, snapshot, mode).await;
                 }
             }
         }
@@ -238,7 +238,7 @@ async fn rollback_local_resources(
 
     if errors.is_empty() {
         if let Some(id) = config.id {
-            crate::kube::stop::settle_local_cleanup(id, config);
+            crate::kube::stop::settle_local_cleanup(id, config, mode).await;
         }
         // Releasing the address needed privileges that are not available
         // right now: reported once, but not by keeping this queued forever.
@@ -249,7 +249,7 @@ async fn rollback_local_resources(
         }
     } else {
         if let Some(id) = config.id {
-            crate::kube::stop::record_local_cleanup(id, config.clone());
+            crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
         }
         let mut incomplete = unsatisfiable;
         incomplete.extend(errors);
@@ -263,7 +263,7 @@ async fn rollback_startup(
     match port_forward.cleanup_resources(Some(&config), mode).await {
         crate::port_forward::CleanupOutcome::Settled(unsatisfiable) => {
             if let Some(id) = config.id {
-                crate::kube::stop::settle_local_cleanup(id, &config);
+                crate::kube::stop::settle_local_cleanup(id, &config, mode).await;
             }
             match unsatisfiable {
                 Some(note) => format!("{reason}; {note}"),
@@ -272,7 +272,7 @@ async fn rollback_startup(
         }
         crate::port_forward::CleanupOutcome::Incomplete(error) => {
             if let Some(id) = config.id {
-                crate::kube::stop::record_local_cleanup(id, config);
+                crate::kube::stop::record_local_cleanup(id, config, mode).await;
             }
             format!("{reason}; cleanup incomplete: {error}")
         }
@@ -406,7 +406,7 @@ async fn allocate_local_address_owned(
         if acquired.is_some()
             && let Some(id) = held.id
         {
-            crate::kube::stop::record_local_cleanup(id, held.clone());
+            crate::kube::stop::record_local_cleanup(id, held.clone(), mode).await;
         }
         let failed = result.is_err();
         let handed_over = match sender.send((result, owned, claim)) {
@@ -434,7 +434,7 @@ async fn allocate_local_address_owned(
             match crate::kube::stop::release_address_with_fallback(address, None, mode).await {
                 Ok(()) => {
                     if let Some(id) = held.id {
-                        crate::kube::stop::settle_local_cleanup(id, &held);
+                        crate::kube::stop::settle_local_cleanup(id, &held, mode).await;
                     }
                 }
                 Err(error) => {
@@ -613,7 +613,7 @@ async fn release_stray_alias(owned: &Config, address: &str, mode: DatabaseMode) 
         {
             let mut stray = owned.clone();
             stray.local_address = Some(address.to_owned());
-            crate::kube::stop::record_local_cleanup(id, stray);
+            crate::kube::stop::record_local_cleanup(id, stray, mode).await;
         }
     }
 }
@@ -911,8 +911,11 @@ pub(super) async fn start_config_cancellable(
     // Claimed once for the whole startup, before any hosts entry is written,
     // so a deferred cleanup task spawned by an earlier, abandoned attempt for
     // this id can tell it has been superseded rather than deleting what this
-    // attempt writes.
-    let hosts_claim = crate::kube::stop::claim_host_entries(config_id);
+    // attempt writes. Held by a guard so a return before registration (below,
+    // or from any `?` in between) still releases it instead of leaking it
+    // until the next start of this id silently overwrites it.
+    let mut hosts_claim_guard = crate::kube::stop::HostsClaimGuard::new(config_id);
+    let hosts_claim = hosts_claim_guard.token();
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);
     }
@@ -990,7 +993,7 @@ pub(super) async fn start_config_cancellable(
         // entry, and being dropped before the process is registered would
         // otherwise leave it behind with nothing tracking it.
         if let Some(id) = config.id {
-            crate::kube::stop::record_local_cleanup(id, config.clone());
+            crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
         }
         let host_entry = HostEntry {
             ip: ip_addr,
@@ -1145,11 +1148,16 @@ pub(super) async fn start_config_cancellable(
             if !ssl_write_deferred {
                 crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
             }
+            // The claim's fate is now owned by whichever of the two paths
+            // above applies, not by this guard: releasing it again here
+            // would be a no-op for the direct path, and would wrongly steal
+            // it out from under the deferred SSL write's own cleanup.
+            hosts_claim_guard.disarm();
             // The process now owns the local resources, so the record taken
             // when the address was allocated is no longer needed. Only the
             // local obligation goes: a cluster obligation left by an earlier
             // attempt on another server is not settled by this start.
-            crate::kube::stop::settle_local_cleanup(config_id, &config);
+            crate::kube::stop::settle_local_cleanup(config_id, &config, mode).await;
             let timeout_callback = create_static_timeout_callback(mode);
 
             if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
@@ -1353,6 +1361,18 @@ pub async fn start_port_forward_with_mode(
             .into_iter()
             .map(|(config, error)| start_failure_response(&config, error)),
     );
+    finish_start_batch(responses)
+}
+
+/// A mixed batch keeps its per-config responses (including the dynamically
+/// assigned local ports of the configs that did start): a batch-level `Err`
+/// would discard those. Only a batch where every config failed is reported
+/// as `Err`.
+fn finish_start_batch(responses: Vec<CustomResponse>) -> Result<Vec<CustomResponse>, String> {
+    if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
+        let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
+        return Err(errors.join("; "));
+    }
     Ok(responses)
 }
 
@@ -1438,20 +1458,15 @@ mod tests {
         let config = insert_fixture(setup_test_config()).await;
         let id = config.id.unwrap();
 
-        let responses =
+        // The batch has a single config and it fails, so the batch is
+        // all-failed: it is reported as `Err` instead of `Ok` with a single
+        // failed response (finding 29).
+        let error =
             start_port_forward_with_mode(vec![config], "invalid", DatabaseMode::Memory, false)
                 .await
-                .unwrap();
+                .unwrap_err();
 
-        assert_eq!(responses.len(), 1);
-        assert_ne!(responses[0].status, 0);
-        assert!(
-            responses[0]
-                .stderr
-                .contains("Unsupported protocol: invalid"),
-            "{}",
-            responses[0].stderr
-        );
+        assert!(error.contains("Unsupported protocol: invalid"), "{error}");
         assert!(!CHILD_PROCESSES.contains_key(&id));
     }
 
@@ -1462,28 +1477,25 @@ mod tests {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let healthy = insert_fixture(setup_config_with_domain()).await;
         let broken = insert_fixture(setup_config_with_invalid_ip()).await;
-        let expected = {
-            let mut ids = vec![healthy.id.unwrap(), broken.id.unwrap()];
-            ids.sort_unstable();
-            ids
-        };
 
-        let responses =
+        // Both configs fail in this test environment (no reachable
+        // cluster), so the batch is all-failed and reported as `Err`; each
+        // sibling's message still appears in it, joined rather than
+        // dropped (finding 29).
+        let error =
             start_port_forward_with_mode(vec![healthy, broken], "tcp", DatabaseMode::Memory, false)
                 .await
-                .unwrap();
+                .unwrap_err();
 
-        assert_eq!(responses.len(), 2);
-        for response in &responses {
-            assert_ne!(response.status, 0);
-            assert!(!response.stderr.is_empty());
-        }
-        let mut ids: Vec<_> = responses
-            .iter()
-            .filter_map(|response| response.id)
-            .collect();
-        ids.sort_unstable();
-        assert_eq!(ids, expected);
+        assert!(
+            error.contains("Invalid IP address"),
+            "the broken sibling's failure must be present: {error}"
+        );
+        assert!(
+            error.contains("; "),
+            "the healthy sibling's failure must still be present, not dropped in favor of the \
+             other: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1544,7 +1556,7 @@ mod tests {
 
         // Holding the registration models the queued tail of a larger batch:
         // stop-all can see and cancel it, and a second start cannot slip past.
-        let responses = start_port_forward_with_mode(
+        let error = start_port_forward_with_mode(
             vec![Config {
                 id: Some(id),
                 ..setup_config_with_invalid_ip()
@@ -1554,14 +1566,9 @@ mod tests {
             false,
         )
         .await
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(responses.len(), 1);
-        assert!(
-            responses[0].stderr.contains("already in progress"),
-            "{}",
-            responses[0].stderr
-        );
+        assert!(error.contains("already in progress"), "{error}");
         assert!(!CHILD_PROCESSES.contains_key(&id));
 
         drop(queued);
@@ -1604,13 +1611,10 @@ mod tests {
             kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_string()),
             ..setup_test_config()
         };
-        let responses =
-            start_port_forward_with_mode(vec![config], "tcp", DatabaseMode::Memory, false)
-                .await
-                .unwrap();
-        assert_eq!(responses.len(), 1);
-        assert_ne!(responses[0].status, 0);
-        assert!(responses[0].stderr.contains("already running"));
+        let error = start_port_forward_with_mode(vec![config], "tcp", DatabaseMode::Memory, false)
+            .await
+            .unwrap_err();
+        assert!(error.contains("already running"));
         assert!(tokio::net::TcpListener::bind(address).await.is_err());
         super::super::stop::stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
             .await
@@ -1681,5 +1685,88 @@ mod tests {
              registered: the lines this write landed have nobody left to own them and must \
              come out"
         );
+    }
+
+    #[tokio::test]
+    async fn a_hosts_claim_is_released_by_an_early_return_before_registration() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_160;
+        let config = Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        };
+
+        let result =
+            start_config_cancellable(config, "tcp", DatabaseMode::Memory, false, None, None).await;
+
+        assert!(
+            result.is_err(),
+            "an invalid loopback address must fail before registration"
+        );
+        assert!(
+            !crate::kube::stop::host_entry_has_any_claim(id),
+            "the hosts claim taken at the top of the startup must be released by the RAII \
+             guard on this early return, not left for the next start of this id to silently \
+             overwrite"
+        );
+    }
+
+    #[test]
+    fn finish_start_batch_errors_when_every_config_failed() {
+        let responses = vec![
+            start_failure_response(
+                &Config {
+                    id: Some(1),
+                    ..setup_test_config()
+                },
+                "boom-1".to_string(),
+            ),
+            start_failure_response(
+                &Config {
+                    id: Some(2),
+                    ..setup_test_config()
+                },
+                "boom-2".to_string(),
+            ),
+        ];
+
+        let error = finish_start_batch(responses).unwrap_err();
+        assert!(error.contains("boom-1"));
+        assert!(error.contains("boom-2"));
+    }
+
+    #[test]
+    fn finish_start_batch_stays_ok_for_a_mixed_batch() {
+        let succeeded = CustomResponse {
+            id: Some(1),
+            service: String::new(),
+            namespace: String::new(),
+            local_port: 8080,
+            remote_port: 80,
+            context: String::new(),
+            protocol: "tcp".to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
+            status: 0,
+        };
+        let failed = start_failure_response(
+            &Config {
+                id: Some(2),
+                ..setup_test_config()
+            },
+            "boom".to_string(),
+        );
+
+        let responses = finish_start_batch(vec![succeeded, failed]).unwrap();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].id, Some(1));
+        assert_eq!(responses[0].status, 0);
+        assert_eq!(responses[1].id, Some(2));
+        assert_ne!(responses[1].status, 0);
+    }
+
+    #[test]
+    fn finish_start_batch_stays_ok_for_an_empty_batch() {
+        assert!(finish_start_batch(Vec::new()).unwrap().is_empty());
     }
 }

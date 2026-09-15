@@ -248,17 +248,29 @@ impl PortForwardRunner {
         let dispatched_ids: HashSet<i64> = configs.iter().filter_map(|config| config.id).collect();
 
         let tasks = stream::iter(dispatched_ids.iter().copied())
-            .map(|config_id| async move {
-                let result = Self::stop_single_port_forward(config_id, mode)
-                    .await
-                    .map_err(|error| format!("Config {config_id}: {error}"));
-                (config_id, result)
+            .map(|config_id| {
+                let handle = tokio::spawn(async move {
+                    Self::stop_single_port_forward(config_id, mode)
+                        .await
+                        .map_err(|error| format!("Config {config_id}: {error}"))
+                });
+                async move {
+                    let result = match handle.await {
+                        Ok(result) => result,
+                        Err(join_error) => Err(format!(
+                            "Config {config_id}: stop task panicked: {join_error}"
+                        )),
+                    };
+                    (config_id, result)
+                }
             })
             .buffer_unordered(16);
 
         // Bounded like the reconciliation pass below: a stuck stop must not
-        // keep this process alive forever, so anything still in flight past
-        // the budget is left running for the next stop-all to retry.
+        // keep this process alive forever. Each stop above runs as its own
+        // spawned task, so past the budget it keeps running to completion
+        // detached in the background instead of being cancelled mid-cleanup;
+        // only the future joining it here is dropped.
         let (results, completed_ids, drained_ok) =
             Self::drain_stop_tasks(tasks, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;
 
@@ -284,8 +296,10 @@ impl PortForwardRunner {
             failures.extend(stop_errors);
         }
 
+        let unfinished_stop_ids: HashSet<i64> =
+            dispatched_ids.difference(&completed_ids).copied().collect();
         if !drained_ok {
-            let still_owed: Vec<i64> = dispatched_ids.difference(&completed_ids).copied().collect();
+            let still_owed: Vec<i64> = unfinished_stop_ids.iter().copied().collect();
             let message = format!(
                 "stop for configuration(s) {still_owed:?} did not finish within the shutdown \
                  budget; they stay marked running and are retried on the next stop"
@@ -297,9 +311,12 @@ impl PortForwardRunner {
         // The cleanup registry lives only in this process, so anything a failed
         // stop left outstanding has to be retried before it exits. Both
         // interactive exits do this; without it a transient delete failure on
-        // Ctrl+C leaks a relay Deployment with nothing left to remove it.
+        // Ctrl+C leaks a relay Deployment with nothing left to remove it. Ids
+        // still mid-stop above are excluded here too: they are still running
+        // detached and hold their per-config recovery lock, so reconciling or
+        // re-stopping them here would only contend for it.
         let (still_owed, cleanup_result) =
-            crate::core::port_forward::reconcile_shutdown_cleanup(mode, &HashSet::new()).await;
+            crate::core::port_forward::reconcile_shutdown_cleanup(mode, &unfinished_stop_ids).await;
         if !still_owed.is_empty() {
             let message = format!(
                 "cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
@@ -332,10 +349,16 @@ impl PortForwardRunner {
 
     /// Drains `tasks` under `deadline` and returns before doing anything
     /// else. `tasks` is owned by this function, so if `deadline` elapses
-    /// while stops are still buffered inside it, they are dropped the
-    /// moment this function returns rather than staying alive (holding
-    /// whatever they hold, e.g. a per-config recovery lock) through the
-    /// caller's own later, unrelated cleanup.
+    /// while items are still buffered inside it, dropping it here only drops
+    /// whatever future is joining each item, not the underlying work: the
+    /// caller (`stop_all_port_forwards`) wraps each stop in `tokio::spawn`
+    /// before handing it to this function, so a stop still in flight past
+    /// the deadline keeps running to completion detached in the background
+    /// instead of being cancelled mid-cleanup (which could leave a relay or
+    /// an address claim half released). The caller learns which ids never
+    /// reported back (`dispatched_ids.difference(&completed_ids)`) and
+    /// excludes them from cleanup work that would otherwise contend for
+    /// their per-config recovery lock.
     pub(crate) async fn drain_stop_tasks<S>(
         mut tasks: S, deadline: std::time::Duration,
     ) -> (Vec<(i64, Result<(), String>)>, HashSet<i64>, bool)

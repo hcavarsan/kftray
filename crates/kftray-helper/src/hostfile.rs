@@ -179,6 +179,19 @@ impl HostfileManager {
         Ok(())
     }
 
+    /// Clears both sections this helper writes, whoever wrote each line.
+    ///
+    /// Kept for a client of another version still sending `RemoveAll`.
+    pub fn remove_all_entries(&self) -> Result<(), HostfileError> {
+        debug!("Removing all host entries from both kftray sections");
+        edit_hosts(|document| {
+            document.clear_section(KFTRAY_HOSTS_TAG)?;
+            document.clear_section(KFTRAY_DIRECT_HOSTS_TAG)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Every owned alias in this helper's section.
     pub fn list_entries(&self) -> Result<Vec<(String, HostEntry)>, HostfileError> {
         Ok(read_hosts(|document| document.section(KFTRAY_HOSTS_TAG))?

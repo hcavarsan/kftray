@@ -435,14 +435,14 @@ async fn start_unix_socket_server(
                     let network_manager = Arc::clone(&network_manager);
                     let hostfile_manager = Arc::clone(&hostfile_manager);
 
-                    task::spawn(async move {
-                        if let Err(e) = handle_connection(
-                            stream,
-                            pool_manager,
-                            network_manager,
-                            hostfile_manager,
-                        )
-                        .await
+                    task::spawn_blocking(move || {
+                        if let Err(e) =
+                            tokio::runtime::Handle::current().block_on(handle_connection(
+                                stream,
+                                pool_manager,
+                                network_manager,
+                                hostfile_manager,
+                            ))
                         {
                             error!("Error handling connection: {e}");
                         }
@@ -497,13 +497,16 @@ async fn handle_connection(
     })?;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        if let Err(e) = validate_peer_credentials(&stream) {
+    let caller_pid = match validate_peer_credentials(&stream) {
+        Ok(pid) => {
+            debug!("Peer credentials validated successfully");
+            pid
+        }
+        Err(e) => {
             error!("Peer credential validation failed: {e}");
             return Err(e);
         }
-        debug!("Peer credentials validated successfully");
-    }
+    };
 
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -527,8 +530,14 @@ async fn handle_connection(
     debug!("Request validation passed");
 
     debug!("Processing request...");
-    let response =
-        process_request(request, pool_manager, network_manager, hostfile_manager).await?;
+    let response = process_request(
+        request,
+        pool_manager,
+        network_manager,
+        hostfile_manager,
+        caller_pid,
+    )
+    .await?;
     debug!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
@@ -828,7 +837,7 @@ fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error
 /// Verifies the named pipe's client process runs as the account this
 /// installation trusts (`crate::win_identity::record_authorized_user`), the
 /// Windows analogue of the `SO_PEERCRED`/`LOCAL_PEERCRED` UID check
-/// `validate_peer_credentials` does on Unix.
+/// `validate_peer_credentials` does on Unix, and returns that client's pid.
 ///
 /// This helper normally runs as `LocalSystem`, so there is no "current
 /// process UID" to compare the peer against the way the Unix non-root
@@ -837,8 +846,14 @@ fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error
 /// user switching, and can trust the wrong account when no one is on the
 /// console at all; the account recorded at install avoids depending on
 /// which session happens to be active.
+///
+/// An in-place upgrade from before the SID was recorded leaves no file to
+/// read: falling back to the active console session, as this helper always
+/// did before, keeps that installation usable instead of rejecting every
+/// client, and records the accepted client's SID once so the next
+/// connection uses the strict path.
 #[cfg(target_os = "windows")]
-fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
+fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<u32, HelperError> {
     use std::os::windows::io::AsRawHandle;
 
     use windows::Win32::Foundation::{
@@ -849,19 +864,20 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         EqualSid,
         GetTokenInformation,
         TOKEN_QUERY,
-        TOKEN_USER,
         TokenUser,
     };
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::RemoteDesktop::{
+        WTSGetActiveConsoleSessionId,
+        WTSQueryUserToken,
+    };
     use windows::Win32::System::Threading::{
         OpenProcess,
         OpenProcessToken,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
-    /// A SID is at most 68 bytes; `TokenUser` returns that SID plus one
-    /// pointer-sized header, comfortably inside this buffer.
-    const TOKEN_USER_BUF_LEN: usize = 256;
+    use crate::win_identity::AlignedTokenUserBuf;
 
     struct OwnedHandle(HANDLE);
     impl Drop for OwnedHandle {
@@ -882,15 +898,15 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         Ok(OwnedHandle(token))
     }
 
-    fn token_user_sid(token: &OwnedHandle) -> windows::core::Result<[u8; TOKEN_USER_BUF_LEN]> {
-        let mut buf = [0u8; TOKEN_USER_BUF_LEN];
+    fn token_user_sid(token: &OwnedHandle) -> windows::core::Result<AlignedTokenUserBuf> {
+        let mut buf = AlignedTokenUserBuf::new();
         let mut returned = 0u32;
         unsafe {
             GetTokenInformation(
                 token.0,
                 TokenUser,
                 Some(buf.as_mut_ptr().cast()),
-                buf.len() as u32,
+                AlignedTokenUserBuf::LEN as u32,
                 &mut returned,
             )?;
         }
@@ -900,14 +916,6 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
     let auth_err = |what: &str, e: windows::core::Error| {
         HelperError::Authentication(format!("Failed to {what}: {e}"))
     };
-
-    let authorized_sid_string =
-        crate::win_identity::read_authorized_user_sid().ok_or_else(|| {
-            HelperError::Authentication(
-                "No authorized user recorded for this helper installation".to_owned(),
-            )
-        })?;
-    let authorized_sid = crate::win_identity::parse_sid(&authorized_sid_string)?;
 
     let pipe_handle = HANDLE(pipe.as_raw_handle());
     let mut client_pid = 0u32;
@@ -922,11 +930,45 @@ fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
         open_token(client_process.0).map_err(|e| auth_err("open client process token", e))?;
     let client_sid_buf =
         token_user_sid(&client_token).map_err(|e| auth_err("read client token SID", e))?;
-    let client_sid = unsafe { (*client_sid_buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    let client_sid = client_sid_buf.token_user().User.Sid;
 
-    unsafe { EqualSid(client_sid, authorized_sid.0) }.map_err(|_| {
-        HelperError::Authentication("Named pipe client is not the authorized user".to_owned())
-    })
+    match crate::win_identity::read_authorized_user_sid() {
+        Some(authorized_sid_string) => {
+            let authorized_sid = crate::win_identity::parse_sid(&authorized_sid_string)?;
+            unsafe { EqualSid(client_sid, authorized_sid.0) }.map_err(|_| {
+                HelperError::Authentication(
+                    "Named pipe client is not the authorized user".to_owned(),
+                )
+            })?;
+        }
+        None => {
+            warn!(
+                "No authorized user recorded for this helper installation (expected after an \
+                 in-place upgrade); falling back to the active console session"
+            );
+
+            let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+            let mut session_token = HANDLE::default();
+            unsafe { WTSQueryUserToken(session_id, &mut session_token) }
+                .map_err(|e| auth_err("query the active console session", e))?;
+            let session_token = OwnedHandle(session_token);
+            let session_sid_buf = token_user_sid(&session_token)
+                .map_err(|e| auth_err("read session token SID", e))?;
+            let session_sid = session_sid_buf.token_user().User.Sid;
+
+            unsafe { EqualSid(client_sid, session_sid) }.map_err(|_| {
+                HelperError::Authentication(
+                    "Named pipe client is not the active console user".to_owned(),
+                )
+            })?;
+
+            if let Err(e) = crate::win_identity::record_authorized_user_sid(session_sid) {
+                warn!("Could not record the authorized user for future connections: {e}");
+            }
+        }
+    }
+
+    Ok(client_pid)
 }
 
 #[cfg(target_os = "windows")]
@@ -1019,11 +1061,16 @@ async fn handle_windows_connection(
 
     info!("New connection received on Windows named pipe");
 
-    if let Err(e) = validate_windows_peer(&pipe) {
-        error!("Peer identity validation failed: {e}");
-        return Err(e);
-    }
-    debug!("Peer identity validated successfully");
+    let caller_pid = match validate_windows_peer(&pipe) {
+        Ok(pid) => {
+            debug!("Peer identity validated successfully");
+            pid
+        }
+        Err(e) => {
+            error!("Peer identity validation failed: {e}");
+            return Err(e);
+        }
+    };
 
     let request = match read_request(&mut pipe).await? {
         Some(request) => request,
@@ -1037,8 +1084,14 @@ async fn handle_windows_connection(
     debug!("Request validation passed");
 
     debug!("Processing request...");
-    let response =
-        process_request(request, pool_manager, network_manager, hostfile_manager).await?;
+    let response = process_request(
+        request,
+        pool_manager,
+        network_manager,
+        hostfile_manager,
+        caller_pid,
+    )
+    .await?;
     debug!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
@@ -1267,6 +1320,7 @@ async fn respond_with_parse_error(
 async fn process_request(
     request: HelperRequest, pool_manager: Arc<AddressPoolManager>,
     network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
+    caller_pid: u32,
 ) -> Result<HelperResponse, HelperError> {
     let request_id = request.request_id.clone();
 
@@ -1350,7 +1404,10 @@ async fn process_request(
         RequestCommand::Address(cmd) => match cmd {
             AddressCommand::Allocate { service_name } => {
                 debug!("Processing Allocate request for service: {service_name}");
-                match pool_manager.allocate_address(&service_name).await {
+                match pool_manager
+                    .allocate_address(&service_name, Some(caller_pid))
+                    .await
+                {
                     Ok(address) => {
                         info!(
                             "Address pool allocation successful for service {service_name}: {address}"
@@ -1367,8 +1424,9 @@ async fn process_request(
                                 error!(
                                     "Network interface addition failed for address {address}: {e}"
                                 );
-                                if let Err(release_err) =
-                                    pool_manager.release_address(&address).await
+                                if let Err(release_err) = pool_manager
+                                    .release_address(&address, Some(caller_pid))
+                                    .await
                                 {
                                     warn!(
                                         "Failed to release address from pool after network error: {release_err}"
@@ -1394,11 +1452,20 @@ async fn process_request(
             AddressCommand::Release { address } => {
                 debug!("Processing Release request for address: {address}");
 
-                let pool_result = pool_manager.release_address(&address).await;
-                match pool_result {
-                    Ok(_) => info!("Address pool release successful for address: {address}"),
-                    Err(e) => error!("Address pool release failed for address {address}: {e}"),
+                // A pool failure (an ownership conflict, or the address
+                // being unknown) is returned to the caller rather than only
+                // logged: `Ok` here previously meant only "the network
+                // interface came off", so a refused release was
+                // indistinguishable from a successful one and the alias
+                // this address backs was torn down anyway.
+                if let Err(e) = pool_manager
+                    .release_address(&address, Some(caller_pid))
+                    .await
+                {
+                    error!("Address pool release failed for address {address}: {e}");
+                    return Ok(HelperResponse::error(request_id, format!("Error: {e}")));
                 }
+                info!("Address pool release successful for address: {address}");
 
                 let network_result = network_manager.remove_loopback_address(&address).await;
                 match network_result {
@@ -1557,6 +1624,15 @@ fn handle_host_command(
                 &request_id,
                 "RemoveDirectOwned",
                 hostfile_manager.remove_direct_owned(&ids, &legacy),
+                |rid, _| HelperResponse::success(rid),
+            )
+        }
+        HostCommand::RemoveAll => {
+            debug!("Processing Host RemoveAll request");
+            reply(
+                &request_id,
+                "RemoveAll",
+                hostfile_manager.remove_all_entries(),
                 |rid, _| HelperResponse::success(rid),
             )
         }

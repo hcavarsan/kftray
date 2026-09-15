@@ -89,6 +89,14 @@ pub enum HostCommand {
         legacy: Vec<HostEntry>,
     },
     List,
+    /// Clears both hosts sections this helper writes, whoever wrote each
+    /// line.
+    ///
+    /// Kept for a client of another version still sending it: the current
+    /// client uses `RemoveDirectOwned` and `RemoveUnowned` instead, but an
+    /// installed helper of this version must still answer an older one
+    /// rather than reject it as unrecognized.
+    RemoveAll,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

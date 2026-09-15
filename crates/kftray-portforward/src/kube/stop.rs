@@ -25,6 +25,7 @@ use kftray_commons::{
         config::read_configs_with_mode,
         config_state::{
             get_configs_state_with_mode,
+            running_snapshot,
             update_config_state_with_mode,
         },
         db_mode::DatabaseMode,
@@ -397,6 +398,68 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
             destination,
         );
     }
+    restore_local_cleanup_targets(mode).await;
+}
+
+/// Key prefix under which a local cleanup obligation (a loopback alias, hosts
+/// entries, or both) is persisted, the same way an uncertain cluster create
+/// is, so a restart still finds resources this process never got to release.
+const LOCAL_CLEANUP_PREFIX: &str = "local_cleanup:";
+
+/// One key per id, not per resource digest like a cluster target: a
+/// configuration only ever holds one loopback alias and one set of hosts
+/// entries at a time, so the latest local obligation recorded for an id is
+/// the only one worth surviving a restart.
+fn local_cleanup_key(id: i64, mode: DatabaseMode) -> String {
+    let scope = match mode {
+        DatabaseMode::File => "file",
+        DatabaseMode::Memory => "memory",
+    };
+    format!("{LOCAL_CLEANUP_PREFIX}{scope}:{id}")
+}
+
+/// Reloads local cleanup obligations persisted by an earlier run into the
+/// cleanup registry, the same way [`restore_uncertain_targets`] does for
+/// cluster ones.
+async fn restore_local_cleanup_targets(mode: DatabaseMode) {
+    let stored = match kftray_commons::utils::settings::get_settings_with_prefix_and_mode(
+        LOCAL_CLEANUP_PREFIX,
+        mode,
+    )
+    .await
+    {
+        Ok(stored) => stored,
+        Err(error) => {
+            warn!("Failed to read unsettled local cleanup obligations: {error}");
+            return;
+        }
+    };
+    let scope = match mode {
+        DatabaseMode::File => "file:",
+        DatabaseMode::Memory => "memory:",
+    };
+    for (key, value) in stored {
+        let Some(id) = key
+            .strip_prefix(LOCAL_CLEANUP_PREFIX)
+            .and_then(|rest| rest.strip_prefix(scope))
+            .and_then(|id| id.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let Ok(config) = serde_json::from_str::<Config>(&value) else {
+            continue;
+        };
+        // Already tracked, e.g. by an allocation still in flight in this same
+        // process: restoring again would only duplicate the entry.
+        if PENDING_CLEANUP.get(&id).is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.local && entry.is_exactly(&config, None))
+        }) {
+            continue;
+        }
+        record_target(id, config, None, false, true, None);
+    }
 }
 
 /// The process id another live kftray process recorded for this row, when
@@ -474,16 +537,35 @@ pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
 /// Records local resources a startup holds: a loopback alias or hosts entries
 /// that exist before, or without, anything in the cluster. Nothing here says
 /// where in the cluster anything is, so the record carries no destination and
-/// no cluster obligation.
-pub(crate) fn record_local_cleanup(id: i64, config: Config) {
-    record_target(id, config, None, false, true, None);
+/// no cluster obligation. Persisted the same way an uncertain cluster create
+/// is, so a restart still finds the address and hosts entries this process
+/// never got to release.
+pub(crate) async fn record_local_cleanup(id: i64, config: Config, mode: DatabaseMode) {
+    record_target(id, config.clone(), None, false, true, None);
+    match serde_json::to_string(&config) {
+        Ok(serialized) => {
+            if let Err(error) = kftray_commons::utils::settings::set_setting_with_mode(
+                &local_cleanup_key(id, mode),
+                &serialized,
+                mode,
+            )
+            .await
+            {
+                warn!("Failed to persist a local cleanup obligation for config {id}: {error}");
+            }
+        }
+        Err(error) => {
+            warn!("Failed to describe a local cleanup obligation for config {id}: {error}");
+        }
+    }
 }
 
 /// Marks the local resources for these rows as released, on every server
 /// they were recorded for. Loopback aliases and hosts entries do not depend on
 /// which server the rows reached, so one release settles them all; a record
-/// that still owes cluster cleanup keeps that.
-pub(crate) fn settle_local_cleanup(id: i64, config: &Config) {
+/// that still owes cluster cleanup keeps that. Forgets the durable record
+/// too: nothing is left for a restart to find.
+pub(crate) async fn settle_local_cleanup(id: i64, config: &Config, mode: DatabaseMode) {
     if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
         for entry in entries
             .iter_mut()
@@ -494,6 +576,16 @@ pub(crate) fn settle_local_cleanup(id: i64, config: &Config) {
         entries.retain(|entry| entry.cluster || entry.local);
     }
     PENDING_CLEANUP.remove_if(&id, |_, entries| entries.is_empty());
+    if let Err(error) = kftray_commons::utils::settings::delete_setting_with_mode(
+        &local_cleanup_key(id, mode),
+        mode,
+    )
+    .await
+    {
+        log::debug!(
+            "Failed to clear the persisted local cleanup obligation for config {id}: {error}"
+        );
+    }
 }
 
 fn record_target(
@@ -667,6 +759,7 @@ impl ClusterResourceGuard {
         {
             inherited_until = Some(Instant::now() + UNCERTAIN_CREATE_WINDOW);
         }
+        persist_uncertain_target(id, &config, destination.as_deref(), mode).await?;
         record_target(
             id,
             config.clone(),
@@ -675,7 +768,6 @@ impl ClusterResourceGuard {
             false,
             destination.clone(),
         );
-        persist_uncertain_target(id, &config, destination.as_deref(), mode).await?;
 
         Ok(Self {
             id,
@@ -945,6 +1037,49 @@ pub(crate) fn host_entry_has_any_claim(id: i64) -> bool {
     HOST_ENTRY_CLAIMS.contains_key(&id)
 }
 
+/// RAII wrapper around [`claim_host_entries`], so a startup that returns
+/// early (selector resolution, address validation, a hosts write that never
+/// lands) before registration still releases its claim instead of leaving
+/// it for the next start of the same id to silently overwrite.
+///
+/// Left armed, [`Drop`] releases the claim exactly like the explicit
+/// release call the non-deferred path used to make on its own. Call
+/// [`disarm`](Self::disarm) once responsibility for the claim has been
+/// handed off: the process is registered and the claim released right
+/// there, or a deferred hosts write is about to run its own cleanup, which
+/// manages the same claim from that point on.
+pub(crate) struct HostsClaimGuard {
+    id: i64,
+    token: u64,
+    armed: bool,
+}
+
+impl HostsClaimGuard {
+    pub(crate) fn new(id: i64) -> Self {
+        Self {
+            id,
+            token: claim_host_entries(id),
+            armed: true,
+        }
+    }
+
+    pub(crate) fn token(&self) -> u64 {
+        self.token
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for HostsClaimGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            take_host_entry_claim_if_current(self.id, self.token);
+        }
+    }
+}
+
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
     RELEASING_ADDRESSES
@@ -1111,6 +1246,14 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
     }
 }
 
+/// Whether a helper release error means another live process still owns
+/// this address, per kftray-helper's address pool (finding 9). A named
+/// predicate rather than an inline string match, so the exact wording the
+/// helper commits to is pinned and testable on its own.
+fn address_owned_by_another_process(helper_error: &str) -> bool {
+    helper_error.contains("owned by another live process")
+}
+
 /// Why a loopback address release did not complete.
 pub(crate) enum AddressReleaseError {
     /// Retryable: a later stop may succeed where this one did not.
@@ -1216,6 +1359,17 @@ pub(crate) async fn release_address_with_fallback(
         // Timeout elapsed
         Err(_) => format!("timed out after {ADDRESS_RELEASE_TIMEOUT:?}"),
     };
+
+    // The helper's address pool now tracks which live process allocated
+    // each address (kftray-helper finding 9): a release refused because
+    // another live process still owns it is not this release's failure,
+    // it is proof the alias is still in use and must be left alone. Falling
+    // through to the platform release below would remove it out from under
+    // that sibling forward.
+    if address_owned_by_another_process(&helper_error) {
+        log::debug!("Skipping the release of {address}: {helper_error}");
+        return Ok(());
+    }
 
     // The helper is optional: a platform that binds the address without an
     // interface alias, or one where cleanup happens on restart, reports success
@@ -1685,13 +1839,19 @@ pub async fn stop_all_port_forward_with_mode(
     stop_all_port_forward_with_mode_excluding(mode, &HashSet::new()).await
 }
 
-/// Same as [`stop_all_port_forward_with_mode`], but skips every id in
-/// `exclude`. Lets a caller that has already detached its own stop tasks for
-/// those ids keep this pass from contending with them for the per-config
-/// recovery lock those tasks still hold.
-pub async fn stop_all_port_forward_with_mode_excluding(
+/// Enumerates the ids a stop-all pass must act on, together with what each
+/// one needs to run its stop and interpret the outcome. Shared by every
+/// stop-all variant so they enumerate identically and differ only in how
+/// they dispatch and await the per-id stops.
+async fn collect_stop_all_targets(
     mode: DatabaseMode, exclude: &HashSet<i64>,
-) -> Result<Vec<CustomResponse>, String> {
+) -> (
+    HashSet<i64>,
+    HashMap<i64, Config>,
+    HashSet<i64>,
+    Result<Vec<Config>, String>,
+    Result<Vec<ConfigState>, String>,
+) {
     // Creates abandoned by an earlier run exist only on disk: the desktop
     // application never calls the reconciliation pass, so without this its
     // stop-all cannot find a relay left behind by a crash.
@@ -1761,19 +1921,32 @@ pub async fn stop_all_port_forward_with_mode_excluding(
             ids.insert(state.config_id);
         }
     }
-    let configs: HashMap<_, _> = configs_result
+    let configs: HashMap<i64, Config> = configs_result
         .as_ref()
         .ok()
         .into_iter()
         .flatten()
-        .filter_map(|config| config.id.map(|id| (id, config)))
+        .filter_map(|config| config.id.map(|id| (id, config.clone())))
         .collect();
+    (ids, configs, registry_only, configs_result, states_result)
+}
+
+/// Same as [`stop_all_port_forward_with_mode`], but skips every id in
+/// `exclude`. Lets a caller that has already detached its own stop tasks for
+/// those ids keep this pass from contending with them for the per-config
+/// recovery lock those tasks still hold.
+pub async fn stop_all_port_forward_with_mode_excluding(
+    mode: DatabaseMode, exclude: &HashSet<i64>,
+) -> Result<Vec<CustomResponse>, String> {
+    let (ids, configs, registry_only, configs_result, states_result) =
+        collect_stop_all_targets(mode, exclude).await;
+
     let mut responses: Vec<CustomResponse> = stream::iter(ids)
         .map(|id| {
-            let config = configs.get(&id).copied();
+            let config = configs.get(&id).cloned();
             let suppress_missing = registry_only.contains(&id);
             async move {
-                match stop_config(id, config, mode).await {
+                match stop_config(id, config.as_ref(), mode).await {
                     Ok(response) => Some(response),
                     Err(error) => {
                         if suppress_missing && error == nothing_forwarding_error(id) {
@@ -1783,7 +1956,7 @@ pub async fn stop_all_port_forward_with_mode_excluding(
                             );
                             None
                         } else {
-                            Some(stop_response(id, config, Some(error)))
+                            Some(stop_response(id, config.as_ref(), Some(error)))
                         }
                     }
                 }
@@ -1809,6 +1982,94 @@ pub async fn stop_all_port_forward_with_mode_excluding(
         )));
     }
     Ok(responses)
+}
+
+/// Same target enumeration as [`stop_all_port_forward_with_mode_excluding`],
+/// but each stop runs as its own spawned task and the whole pass is bounded
+/// by `deadline` instead of waiting for every stop to finish. A stop still
+/// running when the deadline elapses is left detached, not aborted: dropping
+/// its `JoinHandle` here does not cancel the task, so it keeps running and
+/// cleaning up in the background. Its config id comes back in the second
+/// element instead of a response, for the caller to fold into whatever it
+/// does next (excluding it from a reconciliation pass, for instance) instead
+/// of contending with it for the same per-config recovery lock.
+pub async fn stop_all_port_forward_with_deadline(
+    mode: DatabaseMode, exclude: &HashSet<i64>, deadline: Duration,
+) -> Result<(Vec<CustomResponse>, Vec<i64>), String> {
+    let (ids, configs, registry_only, configs_result, states_result) =
+        collect_stop_all_targets(mode, exclude).await;
+
+    let handles: Vec<(i64, tokio::task::JoinHandle<Option<CustomResponse>>)> = ids
+        .iter()
+        .map(|&id| {
+            let config = configs.get(&id).cloned();
+            let suppress_missing = registry_only.contains(&id);
+            let handle = tokio::spawn(async move {
+                match stop_config(id, config.as_ref(), mode).await {
+                    Ok(response) => Some(response),
+                    Err(error) => {
+                        if suppress_missing && error == nothing_forwarding_error(id) {
+                            log::debug!(
+                                "Stop-all: config {id} was only tracked by the recovery/cleanup \
+                                 registry and nothing remained to clean"
+                            );
+                            None
+                        } else {
+                            Some(stop_response(id, config.as_ref(), Some(error)))
+                        }
+                    }
+                }
+            });
+            (id, handle)
+        })
+        .collect();
+
+    let mut responses = Vec::new();
+    let mut completed: HashSet<i64> = HashSet::new();
+    let deadline_at = Instant::now() + deadline;
+    for (id, handle) in handles {
+        let remaining = deadline_at.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, handle).await {
+            Ok(Ok(Some(response))) => {
+                completed.insert(id);
+                responses.push(response);
+            }
+            Ok(Ok(None)) => {
+                completed.insert(id);
+            }
+            Ok(Err(join_error)) => {
+                completed.insert(id);
+                warn!("Stop-all: stopping config {id} panicked: {join_error}");
+                responses.push(stop_response(
+                    id,
+                    configs.get(&id),
+                    Some(format!("Stopping config {id} panicked: {join_error}")),
+                ));
+            }
+            Err(_) => {
+                // Left detached: not counted as completed, and nothing here
+                // aborts it.
+            }
+        }
+    }
+    let unfinished: Vec<i64> = ids
+        .into_iter()
+        .filter(|id| !completed.contains(id))
+        .collect();
+
+    if let Err(error) = configs_result {
+        warn!("Could not read configs while stopping every forward: {error}");
+        responses.push(enumeration_failure(format!(
+            "Could not read configs, so some forwards may not have been cleaned up: {error}"
+        )));
+    }
+    if let Err(error) = states_result {
+        warn!("Could not read config states while stopping every forward: {error}");
+        responses.push(enumeration_failure(format!(
+            "Could not read config states, so persisted forwards may have been missed: {error}"
+        )));
+    }
+    Ok((responses, unfinished))
 }
 
 /// The error `stop_config` reports when it found no local process, database
@@ -1946,10 +2207,16 @@ async fn stop_config(
     // the forward, which would point cleanup at the new destination.
     let pending = pending_cleanup_targets(id);
     let refreshed = if retained.is_none() && pending.is_empty() && was_starting {
-        get_config_with_mode(id, mode).await.ok()
+        running_snapshot(id, mode).await
     } else {
         None
     };
+    // Only a registered process, a pending target or a persisted running
+    // snapshot is proof resources may exist; a config found only through
+    // the plain row must not infer a cluster obligation from its workload
+    // type alone, or an already-stopped proxy would need cluster access
+    // just to be stopped again.
+    let evidenced = existed || !pending.is_empty() || refreshed.is_some();
     // A recorded target describes resources that exist. The database row can
     // have been edited since the forward started, so it is only consulted when
     // nothing else describes what to clean.
@@ -1976,7 +2243,7 @@ async fn stop_config(
             // obligation is whatever this workload type can actually create:
             // a plain TCP forward owes no cluster cleanup at all.
             cluster: recorded.map_or_else(
-                || config_has_cluster_resources(config),
+                || evidenced && config_has_cluster_resources(config),
                 |target| target.cluster,
             ),
             local: recorded.is_none_or(|target| target.local),
@@ -2417,6 +2684,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopping_an_already_stopped_proxy_by_row_alone_does_not_need_cluster_access() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            namespace: "default".to_string(),
+            service: Some("relay".to_string()),
+            context: Some("missing-context".to_string()),
+            kubeconfig: Some("/nonexistent/kubeconfig".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+        let id =
+            kftray_commons::utils::config::insert_config_with_mode(config, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        PENDING_CLEANUP.remove(&id);
+
+        // Nothing is running, nothing is pending, and no snapshot was ever
+        // recorded: only the database row exists. Its workload type alone
+        // must not be read as proof cluster resources exist, or stopping an
+        // already-stopped proxy would fail every time cluster access is
+        // unavailable.
+        let response = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .expect(
+                "stopping a config with nothing running and no evidence of cluster resources \
+                 must not need cluster access",
+            );
+        assert_eq!(response.status, 0);
+
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
     async fn a_settled_create_keeps_its_local_cleanup_recorded() {
         let id = -9_312;
         PENDING_CLEANUP.remove(&id);
@@ -2448,6 +2749,76 @@ mod tests {
         PENDING_CLEANUP.remove(&id);
     }
 
+    #[tokio::test]
+    async fn a_local_cleanup_obligation_survives_a_simulated_restart() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = -9_313;
+        PENDING_CLEANUP.remove(&id);
+        let mode = DatabaseMode::Memory;
+        let key = local_cleanup_key(id, mode);
+        kftray_commons::utils::settings::delete_setting_with_mode(&key, mode)
+            .await
+            .unwrap();
+        let config = Config {
+            id: Some(id),
+            namespace: "prod".to_string(),
+            service: Some("relay".to_string()),
+            local_address: Some("127.0.44.2".to_string()),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+
+        record_local_cleanup(id, config.clone(), mode).await;
+        assert!(
+            kftray_commons::utils::settings::get_setting_with_mode(&key, mode)
+                .await
+                .unwrap()
+                .is_some(),
+            "the obligation must be durable, not only in this process's memory"
+        );
+
+        // A restart starts with an empty registry; only the durable record
+        // survives it.
+        PENDING_CLEANUP.remove(&id);
+        assert!(pending_cleanup_targets(id).is_empty());
+
+        restore_uncertain_targets(mode).await;
+
+        let targets = pending_cleanup_targets(id);
+        assert_eq!(
+            targets.len(),
+            1,
+            "the persisted local obligation must be reloaded into the registry"
+        );
+        assert!(targets[0].local);
+        assert!(!targets[0].cluster);
+        assert_eq!(targets[0].config.local_address, config.local_address);
+
+        settle_local_cleanup(id, &config, mode).await;
+        assert!(
+            kftray_commons::utils::settings::get_setting_with_mode(&key, mode)
+                .await
+                .unwrap()
+                .is_none(),
+            "settling must forget the durable record too"
+        );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[test]
+    fn owned_by_another_process_is_recognized_and_settled_not_failed() {
+        assert!(address_owned_by_another_process(
+            "Address 127.0.44.1 is owned by another live process (pid 4242)"
+        ));
+        assert!(
+            !address_owned_by_another_process("Helper service is not available"),
+            "an unrelated helper failure must still be reported, not silently settled"
+        );
+        assert!(
+            !address_owned_by_another_process("timed out after 3s"),
+            "a timeout must still be reported, not silently settled"
+        );
+    }
     #[test]
     fn a_startup_can_release_the_address_it_claimed() {
         let address = "127.0.57.1";

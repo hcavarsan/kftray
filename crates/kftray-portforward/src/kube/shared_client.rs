@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{
     AtomicUsize,
@@ -86,6 +87,25 @@ impl Drop for CreationLockInterest<'_> {
     }
 }
 
+/// A kubeconfig resolution's file state at the time it was resolved: each
+/// path considered paired with its last-modified time (`None` if the path
+/// did not exist). Compared against a fresh stat on a cache hit so a
+/// current-context resolution is not replayed after the file it came from
+/// changed underneath it, even while still within the TTL.
+type KubeconfigSignature = Vec<(PathBuf, Option<std::time::SystemTime>)>;
+
+fn kubeconfig_signature(paths: &[PathBuf]) -> KubeconfigSignature {
+    paths
+        .iter()
+        .map(|path| {
+            let mtime = std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok();
+            (path.clone(), mtime)
+        })
+        .collect()
+}
+
 pub struct SharedClientManager {
     clients: DashMap<ServiceClientKey, CachedClient>,
     client_ttl: Duration,
@@ -94,7 +114,7 @@ pub struct SharedClientManager {
     /// `get_connection`/`resolve_key` call only reads and merges the
     /// kubeconfig on the first miss; later calls reuse the recorded
     /// context instead of touching disk again.
-    resolved_contexts: DashMap<Option<String>, (String, Instant)>,
+    resolved_contexts: DashMap<Option<String>, (String, Instant, KubeconfigSignature)>,
 }
 
 impl SharedClientManager {
@@ -174,15 +194,21 @@ impl SharedClientManager {
     /// resolved context is cached per kubeconfig path in
     /// `resolved_contexts`, so a repeated cache-hit call never touches disk,
     /// and the read itself runs on a blocking thread since it is synchronous
-    /// file IO.
+    /// file IO. Resolving the paths and stating them (env var read plus one
+    /// stat per file) is cheap enough to redo on every call: it is what
+    /// lets a still-fresh TTL entry be treated as stale once the kubeconfig
+    /// it came from changed on disk, instead of only when the TTL expires.
     async fn resolve_key(&self, key: ServiceClientKey) -> anyhow::Result<ServiceClientKey> {
         if key.context_name.is_some() {
             return Ok(key);
         }
 
+        let current_paths = get_kubeconfig_paths_from_option(key.kubeconfig_path.clone())?;
+        let current_signature = kubeconfig_signature(&current_paths);
+
         if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
-            let (context_name, resolved_at) = resolved.value();
-            if resolved_at.elapsed() <= self.client_ttl {
+            let (context_name, resolved_at, signature) = resolved.value();
+            if resolved_at.elapsed() <= self.client_ttl && *signature == current_signature {
                 return Ok(ServiceClientKey {
                     context_name: Some(context_name.clone()),
                     kubeconfig_path: key.kubeconfig_path,
@@ -192,8 +218,7 @@ impl SharedClientManager {
 
         let kubeconfig_path = key.kubeconfig_path.clone();
         let current_context = tokio::task::spawn_blocking(move || {
-            let paths = get_kubeconfig_paths_from_option(kubeconfig_path.clone())?;
-            let (kubeconfig, errors) = merge_kubeconfigs(&paths)?;
+            let (kubeconfig, errors) = merge_kubeconfigs(&current_paths)?;
             kubeconfig.current_context.ok_or_else(|| {
                 if errors.is_empty() {
                     anyhow::anyhow!(
@@ -216,7 +241,7 @@ impl SharedClientManager {
 
         self.resolved_contexts.insert(
             key.kubeconfig_path.clone(),
-            (current_context.clone(), Instant::now()),
+            (current_context.clone(), Instant::now(), current_signature),
         );
 
         Ok(ServiceClientKey {
@@ -251,7 +276,8 @@ impl SharedClientManager {
     /// resolution an exact-context eviction just invalidated.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
         if key.context_name.is_none() {
-            if let Some((_, (resolved, _))) = self.resolved_contexts.remove(&key.kubeconfig_path) {
+            if let Some((_, (resolved, _, _))) = self.resolved_contexts.remove(&key.kubeconfig_path)
+            {
                 let resolved_key = ServiceClientKey {
                     context_name: Some(resolved),
                     kubeconfig_path: key.kubeconfig_path.clone(),
@@ -266,7 +292,7 @@ impl SharedClientManager {
 
         if let Some(ctx) = key.context_name.as_deref() {
             self.resolved_contexts
-                .remove_if(&key.kubeconfig_path, |_, (resolved, _)| resolved == ctx);
+                .remove_if(&key.kubeconfig_path, |_, (resolved, _, _)| resolved == ctx);
         }
         self.clients.remove(key);
     }
@@ -278,7 +304,7 @@ impl SharedClientManager {
             self.clients.contains_key(key) || lock.1.load(Ordering::SeqCst) > 0
         });
         self.resolved_contexts
-            .retain(|kubeconfig_path, (context_name, resolved_at)| {
+            .retain(|kubeconfig_path, (context_name, resolved_at, _)| {
                 if resolved_at.elapsed() > self.client_ttl {
                     return false;
                 }
@@ -390,18 +416,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn resolve_key_with_none_context_is_cached_and_skips_kubeconfig_on_hit() {
-        use std::io::Write;
-
-        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
-        write!(
-            kubeconfig_file,
+    fn kubeconfig_yaml(context_name: &str) -> String {
+        format!(
             "apiVersion: v1\n\
              kind: Config\n\
-             current-context: kftray-test-cache-hit-context\n\
+             current-context: {context_name}\n\
              contexts:\n\
-             - name: kftray-test-cache-hit-context\n  \
+             - name: {context_name}\n  \
                context:\n    \
                  cluster: kftray-test-cluster\n    \
                  user: kftray-test-user\n\
@@ -412,6 +433,31 @@ mod tests {
              users:\n\
              - name: kftray-test-user\n  \
                user: {{}}\n"
+        )
+    }
+
+    /// Rewrites `path` and restores its mtime to `mtime`, so the write is
+    /// invisible to a signature comparison keyed on the file's timestamp.
+    fn rewrite_kubeconfig_preserving_mtime(
+        path: &std::path::Path, contents: &str, mtime: std::time::SystemTime,
+    ) {
+        std::fs::write(path, contents).expect("rewrite temp kubeconfig");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_times(std::fs::FileTimes::new().set_modified(mtime)))
+            .expect("restore the kubeconfig's mtime");
+    }
+
+    #[tokio::test]
+    async fn resolve_key_with_none_context_is_cached_on_a_hit_within_ttl() {
+        use std::io::Write;
+
+        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        write!(
+            kubeconfig_file,
+            "{}",
+            kubeconfig_yaml("kftray-test-cache-hit-context")
         )
         .expect("write temp kubeconfig");
 
@@ -430,18 +476,75 @@ mod tests {
             Some("kftray-test-cache-hit-context")
         );
 
-        kubeconfig_file
-            .close()
-            .expect("delete the kubeconfig so a second disk read would fail resolution");
+        let original_mtime = std::fs::metadata(kubeconfig_file.path())
+            .and_then(|meta| meta.modified())
+            .expect("read the kubeconfig's mtime");
+        // Rewritten with a different current-context but restored to its
+        // original mtime: a cache hit must reuse the recorded resolution
+        // since nothing it checks (TTL, mtime) says the file changed.
+        rewrite_kubeconfig_preserving_mtime(
+            kubeconfig_file.path(),
+            &kubeconfig_yaml("kftray-test-changed-context"),
+            original_mtime,
+        );
 
         let second_resolved = manager
             .resolve_key(key)
             .await
-            .expect("a cache hit must resolve without reading the now-deleted kubeconfig");
+            .expect("a cache hit must resolve without needing the rewritten kubeconfig to parse");
         assert_eq!(
             second_resolved.context_name.as_deref(),
             Some("kftray-test-cache-hit-context"),
-            "a cache hit must reuse the recorded resolved context"
+            "a cache hit with an unchanged mtime must reuse the recorded resolved context"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_key_re_resolves_when_the_kubeconfig_mtime_changes() {
+        use std::io::Write;
+
+        let mut kubeconfig_file = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        write!(
+            kubeconfig_file,
+            "{}",
+            kubeconfig_yaml("kftray-test-original-context")
+        )
+        .expect("write temp kubeconfig");
+
+        let manager = SharedClientManager::new();
+        let key = ServiceClientKey::new(
+            None,
+            Some(kubeconfig_file.path().to_string_lossy().to_string()),
+        );
+
+        let first_resolved = manager
+            .resolve_key(key.clone())
+            .await
+            .expect("a kubeconfig with a current-context must resolve");
+        assert_eq!(
+            first_resolved.context_name.as_deref(),
+            Some("kftray-test-original-context")
+        );
+
+        // A different current-context, with the mtime moved well past
+        // filesystem timestamp resolution, simulates the user switching
+        // contexts (e.g. `kubectl config use-context`) while the TTL is
+        // still fresh.
+        let advanced_mtime = std::time::SystemTime::now() + Duration::from_secs(60);
+        rewrite_kubeconfig_preserving_mtime(
+            kubeconfig_file.path(),
+            &kubeconfig_yaml("kftray-test-switched-context"),
+            advanced_mtime,
+        );
+
+        let second_resolved = manager
+            .resolve_key(key)
+            .await
+            .expect("the rewritten kubeconfig must still resolve");
+        assert_eq!(
+            second_resolved.context_name.as_deref(),
+            Some("kftray-test-switched-context"),
+            "a changed mtime must force a re-resolution even though the TTL has not expired"
         );
     }
 
@@ -478,7 +581,7 @@ mod tests {
             .insert(other_key.clone(), make_cached_client());
         manager.resolved_contexts.insert(
             kubeconfig_path.clone(),
-            ("recorded-ctx".to_string(), Instant::now()),
+            ("recorded-ctx".to_string(), Instant::now(), Vec::new()),
         );
 
         manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path.clone()));
@@ -567,7 +670,11 @@ mod tests {
             .insert(resolved_key.clone(), CachedClient::new(connection));
         manager.resolved_contexts.insert(
             Some(kubeconfig_path.clone()),
-            ("kftray-test-invalidate-context".to_string(), Instant::now()),
+            (
+                "kftray-test-invalidate-context".to_string(),
+                Instant::now(),
+                Vec::new(),
+            ),
         );
 
         manager.invalidate_client(&raw_key);
@@ -809,7 +916,7 @@ mod tests {
             .insert(key.clone(), CachedClient::new(connection));
         manager.resolved_contexts.insert(
             kubeconfig_path.clone(),
-            ("explicit-ctx".to_string(), Instant::now()),
+            ("explicit-ctx".to_string(), Instant::now(), Vec::new()),
         );
 
         manager.invalidate_client(&key);
@@ -833,7 +940,7 @@ mod tests {
 
         manager.resolved_contexts.insert(
             kubeconfig_path.clone(),
-            ("current-ctx".to_string(), Instant::now()),
+            ("current-ctx".to_string(), Instant::now(), Vec::new()),
         );
 
         manager.invalidate_client(&ServiceClientKey::new(
@@ -896,6 +1003,7 @@ mod tests {
             (
                 "stale-context".to_string(),
                 Instant::now() - Duration::from_millis(21),
+                Vec::new(),
             ),
         );
 

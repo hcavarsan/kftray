@@ -414,7 +414,7 @@ pub fn migrate_pod_manifest_if_previous_default() -> std::io::Result<()> {
         return Ok(());
     }
     let manifest_json = serde_json::to_string_pretty(&default_pod_manifest())?;
-    std::fs::write(path, manifest_json)
+    crate::utils::config_dir::write_file_durably(&path, manifest_json.as_bytes())
 }
 
 pub fn migrate_proxy_deployment_manifest_if_previous_default() -> std::io::Result<()> {
@@ -426,7 +426,7 @@ pub fn migrate_proxy_deployment_manifest_if_previous_default() -> std::io::Resul
     if !manifest_matches(&path, &previous) {
         return Ok(());
     }
-    std::fs::write(path, DEFAULT_PROXY_DEPLOYMENT)
+    crate::utils::config_dir::write_file_durably(&path, DEFAULT_PROXY_DEPLOYMENT.as_bytes())
 }
 
 pub fn migrate_expose_deployment_manifest_if_previous_default() -> std::io::Result<()> {
@@ -439,7 +439,7 @@ pub fn migrate_expose_deployment_manifest_if_previous_default() -> std::io::Resu
     if !manifest_matches(&path, &previous) {
         return Ok(());
     }
-    std::fs::write(path, DEFAULT_EXPOSE_DEPLOYMENT)
+    crate::utils::config_dir::write_file_durably(&path, DEFAULT_EXPOSE_DEPLOYMENT.as_bytes())
 }
 
 fn manifest_matches(path: &std::path::Path, expected: &serde_json::Value) -> bool {

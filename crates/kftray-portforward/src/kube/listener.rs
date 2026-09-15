@@ -5,8 +5,11 @@ use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
 use tokio::io::{
+    AsyncRead,
     AsyncReadExt,
+    AsyncWrite,
     AsyncWriteExt,
+    ReadBuf,
 };
 use tokio::net::{
     TcpListener,
@@ -77,6 +80,11 @@ struct NamedPort {
     resolved: Arc<std::sync::Mutex<Option<(kube_portforward::ReadyPod, u16)>>>,
 }
 
+/// Concurrent upstream streams a single forward may hold open, shared by
+/// its TCP and UDP paths. Matches the limit the pre-refactor
+/// `portforward_semaphore` used.
+const MAX_CONCURRENT_STREAMS: usize = 50;
+
 pub struct PortForwarder {
     namespace: Arc<str>,
     forwarder: Arc<kube_portforward::Forwarder>,
@@ -94,11 +102,55 @@ pub struct PortForwarder {
     /// `Uri::to_string()` on IPv6 hosts and default ports).
     cluster_identity: Arc<str>,
     http_log_watcher: HttpLogStateWatcher,
+    /// Bounds concurrent open upstream streams (TCP and UDP share it); a
+    /// permit is held for as long as a stream returned by [`get_stream`]
+    /// stays open, not just for its creation.
+    ///
+    /// [`get_stream`]: Self::get_stream
+    stream_semaphore: Arc<tokio::sync::Semaphore>,
     background_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     connection_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// Set once shutdown has drained the registries, so a connection accepted
     /// afterwards is aborted rather than tracked by nobody.
     workers_closed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// An upstream stream paired with the semaphore permit that bounds it.
+///
+/// The permit is held for as long as the stream stays open (dropped together
+/// with it), so the semaphore it came from bounds concurrent open streams
+/// rather than just concurrent stream creations.
+pub struct PermitStream {
+    stream: kube_portforward::Stream,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl AsyncRead for PermitStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PermitStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+    }
 }
 
 impl PortForwarder {
@@ -219,19 +271,34 @@ impl PortForwarder {
             cluster_url: connection.cluster_url.clone(),
             cluster_identity: cluster_identity(&connection.cluster_url).into(),
             http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
-    pub async fn get_stream(&self) -> anyhow::Result<kube_portforward::Stream> {
+    pub async fn get_stream(&self) -> anyhow::Result<PermitStream> {
         const STREAM_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
         // Resolution is inside the deadline: it can perform a pod GET, and a
         // stalled API server would otherwise hold the client past the ten
-        // seconds this promises and delay stream-failure recovery.
-        let acquired = tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.acquire_stream()).await;
+        // seconds this promises and delay stream-failure recovery. The
+        // semaphore permit is acquired inside the same deadline and rides
+        // with the returned stream, so it bounds concurrent open streams
+        // (TCP and UDP share it) rather than just concurrent acquisitions.
+        let acquired = tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, async {
+            let permit = Arc::clone(&self.stream_semaphore)
+                .acquire_owned()
+                .await
+                .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
+            let stream = self.acquire_stream().await?;
+            Ok::<_, anyhow::Error>(PermitStream {
+                stream,
+                _permit: permit,
+            })
+        })
+        .await;
         // Any unsuccessful acquisition drops the cached mapping, including a
         // timeout: a rollout can change the number a port name maps to, and
         // every later client would otherwise repeat the same stale lookup.
@@ -806,7 +873,7 @@ struct ForwarderUpstream {
 }
 
 impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
-    type Stream = kube_portforward::Stream;
+    type Stream = PermitStream;
 
     async fn connect(&self) -> anyhow::Result<Self::Stream> {
         self.forwarder.get_stream().await
@@ -998,6 +1065,7 @@ mod tests {
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1053,6 +1121,7 @@ mod tests {
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1078,6 +1147,100 @@ mod tests {
                 .downcast_ref::<tokio::time::error::Elapsed>()
                 .is_some()
         );
+        port_forwarder.shutdown().await;
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn stream_semaphore_bounds_concurrent_acquisitions_shared_by_tcp_and_udp() {
+        use crate::kube::udp_forwarder::UdpUpstream;
+
+        tokio::time::pause();
+
+        let pod_name = "web-0";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let cluster_url: http::Uri = "http://127.0.0.1:1".parse().unwrap();
+
+        let upgrade_started = Arc::new(tokio::sync::Notify::new());
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::clone(&upgrade_started),
+            Duration::ZERO,
+        ));
+
+        let forwarder =
+            kube_portforward::Forwarder::builder(kube_client, cluster_url.clone(), "default")
+                .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_string()))
+                .pod_readiness(kube_portforward::PodReadiness::default())
+                .build()
+                .await
+                .expect("forwarder should build without contacting the apiserver");
+
+        let ready = forwarder
+            .wait_for_ready_pod(Duration::from_secs(5))
+            .await
+            .expect("pod list response should mark the pod ready");
+        assert_eq!(ready, pod_name);
+
+        let port_forwarder = Arc::new(PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            named_port: None,
+            cluster_url: cluster_url.clone(),
+            cluster_identity: cluster_url.to_string().into(),
+            http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+
+        // TCP path: get_stream() takes the sole permit and then hangs on the
+        // stalled upgrade response while still holding it.
+        let tcp_forwarder = Arc::clone(&port_forwarder);
+        let mut tcp_call = Box::pin(tcp_forwarder.get_stream());
+        tokio::select! {
+            _ = upgrade_started.notified() => {}
+            result = &mut tcp_call => panic!(
+                "TCP call ended before it could reach the network: {:?}",
+                result.err()
+            ),
+        }
+
+        // UDP path shares the same `PortForwarder` field: with the sole
+        // permit held by the TCP call above, its connect() must stay
+        // blocked on the semaphore rather than reaching the network.
+        let udp_upstream = ForwarderUpstream {
+            forwarder: Arc::clone(&port_forwarder),
+            failures: UdpUpstreamFailures::new(1),
+        };
+        let mut udp_call = Box::pin(udp_upstream.connect());
+        tokio::select! {
+            biased;
+            result = &mut udp_call => panic!(
+                "UDP connect proceeded while the TCP call still held the sole permit: {:?}",
+                result.err()
+            ),
+            _ = tokio::time::sleep(Duration::ZERO) => {}
+        }
+
+        // Dropping the TCP call releases its permit; the UDP call can now
+        // reach the network and issue its own upgrade request.
+        let udp_notified = upgrade_started.notified();
+        drop(tcp_call);
+        tokio::select! {
+            () = udp_notified => {}
+            result = &mut udp_call => panic!(
+                "UDP connect resolved before reaching the network: {:?}",
+                result.err()
+            ),
+        }
+
+        drop(udp_call);
         port_forwarder.shutdown().await;
         driver.abort();
         let _ = driver.await;
@@ -1238,6 +1401,7 @@ mod tests {
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1295,6 +1459,7 @@ mod tests {
             cluster_url: "http://127.0.0.1:1".parse().unwrap(),
             cluster_identity: "http://127.0.0.1:1".into(),
             http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),

@@ -342,6 +342,32 @@ fn open_locked(path: &Path, recover: bool) -> Result<Option<std::fs::File>> {
     Ok(Some(file))
 }
 
+/// One physical line, with the terminator it had on disk.
+///
+/// A line kftray did not touch is written back with exactly the terminator
+/// it was read with; only a line kftray itself formats picks the file's
+/// dominant terminator. Without this, rewriting one line of a Windows
+/// hosts file through `str::lines()` and `writeln!` silently turned every
+/// untouched CRLF line into LF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Line {
+    text: String,
+    crlf: bool,
+}
+
+impl Line {
+    fn new(text: impl Into<String>, crlf: bool) -> Self {
+        Self {
+            text: text.into(),
+            crlf,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+}
+
 /// The hosts file as raw lines, edited under one lock and written once.
 ///
 /// Every operation preserves the lines it was not asked to touch exactly as
@@ -351,8 +377,10 @@ fn open_locked(path: &Path, recover: bool) -> Result<Option<std::fs::File>> {
 /// unprivileged caller find out that nothing of its own is on disk without
 /// needing permission to write.
 pub struct HostsDocument {
-    lines: Vec<String>,
-    original: Vec<String>,
+    lines: Vec<Line>,
+    original: Vec<Line>,
+    /// Whether the file, as read, ended in a newline after its last line.
+    ends_with_newline: bool,
 }
 
 /// One parsed line of a managed section.
@@ -365,11 +393,38 @@ struct ParsedLine {
 impl HostsDocument {
     fn load(path: &Path) -> Result<Self> {
         let contents = Self::read_intended_content(path)?;
-        let lines: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
+        let (lines, ends_with_newline) = Self::split_content(&contents);
         Ok(Self {
             original: lines.clone(),
             lines,
+            ends_with_newline,
         })
+    }
+
+    /// Splits raw file content into lines, keeping each line's own CRLF/LF
+    /// terminator, and whether the content ended in a newline at all.
+    ///
+    /// `str::lines()` cannot be used here: it discards the terminator, which
+    /// is exactly what an untouched line must keep across a rewrite.
+    fn split_content(contents: &str) -> (Vec<Line>, bool) {
+        if contents.is_empty() {
+            return (Vec::new(), true);
+        }
+        let ends_with_newline = contents.ends_with('\n');
+        let mut raw: Vec<&str> = contents.split('\n').collect();
+        if ends_with_newline {
+            // The split on the final `\n` leaves an empty trailing element
+            // that is not a line.
+            raw.pop();
+        }
+        let lines = raw
+            .into_iter()
+            .map(|line| match line.strip_suffix('\r') {
+                Some(stripped) => Line::new(stripped, true),
+                None => Line::new(line, false),
+            })
+            .collect();
+        (lines, ends_with_newline)
     }
 
     #[cfg(not(windows))]
@@ -415,6 +470,17 @@ impl HostsDocument {
         self.lines != self.original
     }
 
+    /// The terminator a line kftray itself formats should use: whichever
+    /// one most of the file's lines already have. A file with no lines yet
+    /// (freshly created) follows the platform's own convention instead.
+    fn dominant_crlf(&self) -> bool {
+        if self.original.is_empty() {
+            return cfg!(windows);
+        }
+        let crlf_count = self.original.iter().filter(|line| line.crlf).count();
+        crlf_count * 2 > self.original.len()
+    }
+
     fn begin_marker(tag: &str) -> String {
         format!("# DO NOT EDIT {tag} BEGIN")
     }
@@ -443,13 +509,13 @@ impl HostsDocument {
             .lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.trim() == begin_marker)
+            .filter(|(_, line)| line.text.trim() == begin_marker)
             .map(|(index, _)| index);
         let mut ends = self
             .lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.trim() == end_marker)
+            .filter(|(_, line)| line.text.trim() == end_marker)
             .map(|(index, _)| index);
         let (begin, end) = (begins.next(), ends.next());
         if begins.next().is_some() || ends.next().is_some() {
@@ -485,7 +551,7 @@ impl HostsDocument {
         let mut open: Vec<usize> = Vec::new();
         let mut top_level: Vec<(usize, usize)> = Vec::new();
         for (index, line) in self.lines.iter().enumerate() {
-            let trimmed = line.trim();
+            let trimmed = line.text.trim();
             if trimmed == begin_marker {
                 open.push(index);
             } else if trimmed == end_marker {
@@ -521,7 +587,7 @@ impl HostsDocument {
         if sections.len() <= 1 {
             return Ok(());
         }
-        let mut body: Vec<String> = Vec::new();
+        let mut body: Vec<Line> = Vec::new();
         for &(begin, end) in &sections {
             body.extend(self.lines[begin + 1..end].iter().cloned());
         }
@@ -530,7 +596,7 @@ impl HostsDocument {
             if begin > 0
                 && begin <= self.lines.len()
                 && self.lines[begin - 1].is_empty()
-                && self.lines.get(begin).is_none_or(String::is_empty)
+                && self.lines.get(begin).is_none_or(Line::is_empty)
             {
                 self.lines.remove(begin - 1);
             }
@@ -582,7 +648,7 @@ impl HostsDocument {
         };
         Ok(self.lines[begin + 1..end]
             .iter()
-            .filter_map(|line| Self::parse_line(line))
+            .filter_map(|line| Self::parse_line(&line.text))
             .flat_map(|parsed| {
                 parsed
                     .hostnames
@@ -599,7 +665,8 @@ impl HostsDocument {
     /// Replaces the body of `tag`'s section with `body`, creating the section
     /// at the end of the file when it does not exist and removing it, markers
     /// included, when `body` is empty.
-    fn set_body(&mut self, tag: &str, body: Vec<String>) -> Result<()> {
+    fn set_body(&mut self, tag: &str, body: Vec<Line>) -> Result<()> {
+        let dominant = self.dominant_crlf();
         match self.bounds(tag)? {
             Some((begin, end)) => {
                 if body.is_empty() {
@@ -610,7 +677,7 @@ impl HostsDocument {
                     if begin > 0
                         && begin <= self.lines.len()
                         && self.lines[begin - 1].is_empty()
-                        && self.lines.get(begin).is_none_or(String::is_empty)
+                        && self.lines.get(begin).is_none_or(Line::is_empty)
                     {
                         self.lines.remove(begin - 1);
                     }
@@ -623,11 +690,12 @@ impl HostsDocument {
                     return Ok(());
                 }
                 if self.lines.last().is_some_and(|last| !last.is_empty()) {
-                    self.lines.push(String::new());
+                    self.lines.push(Line::new(String::new(), dominant));
                 }
-                self.lines.push(Self::begin_marker(tag));
+                self.lines
+                    .push(Line::new(Self::begin_marker(tag), dominant));
                 self.lines.extend(body);
-                self.lines.push(Self::end_marker(tag));
+                self.lines.push(Line::new(Self::end_marker(tag), dominant));
             }
         }
         Ok(())
@@ -641,13 +709,17 @@ impl HostsDocument {
                 validate_owner(owner)?;
             }
         }
+        let dominant = self.dominant_crlf();
         let body = entries
             .iter()
             .map(|entry| {
-                Self::format_line(
-                    entry.ip,
-                    std::slice::from_ref(&entry.hostname),
-                    entry.owner.as_deref(),
+                Line::new(
+                    Self::format_line(
+                        entry.ip,
+                        std::slice::from_ref(&entry.hostname),
+                        entry.owner.as_deref(),
+                    ),
+                    dominant,
                 )
             })
             .collect();
@@ -661,7 +733,7 @@ impl HostsDocument {
             if begin > 0
                 && begin <= self.lines.len()
                 && self.lines[begin - 1].is_empty()
-                && self.lines.get(begin).is_none_or(String::is_empty)
+                && self.lines.get(begin).is_none_or(Line::is_empty)
             {
                 self.lines.remove(begin - 1);
             }
@@ -689,11 +761,12 @@ impl HostsDocument {
         }
         self.merge_duplicate_sections(tag)?;
         let mut present = HashSet::new();
-        let mut body: Vec<String> = match self.bounds(tag)? {
+        let dominant = self.dominant_crlf();
+        let mut body: Vec<Line> = match self.bounds(tag)? {
             Some((begin, end)) => self.lines[begin + 1..end]
                 .iter()
                 .filter(
-                    |line| match Self::parse_line(line).and_then(|parsed| parsed.owner) {
+                    |line| match Self::parse_line(&line.text).and_then(|parsed| parsed.owner) {
                         Some(owner) if owners.contains(&owner.as_str()) => {
                             present.insert(owner);
                             false
@@ -706,10 +779,13 @@ impl HostsDocument {
             None => Vec::new(),
         };
         body.extend(entries.iter().map(|entry| {
-            Self::format_line(
-                entry.ip,
-                std::slice::from_ref(&entry.hostname),
-                entry.owner.as_deref(),
+            Line::new(
+                Self::format_line(
+                    entry.ip,
+                    std::slice::from_ref(&entry.hostname),
+                    entry.owner.as_deref(),
+                ),
+                dominant,
             )
         }));
         self.set_body(tag, body)?;
@@ -725,10 +801,11 @@ impl HostsDocument {
         let Some((begin, end)) = self.bounds(tag)? else {
             return Ok(());
         };
-        let body: Vec<String> = self.lines[begin + 1..end]
+        let dominant = self.dominant_crlf();
+        let body: Vec<Line> = self.lines[begin + 1..end]
             .iter()
             .filter_map(|line| {
-                let Some(parsed) = Self::parse_line(line) else {
+                let Some(parsed) = Self::parse_line(&line.text) else {
                     return Some(line.clone());
                 };
                 let kept: Vec<String> = parsed
@@ -748,7 +825,10 @@ impl HostsDocument {
                 } else if kept.is_empty() {
                     None
                 } else {
-                    Some(Self::format_line(parsed.ip, &kept, parsed.owner.as_deref()))
+                    Some(Line::new(
+                        Self::format_line(parsed.ip, &kept, parsed.owner.as_deref()),
+                        dominant,
+                    ))
                 }
             })
             .collect();
@@ -759,9 +839,20 @@ impl HostsDocument {
         if !self.is_dirty() {
             return Ok(false);
         }
+        // The file's own trailing newline is kept only when the very last
+        // line on disk is still, byte for byte, the last line being
+        // written: anything appended or changed after it always ends in a
+        // newline, matching every line before it.
+        let omit_trailing_terminator =
+            !self.ends_with_newline && self.lines.last() == self.original.last();
+        let last_index = self.lines.len().saturating_sub(1);
         let mut content = Vec::new();
-        for line in &self.lines {
-            writeln!(content, "{line}")?;
+        for (index, line) in self.lines.iter().enumerate() {
+            content.extend_from_slice(line.text.as_bytes());
+            if index == last_index && omit_trailing_terminator {
+                continue;
+            }
+            content.extend_from_slice(if line.crlf { b"\r\n" } else { b"\n" });
         }
         AtomicFileWriter::new(path).write_content(&content)?;
         Ok(true)
@@ -805,6 +896,7 @@ pub fn read_hosts_at<T>(path: &Path, read: impl FnOnce(&HostsDocument) -> Result
         return read(&HostsDocument {
             lines: Vec::new(),
             original: Vec::new(),
+            ends_with_newline: true,
         });
     }
     with_hosts_lock(path, false, || read(&HostsDocument::load(path)?))
@@ -1363,10 +1455,22 @@ mod tests {
         // but before it was applied.
         std::fs::write(pending_path(&path_a), "a-pending\n").unwrap();
 
-        let a_lines: Vec<String> =
-            read_hosts_at(&path_a, |document| Ok(document.lines.clone())).unwrap();
-        let b_lines: Vec<String> =
-            read_hosts_at(&path_b, |document| Ok(document.lines.clone())).unwrap();
+        let a_lines: Vec<String> = read_hosts_at(&path_a, |document| {
+            Ok(document
+                .lines
+                .iter()
+                .map(|line| line.text.clone())
+                .collect())
+        })
+        .unwrap();
+        let b_lines: Vec<String> = read_hosts_at(&path_b, |document| {
+            Ok(document
+                .lines
+                .iter()
+                .map(|line| line.text.clone())
+                .collect())
+        })
+        .unwrap();
 
         assert_eq!(
             a_lines,
@@ -1810,5 +1914,33 @@ mod tests {
         assert_eq!(attempts, 3, "every attempt runs before giving up");
         let error = result.expect_err("exhausting every attempt is a timeout, not success");
         assert!(error.to_string().contains("Timed out"), "{error}");
+    }
+
+    #[test]
+    fn an_untouched_crlf_line_keeps_its_terminator_after_an_edit() {
+        let (mut temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+        temp_file
+            .write_all(
+                b"127.0.0.1 localhost\r\n\
+                  # DO NOT EDIT test BEGIN\r\n\
+                  127.0.0.1 old.local # kftray-id=1\r\n\
+                  # DO NOT EDIT test END\r\n",
+            )
+            .unwrap();
+
+        let mut next = HostsFile::new("test");
+        next.add_owned_entry([127, 0, 0, 2].into(), "new.local", "2")
+            .unwrap();
+        next.reconcile_owners_in(&temp_path, &["1"]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&temp_path).unwrap(),
+            "127.0.0.1 localhost\r\n\
+             # DO NOT EDIT test BEGIN\r\n\
+             127.0.0.2 new.local # kftray-id=2\r\n\
+             # DO NOT EDIT test END\r\n",
+            "an untouched line outside the section, and the file's own CRLF terminator, must \
+             survive an edit made inside it rather than being normalised to LF"
+        );
     }
 }

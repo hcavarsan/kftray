@@ -99,6 +99,20 @@ async fn execute_strategies(
         let strategies_after = (strategy_count - index - 1) as u32;
         let reserved_for_rest = MIN_STRATEGY_SLICE.saturating_mul(strategies_after);
         let after_reservation = remaining.saturating_sub(reserved_for_rest);
+        // With strategies still to come, giving this one the whole remaining
+        // budget (instead of skipping it) would exhaust the time reserved
+        // for them, letting one slow strategy starve every later one.
+        if after_reservation.is_zero() && strategies_after > 0 {
+            warn!(
+                "Strategy '{description}' skipped: no budget remains after reserving time for \
+                 {strategies_after} more strategies"
+            );
+            failed_attempts.push(description.to_string());
+            last_error = Some(KubeClientError::connection_error(
+                "Timed out connecting to the Kubernetes API server",
+            ));
+            continue;
+        }
         let strategy_budget = if after_reservation.is_zero() {
             remaining
         } else {
@@ -506,6 +520,44 @@ mod tests {
              slice (~100ms); the previous `.max(remaining.min(MIN_STRATEGY_SLICE))` clamp undid \
              the reservation and let the first strategy run its full 250ms sleep instead of \
              timing out at ~100ms, leaving less than the intended slice for the second strategy"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_strategies_skips_a_strategy_with_no_budget_left_after_reservation() {
+        fn timeout_prone_strategy(description: &'static str, sleep_ms: u64) -> Strategy<'static> {
+            (
+                description,
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                    Err(KubeClientError::connection_error("unreachable"))
+                }),
+            )
+        }
+
+        // After the first strategy's 300ms, ~4900ms remain: less than the
+        // 5000ms `MIN_STRATEGY_SLICE` reserved for the still-pending third
+        // strategy, so `after_reservation` is zero for the second strategy
+        // while a strategy still follows it. The second strategy sleeps
+        // 4000ms so a regression that gives it the whole remaining budget
+        // instead of skipping it shows up as several extra seconds of
+        // elapsed time rather than the near-instant skip this asserts.
+        let strategies = vec![
+            timeout_prone_strategy("first", 300),
+            timeout_prone_strategy("would-exhaust-the-reservation", 4000),
+            timeout_prone_strategy("third", 0),
+        ];
+
+        let start = Instant::now();
+        let result = execute_strategies(strategies, Duration::from_millis(5200)).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "every strategy fails or is skipped");
+        assert!(
+            elapsed < Duration::from_millis(1000),
+            "elapsed {elapsed:?} implies the second strategy ran with the whole remaining \
+             budget (~4900ms) instead of being skipped once no budget was left after \
+             reserving time for the third strategy"
         );
     }
 }

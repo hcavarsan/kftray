@@ -200,6 +200,17 @@ pub async fn deploy_and_forward_pod_with_mode(
             .into_iter()
             .map(|(config, error)| super::start::start_failure_response(&config, error)),
     );
+    finish_start_batch(responses)
+}
+
+/// A mixed batch keeps its per-config responses (including the dynamically
+/// assigned local ports of the configs that did start) as `Ok`; only a batch
+/// where every config failed is reported as `Err`.
+fn finish_start_batch(responses: Vec<CustomResponse>) -> Result<Vec<CustomResponse>, String> {
+    if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
+        let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
+        return Err(errors.join("; "));
+    }
     Ok(responses)
 }
 
@@ -1002,11 +1013,65 @@ mod tests {
             ingress_annotations: None,
         };
 
-        let responses = deploy_and_forward_pod(vec![config]).await.unwrap();
-        assert_eq!(responses.len(), 1);
+        // The batch has a single config and it fails, so the batch is
+        // all-failed: `deploy_and_forward_pod` must reject it instead of
+        // returning `Ok` with a single failed response (finding 29).
+        let error = deploy_and_forward_pod(vec![config]).await.unwrap_err();
+        assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn finish_start_batch_errors_when_every_config_failed() {
+        let responses = vec![
+            crate::kube::start::start_failure_response(
+                &Config {
+                    id: Some(1),
+                    ..Default::default()
+                },
+                "boom-1".to_string(),
+            ),
+            crate::kube::start::start_failure_response(
+                &Config {
+                    id: Some(2),
+                    ..Default::default()
+                },
+                "boom-2".to_string(),
+            ),
+        ];
+
+        let error = finish_start_batch(responses).unwrap_err();
+        assert!(error.contains("boom-1"));
+        assert!(error.contains("boom-2"));
+    }
+
+    #[test]
+    fn finish_start_batch_stays_ok_for_a_mixed_batch() {
+        let succeeded = CustomResponse {
+            id: Some(1),
+            service: String::new(),
+            namespace: String::new(),
+            local_port: 8080,
+            remote_port: 8080,
+            context: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
+            status: 0,
+            protocol: "tcp".to_string(),
+        };
+        let failed = crate::kube::start::start_failure_response(
+            &Config {
+                id: Some(2),
+                ..Default::default()
+            },
+            "boom".to_string(),
+        );
+
+        let responses = finish_start_batch(vec![succeeded, failed]).unwrap();
+        assert_eq!(responses.len(), 2);
         assert_eq!(responses[0].id, Some(1));
-        assert_ne!(responses[0].status, 0);
-        assert!(!responses[0].stderr.is_empty());
+        assert_eq!(responses[0].status, 0);
+        assert_eq!(responses[1].id, Some(2));
+        assert_ne!(responses[1].status, 0);
     }
 
     #[test]

@@ -1762,7 +1762,13 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         .filter_map(|&row| configs.get(row).cloned())
         .filter(|config| {
             let Some(id) = config.id else {
-                return true;
+                if let Some(sender) = &app.error_sender {
+                    let alias = config.alias.as_deref().unwrap_or("unknown");
+                    let _ = sender.send(format!(
+                        "Config \"{alias}\" has no id and cannot be started or stopped"
+                    ));
+                }
+                return false;
             };
             let busy = app
                 .configs_being_processed

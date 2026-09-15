@@ -15,6 +15,7 @@ use kftray_portforward::kube::{
     reconcile_pending_cleanup,
     start_port_forward,
     stop_all_port_forward,
+    stop_all_port_forward_with_deadline,
     stop_port_forward,
     stop_proxy_forward,
 };
@@ -167,14 +168,12 @@ pub(crate) async fn dispatch_stop(config: &Config) -> Result<CustomResponse, Str
 
 /// Reconciles anything this process still owes a cluster delete for, then
 /// clears its rows from `config_state` so the next launch does not see them
-/// as still running. Mirrors kftui's shutdown sequence.
-async fn reconcile_and_cleanup_on_exit() {
-    let still_owed = reconcile_pending_cleanup(
-        DatabaseMode::File,
-        CLEANUP_RECONCILE_TIMEOUT,
-        &HashSet::new(),
-    )
-    .await;
+/// as still running. Mirrors kftui's shutdown sequence. `exclude` names
+/// configs whose stop is still running past the shutdown deadline: they are
+/// left out of this pass rather than raced by a second stop attempt.
+async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
+    let still_owed =
+        reconcile_pending_cleanup(DatabaseMode::File, CLEANUP_RECONCILE_TIMEOUT, exclude).await;
     if !still_owed.is_empty() {
         error!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
@@ -265,7 +264,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             let any_running = config_states.iter().any(|config| config.is_running);
 
             if !any_running {
-                reconcile_and_cleanup_on_exit().await;
+                reconcile_and_cleanup_on_exit(&HashSet::new()).await;
                 // Stop MCP server if running
                 if let Err(e) = crate::mcp::stop().await {
                     error!("Failed to stop MCP server: {e}");
@@ -284,15 +283,26 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                         // User clicked "Yes" - stop all port forwards
                         info!("User chose to stop all port forwards before closing.");
                         tauri::async_runtime::spawn(async move {
-                            match stop_all_port_forward().await {
-                                Ok(responses) => {
-                                    info!("Successfully stopped all port forwards: {responses:?}");
+                            let unfinished = match stop_all_port_forward_with_deadline(
+                                DatabaseMode::File,
+                                &HashSet::new(),
+                                CLEANUP_RECONCILE_TIMEOUT,
+                            )
+                            .await
+                            {
+                                Ok((responses, unfinished)) => {
+                                    info!(
+                                        "Successfully stopped all port forwards: {responses:?}"
+                                    );
+                                    unfinished
                                 }
                                 Err(err) => {
                                     error!("Failed to stop port forwards: {err:?}");
+                                    Vec::new()
                                 }
-                            }
-                            reconcile_and_cleanup_on_exit().await;
+                            };
+                            reconcile_and_cleanup_on_exit(&unfinished.into_iter().collect())
+                                .await;
                             // Stop MCP server if running
                             if let Err(e) = crate::mcp::stop().await {
                                 error!("Failed to stop MCP server: {e}");
@@ -316,7 +326,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
         }
         _ => {
             error!("No windows found, exiting application.");
-            reconcile_and_cleanup_on_exit().await;
+            reconcile_and_cleanup_on_exit(&HashSet::new()).await;
             // Stop MCP server if running
             if let Err(e) = crate::mcp::stop().await {
                 error!("Failed to stop MCP server: {e}");
