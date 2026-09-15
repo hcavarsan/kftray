@@ -7,8 +7,9 @@ use std::time::{
 use log::{
     debug,
     info,
-    warn,
 };
+#[cfg(target_os = "macos")]
+use log::warn;
 
 use crate::error::HelperError;
 use crate::messages::HelperRequest;
