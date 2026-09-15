@@ -3,13 +3,13 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+#[cfg(target_os = "macos")]
+use log::warn;
 #[cfg(unix)]
 use log::{
     debug,
     info,
 };
-#[cfg(target_os = "macos")]
-use log::warn;
 
 use crate::error::HelperError;
 use crate::messages::HelperRequest;
