@@ -17,10 +17,7 @@ use kftray_commons::utils::settings::{
     set_ssl_ca_auto_install,
     set_ssl_enabled,
 };
-use kftray_portforward::kube::{
-    stop_port_forward_with_mode,
-    stop_proxy_forward_with_mode,
-};
+use kftray_portforward::kube::stop_port_forward_with_mode;
 use kftray_portforward::ssl::CertificateManager;
 use log::{
     info,
@@ -194,13 +191,52 @@ impl PortForwardRunner {
     async fn wait_for_shutdown_signal(
         configs: &[Config], mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(unix)]
+        {
+            let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                .map_err(|error| warn!("Failed to install SIGTERM handler: {error}"))
+                .ok();
+
+            tokio::select! {
+                result = signal::ctrl_c() => {
+                    if let Err(error) = result {
+                        warn!("Failed to install Ctrl+C handler: {error}");
+                        match sigterm.as_mut() {
+                            Some(sigterm) => {
+                                sigterm.recv().await;
+                            }
+                            None => {
+                                eprintln!(
+                                    "Error: no shutdown signal handler could be installed; \
+                                     stopping port forwards and exiting"
+                                );
+                                Self::stop_all_port_forwards(configs, mode).await?;
+                                return Err(
+                                    "no shutdown signal handler could be installed".into()
+                                );
+                            }
+                        }
+                    }
+                }
+                _ = async {
+                    match sigterm.as_mut() {
+                        Some(sigterm) => {
+                            sigterm.recv().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {}
+            }
+        }
+        #[cfg(not(unix))]
         if let Err(error) = signal::ctrl_c().await {
             warn!("Failed to install Ctrl+C handler: {error}");
-            // No handler means no way to observe a real interrupt any more:
-            // stay up rather than tearing every forward down right after
-            // start. A real Ctrl+C still runs the teardown below when the
-            // handler installs successfully.
-            std::future::pending::<()>().await;
+            eprintln!(
+                "Error: no shutdown signal handler could be installed; stopping port forwards \
+                 and exiting"
+            );
+            Self::stop_all_port_forwards(configs, mode).await?;
+            return Err("no shutdown signal handler could be installed".into());
         }
         println!("\nStopping port forwards");
         Self::stop_all_port_forwards(configs, mode).await
@@ -209,27 +245,34 @@ impl PortForwardRunner {
     async fn stop_all_port_forwards(
         configs: &[Config], mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut tasks = stream::iter(
-            configs
-                .iter()
-                .filter_map(|config| config.id.map(|id| (config, id))),
-        )
-        .map(|(config, config_id)| async move {
-            Self::stop_single_port_forward(config, config_id, mode)
-                .await
-                .map_err(|error| format!("Config {config_id}: {error}"))
-        })
-        .buffer_unordered(16);
+        let dispatched_ids: HashSet<i64> = configs.iter().filter_map(|config| config.id).collect();
+
+        let mut tasks = stream::iter(dispatched_ids.iter().copied())
+            .map(|config_id| async move {
+                let result = Self::stop_single_port_forward(config_id, mode)
+                    .await
+                    .map_err(|error| format!("Config {config_id}: {error}"));
+                (config_id, result)
+            })
+            .buffer_unordered(16);
 
         let mut stop_errors = Vec::new();
         let mut stopped_count = 0;
+        let mut completed_ids: HashSet<i64> = HashSet::new();
 
-        while let Some(result) = tasks.next().await {
-            match result {
-                Ok(()) => stopped_count += 1,
-                Err(e) => stop_errors.push(e),
+        // Bounded like the reconciliation pass below: a stuck stop must not
+        // keep this process alive forever, so anything still in flight past
+        // the budget is left running for the next stop-all to retry.
+        let drained = tokio::time::timeout(crate::tui::app::CLEANUP_RECONCILE_TIMEOUT, async {
+            while let Some((config_id, result)) = tasks.next().await {
+                completed_ids.insert(config_id);
+                match result {
+                    Ok(()) => stopped_count += 1,
+                    Err(e) => stop_errors.push(e),
+                }
             }
-        }
+        })
+        .await;
 
         println!("Stopped {stopped_count} port forward(s)");
 
@@ -242,6 +285,16 @@ impl PortForwardRunner {
                 eprintln!("  {error}");
             }
             failures.extend(stop_errors);
+        }
+
+        if drained.is_err() {
+            let still_owed: Vec<i64> = dispatched_ids.difference(&completed_ids).copied().collect();
+            let message = format!(
+                "stop for configuration(s) {still_owed:?} did not finish within the shutdown \
+                 budget; they stay marked running and are retried on the next stop"
+            );
+            eprintln!("Warning: {message}");
+            failures.push(message);
         }
 
         // The cleanup registry lives only in this process, so anything a failed
@@ -272,25 +325,12 @@ impl PortForwardRunner {
     }
 
     async fn stop_single_port_forward(
-        config: &Config, config_id: i64, mode: DatabaseMode,
+        config_id: i64, mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        match config.workload_type.as_deref() {
-            Some("proxy") => {
-                let namespace = &config.namespace;
-                let service_name = config
-                    .service
-                    .clone()
-                    .unwrap_or_else(|| format!("proxy-{config_id}"));
-                stop_proxy_forward_with_mode(config_id, namespace, service_name, mode)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
-            }
-            _ => stop_port_forward_with_mode(config_id.to_string(), mode)
-                .await
-                .map(|_| ())
-                .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>),
-        }
+        stop_port_forward_with_mode(config_id.to_string(), mode)
+            .await
+            .map(|_| ())
+            .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
     }
 
     async fn ensure_ssl_setup_with_configs(

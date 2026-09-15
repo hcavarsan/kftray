@@ -461,6 +461,17 @@ impl PortForwarder {
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             debug!("pod_change_rx lagged by {} for config {}", n, config_id);
+                            // A lagged receiver may have missed a pod
+                            // replacement event entirely; drop the cached
+                            // mapping so the next acquire re-resolves it
+                            // instead of risking a stale port number.
+                            if let Some(named) = &self.named_port {
+                                named
+                                    .resolved
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .take();
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             debug!("pod_change_rx closed for config {}", config_id);

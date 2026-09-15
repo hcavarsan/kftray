@@ -39,6 +39,26 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
     setSelectedConfigs(checked === true ? configs : [])
   }
 
+  const isStartBusy =
+    isInitiating ||
+    (selectedConfigs.length > 0
+      ? selectedConfigs.every(selected => {
+          const currentConfig = configs.find(c => c.id === selected.id)
+
+          return currentConfig?.is_running
+        })
+      : configs.every(config => config.is_running))
+
+  const isStopBusy =
+    isStopping ||
+    (selectedConfigs.length > 0
+      ? selectedConfigs.every(selected => {
+          const currentConfig = configs.find(c => c.id === selected.id)
+
+          return currentConfig && !currentConfig.is_running
+        })
+      : configs.every(config => !config.is_running))
+
   return (
     <Box
       display='flex'
@@ -105,39 +125,14 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             <Button
               size='xs'
               variant='ghost'
-              disabled={
-                isInitiating ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig?.is_running
-                    })
-                  : configs.every(config => config.is_running))
-              }
-              aria-disabled={
-                isInitiating ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig?.is_running
-                    })
-                  : configs.every(config => config.is_running))
-              }
+              disabled={isStartBusy}
               onClick={
-                isInitiating
-                  ? undefined
-                  : selectedConfigs.length > 0
-                    ? () => void startSelectedPortForwarding()
-                    : () =>
-                        void initiatePortForwarding(
-                          configs.filter(config => !config.is_running),
-                        )
+                selectedConfigs.length > 0
+                  ? () => void startSelectedPortForwarding()
+                  : () =>
+                      void initiatePortForwarding(
+                        configs.filter(config => !config.is_running),
+                      )
               }
               _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
               _disabled={{ cursor: 'not-allowed' }}
@@ -231,36 +226,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             <Button
               size='xs'
               variant='ghost'
-              disabled={
-                isStopping ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig && !currentConfig.is_running
-                    })
-                  : configs.every(config => !config.is_running))
-              }
-              aria-disabled={
-                isStopping ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig && !currentConfig.is_running
-                    })
-                  : configs.every(config => !config.is_running))
-              }
+              disabled={isStopBusy}
               onClick={
-                isStopping
-                  ? undefined
-                  : selectedConfigs.length > 0
-                    ? () => void stopSelectedPortForwarding()
-                    : () => void stopAllPortForwarding()
+                selectedConfigs.length > 0
+                  ? () => void stopSelectedPortForwarding()
+                  : () => void stopAllPortForwarding()
               }
               _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
               _disabled={{ cursor: 'not-allowed' }}

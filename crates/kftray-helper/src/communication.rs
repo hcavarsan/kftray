@@ -622,17 +622,33 @@ async fn handle_connection(
     Ok(())
 }
 
+/// The request id an otherwise-unparseable buffer still carries, if it was
+/// at least valid JSON with that field: lets the client correlate the
+/// error with its own request instead of getting an unaddressed one.
+fn parse_error_request_id(buffer: &[u8]) -> String {
+    serde_json::from_slice::<serde_json::Value>(buffer)
+        .ok()
+        .and_then(|value| value.get("request_id")?.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
 /// Writes an error response for a request that could not be parsed, so an
 /// old or misbehaving client fails fast instead of waiting out its timeout.
+///
+/// The caller only reaches this once its own parse of `buffer` as a
+/// `HelperRequest` already failed, so re-parsing it here is always the
+/// error case; kept as a fallback rather than assumed, so a change to the
+/// caller cannot silently turn this into a report of success.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<(), HelperError> {
-    let message = match serde_json::from_slice::<HelperRequest>(buffer) {
-        Ok(_) => "Incomplete request".to_string(),
-        Err(e) => format!("Failed to parse request: {e}"),
-    };
+    let message = serde_json::from_slice::<HelperRequest>(buffer)
+        .err()
+        .map(|e| format!("Failed to parse request: {e}"))
+        .unwrap_or_else(|| "Incomplete request".to_string());
+    let request_id = parse_error_request_id(buffer);
     error!("{message}");
 
-    match serde_json::to_vec(&HelperResponse::error(String::new(), message)) {
+    match serde_json::to_vec(&HelperResponse::error(request_id, message)) {
         Ok(bytes) => {
             if let Err(e) = stream.write_all(&bytes) {
                 warn!("Failed to write parse-error response: {e}");
@@ -892,19 +908,25 @@ async fn handle_windows_connection(
 
 /// Writes an error response for a request that could not be parsed, so an
 /// old or misbehaving client fails fast instead of waiting out its timeout.
+///
+/// The caller only reaches this once its own parse of `buffer` as a
+/// `HelperRequest` already failed, so re-parsing it here is always the
+/// error case; kept as a fallback rather than assumed, so a change to the
+/// caller cannot silently turn this into a report of success.
 #[cfg(target_os = "windows")]
 async fn respond_with_parse_error(
     pipe: &mut NamedPipeServer, buffer: &[u8],
 ) -> Result<(), HelperError> {
     use tokio::io::AsyncWriteExt;
 
-    let message = match serde_json::from_slice::<HelperRequest>(buffer) {
-        Ok(_) => "Incomplete request".to_string(),
-        Err(e) => format!("Failed to parse request: {}", e),
-    };
+    let message = serde_json::from_slice::<HelperRequest>(buffer)
+        .err()
+        .map(|e| format!("Failed to parse request: {e}"))
+        .unwrap_or_else(|| "Incomplete request".to_string());
+    let request_id = parse_error_request_id(buffer);
     error!("{}", message);
 
-    match serde_json::to_vec(&HelperResponse::error(String::new(), message)) {
+    match serde_json::to_vec(&HelperResponse::error(request_id, message)) {
         Ok(bytes) => {
             if let Err(e) = pipe.write_all(&bytes).await {
                 warn!("Failed to write parse-error response: {}", e);

@@ -45,8 +45,7 @@ import '../../styles.css'
 
 const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   config,
-  confirmDeleteConfig,
-  handleDeleteConfig,
+  deleteConfigs,
   handleEditConfig,
   handleDuplicateConfig,
   selected,
@@ -222,7 +221,6 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   }
 
   const handleOpenDeleteDialog = () => {
-    handleDeleteConfig(config.id)
     setIsDeleteDialogOpen(true)
   }
 
@@ -591,7 +589,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                 className='menu-item'
                 value='edit'
                 disabled={isPending}
-                onClick={() => handleEditConfig(config.id)}
+                onClick={() => void handleEditConfig(config.id)}
               >
                 <Box as={Pencil} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
@@ -690,7 +688,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                 className='dialog-button dialog-button-primary'
                 onClick={() => {
                   void (async () => {
-                    const success = await confirmDeleteConfig()
+                    const success = await deleteConfigs([config.id])
 
                     if (success) {
                       setIsDeleteDialogOpen(false)

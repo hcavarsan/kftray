@@ -209,7 +209,11 @@ lazy_static! {
 }
 
 fn pod_readiness_for(workload_type: &str) -> kube_portforward::PodReadiness {
-    if workload_type == "proxy" {
+    // Expose's relay is probed the same relay-aware way a proxy's is (see
+    // `expose::kubernetes::relay_pod_ready`): the aggregate `Ready` condition
+    // waits on every sidecar in the pod, which has nothing to do with the
+    // relay actually listening.
+    if workload_type == "proxy" || workload_type == "expose" {
         kube_portforward::PodReadiness::Running
     } else {
         kube_portforward::PodReadiness::Ready
@@ -516,7 +520,7 @@ mod tests {
         );
         assert_eq!(
             pod_readiness_for("expose"),
-            kube_portforward::PodReadiness::Ready
+            kube_portforward::PodReadiness::Running
         );
     }
 

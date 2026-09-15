@@ -44,6 +44,7 @@ pub use stop::{
     cancel_all_startups,
     delete_configs_if_idle,
     reconcile_pending_cleanup,
+    settle_cluster_obligation,
     stop_all_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward,

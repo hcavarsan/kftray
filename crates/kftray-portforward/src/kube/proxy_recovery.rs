@@ -23,8 +23,11 @@ pub const BASE_BACKOFF_SECS: u64 = 2;
 /// Maximum backoff duration in seconds (caps exponential growth)
 pub const MAX_BACKOFF_SECS: u64 = 32;
 
-/// Timeout for waiting for a pod to become ready during recovery
-pub const POD_READY_TIMEOUT_SECS: u64 = 30;
+/// Timeout for waiting for a pod to become ready during recovery, matching
+/// the initial deploy wait (`wait_for_relay_pod`/`wait_for_relay_startup` in
+/// `kube::proxy`): the startup probe alone can take ~30s, so a shorter
+/// recovery wait gives up before a healthy relay would have reported ready.
+pub const POD_READY_TIMEOUT_SECS: u64 = 120;
 
 /// Represents the current state of a proxy recovery operation
 #[derive(Debug, Clone, PartialEq)]
@@ -574,16 +577,36 @@ pub async fn recover_bare_pod(
         return Err(anyhow::anyhow!("Re-deployment failed: {error}"));
     };
 
+    // Re-run the same duplicate / already-running / other-process /
+    // existence checks a normal start goes through: recovery re-enters the
+    // start path outside `process_single_proxy_config` and would otherwise
+    // recreate a relay for a config another process, or another start,
+    // already owns.
+    if let Err(error) = crate::kube::proxy::verify_start_preconditions(config_id, mode).await {
+        drop(startup);
+        return Err(anyhow::anyhow!("Re-deployment refused: {error}"));
+    }
+
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
-    let result = crate::kube::proxy::start_proxy_config(
-        config.clone(),
-        mode,
-        ssl_override,
-        cancellation,
-        Some(destination),
-    )
-    .await;
+    //
+    // Also races the freshly registered PendingStart's own cancellation:
+    // stop-all and a per-config stop cancel every `STARTING_PROXIES` entry,
+    // and this redeploy must abort on that signal even if it ever runs
+    // without the recovery manager's own token also firing.
+    let result = tokio::select! {
+        biased;
+        _ = startup.cancellation().cancelled() => {
+            Err(format!("Re-deployment cancelled for config {config_id}"))
+        }
+        result = crate::kube::proxy::start_proxy_config(
+            config.clone(),
+            mode,
+            ssl_override,
+            cancellation,
+            Some(destination),
+        ) => result,
+    };
     drop(startup);
     result
         .map(|_| ())

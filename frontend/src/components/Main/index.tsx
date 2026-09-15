@@ -95,8 +95,6 @@ const KFTray = () => {
   const [isStopping, setIsStopping] = useState(false)
   const startAbortControllerRef = useRef<AbortController | null>(null)
   const stopAbortControllerRef = useRef<AbortController | null>(null)
-  const [isAlertOpen, setIsAlertOpen] = useState(false)
-  const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
   const [isShortcutModalOpen, setIsShortcutModalOpen] = useState(false)
   const [isServerResourcesModalOpen, setIsServerResourcesModalOpen] =
@@ -446,13 +444,13 @@ const KFTray = () => {
     }
   }
 
-  const handleSaveConfig = async (_configToSave: Config) => {
+  const handleSaveConfig = async (configToSave: Config) => {
     const runningConfig = isEdit
-      ? configsRef.current.find(conf => conf.id === newConfig.id)
+      ? configsRef.current.find(conf => conf.id === configToSave.id)
       : undefined
     const wasRunning = Boolean(runningConfig?.is_running)
 
-    if (isEdit && pendingConfigActionsRef.current.has(newConfig.id)) {
+    if (isEdit && pendingConfigActionsRef.current.has(configToSave.id)) {
       toaster.error({
         title: 'Error',
         description: 'This configuration is busy. Try again once it settles.',
@@ -469,24 +467,26 @@ const KFTray = () => {
 
     if (isEdit) {
       pendingToken = markPending(
-        newConfig.id,
+        configToSave.id,
         wasRunning ? 'stopping' : 'saving',
       )
     }
 
     let configSaved = false
+    let wasStopped = false
 
     try {
       const updatedConfigToSave: Config = {
-        ...newConfig,
-        id: isEdit ? newConfig.id : 0,
+        ...configToSave,
+        id: isEdit ? configToSave.id : 0,
       }
 
-      // Stopped by its pre-edit identity: `newConfig` carries the edited
+      // Stopped by its pre-edit identity: `configToSave` carries the edited
       // service/namespace/port, and stopping with those would target the
       // wrong running resource.
       if (wasRunning && runningConfig) {
         await stopPortForwardingForConfig(runningConfig)
+        wasStopped = true
       }
 
       if (isEdit) {
@@ -500,8 +500,8 @@ const KFTray = () => {
       }
       configSaved = true
       if (wasRunning) {
-        pendingToken = markPending(newConfig.id, 'starting')
-        await startPortForwardingForConfig(newConfig)
+        pendingToken = markPending(configToSave.id, 'starting')
+        await startPortForwardingForConfig(updatedConfigToSave)
       }
 
       toaster.success({
@@ -524,6 +524,13 @@ const KFTray = () => {
           duration: 2000,
         })
         closeModal()
+      } else if (wasStopped) {
+        console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
+        toaster.error({
+          title: 'Error',
+          description: `The forward was stopped but the save failed. ${message}`,
+          duration: 2000,
+        })
       } else {
         console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
         toaster.error({
@@ -534,7 +541,7 @@ const KFTray = () => {
       }
     } finally {
       if (isEdit && pendingToken !== undefined) {
-        clearPending(newConfig.id, pendingToken)
+        clearPending(configToSave.id, pendingToken)
       }
       // The optimistic update only flips is_running, and the restart's version
       // bump discards any refresh that raced it.
@@ -618,6 +625,12 @@ const KFTray = () => {
   const toggleConfigForward = useCallback(
     async (config: Config, action: PortForwardToggleAction) => {
       if (pendingConfigActionsRef.current.has(config.id)) {
+        toaster.error({
+          title: 'Error',
+          description: 'This configuration is busy. Try again once it settles.',
+          duration: 1000,
+        })
+
         return
       }
       const token = markPending(config.id, action)
@@ -876,12 +889,6 @@ const KFTray = () => {
     [runPortForwardBatch],
   )
 
-  const handleDeleteConfig = useCallback(async (id: number) => {
-    setConfigToDelete(id)
-
-    setIsAlertOpen(true)
-  }, [])
-
   const deleteConfigs = useCallback(
     async (ids: number[]): Promise<boolean> => {
       const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
@@ -921,6 +928,7 @@ const KFTray = () => {
         }
         await invoke('delete_configs_cmd', { ids })
         dropConfigs(ids)
+        setSelectedConfigs(prev => prev.filter(c => !ids.includes(c.id)))
         toaster.success({
           title: 'Success',
           description: 'Configurations deleted successfully.',
@@ -951,27 +959,6 @@ const KFTray = () => {
       dropConfigs,
     ],
   )
-
-  const confirmDeleteConfig = useCallback(async () => {
-    if (typeof configToDelete !== 'number') {
-      toaster.error({
-        title: 'Error',
-        description: 'Configuration id is undefined.',
-        duration: 1000,
-      })
-
-      return false
-    }
-
-    // The same reservation, revalidation and refresh as a bulk delete.
-    const success = await deleteConfigs([configToDelete])
-
-    if (success) {
-      setIsAlertOpen(false)
-    }
-
-    return success
-  }, [configToDelete, deleteConfigs])
 
   const startSelectedPortForwarding = async () => {
     const configsToStart = selectedConfigs
@@ -1017,7 +1004,7 @@ const KFTray = () => {
   }, [])
 
   const handleSyncComplete = useCallback(() => {
-    updateConfigsWithState()
+    void updateConfigsWithState()
   }, [updateConfigsWithState])
 
   const handleSyncFailure = useCallback((error: Error) => {
@@ -1096,10 +1083,7 @@ const KFTray = () => {
               stopAllPortForwarding={stopAllPortForwarding}
               abortStartOperation={abortStartOperation}
               abortStopOperation={abortStopOperation}
-              handleDeleteConfig={handleDeleteConfig}
-              confirmDeleteConfig={confirmDeleteConfig}
-              isAlertOpen={isAlertOpen}
-              setIsAlertOpen={setIsAlertOpen}
+              deleteConfigs={deleteConfigs}
               selectedConfigs={selectedConfigs}
               setSelectedConfigs={setSelectedConfigs}
               openSettingsModal={openSettingsModal}

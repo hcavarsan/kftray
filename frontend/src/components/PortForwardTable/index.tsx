@@ -27,10 +27,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   abortStopOperation,
   handleEditConfig,
   handleDuplicateConfig,
-  handleDeleteConfig,
-  confirmDeleteConfig,
-  isAlertOpen,
-  setIsAlertOpen,
+  deleteConfigs,
   selectedConfigs,
   setSelectedConfigs,
   openSettingsModal,
@@ -87,7 +84,9 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   useEffect(() => {
     setSelectedConfigs(prev =>
-      prev.map(selected => configs.find(c => c.id === selected.id) || selected),
+      prev
+        .map(selected => configs.find(c => c.id === selected.id))
+        .filter((config): config is Config => config !== undefined),
     )
   }, [configs, setSelectedConfigs])
 
@@ -227,12 +226,9 @@ const PortForwardTable: React.FC<TableProps> = ({
               context={context}
               contextConfigs={contextConfigs}
               selectedConfigs={selectedConfigs}
-              handleDeleteConfig={handleDeleteConfig}
-              confirmDeleteConfig={confirmDeleteConfig}
+              deleteConfigs={deleteConfigs}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}
-              isAlertOpen={isAlertOpen}
-              setIsAlertOpen={setIsAlertOpen}
               handleSelectionChange={handleSelectionChange}
               selectedConfigsByContext={selectedConfigsByContext}
               handleCheckboxChange={handleCheckboxChange}

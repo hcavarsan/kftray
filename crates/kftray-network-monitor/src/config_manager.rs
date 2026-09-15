@@ -134,13 +134,14 @@ impl ConfigManager {
 /// `proxy_udp_configs_are_not_skipped_on_no_ready_pods`).
 fn classify_restart_outcome<'a>(
     responses: &'a [CustomResponse], protocol: &str, downgrade_no_ready_pods: bool,
-) -> (usize, Vec<&'a str>, Vec<&'a str>) {
-    let (pending_pods, failures): (Vec<&str>, Vec<&str>) = responses
+) -> (usize, Vec<&'a CustomResponse>, Vec<&'a CustomResponse>) {
+    let (pending_pods, failures): (Vec<&CustomResponse>, Vec<&CustomResponse>) = responses
         .iter()
         .filter(|response| response.failed())
-        .map(|response| response.stderr.as_str())
-        .partition(|stderr| {
-            downgrade_no_ready_pods && protocol == "udp" && stderr.contains(NO_READY_PODS_ERROR)
+        .partition(|response| {
+            downgrade_no_ready_pods
+                && protocol == "udp"
+                && response.stderr.contains(NO_READY_PODS_ERROR)
         });
     let restarted = responses.len() - pending_pods.len() - failures.len();
     (restarted, pending_pods, failures)
@@ -154,18 +155,19 @@ fn report_restart_outcome(
     if restarted > 0 {
         info!("Restarted {restarted} {protocol} {kind}");
     }
-    if !pending_pods.is_empty() {
+    for response in &pending_pods {
         log::warn!(
-            "Skipped {} UDP {kind} with no ready pods: {}",
-            pending_pods.len(),
-            pending_pods.join("; ")
+            "Skipped UDP {kind} with no ready pods: config {:?} ({}/{}): {}",
+            response.id,
+            response.namespace,
+            response.service,
+            response.stderr
         );
     }
-    if !failures.is_empty() {
+    for response in &failures {
         error!(
-            "Failed to restart {} {protocol} {kind}: {}",
-            failures.len(),
-            failures.join("; ")
+            "Failed to restart {protocol} {kind}: config {:?} ({}/{}): {}",
+            response.id, response.namespace, response.service, response.stderr
         );
     }
 }

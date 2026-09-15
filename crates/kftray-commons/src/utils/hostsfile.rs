@@ -212,57 +212,28 @@ fn open_locked(path: &Path, _recover: bool) -> Result<std::fs::File> {
     })
 }
 
-/// Where the content of an in-place rewrite is published before it is applied.
+/// Where the content of an in-place rewrite is published before it is
+/// applied, and where a read looks for one that never completed.
 ///
 /// The rewrite truncates the hosts file, so the new content is committed to
 /// this file first: a rewrite interrupted at any point is completed from it
 /// the next time the file is opened, rather than leaving the file truncated.
 /// It exists only while a rewrite is outstanding; an incomplete one is never
 /// visible because it is written to a temporary name and renamed into place.
+///
+/// A sibling of the hosts file itself is the only location: it is writable
+/// by exactly the principal that can write the hosts file (typically
+/// `drivers\etc\`, which requires the same elevation hosts editing does), so
+/// planting one needs no less privilege than editing hosts directly. A
+/// directory outside the hosts tree, such as `%ProgramData%`, is writable by
+/// far less privileged callers, which would let an unprivileged process
+/// stage a pending rewrite for an elevated recovery to apply over the real
+/// file.
 #[cfg(windows)]
 fn pending_path(path: &Path) -> PathBuf {
     let mut pending = path.as_os_str().to_owned();
     pending.push(".kftray-pending");
     PathBuf::from(pending)
-}
-
-/// Where the copy goes when the hosts directory is not writable.
-///
-/// Both the unprivileged application and the elevated helper must resolve
-/// this to the same directory, or the recovery an interrupted rewrite
-/// depends on only ever sees whichever of them wrote it: `get_config_dir()`
-/// does not hold that guarantee, since it can differ with the home
-/// directory or a `KFTRAY_CONFIG` the elevated process does not inherit.
-/// `%ProgramData%` is machine-wide and both resolve it identically; the
-/// config dir is used only when it is unset.
-#[cfg(windows)]
-fn fallback_pending_dir() -> Result<PathBuf> {
-    match std::env::var_os("PROGRAMDATA") {
-        Some(program_data) if !program_data.is_empty() => {
-            let dir = PathBuf::from(program_data).join("kftray");
-            std::fs::create_dir_all(&dir)?;
-            Ok(dir)
-        }
-        _ => crate::utils::config_dir::get_config_dir().map_err(HostsFileError::Io),
-    }
-}
-
-/// The pending file's name for `path`, stable across processes and Rust
-/// versions.
-///
-/// Derived from the hosts path alone, with the same fixed FNV-1a
-/// `memory_owner_base` uses, rather than `DefaultHasher`: the app and the
-/// helper are built and upgraded independently of each other, and
-/// `DefaultHasher` is not guaranteed to hash the same bytes to the same
-/// value across Rust versions.
-#[cfg(windows)]
-fn fallback_pending_path(path: &Path) -> Result<PathBuf> {
-    use std::os::windows::ffi::OsStrExt;
-
-    let name = crate::utils::config_dir::fnv1a_hex(
-        path.as_os_str().encode_wide().flat_map(u16::to_le_bytes),
-    );
-    Ok(fallback_pending_dir()?.join(format!("hosts-{name}.kftray-pending")))
 }
 
 /// Opens the hosts file read-only and takes its lock.
@@ -283,31 +254,17 @@ fn open_locked(path: &Path, recover: bool) -> Result<std::fs::File> {
     wait_for_exclusive_lock(&file, LockRegion::PendingByte, &path.display().to_string())
         .map_err(HostsFileError::Io)?;
     if recover {
-        let candidates: Vec<PathBuf> = [pending_path(path), fallback_pending_path(path)?]
-            .into_iter()
-            .filter(|pending| pending.exists())
-            .collect();
-        // Two locations can each hold a pending rewrite (one from before the
-        // hosts directory became unwritable, one from after); at most one of
-        // them is the intended state. Applying both in a fixed order would
-        // let a stale leftover at one location overwrite the newer pending
-        // at the other, so only the newest by mtime is ever applied.
-        if let Some(newest) = candidates.iter().max_by_key(|pending| {
-            std::fs::metadata(pending)
-                .and_then(|metadata| metadata.modified())
-                .ok()
-        }) {
+        let pending = pending_path(path);
+        if pending.exists() {
             log::warn!(
                 "Completing an interrupted rewrite of the hosts file from {}",
-                newest.display()
+                pending.display()
             );
-            std::fs::copy(newest, path)?;
+            std::fs::copy(&pending, path)?;
             // Durable before the copy it was restored from goes: a power loss
             // after the removal would otherwise leave the file partial with
             // nothing left to complete it from.
             OpenOptions::new().write(true).open(path)?.sync_all()?;
-        }
-        for pending in candidates {
             if let Err(error) = std::fs::remove_file(&pending) {
                 log::warn!(
                     "Could not remove stale pending hosts rewrite at {}: {error}",
@@ -369,20 +326,15 @@ impl HostsDocument {
     /// fails because one could not be made.
     #[cfg(windows)]
     fn read_intended_content(path: &Path) -> Result<String> {
-        for pending in [Some(pending_path(path)), fallback_pending_path(path).ok()]
-            .into_iter()
-            .flatten()
-        {
-            match std::fs::read_to_string(&pending) {
-                Ok(contents) => return Ok(contents),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    log::warn!(
-                        "Ignoring unreadable pending hosts rewrite at {}: {error}",
-                        pending.display()
-                    );
-                    continue;
-                }
+        let pending = pending_path(path);
+        match std::fs::read_to_string(&pending) {
+            Ok(contents) => return Ok(contents),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                log::warn!(
+                    "Ignoring unreadable pending hosts rewrite at {}: {error}",
+                    pending.display()
+                );
             }
         }
         match std::fs::read_to_string(path) {
@@ -905,31 +857,22 @@ impl<'a> AtomicFileWriter<'a> {
     /// the write, but the write already succeeded and was fsynced by the
     /// time it happens: a failure to remove it is only ever logged, not
     /// reported as a failed write.
+    ///
+    /// The pending copy is staged next to the hosts file itself; a caller
+    /// unable to write there is not privileged enough to write the hosts
+    /// file either, and gets that `PermissionDenied` back rather than a
+    /// fallback location a less privileged process could also reach.
     #[cfg(windows)]
     fn write_content(&self, content: &[u8]) -> Result<()> {
-        let mut pending = pending_path(self.target_path);
-        let staging_for = |pending: &Path| {
-            let mut staging = pending.as_os_str().to_owned();
-            staging.push(".tmp");
-            PathBuf::from(staging)
-        };
-        let mut staging = staging_for(&pending);
-        let open_staging = |staging: &Path| {
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(staging)
-        };
-        let mut staged = match open_staging(&staging) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                pending = fallback_pending_path(self.target_path)?;
-                staging = staging_for(&pending);
-                open_staging(&staging)?
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let pending = pending_path(self.target_path);
+        let mut staging = pending.as_os_str().to_owned();
+        staging.push(".tmp");
+        let staging = PathBuf::from(staging);
+        let mut staged = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&staging)?;
         staged.write_all(content)?;
         staged.sync_all()?;
         drop(staged);
@@ -1123,58 +1066,24 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn fallback_pending_path_is_stable_for_the_same_hosts_path() {
-        let path = Path::new(r"C:\Windows\System32\Drivers\Etc\hosts");
-
-        let first = fallback_pending_path(path).unwrap();
-        let second = fallback_pending_path(path).unwrap();
-
-        assert_eq!(
-            first, second,
-            "the same hosts path must derive the same pending file name every time"
-        );
-        assert_eq!(
-            first.file_name().and_then(|name| name.to_str()),
-            Some("hosts-ae8644124165b0df.kftray-pending"),
-            "the name must be the fixed FNV-1a digest of the path, not whatever \
-             `DefaultHasher` derives for this build"
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn open_locked_recovery_applies_only_the_newest_pending_file() {
+    fn open_locked_recovery_applies_the_pending_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hosts");
         std::fs::write(&path, "original\n").unwrap();
 
-        let primary = pending_path(&path);
-        let fallback = fallback_pending_path(&path).unwrap();
-
-        // A stale leftover at the fallback location, from an earlier write
-        // whose removal failed (write_content only warns when that
-        // happens), older than the pending copy of the current interrupted
-        // rewrite at the primary location.
-        std::fs::write(&fallback, "stale-pending\n").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        std::fs::write(&primary, "fresh-pending\n").unwrap();
+        let pending = pending_path(&path);
+        std::fs::write(&pending, "fresh-pending\n").unwrap();
 
         open_locked(&path, true).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "fresh-pending\n",
-            "recovery must apply the newest pending file by mtime, not whichever \
-             location is checked last"
+            "recovery must apply the pending rewrite sibling to the hosts file"
         );
         assert!(
-            !primary.exists(),
-            "every pending file must be removed once recovery completes"
-        );
-        assert!(
-            !fallback.exists(),
-            "every pending file must be removed once recovery completes, including \
-             the stale one that was not applied"
+            !pending.exists(),
+            "the pending file must be removed once recovery completes"
         );
     }
 
@@ -1187,9 +1096,9 @@ mod tests {
         std::fs::write(&path_a, "a-original\n").unwrap();
         std::fs::write(&path_b, "b-original\n").unwrap();
 
-        // As if a write to A using the fallback location was interrupted
-        // after the copy was committed but before it was applied.
-        std::fs::write(fallback_pending_path(&path_a).unwrap(), "a-pending\n").unwrap();
+        // As if a write to A was interrupted after the copy was committed
+        // but before it was applied.
+        std::fs::write(pending_path(&path_a), "a-pending\n").unwrap();
 
         let a_lines: Vec<String> =
             read_hosts_at(&path_a, |document| Ok(document.lines.clone())).unwrap();
@@ -1210,7 +1119,7 @@ mod tests {
         // exactly as they were.
         assert_eq!(std::fs::read_to_string(&path_a).unwrap(), "a-original\n");
         assert_eq!(
-            std::fs::read_to_string(fallback_pending_path(&path_a).unwrap()).unwrap(),
+            std::fs::read_to_string(pending_path(&path_a)).unwrap(),
             "a-pending\n"
         );
     }

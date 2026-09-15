@@ -256,6 +256,7 @@ pub async fn create_expose_resources(
             },
             pod_ip,
             pod_name,
+            websocket_port: relay.websocket_port,
             owned: std::mem::take(&mut created),
         })
     }
@@ -385,7 +386,12 @@ where
 fn classify_create_error(kind: ResourceKind, error: &kube::Error) -> ExposeCreateError {
     let ambiguous = match error {
         kube::Error::Api(response) => {
-            matches!(response.code, 408 | 429 | 500 | 502 | 503 | 504)
+            // 409 on create means an object by this name already exists. That
+            // can be this same attempt's own request, applied after an earlier
+            // response was lost to a timeout or a dropped connection: treating
+            // it as a definitive rejection would clear the ingress history (or
+            // disarm the cleanup guard) for an object that is still there.
+            matches!(response.code, 408 | 409 | 429 | 500 | 502 | 503 | 504)
         }
         _ => true,
     };
@@ -624,6 +630,10 @@ async fn still_present(
 struct RelayProbe {
     container_name: Option<String>,
     readiness_probe_present: bool,
+    /// The pod-side port the tunnel's port-forward must target. Resolved the
+    /// same way the startup probe is, so a relay whose `WEBSOCKET_PORT` is
+    /// customized is still reachable once the deployment is up.
+    websocket_port: u16,
 }
 
 async fn create_deployment(
@@ -700,10 +710,12 @@ async fn create_deployment(
     let mut relay_probe = RelayProbe {
         container_name: None,
         readiness_probe_present: false,
+        websocket_port: 9999,
     };
     if let Some(container) = relay {
         relay_probe.container_name = Some(container.name.clone());
         if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
+            relay_probe.websocket_port = u16::try_from(websocket_port).unwrap_or(9999);
             container.startup_probe.get_or_insert_with(|| Probe {
                 tcp_socket: Some(TCPSocketAction {
                     port: IntOrString::Int(websocket_port),
@@ -1581,6 +1593,7 @@ mod tests {
         let relay = RelayProbe {
             container_name: Some("kftray-server".to_owned()),
             readiness_probe_present: false,
+            websocket_port: 9999,
         };
         let ready: Pod = serde_json::from_value(serde_json::json!({
             "metadata": {"name": "relay"},
@@ -1617,6 +1630,7 @@ mod tests {
         let relay = RelayProbe {
             container_name: Some("kftray-server".to_owned()),
             readiness_probe_present: true,
+            websocket_port: 9999,
         };
         // The relay container itself is ready, but a sidecar in the same pod
         // is not: with a readiness probe actually injected, the aggregate
@@ -1964,6 +1978,78 @@ mod tests {
             !ingress_was_created(config_id, &location, mode).await,
             "a confirmed UID-scoped delete proves no ingress is left, so a later private start \
              must not need ingress-list rights just to rule this exposure out"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_409_on_ingress_create_keeps_its_history() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        kftray_commons::utils::manifests::create_expose_ingress_manifest().unwrap();
+
+        let config_id = "3003";
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        let config = Config {
+            id: Some(3003),
+            namespace: "default".to_owned(),
+            alias: Some("myapp.example.com".to_owned()),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::POST);
+            let conflict = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"AlreadyExists","message":"ingresses.networking.k8s.io \"myapp\" \
+                 already exists","code":409
+            });
+            send.send_response(
+                Response::builder()
+                    .status(409)
+                    .body(Body::from(serde_json::to_vec(&conflict).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            create_ingress(
+                &client,
+                "default",
+                "myapp",
+                "myapp-svc",
+                &config,
+                &location,
+                mode,
+            ),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error = result.expect_err("a 409 must not be reported as a created ingress");
+        assert!(
+            error.ambiguous,
+            "an AlreadyExists response can be this attempt's own request landing late; it must \
+             not be read as a definitive rejection"
+        );
+        assert!(
+            ingress_was_created(config_id, &location, mode).await,
+            "a 409 must not wipe the ingress history: the object it names may be the one this \
+             attempt itself is responsible for"
         );
     }
 

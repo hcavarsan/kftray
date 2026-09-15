@@ -336,12 +336,17 @@ mod tests {
         );
         assert_eq!(app.state, AppState::ShowErrorPopup);
 
+        app.error_scroll = 5;
         sender.send("third failure".to_string()).unwrap();
         app.update_configs(&[], &[]);
 
         assert_eq!(
             app.error_message.as_deref(),
             Some("first failure\nsecond failure\nthird failure")
+        );
+        assert_eq!(
+            app.error_scroll, 0,
+            "a newly appended failure must be visible, not hidden below a stale scroll offset"
         );
     }
 

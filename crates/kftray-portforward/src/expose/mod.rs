@@ -160,7 +160,7 @@ pub(crate) async fn start_single_expose(
     let label_selector = kubernetes::expose_owner_selector(&config_id.to_string(), mode).await?;
     let target = Target {
         selector: TargetSelector::PodLabel(label_selector),
-        port: Port::Number(9999),
+        port: Port::Number(i32::from(resources.websocket_port)),
         namespace: NameSpace(Some(config.namespace.clone())),
     };
 
@@ -199,8 +199,8 @@ pub(crate) async fn start_single_expose(
     };
 
     info!(
-        "Port-forward established: localhost:{} → pod:9999",
-        websocket_port
+        "Port-forward established: localhost:{} → pod:{}",
+        websocket_port, resources.websocket_port
     );
 
     let local_service_port = config.local_port.unwrap_or(8080);
@@ -288,7 +288,7 @@ pub(crate) async fn start_single_expose(
         service: config.service.unwrap_or(resources.service_name),
         namespace: config.namespace.clone(),
         local_port: local_service_port,
-        remote_port: 9999,
+        remote_port: resources.websocket_port,
         context: config.context.unwrap_or_default(),
         stdout: String::new(),
         stderr: String::new(),

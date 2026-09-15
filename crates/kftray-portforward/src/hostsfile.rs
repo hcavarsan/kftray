@@ -29,6 +29,18 @@ pub struct HostfileManager {
     ssl_ids_written: std::sync::Mutex<HashSet<String>>,
 }
 
+/// The outcome of a failed SSL host-entry write, once any rollback attempt
+/// has had its turn.
+struct SslWriteError {
+    error: std::io::Error,
+    /// Whether a line this call wrote is still on disk despite the
+    /// rollback attempt. `false` means the caller may forget any record it
+    /// made of these ids before the write; `true` means a leftover line
+    /// remains and the record must survive so a later stop can still
+    /// attribute and remove it.
+    left_on_disk: bool,
+}
+
 impl HostfileManager {
     pub fn new() -> Self {
         Self {
@@ -82,18 +94,17 @@ impl HostfileManager {
         self.direct_manager.add_host_entry(id, entry)
     }
 
-    /// Writes the HTTPS aliases for `config_id` as one pair and records their
-    /// full ids as written, so a later removal can tell an unrelated unmarked
-    /// line that merely shares the alias from one this run actually wrote.
+    /// Writes the HTTPS aliases for `config_id` as one pair.
     ///
     /// The pair is written together: if the second entry fails, the first is
-    /// rolled back rather than left on disk, and neither id is recorded. Once
-    /// both are on disk, both ids are also persisted to settings, so a
-    /// process restart still attributes and protects the aliases a stop
-    /// needs to verify.
-    pub fn add_ssl_host_entry(
+    /// rolled back rather than left on disk. Whether the caller's persisted
+    /// record of these ids may be forgotten depends on how that rollback
+    /// went, reported through `SslWriteError::left_on_disk` rather than
+    /// decided here, since forgetting them is a durability decision the
+    /// caller owns.
+    fn add_ssl_host_entry(
         &self, config_id: &str, alias: &str,
-    ) -> std::io::Result<(String, String)> {
+    ) -> Result<(String, String), SslWriteError> {
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
         let https_id = format!("{config_id}-https");
@@ -105,7 +116,11 @@ impl HostfileManager {
                 ip: loopback,
                 hostname: alias.to_string(),
             },
-        )?;
+        )
+        .map_err(|error| SslWriteError {
+            error,
+            left_on_disk: false,
+        })?;
 
         if let Err(error) = self.add_host_entry(
             https_local_id.clone(),
@@ -114,10 +129,15 @@ impl HostfileManager {
                 hostname: format!("{alias}.local"),
             },
         ) {
-            if let Err(cleanup_error) = self.remove_host_entries(&[https_id.as_str()], &[], &[]) {
+            let rollback = self.remove_host_entries(&[https_id.as_str()], &[], &[]);
+            let left_on_disk = rollback.is_err();
+            if let Err(cleanup_error) = rollback {
                 warn!("Failed to roll back {https_id} after SSL write failure: {cleanup_error}");
             }
-            return Err(error);
+            return Err(SslWriteError {
+                error,
+                left_on_disk,
+            });
         }
 
         {
@@ -331,8 +351,11 @@ impl HostfileManager {
     /// Clears every alias this application wrote, through either writer.
     ///
     /// The helper clears only its own section, so the direct one is cleared
-    /// here regardless, and a failure from either is reported: a remove-all
-    /// that left a section behind is not one.
+    /// here regardless. A failure from either is reported unless what is
+    /// actually left on disk says otherwise: the direct clear above already
+    /// reaches both sections when this process can write the hosts file
+    /// itself, so a helper IPC failure alongside a successful direct clear
+    /// must not be reported as an incomplete remove-all.
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
         let mut errors = Vec::new();
         if let Some(helper) = self.helper() {
@@ -346,11 +369,15 @@ impl HostfileManager {
         }
 
         if !errors.is_empty() {
-            // The attribution stays: an unmarked line an older helper left
-            // behind can only be tied to its id through what was handed over,
-            // and a later per-id removal would otherwise pass verification with
-            // the alias still resolving.
-            return Err(std::io::Error::other(errors.join("; ")));
+            let direct_section = DirectHostfileManager::direct_section()?;
+            let helper_section = DirectHostfileManager::helper_section()?;
+            if !remove_all_verified_despite(&errors, &direct_section, &helper_section) {
+                // The attribution stays: an unmarked line an older helper left
+                // behind can only be tied to its id through what was handed over,
+                // and a later per-id removal would otherwise pass verification with
+                // the alias still resolving.
+                return Err(std::io::Error::other(errors.join("; ")));
+            }
         }
         self.handed_to_helper
             .lock()
@@ -386,6 +413,27 @@ impl Default for HostfileManager {
 
 pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
     HOSTFILE_MANAGER.add_host_entry(id, entry)
+}
+
+/// Whether errors from `remove_all_host_entries` still count as complete
+/// cleanup.
+///
+/// The direct clear reaches both sections whenever this process can write
+/// the hosts file itself, so what is actually left on disk decides,
+/// not which writer reported trouble getting there: a helper IPC failure
+/// alongside sections that are verified empty is not a leftover alias.
+fn remove_all_verified_despite(
+    errors: &[String], direct_section: &[kftray_commons::utils::hostsfile::SectionEntry],
+    helper_section: &[kftray_commons::utils::hostsfile::SectionEntry],
+) -> bool {
+    let verified = direct_section.is_empty() && helper_section.is_empty();
+    if verified {
+        warn!(
+            "remove_all_host_entries reported errors but both sections are already empty: {}",
+            errors.join("; ")
+        );
+    }
+    verified
 }
 
 /// The unmarked lines a removal may attribute to the ids it is removing: what
@@ -500,6 +548,19 @@ async fn forget_ssl_id_written(full_id: &str, mode: DatabaseMode) {
     }
 }
 
+/// After a failed SSL write, forgets the record persisted before the write
+/// unless something could not be rolled back: a line left on disk must stay
+/// attributable so a later stop can still find and remove it.
+async fn settle_ssl_write_failure(
+    https_id: &str, https_local_id: &str, left_on_disk: bool, mode: DatabaseMode,
+) {
+    if left_on_disk {
+        return;
+    }
+    forget_ssl_id_written(https_id, mode).await;
+    forget_ssl_id_written(https_local_id, mode).await;
+}
+
 /// Every full id a run before a restart recorded as written, for this
 /// database mode.
 async fn persisted_ssl_ids_written(mode: DatabaseMode) -> HashSet<String> {
@@ -576,18 +637,30 @@ pub fn remove_all_host_entries() -> std::io::Result<()> {
 pub async fn add_ssl_host_entry(
     config_id: &str, alias: &str, _https_port: u16, mode: DatabaseMode,
 ) -> std::io::Result<()> {
-    let config_id = config_id.to_string();
-    let alias = alias.to_string();
-    let (https_id, https_local_id) = tokio::task::spawn_blocking(move || {
-        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id, &alias)
-    })
-    .await
-    .map_err(|e| std::io::Error::other(format!("add_ssl_host_entry task panicked: {e}")))??;
+    let https_id = format!("{config_id}-https");
+    let https_local_id = format!("{config_id}-https-local");
 
+    // Persisted before the write: a crash between the write landing and
+    // this record would otherwise lose attribution of the lines it is
+    // about to add.
     persist_ssl_id_written(&https_id, mode).await;
     persist_ssl_id_written(&https_local_id, mode).await;
 
-    Ok(())
+    let config_id_owned = config_id.to_string();
+    let alias_owned = alias.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id_owned, &alias_owned)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("add_ssl_host_entry task panicked: {e}")))?;
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(failure) => {
+            settle_ssl_write_failure(&https_id, &https_local_id, failure.left_on_disk, mode).await;
+            Err(failure.error)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -754,5 +827,83 @@ mod tests {
         );
 
         forget_ssl_id_written("77-https", mode).await;
+    }
+
+    #[tokio::test]
+    async fn persisted_ssl_ids_survive_a_failed_second_write_whose_rollback_also_fails() {
+        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        let mode = DatabaseMode::Memory;
+
+        // What `add_ssl_host_entry` does before attempting the write: both
+        // ids are persisted up front, so a crash between the write and the
+        // record cannot lose attribution.
+        persist_ssl_id_written("81-https", mode).await;
+        persist_ssl_id_written("81-https-local", mode).await;
+
+        // The second write failed and the rollback of the first could not
+        // verify the line gone: `left_on_disk` is true, so the persisted
+        // record must survive for a later stop to attribute and remove the
+        // leftover.
+        settle_ssl_write_failure("81-https", "81-https-local", true, mode).await;
+
+        let manager = HostfileManager::without_helper();
+        let ids = manager.ssl_ids_written_including_persisted(mode).await;
+        assert!(
+            ids.contains("81-https") && ids.contains("81-https-local"),
+            "a leftover that could not be rolled back must stay attributable so a later stop \
+             can remove it"
+        );
+
+        forget_ssl_id_written("81-https", mode).await;
+        forget_ssl_id_written("81-https-local", mode).await;
+    }
+
+    #[tokio::test]
+    async fn persisted_ssl_ids_are_forgotten_once_a_failed_writes_rollback_is_verified() {
+        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        let mode = DatabaseMode::Memory;
+
+        persist_ssl_id_written("82-https", mode).await;
+        persist_ssl_id_written("82-https-local", mode).await;
+
+        // The write failed but rollback verified nothing is left: the
+        // persisted record is no longer needed.
+        settle_ssl_write_failure("82-https", "82-https-local", false, mode).await;
+
+        let manager = HostfileManager::without_helper();
+        let ids = manager.ssl_ids_written_including_persisted(mode).await;
+        assert!(
+            !ids.contains("82-https") && !ids.contains("82-https-local"),
+            "a verified rollback must not leave a durable record behind"
+        );
+    }
+
+    #[test]
+    fn remove_all_is_ok_when_both_sections_are_already_gone_despite_a_helper_error() {
+        let errors = vec!["helper: not available".to_owned()];
+        assert!(
+            remove_all_verified_despite(&errors, &[], &[]),
+            "the direct clear already reached both sections; a helper IPC failure alone must \
+             not fail the call"
+        );
+    }
+
+    #[test]
+    fn remove_all_still_fails_when_a_line_actually_survives() {
+        let errors = vec!["helper: not available".to_owned()];
+        let leftover = vec![kftray_commons::utils::hostsfile::SectionEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "still-here.local".to_owned(),
+            owner: Some("7".to_owned()),
+        }];
+        assert!(
+            !remove_all_verified_despite(&errors, &leftover, &[]),
+            "a line still on disk must fail the call, not just an error being reported"
+        );
+        assert!(!remove_all_verified_despite(&errors, &[], &leftover));
     }
 }

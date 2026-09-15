@@ -83,12 +83,9 @@ export interface TableProps {
   stopAllPortForwarding: () => Promise<void>
   abortStartOperation: () => void
   abortStopOperation: () => void
-  confirmDeleteConfig: () => Promise<boolean>
-  handleDeleteConfig: (id: number) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   openSettingsModal: () => void
@@ -97,12 +94,9 @@ export interface TableProps {
 
 export interface PortForwardRowProps {
   config: Config
-  confirmDeleteConfig: () => Promise<boolean>
-  handleDeleteConfig: (id: number) => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
@@ -212,12 +206,9 @@ export interface ContextsAccordionProps {
   context: string
   contextConfigs: Config[]
   selectedConfigs: Config[]
-  handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: () => Promise<boolean>
+  deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => void
   handleDuplicateConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (open: boolean) => void
   handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void

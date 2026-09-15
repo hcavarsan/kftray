@@ -280,7 +280,9 @@ pub async fn remove_loopback_address(addr: &str) -> Result<LoopbackRelease> {
         if unsafe { libc::geteuid() } == 0 {
             match execute_command("ip", &["addr", "del", addr, "dev", "lo"]) {
                 Ok(()) => Ok(LoopbackRelease::Released),
-                Err(e) => Ok(LoopbackRelease::Failed(e.to_string())),
+                Err(e) => Ok(resolve_failed_removal(e.to_string(), || {
+                    linux_alias_exists(addr)
+                })),
             }
         } else {
             // `-n` keeps this non-interactive: a password prompt during a stop
@@ -479,13 +481,23 @@ fn classify_sudo_ip_addr_del(
              refused it (a password may be required): {stderr}"
         ));
     }
-    // `ip` itself failed rather than sudo refusing credentials. Re-query
-    // instead of assuming: the alias can already be gone despite the
-    // reported failure, and recording `Failed` for that would keep a
-    // cleanup that already succeeded stuck retrying forever.
+    resolve_failed_removal(
+        format!("`sudo -n ip addr del` failed: {stderr}"),
+        alias_present,
+    )
+}
+
+/// Re-queries `alias_present` after a failed removal attempt rather than
+/// assuming the alias is still there: the alias can already be gone despite
+/// the reported failure, and recording `Failed` for that would keep a
+/// cleanup that already succeeded stuck retrying forever.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn resolve_failed_removal(
+    error_message: String, alias_present: impl FnOnce() -> Result<bool>,
+) -> LoopbackRelease {
     match alias_present() {
         Ok(false) => LoopbackRelease::Released,
-        _ => LoopbackRelease::Failed(format!("`sudo -n ip addr del` failed: {stderr}")),
+        _ => LoopbackRelease::Failed(error_message),
     }
 }
 
@@ -713,6 +725,30 @@ mod tests {
         let output = exited(2, b"RTNETLINK answers: Operation not permitted");
         assert!(matches!(
             classify_sudo_ip_addr_del("127.0.0.253", Ok(output), || { Err(anyhow!("ip missing")) }),
+            LoopbackRelease::Failed(_)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_failed_removal_reports_released_when_alias_already_gone() {
+        assert_eq!(
+            resolve_failed_removal(
+                "`ip addr del` exited with exit status: 1".to_string(),
+                || { Ok(false) }
+            ),
+            LoopbackRelease::Released
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_failed_removal_keeps_failure_when_alias_still_present() {
+        assert!(matches!(
+            resolve_failed_removal(
+                "`ip addr del` exited with exit status: 1".to_string(),
+                || { Ok(true) }
+            ),
             LoopbackRelease::Failed(_)
         ));
     }

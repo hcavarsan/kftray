@@ -29,6 +29,8 @@ use crate::utils::manifests::{
     expose_deployment_manifest_exists,
     expose_ingress_manifest_exists,
     expose_service_manifest_exists,
+    migrate_pod_manifest_if_previous_default,
+    migrate_proxy_deployment_manifest_if_previous_default,
     proxy_deployment_manifest_exists,
 };
 
@@ -43,11 +45,15 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     if !pod_manifest_file_exists() {
         create_server_config_manifest()?;
+    } else {
+        migrate_pod_manifest_if_previous_default()?;
     }
 
     if !proxy_deployment_manifest_exists() {
         info!("Creating proxy deployment manifest");
         create_proxy_deployment_manifest()?;
+    } else {
+        migrate_proxy_deployment_manifest_if_previous_default()?;
     }
 
     if !expose_deployment_manifest_exists() {

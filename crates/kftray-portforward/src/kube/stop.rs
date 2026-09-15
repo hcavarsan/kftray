@@ -538,6 +538,45 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config, destination: Opti
     PENDING_CLEANUP.remove_if(&id, |_, entries| entries.is_empty());
 }
 
+/// Forgets the cluster obligation kept for `config_id` at `destination`,
+/// once its resources have been removed by hand from the server-resources
+/// screen. Local obligations for the same id are left untouched: hand-editing
+/// hosts or a loopback alias is not something that screen does.
+///
+/// Exact, like [`forget_pending_cleanup`]: a record for a known destination
+/// is only cleared by naming that destination, so an obligation for a server
+/// the resource was not deleted from stays in place.
+///
+/// Synchronous, so a caller already holding an async lock can call it
+/// directly. The in-memory record is what `delete_configs_if_idle` and
+/// stop-all actually consult, and is cleared before returning; a durable
+/// record left over from an unanswered create is also cleared, best-effort,
+/// in the background, since `restore_uncertain_targets` would otherwise
+/// resurrect the obligation this call just settled on the next restart.
+pub fn settle_cluster_obligation(config_id: i64, destination: &str) {
+    let matching: Vec<PendingTarget> = pending_cleanup_targets(config_id)
+        .into_iter()
+        .filter(|target| target.cluster && target.destination.as_deref() == Some(destination))
+        .collect();
+    for target in &matching {
+        set_target_obligations(config_id, target, None, false, target.local);
+    }
+    for target in matching {
+        tokio::spawn(async move {
+            if let Err(error) = forget_uncertain_target(
+                config_id,
+                &target.config,
+                target.destination.as_deref(),
+                DatabaseMode::File,
+            )
+            .await
+            {
+                warn!("Failed to clear the durable cleanup record for config {config_id}: {error}");
+            }
+        });
+    }
+}
+
 /// Records what this pass left undone, replacing the entry's obligations
 /// rather than adding to them.
 ///
@@ -888,6 +927,16 @@ pub(crate) fn take_host_entry_claim_if_current(id: i64, token: u64) -> bool {
     was_current
 }
 
+/// Whether `token` is still the most recent claim for a config id's hosts
+/// entries, without clearing it. Used to decide whether a deferred write is
+/// still worth doing before it runs, since taking the claim here would let a
+/// newer attempt believe it owns entries nothing has written yet.
+pub(crate) fn host_entry_claim_is_current(id: i64, token: u64) -> bool {
+    HOST_ENTRY_CLAIMS
+        .get(&id)
+        .is_some_and(|current| *current == token)
+}
+
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
     RELEASING_ADDRESSES
@@ -1116,6 +1165,21 @@ pub(crate) async fn release_address_with_fallback(
         log::debug!("Skipping the release of {address}: another forward is using it");
         return Ok(());
     };
+
+    // The mark above closes the same-process race `address_has_other_owner`
+    // checks, but not the cross-process one: another process's forward can
+    // register its row between the read above and this mark. Re-checked now,
+    // immediately before anything is actually removed, so a release that lost
+    // that race aborts instead of pulling the address out from under it.
+    if mode == DatabaseMode::File
+        && forwarding_configs(mode)
+            .await
+            .iter()
+            .any(|config| config.id != owner && config.local_address.as_deref() == Some(address))
+    {
+        log::debug!("Skipping the release of {address}: a forward elsewhere is using it");
+        return Ok(());
+    }
 
     let address_owned = address.to_string();
 
@@ -2517,6 +2581,69 @@ mod tests {
         forget_uncertain_target(id, &config, destination.as_deref(), DatabaseMode::Memory)
             .await
             .unwrap();
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn settle_forgets_the_record_only_for_a_matching_destination() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+
+        let config = Config {
+            id: Some(910_501),
+            namespace: "settle-test".to_string(),
+            service: Some("relay".to_string()),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+        let id = config.id.unwrap();
+        PENDING_CLEANUP.remove(&id);
+
+        // Two servers this configuration's resources have lived on: only the
+        // one named in `settle_cluster_obligation` is settled.
+        record_target(
+            id,
+            config.clone(),
+            None,
+            true,
+            false,
+            Some("https://a".to_string()),
+        );
+        record_target(
+            id,
+            config.clone(),
+            None,
+            true,
+            false,
+            Some("https://b".to_string()),
+        );
+
+        settle_cluster_obligation(id, "https://a");
+        // Lets the best-effort clear of any durable record run before this
+        // test's KFTRAY_CONFIG override is torn down.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let targets = pending_cleanup_targets(id);
+        assert!(
+            !targets
+                .iter()
+                .any(|target| target.destination.as_deref() == Some("https://a")),
+            "the matching destination's cluster obligation must be forgotten: {targets:?}"
+        );
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.destination.as_deref() == Some("https://b") && target.cluster),
+            "an obligation for another destination must stay: {targets:?}"
+        );
         PENDING_CLEANUP.remove(&id);
     }
 

@@ -222,31 +222,49 @@ async fn process_single_proxy_config(
         crate::kube::stop::SHARED_LOCK_WAIT,
     )
     .await;
-    let result = if let Err(error) = &shared {
-        Err(error.clone())
-    } else if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
-        Err(format!(
-            "Port forwarding is already running for config {id}"
-        ))
-    } else if let Some(owner) = crate::kube::stop::running_in_another_process(id, mode).await {
-        Err(format!(
-            "Config {id} is being forwarded by another kftray process ({owner})"
-        ))
-    } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
-        .await
-        .is_err()
-    {
-        // Re-read under the lock: deletion takes the same lock, so a start that
-        // waited on it must not create a relay for a row that has since
-        // disappeared and would leave it with nothing tracking it.
-        Err(format!("Config {id} no longer exists"))
-    } else {
-        start_proxy_config(config, mode, ssl_override, &startup.cancellation, None).await
+    let result = match &shared {
+        Err(error) => Err(error.clone()),
+        Ok(_) => match verify_start_preconditions(id, mode).await {
+            Err(error) => Err(error),
+            Ok(()) => {
+                start_proxy_config(config, mode, ssl_override, &startup.cancellation, None).await
+            }
+        },
     };
     drop(shared);
     drop(guard);
     drop(lock);
     result
+}
+
+/// Duplicate / already-running / other-process / existence checks that gate
+/// a fresh proxy start, shared by a normal start
+/// ([`process_single_proxy_config`]) and a recovery re-deploy
+/// ([`crate::kube::proxy_recovery::recover_bare_pod`]), so both refuse the
+/// same races the same way.
+///
+/// The caller is expected to hold `id`'s config-dir lock (and, for recovery,
+/// its recovery lock) for as long as this check and the start it gates need
+/// to stay valid: re-reading here under that lock means a start that waited
+/// on it cannot create a relay for a row that has since disappeared.
+pub(super) async fn verify_start_preconditions(id: i64, mode: DatabaseMode) -> Result<(), String> {
+    if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
+        return Err(format!(
+            "Port forwarding is already running for config {id}"
+        ));
+    }
+    if let Some(owner) = crate::kube::stop::running_in_another_process(id, mode).await {
+        return Err(format!(
+            "Config {id} is being forwarded by another kftray process ({owner})"
+        ));
+    }
+    if kftray_commons::utils::config::get_config_with_mode(id, mode)
+        .await
+        .is_err()
+    {
+        return Err(format!("Config {id} no longer exists"));
+    }
+    Ok(())
 }
 
 pub(super) async fn start_proxy_config(
@@ -310,11 +328,17 @@ pub(super) async fn start_proxy_config(
         .remote_port
         .filter(|port| *port > 0)
         .ok_or("A proxy destination port is required")?;
+    let service_name = config
+        .service
+        .clone()
+        .filter(|service| !service.is_empty())
+        .unwrap_or_else(|| remote_address.clone());
     config.remote_address = Some(remote_address.clone());
 
     let mut values: HashMap<String, String> = HashMap::new();
     values.insert("hashed_name".to_string(), hashed_name.clone());
     values.insert("config_id".to_string(), config_id_str.clone());
+    values.insert("service_name".to_string(), service_name);
     values.insert("remote_address".to_string(), remote_address);
     values.insert("remote_port".to_string(), remote_port.to_string());
     values.insert("local_port".to_string(), remote_port.to_string());

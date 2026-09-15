@@ -813,16 +813,16 @@ pub async fn establish_expose_history_baseline_at_init(
         }
     }
 
-    let ids: HashSet<i64> = sqlx::query("SELECT id FROM configs")
-        .fetch_all(pool)
-        .await
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.try_get("id").ok())
-                .collect()
-        })
-        .unwrap_or_default();
-    FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
+    if let Ok(rows) = sqlx::query("SELECT id FROM configs").fetch_all(pool).await {
+        let ids: HashSet<i64> = rows
+            .iter()
+            .filter_map(|row| row.try_get("id").ok())
+            .collect();
+        FAILED_BASELINE_SNAPSHOT.lock().unwrap().insert(mode, ids);
+    }
+    // If the snapshot query itself fails, no entry is recorded for `mode`:
+    // the lazy path then treats every row it later sees as unrestricted,
+    // instead of an empty allow-list that would mark nothing.
 
     Err(last_error.expect("loop runs at least once"))
 }
@@ -1105,6 +1105,93 @@ mod tests {
         assert!(
             after_marked.is_none(),
             "a config created after the failed init must never be marked legacy"
+        );
+
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        let _ = crate::utils::config::delete_all_configs_with_pool(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn test_failed_snapshot_query_leaves_lazy_baseline_unrestricted_memory_mode() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let pool = context.pool.clone();
+
+        crate::utils::config::delete_all_configs_with_pool(&pool)
+            .await
+            .unwrap();
+        let _ = delete_setting_with_mode(
+            &expose_history_baseline_key(DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await;
+        FAILED_BASELINE_SNAPSHOT
+            .lock()
+            .unwrap()
+            .remove(&DatabaseMode::Memory);
+
+        // Force every baseline attempt, including the fallback snapshot
+        // query, to fail.
+        sqlx::query("DROP TABLE configs")
+            .execute(&*pool)
+            .await
+            .unwrap();
+
+        let init_result =
+            establish_expose_history_baseline_at_init(&pool, DatabaseMode::Memory).await;
+        assert!(
+            init_result.is_err(),
+            "every attempt must fail with no configs table"
+        );
+        assert!(
+            FAILED_BASELINE_SNAPSHOT
+                .lock()
+                .unwrap()
+                .get(&DatabaseMode::Memory)
+                .is_none(),
+            "a failed snapshot query must not record an empty allow-list"
+        );
+
+        // Recreate the schema, as `db::init` would on the next run, and
+        // insert a pre-existing exposure the failed init never saw.
+        crate::utils::db::create_db_table(&pool).await.unwrap();
+
+        let pre_existing = crate::models::config_model::Config {
+            workload_type: Some("expose".to_string()),
+            ..Default::default()
+        };
+        let pre_existing_id = crate::utils::config::insert_config_with_pool_and_mode(
+            pre_existing,
+            &pool,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        establish_expose_history_baseline(&pool, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let marked = get_setting_with_mode(
+            &expose_legacy_key(&pre_existing_id.to_string(), DatabaseMode::Memory),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        assert!(
+            marked.is_some(),
+            "the lazy baseline must mark a pre-existing exposure when init's snapshot failed"
         );
 
         FAILED_BASELINE_SNAPSHOT

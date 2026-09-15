@@ -552,6 +552,7 @@ pub async fn delete_kftray_resource(
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
+    let destination = kftray_portforward::kube::client::cluster_identity(&connection.cluster_url);
     let client = connection.client;
     let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
@@ -567,13 +568,27 @@ pub async fn delete_kftray_resource(
     // no reason. A resource labelled with another installation's id, or one
     // with no label that cannot be attributed either way, is left alone
     // entirely: neither stopped nor deleted.
+    struct DeleteScope<'a> {
+        config_id: &'a Option<String>,
+        params: &'a DeleteParams,
+        installation_id: &'a str,
+        namespace: &'a str,
+        destination: &'a str,
+    }
+
     async fn delete_kube_resource<K>(
-        api: Api<K>, name: &str, config_id: &Option<String>, params: &DeleteParams,
-        installation_id: &str, namespace: &str, kind: &str,
+        api: Api<K>, name: &str, kind: &str, scope: &DeleteScope<'_>,
     ) -> Result<(), String>
     where
         K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource<DynamicType = ()>,
     {
+        let DeleteScope {
+            config_id,
+            params,
+            installation_id,
+            namespace,
+            destination,
+        } = *scope;
         let object = match api.get_opt(name).await {
             Ok(Some(object)) => object,
             Ok(None) => return Ok(()),
@@ -586,11 +601,18 @@ pub async fn delete_kftray_resource(
             ));
         }
 
-        // The configuration id on the object only names a row in the
-        // database that created it. A memory-mode session's relay with the
-        // same id, or a legacy resource with no label, was already rejected
-        // above and never reaches this point.
-        if let Some(config_id_str) = config_id
+        // The configuration id on the object only names a row in the file
+        // database that created it. A memory-mode session's relay, or a
+        // legacy resource with no label, can carry the same numeric id as
+        // an unrelated file-mode config; the local stop is only attempted
+        // when the label names this exact file-mode installation, so those
+        // other cases fall straight through to the delete below.
+        let is_exact_installation_owner = labels
+            .get(kftray_portforward::kube::INSTALLATION_LABEL)
+            .is_some_and(|owner| owner == installation_id);
+
+        if is_exact_installation_owner
+            && let Some(config_id_str) = config_id
             && let Ok(id) = config_id_str.parse::<i64>()
             && let Ok(config) = kftray_commons::config::get_config(id).await
         {
@@ -632,7 +654,7 @@ pub async fn delete_kftray_resource(
             }),
             ..params.clone()
         };
-        match api.delete(name, &params).await {
+        let result = match api.delete(name, &params).await {
             Ok(_) => Ok(()),
             Err(kube::Error::Api(response)) if response.code == 404 => Ok(()),
             Err(kube::Error::Api(response)) if response.code == 409 => Err(format!(
@@ -640,19 +662,39 @@ pub async fn delete_kftray_resource(
                  try again"
             )),
             Err(e) => Err(format!("Failed to delete {kind}: {e}")),
+        };
+
+        // A labelled resource this installation just deleted by hand is
+        // exactly the manual cleanup the recorded cluster obligation is
+        // waiting for; settle it so stop-all and delete-if-idle stop
+        // refusing the row. A no-op when there is no matching record, e.g.
+        // the obligation was already settled or never existed.
+        if result.is_ok()
+            && labels.contains_key(kftray_portforward::kube::INSTALLATION_LABEL)
+            && let Some(config_id_str) = config_id
+            && let Ok(id) = config_id_str.parse::<i64>()
+        {
+            kftray_portforward::kube::settle_cluster_obligation(id, destination);
         }
+
+        result
     }
+
+    let scope = DeleteScope {
+        config_id: &config_id,
+        params: &delete_params,
+        installation_id,
+        namespace,
+        destination: &destination,
+    };
 
     match resource_type {
         "pod" => {
             delete_kube_resource(
                 Api::<Pod>::namespaced(client, namespace),
                 resource_name,
-                &config_id,
-                &delete_params,
-                installation_id,
-                namespace,
                 "pod",
+                &scope,
             )
             .await?
         }
@@ -660,11 +702,8 @@ pub async fn delete_kftray_resource(
             delete_kube_resource(
                 Api::<Deployment>::namespaced(client, namespace),
                 resource_name,
-                &config_id,
-                &delete_params,
-                installation_id,
-                namespace,
                 "deployment",
+                &scope,
             )
             .await?
         }
@@ -672,11 +711,8 @@ pub async fn delete_kftray_resource(
             delete_kube_resource(
                 Api::<Service>::namespaced(client, namespace),
                 resource_name,
-                &config_id,
-                &delete_params,
-                installation_id,
-                namespace,
                 "service",
+                &scope,
             )
             .await?
         }
@@ -684,11 +720,8 @@ pub async fn delete_kftray_resource(
             delete_kube_resource(
                 Api::<Ingress>::namespaced(client, namespace),
                 resource_name,
-                &config_id,
-                &delete_params,
-                installation_id,
-                namespace,
                 "ingress",
+                &scope,
             )
             .await?
         }

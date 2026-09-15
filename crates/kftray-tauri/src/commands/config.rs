@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use kftray_commons::config::{
-    delete_all_configs,
     delete_config,
     delete_configs,
     export_configs,
@@ -57,7 +56,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
                         info!(
                             "Certificate regeneration successful, attempting to restart SSL proxies"
                         );
-                        restart_ssl_proxies_with_retry().await;
+                        restart_ssl_proxies_with_retry(Arc::new(RealPortOperations)).await;
                     }
                 }
                 Err(e) => {
@@ -81,9 +80,16 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
     Ok(())
 }
 
+/// Restarts the SSL-enabled candidates found among `target_ids` (or, when
+/// `None`, among the currently-running configs). Returns `Ok(None)` when no
+/// SSL-enabled candidate was found at all, and `Ok(Some(failed_ids))`
+/// otherwise, `failed_ids` being empty when every candidate that was
+/// actually attempted restarted successfully. Callers must not conflate the
+/// two: an empty `target_ids` pass that finds nothing is not evidence
+/// everything is running, only that nothing was found yet.
 async fn restart_ssl_proxies_if_running(
     port_ops: &Arc<dyn PortOperations>, target_ids: Option<&[i64]>,
-) -> Result<Vec<i64>, String> {
+) -> Result<Option<Vec<i64>>, String> {
     use kftray_commons::utils::config_state::get_configs_state;
 
     info!("=== Starting SSL proxy restart process ===");
@@ -112,7 +118,7 @@ async fn restart_ssl_proxies_if_running(
 
     if running_config_ids.is_empty() {
         info!("No candidate configs found, no SSL proxies to restart");
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     // Get all configs to filter for SSL-enabled ones
@@ -145,7 +151,7 @@ async fn restart_ssl_proxies_if_running(
 
     if ssl_configs.is_empty() {
         info!("No SSL-enabled candidate configs found, no SSL proxies to restart");
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     info!("Found {} SSL-enabled configs to restart", ssl_configs.len());
@@ -189,11 +195,10 @@ async fn restart_ssl_proxies_if_running(
     }
 
     info!("Completed SSL proxy restart process");
-    Ok(failed_ids)
+    Ok(Some(failed_ids))
 }
 
-async fn restart_ssl_proxies_with_retry() {
-    let port_ops: Arc<dyn PortOperations> = Arc::new(RealPortOperations);
+async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
     let mut target_ids: Option<Vec<i64>> = None;
@@ -207,14 +212,14 @@ async fn restart_ssl_proxies_with_retry() {
         tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
 
         match restart_ssl_proxies_if_running(&port_ops, target_ids.as_deref()).await {
-            Ok(failed_ids) if failed_ids.is_empty() => {
+            Ok(Some(failed_ids)) if failed_ids.is_empty() => {
                 info!(
                     "SSL proxy restart attempt {} completed successfully",
                     attempt + 1
                 );
                 return;
             }
-            Ok(failed_ids) => {
+            Ok(Some(failed_ids)) => {
                 warn!(
                     "SSL proxy restart attempt {} left {} config(s) failing: {:?}",
                     attempt + 1,
@@ -222,6 +227,15 @@ async fn restart_ssl_proxies_with_retry() {
                     failed_ids
                 );
                 target_ids = Some(failed_ids);
+            }
+            Ok(None) => {
+                // No SSL-enabled candidate was found at all: auto-start may
+                // not have marked the configs running yet. Keep retrying
+                // rather than mistaking this for "everything is running".
+                info!(
+                    "SSL proxy restart attempt {} found no running candidates yet",
+                    attempt + 1
+                );
             }
             Err(e) => {
                 warn!("SSL proxy restart attempt {} failed: {}", attempt + 1, e);
@@ -294,7 +308,7 @@ pub async fn delete_all_configs_cmd() -> Result<(), String> {
             for id in &ids {
                 clear_stopped_by_timeout(*id);
             }
-            delete_all_configs().await
+            delete_configs(ids).await
         },
     )
     .await;
@@ -485,6 +499,47 @@ mod tests {
         assert!(
             configs_after.is_empty(),
             "All configs should have been deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_all_configs_cmd_only_deletes_enumerated_ids() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config1 = Config::default();
+        insert_config_cmd(config1)
+            .await
+            .expect("Failed to insert test config");
+
+        // `delete_all_configs_cmd` used to run `delete_all_configs()`
+        // (DELETE FROM configs) instead of `delete_configs(ids)` with the
+        // ids it had just enumerated and validated as idle, so a config
+        // inserted after that enumeration but before the delete ran was
+        // wiped too.
+        let interloper = tokio::spawn(async {
+            tokio::task::yield_now().await;
+            kftray_commons::config::insert_config(Config {
+                service: Some("added-after-enumeration".to_string()),
+                ..Config::default()
+            })
+            .await
+            .expect("Failed to insert interloper config")
+        });
+
+        let result = delete_all_configs_cmd().await;
+        interloper.await.expect("interloper task panicked");
+
+        assert!(result.is_ok(), "Delete all configs command should succeed");
+
+        let configs_after = get_configs_cmd()
+            .await
+            .expect("Failed to get configs after deletion");
+        assert!(
+            configs_after
+                .iter()
+                .any(|c| c.service.as_deref() == Some("added-after-enumeration")),
+            "a config inserted after enumeration must survive delete_all_configs_cmd"
         );
     }
 
@@ -878,11 +933,71 @@ mod tests {
 
         let failed_ids = restart_ssl_proxies_if_running(&port_ops, Some(&[id]))
             .await
-            .expect("restart should succeed");
+            .expect("restart should succeed")
+            .expect("a target id list must always yield a candidate result");
 
         assert!(
             failed_ids.is_empty(),
             "a down candidate must still be started, not skipped"
         );
+    }
+
+    #[tokio::test]
+    async fn test_restart_ssl_proxies_with_retry_does_not_give_up_before_auto_start_catches_up() {
+        // Regression: the first retry attempt runs before auto-start has
+        // marked the config running, so `restart_ssl_proxies_if_running`
+        // finds no candidates and returns `Ok(vec![])`. Treating that as
+        // "all restarted" ended the loop before a later attempt could see
+        // the config once it actually started running.
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config = Config {
+            alias: Some("ssl-retry-not-yet-running".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        insert_config_cmd(config)
+            .await
+            .expect("Failed to insert test config");
+
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
+        let id = configs
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("ssl-retry-not-yet-running"))
+            .and_then(|c| c.id)
+            .expect("inserted config should be present");
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| false);
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let port_ops: Arc<dyn PortOperations> = Arc::new(mock);
+
+        // The first retry attempt fires after the 100ms delay; mark the
+        // config running only after that, so it is invisible to the first
+        // attempt and must be picked up by a later one instead of the loop
+        // having already returned.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            kftray_commons::utils::config_state::update_config_state(
+                &kftray_commons::models::config_state_model::ConfigState::new_without_process(
+                    id, true,
+                ),
+            )
+            .await
+            .expect("Failed to mark config running");
+        });
+
+        // `mock`'s expectations (`times(1)` each) are verified when it is
+        // dropped; a premature return from the loop leaves
+        // `dispatch_start` unmet and panics there.
+        restart_ssl_proxies_with_retry(port_ops).await;
     }
 }

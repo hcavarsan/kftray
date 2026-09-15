@@ -858,6 +858,7 @@ impl App {
                 _ => Some(combined),
             };
             self.state = AppState::ShowErrorPopup;
+            self.error_scroll = 0;
         }
     }
 

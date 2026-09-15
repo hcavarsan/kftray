@@ -59,6 +59,33 @@ impl CachedClient {
 /// `Arc::strong_count`, which a stray clone elsewhere could perturb.
 type CreationLock = Arc<(Mutex<()>, AtomicUsize)>;
 
+/// RAII guard for creation-lock interest. Incrementing the counter and
+/// registering its release used to be two separate steps performed at every
+/// exit point of `get_connection`; a task cancelled between the increment
+/// and one of those manual release calls (e.g. dropped while awaiting the
+/// mutex or the client-creation future) left the counter incremented
+/// forever, pinning the entry so `cleanup_expired` could never reclaim it.
+/// Tying the release to `Drop` instead makes it run exactly once no matter
+/// how the caller's future exits, cancellation included.
+struct CreationLockInterest<'a> {
+    manager: &'a SharedClientManager,
+    key: ServiceClientKey,
+    lock: CreationLock,
+}
+
+impl<'a> CreationLockInterest<'a> {
+    fn new(manager: &'a SharedClientManager, key: ServiceClientKey, lock: CreationLock) -> Self {
+        lock.1.fetch_add(1, Ordering::SeqCst);
+        Self { manager, key, lock }
+    }
+}
+
+impl Drop for CreationLockInterest<'_> {
+    fn drop(&mut self) {
+        self.manager.release_creation_lock(&self.key, &self.lock);
+    }
+}
+
 pub struct SharedClientManager {
     clients: DashMap<ServiceClientKey, CachedClient>,
     client_ttl: Duration,
@@ -96,7 +123,7 @@ impl SharedClientManager {
             .entry(key.clone())
             .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
             .clone();
-        lock.1.fetch_add(1, Ordering::SeqCst);
+        let _interest = CreationLockInterest::new(self, key.clone(), lock.clone());
 
         let guard = lock.0.lock().await;
 
@@ -105,7 +132,6 @@ impl SharedClientManager {
                 let client_arc = cached.connection.clone();
                 drop(cached);
                 drop(guard);
-                self.release_creation_lock(&key, &lock);
                 return Ok(client_arc);
             }
             drop(cached);
@@ -118,12 +144,10 @@ impl SharedClientManager {
                 let client_arc = cached_client.connection.clone();
                 self.clients.insert(key.clone(), cached_client);
                 drop(guard);
-                self.release_creation_lock(&key, &lock);
                 Ok(client_arc)
             }
             Err(error) => {
                 drop(guard);
-                self.release_creation_lock(&key, &lock);
                 Err(error)
             }
         }
@@ -176,18 +200,20 @@ impl SharedClientManager {
         }
     }
 
-    /// Invalidates the cached client for `key`. A key with no explicit
-    /// context never lands in the cache under its raw form (`get_connection`
-    /// resolves it to the kubeconfig's current-context first), so the raw
-    /// key alone would silently no-op for every legacy caller; the resolved
-    /// form is removed too whenever it can be recomputed.
+    /// Invalidates the cached client(s) for `key`. A `None` context means
+    /// the caller does not know (or no longer trusts) which context is
+    /// current for this kubeconfig; re-resolving current-context at
+    /// invalidation time would miss entries cached under a context that was
+    /// current when they were created but has since changed, leaving a
+    /// broken client cached. Drop every entry for the kubeconfig path
+    /// instead.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
-        self.clients.remove(key);
-        if key.context_name.is_none()
-            && let Ok(resolved) = self.resolve_key(key.clone())
-        {
-            self.clients.remove(&resolved);
+        if key.context_name.is_none() {
+            self.clients
+                .retain(|cached_key, _| cached_key.kubeconfig_path != key.kubeconfig_path);
+            return;
         }
+        self.clients.remove(key);
     }
 
     pub fn cleanup_expired(&self) {
@@ -356,6 +382,98 @@ mod tests {
             "invalidate_client with a None-context key must remove the entry cached under \
              the resolved current-context key, not just the never-cached raw key"
         );
+    }
+
+    #[tokio::test]
+    async fn invalidate_client_with_none_context_clears_every_entry_for_kubeconfig_path() {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = SharedClientManager::new();
+        let kubeconfig_path = Some("kftray-test-shared-kubeconfig".to_string());
+
+        let make_cached_client = || {
+            let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+            CachedClient::new(KubeConnection {
+                client: kube::Client::new(mock_service, "default"),
+                cluster_url: "https://example.invalid".parse().unwrap(),
+            })
+        };
+
+        let key_a = ServiceClientKey::new(Some("context-a".to_string()), kubeconfig_path.clone());
+        let key_b = ServiceClientKey::new(Some("context-b".to_string()), kubeconfig_path.clone());
+        let other_kubeconfig_key = ServiceClientKey::new(
+            Some("context-a".to_string()),
+            Some("kftray-test-other-kubeconfig".to_string()),
+        );
+
+        manager.clients.insert(key_a.clone(), make_cached_client());
+        manager.clients.insert(key_b.clone(), make_cached_client());
+        manager
+            .clients
+            .insert(other_kubeconfig_key.clone(), make_cached_client());
+
+        manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path));
+
+        assert!(
+            !manager.clients.contains_key(&key_a),
+            "every cached context for the kubeconfig path must be dropped"
+        );
+        assert!(
+            !manager.clients.contains_key(&key_b),
+            "every cached context for the kubeconfig path must be dropped, not just one \
+             re-resolved current-context entry"
+        );
+        assert!(
+            manager.clients.contains_key(&other_kubeconfig_key),
+            "entries for a different kubeconfig path must be left untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_get_connection_releases_creation_lock_interest() {
+        let manager = Arc::new(SharedClientManager::new());
+        let key = ServiceClientKey::new(Some("ctx".to_string()), None);
+
+        // Hold the creation lock so the spawned get_connection call
+        // registers interest and then blocks awaiting the mutex, mirroring
+        // a real second caller arriving while a first creation is in
+        // flight.
+        let lock = manager
+            .creation_locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
+            .clone();
+        let guard = lock.0.lock().await;
+
+        let waiter_manager = manager.clone();
+        let waiter_key = key.clone();
+        let handle = tokio::spawn(async move { waiter_manager.get_connection(waiter_key).await });
+
+        // Let the waiter register interest and block on the held mutex.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            lock.1.load(Ordering::SeqCst),
+            1,
+            "waiter must have registered interest before being cancelled"
+        );
+
+        // Cancel the waiter mid-await by dropping its future, the way
+        // task cancellation does.
+        handle.abort();
+        let _ = handle.await;
+
+        assert_eq!(
+            lock.1.load(Ordering::SeqCst),
+            0,
+            "a cancelled get_connection must release its creation-lock interest"
+        );
+
+        drop(guard);
     }
 
     #[test]

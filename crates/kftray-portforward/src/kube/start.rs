@@ -131,6 +131,18 @@ async fn update_hosts_with_ssl(
     let snapshot = config.clone();
     tokio::spawn(async move {
         let _counted = counted;
+        // A newer attempt may have claimed this id's hosts entries while this
+        // write was only queued: writing anyway would hand it lines that
+        // belong to this abandoned attempt, with nothing left to remove them
+        // once they land.
+        if !crate::kube::stop::host_entry_claim_is_current(id, hosts_claim) {
+            debug!(
+                "Config {id} was claimed by a newer attempt; skipping its deferred SSL hosts \
+                 write"
+            );
+            let _ = sender.send(Ok(()));
+            return;
+        }
         let written = add_ssl_host_entry(&id.to_string(), &alias, port, mode)
             .await
             .map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"));
@@ -148,15 +160,21 @@ async fn update_hosts_with_ssl(
         // write started and may well be running. Only a process that is
         // gone, checked under the lifecycle lock so a stop or a restart
         // cannot be halfway through, leaves these lines orphaned. A retry
-        // that has since claimed this id but not yet registered is caught
-        // by the claim, not by `CHILD_PROCESSES` alone: registration only
-        // happens at the very end of its startup.
+        // that has since claimed this id but not yet registered is caught by
+        // the claim, not by `CHILD_PROCESSES` alone: registration only
+        // happens at the very end of its startup. A claim that is no longer
+        // current after the write finished means these lines were written
+        // for an attempt a newer one has already superseded, so they come out
+        // regardless of whether this process is still registered.
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
         let guard = lock.lock().await;
         let claim_was_current =
             crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
-        if !CHILD_PROCESSES.contains_key(&id) && claim_was_current {
-            warn!("Removing HTTPS hosts entries for config {id} written after it was stopped");
+        if !claim_was_current || !CHILD_PROCESSES.contains_key(&id) {
+            warn!(
+                "Removing HTTPS hosts entries for config {id} written after it was stopped or \
+                 superseded"
+            );
             let in_use = crate::kube::stop::forwarding_configs(mode).await;
             let removed =
                 crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode)
