@@ -243,9 +243,9 @@ impl UdpForwarder {
     )> {
         let local_udp_addr = format!("{local_address}:{local_port}");
 
-        let local_udp_socket = TokioUdpSocket::bind(&local_udp_addr)
-            .await
-            .context("Failed to bind local UDP socket")?;
+        let local_udp_socket = TokioUdpSocket::bind(&local_udp_addr).await.map_err(|e| {
+            anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}")
+        })?;
 
         let local_port = local_udp_socket.local_addr()?.port();
 
