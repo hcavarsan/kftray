@@ -76,21 +76,17 @@ class KftrayLinux < Formula
   desc "A cross-platform system tray app for Kubernetes port-forward management."
   homepage "https://github.com/hcavarsan/kftray"
   version "{{VERSION}}"
+  url "{{AMD64_URL}}"
+  sha256 "{{AMD64_SHA}}"
+
+  depends_on :linux
 
   NEWER_GLIBC_AMD64_SHA = "{{NEWER_GLIBC_AMD64_SHA}}"
   NEWER_GLIBC_ARM64_SHA = "{{NEWER_GLIBC_ARM64_SHA}}"
 
-
-  on_linux do
-      on_intel do
-          url "{{AMD64_URL}}"
-          sha256 "{{AMD64_SHA}}"
-      end
-
-      on_arm do
-          url "{{ARM64_URL}}"
-          sha256 "{{ARM64_SHA}}"
-      end
+  on_arm do
+      url "{{ARM64_URL}}"
+      sha256 "{{ARM64_SHA}}"
   end
 
   def install
