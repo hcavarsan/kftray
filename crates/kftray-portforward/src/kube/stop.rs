@@ -933,6 +933,18 @@ pub(crate) fn host_entry_claim_is_current(id: i64, token: u64) -> bool {
         .is_some_and(|current| *current == token)
 }
 
+/// Whether any attempt currently claims a config id's hosts entries,
+/// regardless of which token holds it.
+///
+/// A deferred write whose own claim was superseded cannot tell from
+/// [`host_entry_claim_is_current`] alone whether the newer attempt is still
+/// in flight and will manage these lines itself, or has already finished or
+/// given up and taken its own claim away. Only the latter leaves the lines
+/// this write just landed with no one left to own them.
+pub(crate) fn host_entry_has_any_claim(id: i64) -> bool {
+    HOST_ENTRY_CLAIMS.contains_key(&id)
+}
+
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
     RELEASING_ADDRESSES
@@ -1539,7 +1551,9 @@ pub fn cancel_all_startups() {
 /// cluster resources still owed are persisted before returning, so a later
 /// run restores and retries them: the registry that tracks them lives only in
 /// this process, and the caller is about to exit it.
-pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -> Vec<i64> {
+pub async fn reconcile_pending_cleanup(
+    mode: DatabaseMode, deadline: Duration, exclude: &HashSet<i64>,
+) -> Vec<i64> {
     const RETRY_DELAY: Duration = Duration::from_secs(2);
 
     // Creates abandoned by an earlier run are picked up here: nothing else in
@@ -1551,12 +1565,16 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -
         // Registered processes are enumerated too: a stop-all dropped on its
         // deadline leaves the ones it never visited only in `CHILD_PROCESSES`,
         // and they own cluster resources and hosts entries just the same.
-        let mut ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+        let mut ids: Vec<i64> = PENDING_CLEANUP
+            .iter()
+            .map(|entry| *entry.key())
+            .filter(|id| !exclude.contains(id))
+            .collect();
         ids.extend(
             CHILD_PROCESSES
                 .iter()
                 .map(|entry| *entry.key())
-                .filter(|id| !PENDING_CLEANUP.contains_key(id)),
+                .filter(|id| !PENDING_CLEANUP.contains_key(id) && !exclude.contains(id)),
         );
         if ids.is_empty() {
             // An allocation still in flight has nothing recorded yet, so an
@@ -1572,7 +1590,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
                 warn!("Giving up on address allocations that never finished");
 
-                return unresolved_cleanup(mode).await;
+                return unresolved_cleanup(mode, exclude).await;
             };
             tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
             continue;
@@ -1582,7 +1600,7 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -
                 "Giving up on cleanup for {} configuration(s) that never settled: {ids:?}",
                 ids.len()
             );
-            return unresolved_cleanup(mode).await;
+            return unresolved_cleanup(mode, exclude).await;
         };
         tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
         for id in ids {
@@ -1591,13 +1609,13 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -
             // has to hold for the whole pass, not just between passes. A
             // dropped attempt keeps its target recorded.
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
-                return unresolved_cleanup(mode).await;
+                return unresolved_cleanup(mode, exclude).await;
             };
             match tokio::time::timeout(remaining, stop_config(id, None, mode)).await {
                 Ok(Err(error)) => warn!("Cleanup for config {id} is still incomplete: {error}"),
                 Err(_) => {
                     warn!("Cleanup for config {id} did not finish within the shutdown budget");
-                    return unresolved_cleanup(mode).await;
+                    return unresolved_cleanup(mode, exclude).await;
                 }
                 Ok(Ok(_)) => {}
             }
@@ -1607,15 +1625,22 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) -
 
 /// What reconciliation is leaving behind, persisted so the next run can pick
 /// it up. A registered process counts too: its resources were never visited.
-async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
-    let mut ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+async fn unresolved_cleanup(mode: DatabaseMode, exclude: &HashSet<i64>) -> Vec<i64> {
+    let mut ids: Vec<i64> = PENDING_CLEANUP
+        .iter()
+        .map(|entry| *entry.key())
+        .filter(|id| !exclude.contains(id))
+        .collect();
     ids.extend(
         CHILD_PROCESSES
             .iter()
             .map(|entry| *entry.key())
-            .filter(|id| !PENDING_CLEANUP.contains_key(id)),
+            .filter(|id| !PENDING_CLEANUP.contains_key(id) && !exclude.contains(id)),
     );
     for entry in CHILD_PROCESSES.iter() {
+        if exclude.contains(entry.key()) {
+            continue;
+        }
         if let Some(config) = entry.value().config() {
             record_target(
                 *entry.key(),
@@ -1632,6 +1657,7 @@ async fn unresolved_cleanup(mode: DatabaseMode) -> Vec<i64> {
     // held across the database write would block it for the whole write.
     let owed: Vec<(i64, PendingTarget)> = PENDING_CLEANUP
         .iter()
+        .filter(|entry| !exclude.contains(entry.key()))
         .flat_map(|entry| {
             entry
                 .value()
@@ -2375,7 +2401,7 @@ mod tests {
         process.set_config(local_config(id));
         CHILD_PROCESSES.insert(id, process);
 
-        unresolved_cleanup(DatabaseMode::Memory).await;
+        unresolved_cleanup(DatabaseMode::Memory, &HashSet::new()).await;
 
         let targets = pending_cleanup_targets(id);
         assert!(

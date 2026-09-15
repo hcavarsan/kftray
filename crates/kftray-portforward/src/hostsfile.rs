@@ -1,4 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::sync::LazyLock;
 
 use kftray_commons::models::hostfile::HostEntry;
@@ -394,8 +397,13 @@ impl HostfileManager {
             DirectHostfileManager::direct_section(),
         ) {
             (Ok(helper_section), Ok(direct_section)) => {
-                let (verified, stale) =
-                    persisted_ids_verified_on_disk(persisted, &helper_section, &direct_section);
+                let expected = expected_ssl_entries(&persisted, mode).await;
+                let (verified, stale) = persisted_ids_verified_on_disk(
+                    persisted,
+                    &helper_section,
+                    &direct_section,
+                    &expected,
+                );
                 for full_id in stale {
                     forget_ssl_id_written(&full_id, mode).await;
                 }
@@ -447,15 +455,27 @@ fn stranded_fallback_outcome(result: &std::io::Result<()>) -> StrandedFallbackOu
 /// Splits a set of persisted SSL host ids into those a matching line on
 /// disk still verifies, and those a crash between persisting the id and
 /// the write landing left with nothing behind them.
+///
+/// A line marked with the id verifies it outright. An unmarked line whose
+/// ip and hostname match `expected`'s mapping for that id verifies it too:
+/// an unmarked HTTPS alias left by a version of the helper that did not
+/// mark its lines is otherwise indistinguishable from one that never
+/// landed, and would be forgotten on every restart.
 fn persisted_ids_verified_on_disk(
     persisted: HashSet<String>, helper_section: &[kftray_commons::utils::hostsfile::SectionEntry],
     direct_section: &[kftray_commons::utils::hostsfile::SectionEntry],
+    expected: &HashMap<String, HostEntry>,
 ) -> (HashSet<String>, HashSet<String>) {
     persisted.into_iter().partition(|full_id| {
-        helper_section
-            .iter()
-            .chain(direct_section)
-            .any(|entry| entry.owner.as_deref() == Some(full_id.as_str()))
+        let lines = || helper_section.iter().chain(direct_section);
+        lines().any(|entry| entry.owner.as_deref() == Some(full_id.as_str()))
+            || expected.get(full_id).is_some_and(|expected_entry| {
+                lines().any(|entry| {
+                    entry.owner.is_none()
+                        && entry.ip == expected_entry.ip
+                        && entry.hostname == expected_entry.hostname
+                })
+            })
     })
 }
 
@@ -538,6 +558,39 @@ fn config_host_entries(
         }
     }
     entries
+}
+
+/// The base configuration id a full SSL host id names (`42` from
+/// `42-https` or `42-https-local`).
+fn base_config_id(full_id: &str) -> Option<i64> {
+    full_id
+        .strip_suffix("-https-local")
+        .or_else(|| full_id.strip_suffix("-https"))
+        .and_then(|id| id.parse().ok())
+}
+
+/// The mapping each persisted SSL id would have written, derived from the
+/// configuration it belongs to: what `persisted_ids_verified_on_disk` needs
+/// to recognize an unmarked line that already verifies a persisted id.
+async fn expected_ssl_entries(
+    persisted: &HashSet<String>, mode: DatabaseMode,
+) -> HashMap<String, HostEntry> {
+    let base_ids: HashSet<i64> = persisted
+        .iter()
+        .filter_map(|id| base_config_id(id))
+        .collect();
+    let mut expected = HashMap::new();
+    for id in base_ids {
+        let config = kftray_commons::utils::config::get_config_with_mode(id, mode)
+            .await
+            .ok();
+        for (full_id, entry) in config_host_entries(id, config.as_ref(), persisted) {
+            if persisted.contains(&full_id) {
+                expected.insert(full_id, entry);
+            }
+        }
+    }
+    expected
 }
 
 const SSL_HOSTS_WRITTEN_PREFIX: &str = "ssl_hosts_written";
@@ -867,14 +920,55 @@ mod tests {
             "99-https".to_owned(),
         ]);
 
-        let (verified, stale) =
-            persisted_ids_verified_on_disk(persisted, &helper_section, &direct_section);
+        let (verified, stale) = persisted_ids_verified_on_disk(
+            persisted,
+            &helper_section,
+            &direct_section,
+            &HashMap::new(),
+        );
 
         assert_eq!(
             verified,
             HashSet::from(["41-https".to_owned(), "41-https-local".to_owned()])
         );
         assert_eq!(stale, HashSet::from(["99-https".to_owned()]));
+    }
+
+    #[test]
+    fn an_unmarked_line_matching_the_expected_mapping_verifies_a_persisted_id() {
+        use kftray_commons::utils::hostsfile::SectionEntry;
+
+        // An older helper wrote the alias without marking the line; the id
+        // is still persisted from before a restart, and nothing here has
+        // owner-marked it.
+        let helper_section = vec![SectionEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "app.local".to_owned(),
+            owner: None,
+        }];
+        let direct_section = Vec::new();
+        let persisted = HashSet::from(["41-https".to_owned(), "99-https".to_owned()]);
+        let expected = HashMap::from([(
+            "41-https".to_owned(),
+            HostEntry {
+                ip: "127.0.0.1".parse().unwrap(),
+                hostname: "app.local".to_owned(),
+            },
+        )]);
+
+        let (verified, stale) =
+            persisted_ids_verified_on_disk(persisted, &helper_section, &direct_section, &expected);
+
+        assert_eq!(
+            verified,
+            HashSet::from(["41-https".to_owned()]),
+            "an unmarked line matching the expected ip and hostname must still verify the id"
+        );
+        assert_eq!(
+            stale,
+            HashSet::from(["99-https".to_owned()]),
+            "an id with no expected mapping and no marked line stays stale"
+        );
     }
 
     #[tokio::test]

@@ -109,6 +109,7 @@ const KFTray = () => {
     Map<number, PendingConfigAction>
   >(new Map())
   const pendingTokenCounterRef = useRef(0)
+  const inFlightRef = useRef<Map<number, number>>(new Map())
   const configRefreshVersion = useRef(0)
 
   const configsRef = useRef<Config[]>(configs)
@@ -451,7 +452,11 @@ const KFTray = () => {
       : undefined
     const wasRunning = Boolean(runningConfig?.is_running)
 
-    if (isEdit && pendingConfigActionsRef.current.has(configToSave.id)) {
+    if (
+      isEdit &&
+      (pendingConfigActionsRef.current.has(configToSave.id) ||
+        inFlightRef.current.has(configToSave.id))
+    ) {
       toaster.error({
         title: 'Error',
         description: 'This configuration is busy. Try again once it settles.',
@@ -529,11 +534,34 @@ const KFTray = () => {
         return true
       } else if (wasStopped) {
         console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
-        toaster.error({
-          title: 'Error',
-          description: `The forward was stopped but the save failed. ${message}`,
-          duration: 2000,
-        })
+
+        if (runningConfig) {
+          try {
+            await startPortForwardingForConfig(runningConfig, pendingToken)
+            toaster.error({
+              title: 'Error',
+              description: `Failed to ${isEdit ? 'update' : 'add'} configuration. The forward was restarted. ${message}`,
+              duration: 2000,
+            })
+          } catch (restartError) {
+            const restartMessage =
+              restartError instanceof Error
+                ? restartError.message
+                : 'Unknown error'
+
+            toaster.error({
+              title: 'Error',
+              description: `The forward was stopped, the save failed, and restarting it also failed: ${restartMessage}`,
+              duration: 3000,
+            })
+          }
+        } else {
+          toaster.error({
+            title: 'Error',
+            description: `The forward was stopped but the save failed. ${message}`,
+            duration: 2000,
+          })
+        }
 
         return false
       } else {
@@ -558,104 +586,137 @@ const KFTray = () => {
 
   const stopPortForwardingForConfig = useCallback(
     async (config: Config, token?: number) => {
-      if (
-        config.workload_type === 'expose' ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'tcp')
-      ) {
-        await invoke('stop_port_forward_cmd', {
-          serviceName: config.service,
-          configId: config.id.toString(),
-        })
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
-        await invoke('stop_proxy_forward_cmd', {
-          configId: config.id.toString(),
-          namespace: config.namespace,
-          serviceName: config.service,
-          localPort: config.local_port,
-          remoteAddress: config.remote_address,
-          protocol: 'tcp',
-        })
-      } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      if (token !== undefined) {
+        inFlightRef.current.set(config.id, token)
       }
-      configRefreshVersion.current += 1
-      // Skipped when a later reservation already owns this id: the versioned
-      // refresh recovers the authoritative state instead.
-      if (
-        token === undefined ||
-        pendingConfigActionsRef.current.get(config.id)?.token === token
-      ) {
-        setConfigs(current =>
-          current.map(item =>
-            item.id === config.id ? { ...item, is_running: false } : item,
-          ),
-        )
+      try {
+        if (
+          config.workload_type === 'expose' ||
+          ((config.workload_type === 'service' ||
+            config.workload_type === 'pod') &&
+            config.protocol === 'tcp')
+        ) {
+          await invoke('stop_port_forward_cmd', {
+            serviceName: config.service,
+            configId: config.id.toString(),
+          })
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          ((config.workload_type === 'service' ||
+            config.workload_type === 'pod') &&
+            config.protocol === 'udp')
+        ) {
+          await invoke('stop_proxy_forward_cmd', {
+            configId: config.id.toString(),
+            namespace: config.namespace,
+            serviceName: config.service,
+            localPort: config.local_port,
+            remoteAddress: config.remote_address,
+            protocol: 'tcp',
+          })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
+        // A later reservation already owns this id: apply nothing here and
+        // let an authoritative refresh recover the state instead of racing
+        // it.
+        if (
+          token === undefined ||
+          pendingConfigActionsRef.current.get(config.id)?.token === token
+        ) {
+          configRefreshVersion.current += 1
+          setConfigs(current =>
+            current.map(item =>
+              item.id === config.id ? { ...item, is_running: false } : item,
+            ),
+          )
+        } else {
+          void updateConfigsWithState()
+        }
+      } finally {
+        if (
+          token !== undefined &&
+          inFlightRef.current.get(config.id) === token
+        ) {
+          inFlightRef.current.delete(config.id)
+        }
       }
     },
-    [],
+    [updateConfigsWithState],
   )
 
   const startPortForwardingForConfig = useCallback(
     async (config: Config, token?: number) => {
-      let responses: PortForwardResponse[]
-
-      if (
-        config.workload_type === 'expose' ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'tcp')
-      ) {
-        responses = await invoke<PortForwardResponse[]>(
-          'start_port_forward_tcp_cmd',
-          { configs: [config] },
-        )
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
-        responses = await invoke<PortForwardResponse[]>(
-          'deploy_and_forward_pod_cmd',
-          { configs: [config] },
-        )
-      } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      if (token !== undefined) {
+        inFlightRef.current.set(config.id, token)
       }
+      try {
+        let responses: PortForwardResponse[]
 
-      const failure = responses.find(response => response.status !== 0)
+        if (
+          config.workload_type === 'expose' ||
+          ((config.workload_type === 'service' ||
+            config.workload_type === 'pod') &&
+            config.protocol === 'tcp')
+        ) {
+          responses = await invoke<PortForwardResponse[]>(
+            'start_port_forward_tcp_cmd',
+            { configs: [config] },
+          )
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          ((config.workload_type === 'service' ||
+            config.workload_type === 'pod') &&
+            config.protocol === 'udp')
+        ) {
+          responses = await invoke<PortForwardResponse[]>(
+            'deploy_and_forward_pod_cmd',
+            { configs: [config] },
+          )
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
 
-      if (failure) {
-        throw new Error(failure.stderr || 'Failed to start port forwarding.')
-      }
+        const failure = responses.find(response => response.status !== 0)
 
-      configRefreshVersion.current += 1
-      // Skipped when a later reservation already owns this id: the versioned
-      // refresh recovers the authoritative state instead.
-      if (
-        token === undefined ||
-        pendingConfigActionsRef.current.get(config.id)?.token === token
-      ) {
-        setConfigs(current =>
-          current.map(item =>
-            item.id === config.id ? { ...item, is_running: true } : item,
-          ),
-        )
+        if (failure) {
+          throw new Error(failure.stderr || 'Failed to start port forwarding.')
+        }
+
+        // A later reservation already owns this id: apply nothing here and
+        // let an authoritative refresh recover the state instead of racing
+        // it.
+        if (
+          token === undefined ||
+          pendingConfigActionsRef.current.get(config.id)?.token === token
+        ) {
+          configRefreshVersion.current += 1
+          setConfigs(current =>
+            current.map(item =>
+              item.id === config.id ? { ...item, is_running: true } : item,
+            ),
+          )
+        } else {
+          void updateConfigsWithState()
+        }
+      } finally {
+        if (
+          token !== undefined &&
+          inFlightRef.current.get(config.id) === token
+        ) {
+          inFlightRef.current.delete(config.id)
+        }
       }
     },
-    [],
+    [updateConfigsWithState],
   )
 
   const toggleConfigForward = useCallback(
     async (config: Config, action: PortForwardToggleAction) => {
-      if (pendingConfigActionsRef.current.has(config.id)) {
+      if (
+        pendingConfigActionsRef.current.has(config.id) ||
+        inFlightRef.current.has(config.id)
+      ) {
         toaster.error({
           title: 'Error',
           description: 'This configuration is busy. Try again once it settles.',
@@ -739,7 +800,9 @@ const KFTray = () => {
         return
       }
       const targets = candidates.filter(
-        config => !pendingConfigActionsRef.current.has(config.id),
+        config =>
+          !pendingConfigActionsRef.current.has(config.id) &&
+          !inFlightRef.current.has(config.id),
       )
 
       if (targets.length === 0) {
@@ -819,13 +882,18 @@ const KFTray = () => {
           const token = tokens.get(config.id) as number
 
           queued.delete(config.id)
-          if (
-            controller.signal.aborted ||
-            pendingConfigActionsRef.current.get(config.id)?.token !== token
-          ) {
-            // Already released by cancelQueued, or superseded by a newer
-            // reservation for this id: this worker has nothing left to hold.
+          if (pendingConfigActionsRef.current.get(config.id)?.token !== token) {
+            // Superseded by a newer reservation for this id: this worker has
+            // nothing left to hold.
             unresolved.delete(config.id)
+
+            return
+          }
+          if (controller.signal.aborted) {
+            // Dequeued before cancelQueued could release it: this worker
+            // still owns the reservation, so release it here.
+            unresolved.delete(config.id)
+            clearPending(config.id, token)
 
             return
           }

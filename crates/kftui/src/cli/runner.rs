@@ -299,7 +299,7 @@ impl PortForwardRunner {
         // interactive exits do this; without it a transient delete failure on
         // Ctrl+C leaks a relay Deployment with nothing left to remove it.
         let (still_owed, cleanup_result) =
-            crate::core::port_forward::reconcile_shutdown_cleanup(mode).await;
+            crate::core::port_forward::reconcile_shutdown_cleanup(mode, &HashSet::new()).await;
         if !still_owed.is_empty() {
             let message = format!(
                 "cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \

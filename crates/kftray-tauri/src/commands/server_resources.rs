@@ -162,21 +162,6 @@ pub async fn list_all_kftray_resources(
     Ok(namespace_groups)
 }
 
-/// Whether a resource may be shown and deleted from this screen.
-///
-/// A name prefix is not proof of ownership: it truncates the username, so two
-/// users, or two installations of one user, can produce the same one. A
-/// resource labelled with another installation's id is theirs and is hidden.
-/// One with no such label predates the label and cannot be attributed, and
-/// this screen is exactly where those are meant to be removed by hand.
-fn belongs_here(
-    labels: &std::collections::BTreeMap<String, String>, installation_id: &str,
-) -> bool {
-    labels
-        .get(kftray_portforward::kube::INSTALLATION_LABEL)
-        .is_none_or(|owner| owned_by(owner, installation_id))
-}
-
 /// Whether an ownership label names this installation. A memory-mode run
 /// extends the identity with a session identifier; its resources are still
 /// this installation's to manage.
@@ -229,6 +214,31 @@ fn is_ours_dependent(
                 || is_expose_name(name)
                 || config_id.is_some_and(|id| deployment_config_ids.contains(&id.to_string()))
         }
+    }
+}
+
+/// Whether `kind` may treat `name` as attributable to this installation on
+/// this delete screen. `kind` selects which attribution helper applies: a
+/// pod or deployment keeps its own name, while a service or ingress can be
+/// renamed to an arbitrary subdomain by a public exposure and so is also
+/// checked against `deployment_config_ids`. An unlabeled resource whose
+/// name matches neither the forward nor the expose prefix, and whose
+/// `config_id` (if any) names no known deployment, is not attributable:
+/// this is the gate that keeps a direct invoke with an arbitrary unlabeled
+/// name from deleting a non-kftray object.
+fn attribution_for_delete(
+    kind: &str, name: &str, labels: &std::collections::BTreeMap<String, String>,
+    config_id: Option<&str>, deployment_config_ids: &[String], installation_id: &str,
+) -> bool {
+    match kind {
+        "service" | "ingress" => is_ours_dependent(
+            name,
+            labels,
+            config_id,
+            deployment_config_ids,
+            installation_id,
+        ),
+        _ => is_ours(name, labels, installation_id),
     }
 }
 
@@ -504,6 +514,25 @@ fn calculate_age(creation_timestamp: &Time) -> String {
     }
 }
 
+/// Every namespace a config in `context_name` currently uses, deduplicated.
+///
+/// A config's cluster resources normally live in its own namespace; if the
+/// config was later edited to point at a different one, its old resources
+/// are left behind there. Checking every namespace the context's configs
+/// use, not just the namespace a particular resource happens to be in, is
+/// what finds those leftovers.
+async fn namespaces_for_context(context_name: &str) -> Vec<String> {
+    kftray_commons::config::get_configs()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.context.as_deref() == Some(context_name))
+        .map(|c| c.namespace)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 #[tauri::command]
 pub async fn delete_kftray_resource(
     context_name: &str, namespace: &str, resource_type: &str, resource_name: &str,
@@ -539,18 +568,24 @@ pub async fn delete_kftray_resource(
         params: &'a DeleteParams,
         installation_id: &'a str,
         namespace: &'a str,
+        context_name: &'a str,
         destination: &'a str,
         client: &'a Client,
     }
 
     /// Whether any resource carrying `config_id` and this installation's
-    /// label still exists in the namespace, checked across every kind the
-    /// screen lists. A single resource just deleted by hand may be only one
-    /// of several this installation created for the same config (a proxy's
-    /// relay Deployment, Service and Pod, say), so the cluster obligation is
-    /// only settled once none of them remain.
+    /// label still exists anywhere in the context, checked across every
+    /// namespace the context's configs currently use and every kind the
+    /// screen lists. A config's resources normally live in its own
+    /// namespace, but one edited to point elsewhere after creation leaves
+    /// old resources behind in the previous namespace, so every namespace
+    /// is checked rather than only the just-deleted resource's own. A
+    /// single resource just deleted by hand may be only one of several this
+    /// installation created for the same config (a proxy's relay
+    /// Deployment, Service and Pod, say), so the cluster obligation is only
+    /// settled once none of them remain.
     async fn any_sibling_resources_remain(
-        client: &Client, namespace: &str, id: i64, installation_id: &str,
+        client: &Client, context_name: &str, id: i64, installation_id: &str,
     ) -> Result<bool, String> {
         let target = id.to_string();
         let matches = |resources: &[ServerResource]| {
@@ -559,42 +594,48 @@ pub async fn delete_kftray_resource(
                 .any(|resource| resource.config_id.as_deref() == Some(target.as_str()))
         };
 
-        let pods = list_pods_in_namespace(client, namespace, &[], installation_id).await?;
-        if matches(&pods) {
-            return Ok(true);
+        for namespace in namespaces_for_context(context_name).await {
+            let pods = list_pods_in_namespace(client, &namespace, &[], installation_id).await?;
+            if matches(&pods) {
+                return Ok(true);
+            }
+
+            let deployments =
+                list_deployments_in_namespace(client, &namespace, &[], installation_id).await?;
+            if matches(&deployments) {
+                return Ok(true);
+            }
+            let deployment_config_ids: Vec<String> = deployments
+                .iter()
+                .filter_map(|d| d.config_id.clone())
+                .collect();
+
+            let services = list_services_in_namespace(
+                client,
+                &namespace,
+                &deployment_config_ids,
+                &[],
+                installation_id,
+            )
+            .await?;
+            if matches(&services) {
+                return Ok(true);
+            }
+
+            let ingresses = list_ingresses_in_namespace(
+                client,
+                &namespace,
+                &deployment_config_ids,
+                &[],
+                installation_id,
+            )
+            .await?;
+            if matches(&ingresses) {
+                return Ok(true);
+            }
         }
 
-        let deployments =
-            list_deployments_in_namespace(client, namespace, &[], installation_id).await?;
-        if matches(&deployments) {
-            return Ok(true);
-        }
-        let deployment_config_ids: Vec<String> = deployments
-            .iter()
-            .filter_map(|d| d.config_id.clone())
-            .collect();
-
-        let services = list_services_in_namespace(
-            client,
-            namespace,
-            &deployment_config_ids,
-            &[],
-            installation_id,
-        )
-        .await?;
-        if matches(&services) {
-            return Ok(true);
-        }
-
-        let ingresses = list_ingresses_in_namespace(
-            client,
-            namespace,
-            &deployment_config_ids,
-            &[],
-            installation_id,
-        )
-        .await?;
-        Ok(matches(&ingresses))
+        Ok(false)
     }
 
     async fn delete_kube_resource<K>(
@@ -608,6 +649,7 @@ pub async fn delete_kftray_resource(
             params,
             installation_id,
             namespace,
+            context_name,
             destination,
             client,
         } = *scope;
@@ -618,10 +660,33 @@ pub async fn delete_kftray_resource(
             Err(e) => return Err(format!("Failed to read {kind}: {e}")),
         };
         let labels = object.meta().labels.clone().unwrap_or_default();
-        if !belongs_here(&labels, installation_id) {
-            return Err(format!(
-                "{kind} {name} belongs to another kftray installation and was left alone"
-            ));
+        let deployment_config_ids: Vec<String> = if matches!(kind, "service" | "ingress") {
+            list_deployments_in_namespace(client, namespace, &[], installation_id)
+                .await?
+                .into_iter()
+                .filter_map(|d| d.config_id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let attributed = attribution_for_delete(
+            kind,
+            name,
+            &labels,
+            config_id.as_deref(),
+            &deployment_config_ids,
+            installation_id,
+        );
+        if !attributed {
+            return Err(
+                if labels.contains_key(kftray_portforward::kube::INSTALLATION_LABEL) {
+                    format!(
+                        "{kind} {name} belongs to another kftray installation and was left alone"
+                    )
+                } else {
+                    format!("{kind} {name} is not a kftray-managed resource and was left alone")
+                },
+            );
         }
 
         // The configuration id on the object only names a row in the file
@@ -695,11 +760,11 @@ pub async fn delete_kftray_resource(
         // footprint is actually gone. A no-op when there is no matching
         // record, e.g. the obligation was already settled or never existed.
         if result.is_ok()
-            && labels.contains_key(kftray_portforward::kube::INSTALLATION_LABEL)
+            && is_exact_installation_owner
             && let Some(config_id_str) = config_id
             && let Ok(id) = config_id_str.parse::<i64>()
         {
-            match any_sibling_resources_remain(client, namespace, id, installation_id).await {
+            match any_sibling_resources_remain(client, context_name, id, installation_id).await {
                 Ok(true) => {}
                 Ok(false) => {
                     if let Err(e) =
@@ -728,6 +793,7 @@ pub async fn delete_kftray_resource(
         params: &delete_params,
         installation_id,
         namespace,
+        context_name,
         destination: &destination,
         client: &client,
     };
@@ -885,4 +951,86 @@ pub async fn cleanup_orphaned_kftray_resources(
     info!("{}", message);
 
     Ok(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unlabeled name this installation never created must not be
+    /// deletable: pre-fix, `delete_kube_resource` gated on `belongs_here`,
+    /// which treated a missing label as owned regardless of the name, so a
+    /// direct invoke naming an arbitrary unlabeled pod or deployment would
+    /// pass the gate and delete a non-kftray object.
+    #[test]
+    fn an_unlabeled_pod_or_deployment_name_never_created_by_this_installation_is_not_attributable()
+    {
+        let labels = std::collections::BTreeMap::new();
+
+        for kind in ["pod", "deployment"] {
+            assert!(
+                !attribution_for_delete(
+                    kind,
+                    "nginx-unrelated-deployment",
+                    &labels,
+                    None,
+                    &[],
+                    "test-installation-id",
+                ),
+                "an unlabeled {kind} whose name matches neither the forward nor the expose \
+                 prefix must not be attributed to this installation"
+            );
+        }
+    }
+
+    /// The service/ingress branch: same unattributable-name guarantee, plus
+    /// a `config_id` that names no known deployment must not attribute it
+    /// either.
+    #[test]
+    fn an_unlabeled_service_or_ingress_name_never_created_by_this_installation_is_not_attributable()
+    {
+        let labels = std::collections::BTreeMap::new();
+
+        for kind in ["service", "ingress"] {
+            assert!(
+                !attribution_for_delete(
+                    kind,
+                    "nginx-unrelated-service",
+                    &labels,
+                    Some("42"),
+                    &["7".to_string(), "13".to_string()],
+                    "test-installation-id",
+                ),
+                "an unlabeled {kind} whose name and config_id match nothing this installation \
+                 created must not be attributed to it"
+            );
+        }
+    }
+
+    /// Sanity check on the positive side: a labeled resource owned by this
+    /// installation stays attributable regardless of its name, for every
+    /// resource kind the delete screen handles.
+    #[test]
+    fn a_labeled_resource_owned_by_this_installation_is_attributable_for_every_kind() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            kftray_portforward::kube::INSTALLATION_LABEL.to_string(),
+            "test-installation-id".to_string(),
+        );
+
+        for kind in ["pod", "deployment", "service", "ingress"] {
+            assert!(
+                attribution_for_delete(
+                    kind,
+                    "arbitrary-name",
+                    &labels,
+                    None,
+                    &[],
+                    "test-installation-id",
+                ),
+                "a {kind} labeled with this installation's id must be attributable regardless \
+                 of its name"
+            );
+        }
+    }
 }

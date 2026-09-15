@@ -1,13 +1,5 @@
-use std::io::Write;
+use std::collections::HashSet;
 
-use crossterm::{
-    cursor::Show,
-    execute,
-    terminal::{
-        LeaveAlternateScreen,
-        disable_raw_mode,
-    },
-};
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::get_config_with_mode;
 use kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode;
@@ -70,83 +62,93 @@ pub async fn stop_port_forwarding(config: Config, mode: DatabaseMode) -> Result<
         .map_err(|error| format!("Failed to stop port forward: {error}"))
 }
 
-pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
+/// Stops every forward this process owns, then reconciles anything a create
+/// left abandoned on the way out. Used by `run_tui`'s single shutdown path
+/// regardless of why the event loop ended (user quit, Ctrl+C, menu exit, or
+/// an error), so there is exactly one place that knows how to wind a running
+/// process down. Returns whatever failed, for the caller to report and turn
+/// into an exit code.
+pub async fn shutdown_port_forwarding(app: &mut App, mode: DatabaseMode) -> Vec<String> {
     log::debug!("Stopping all port forwards in mode: {mode:?}...");
 
-    // Restore the terminal first: draining in-flight operations and deleting
-    // cluster resources are both unbounded from here, and neither should hold
-    // the shell in raw mode.
-    let _ = disable_raw_mode();
-    let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
-    let _ = std::io::stdout().flush();
+    let mut failures: Vec<String> = Vec::new();
+    let (shutdown_reports, detached_ids) = app.finish_forwarding().await;
+    failures.extend(shutdown_reports);
 
-    let mut failed = false;
-    let (shutdown_reports, detached_stop_ids) = app.finish_forwarding().await;
-    // Reported on stderr and through the exit code: the alternate screen is
-    // already gone by the time this runs, so nothing drawn here would be seen.
-    if !shutdown_reports.is_empty() {
-        failed = true;
-    }
-    // Ids kftui just detached are excluded: their stop is still running in
-    // the background holding the per-config recovery lock, so re-stopping
-    // them here would only contend for the same lock instead of finishing
-    // sooner.
+    // Ids kftui just detached are excluded: a start or stop still running in
+    // the background holds the per-config recovery lock, so re-stopping or
+    // reconciling them here would only contend for the same lock instead of
+    // finishing sooner.
     match tokio::time::timeout(
         crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
-        stop_all_port_forward_with_mode_excluding(mode, &detached_stop_ids),
+        stop_all_port_forward_with_mode_excluding(mode, &detached_ids),
     )
     .await
-    .unwrap_or_else(|_| Err("shutdown budget elapsed".to_owned()))
     {
-        Ok(responses) => {
+        Ok(Ok(responses)) => {
             for response in responses {
                 if response.status != 0 {
-                    error!("Error stopping port forward: {:?}", response.stderr);
-                    // The terminal is already restored and this function always
-                    // exits, so the popup would never be drawn.
-                    eprintln!("Error stopping port forward: {}", response.stderr);
-                    failed = true;
+                    let message = format!("Error stopping port forward: {:?}", response.stderr);
+                    error!("{message}");
+                    eprintln!("{message}");
+                    failures.push(message);
                 }
             }
         }
-        Err(e) => {
-            error!("Failed to stop all port forwards: {e}");
-            eprintln!("Failed to stop all port forwards: {e}");
-            failed = true;
+        Ok(Err(error)) => {
+            let message = format!("Failed to stop port forwards: {error}");
+            error!("{message}");
+            eprintln!("{message}");
+            failures.push(message);
+        }
+        Err(_) => {
+            let message =
+                "Stopping port forwards did not finish within the shutdown budget".to_owned();
+            error!("{message}");
+            eprintln!("{message}");
+            failures.push(message);
         }
     }
 
     // A create abandoned on the way out can surface after that first pass, and
     // the registry that tracks it lives only in this process.
-    let (still_owed, cleanup_result) = reconcile_shutdown_cleanup(mode).await;
+    let (still_owed, cleanup_result) = reconcile_shutdown_cleanup(mode, &detached_ids).await;
     if !still_owed.is_empty() {
-        eprintln!(
+        let message = format!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
              running and are retried on the next stop"
         );
-        failed = true;
+        error!("{message}");
+        eprintln!("{message}");
+        failures.push(message);
+    }
+    if let Err(error) = cleanup_result {
+        let message = format!("Failed to clean up configuration states: {error}");
+        error!("{message}");
+        eprintln!("{message}");
+        failures.push(message);
     }
 
-    if let Err(e) = cleanup_result {
-        log::error!("Failed to cleanup config states: {e}");
-        eprintln!("Failed to clean up configuration states: {e}");
-        failed = true;
-    }
-
-    log::debug!("Exiting application...");
-
-    std::process::exit(i32::from(failed));
+    log::debug!("Port forwarding shutdown complete");
+    failures
 }
 
 /// Reconciles any create still abandoned on the way out, then marks every
 /// configuration this process was running as stopped, except the ones still
 /// owed: those keep their `is_running` state so the next run's stop-all
 /// enumerates and retries them, instead of leaving them behind a dead pid.
-/// Returns the config ids still owed alongside the cleanup outcome so each
-/// shutdown path can report and choose its own exit code independently.
-pub async fn reconcile_shutdown_cleanup(mode: DatabaseMode) -> (Vec<i64>, Result<(), String>) {
-    let still_owed =
-        reconcile_pending_cleanup(mode, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT).await;
+/// `exclude` skips ids a caller already knows are still being handled by a
+/// detached task holding their per-config recovery lock; those ids are
+/// folded into the still-owed set too, so their `is_running` state is left
+/// alone until the detached task finishes. Returns the config ids still owed
+/// alongside the cleanup outcome so each shutdown path can report and choose
+/// its own exit code independently.
+pub async fn reconcile_shutdown_cleanup(
+    mode: DatabaseMode, exclude: &HashSet<i64>,
+) -> (Vec<i64>, Result<(), String>) {
+    let mut still_owed =
+        reconcile_pending_cleanup(mode, crate::tui::app::CLEANUP_RECONCILE_TIMEOUT, exclude).await;
+    still_owed.extend(exclude.iter().copied());
     let cleanup_result = cleanup_current_process_config_states_with_mode(mode, &still_owed).await;
     (still_owed, cleanup_result)
 }

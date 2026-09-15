@@ -64,6 +64,11 @@ pub const SOCKET_FILENAME: &str = "com.hcavarsan.kftray.helper.sock";
 #[cfg(target_os = "windows")]
 pub const DEFAULT_NAMED_PIPE: &str = r"\\.\pipe\kftray-helper";
 
+/// No legitimate request comes close to this size; a client still growing
+/// the buffer past it before a `HelperRequest` parses is a mistake or an
+/// attack, never something worth reading further.
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
 #[cfg(unix)]
 fn is_running_as_root() -> bool {
     unsafe { libc::geteuid() == 0 }
@@ -481,6 +486,16 @@ async fn handle_connection(
 ) -> Result<(), HelperError> {
     info!("New connection received");
 
+    // BSD/macOS accepted sockets inherit O_NONBLOCK from the listening
+    // socket: left as is, the read timeout set below is silently ignored
+    // and every `WouldBlock` in the read loop below is mistaken for a real
+    // timeout instead of "no data yet".
+    stream.set_nonblocking(false).map_err(|e| {
+        HelperError::Communication(format!(
+            "Failed to clear non-blocking mode on accepted socket: {e}"
+        ))
+    })?;
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Err(e) = validate_peer_credentials(&stream) {
@@ -500,73 +515,9 @@ async fn handle_connection(
             HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
         })?;
 
-    let mut buffer = Vec::new();
-    let mut tmp_buf = [0u8; 4096];
-    let mut waited_for_first_byte = false;
-    let timeout = Duration::from_secs(30);
-    let start_time = std::time::Instant::now();
-
-    // Completeness is judged by whether the buffer parses, not by the size
-    // of a single read: a message can arrive in reads of any size, and a
-    // large batch legitimately spans more than one.
-    let request = loop {
-        if start_time.elapsed() > timeout {
-            warn!(
-                "Read operation timed out after {} seconds",
-                timeout.as_secs()
-            );
-            return respond_with_parse_error(&mut stream, &buffer);
-        }
-
-        match stream.read(&mut tmp_buf) {
-            Ok(0) => {
-                if buffer.is_empty() {
-                    info!("Client closed connection (0 bytes read)");
-                    return Ok(());
-                }
-                debug!(
-                    "Client closed connection after sending {} bytes",
-                    buffer.len()
-                );
-                return respond_with_parse_error(&mut stream, &buffer);
-            }
-            Ok(n) => {
-                debug!("Read {n} bytes from client");
-                buffer.extend_from_slice(&tmp_buf[..n]);
-
-                if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
-                    debug!("Request parsed successfully");
-                    break req;
-                }
-            }
-            // With a socket read timeout set (SO_RCVTIMEO), a timed-out read
-            // surfaces as WouldBlock rather than TimedOut on macOS, so an idle
-            // client must fail fast the same way on both: one grace wait for a
-            // slow client's first byte, then the same fail-fast the Windows
-            // path uses.
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                if buffer.is_empty() && !waited_for_first_byte {
-                    waited_for_first_byte = true;
-                    debug!("No data yet, waiting briefly for a slow client");
-                    std::thread::sleep(Duration::from_millis(500));
-                    continue;
-                }
-                debug!("Socket read timed out, ending read loop");
-                return respond_with_parse_error(&mut stream, &buffer);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                debug!("Socket read interrupted, continuing");
-            }
-            Err(e) => {
-                error!("Error reading from client: {e}");
-                return Err(HelperError::Communication(format!(
-                    "Failed to read from socket: {e}"
-                )));
-            }
-        }
+    let request = match read_request(&mut stream)? {
+        Some(request) => request,
+        None => return Ok(()),
     };
 
     if let Err(e) = validate_request(&request) {
@@ -636,6 +587,97 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Reads one `HelperRequest` off `stream`, capping the buffer so a client
+/// that never completes valid JSON cannot grow it without bound.
+///
+/// Returns `Ok(None)` once the read loop already answered the client with
+/// a parse-error reply (the size cap, malformed JSON, or a stalled read),
+/// or gave up without one (an EOF with data already buffered would only
+/// hit a broken pipe), and there is nothing left to process. Returns
+/// `Ok(Some(request))` on a successfully parsed request.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn read_request(stream: &mut UnixStream) -> Result<Option<HelperRequest>, HelperError> {
+    let mut buffer = Vec::new();
+    let mut tmp_buf = [0u8; 4096];
+    let mut waited_for_first_byte = false;
+    let timeout = Duration::from_secs(30);
+    let start_time = std::time::Instant::now();
+
+    // Completeness is judged by whether the buffer parses, not by the size
+    // of a single read: a message can arrive in reads of any size, and a
+    // large batch legitimately spans more than one.
+    loop {
+        if start_time.elapsed() > timeout {
+            warn!(
+                "Read operation timed out after {} seconds",
+                timeout.as_secs()
+            );
+            respond_with_parse_error(stream, &buffer)?;
+            return Ok(None);
+        }
+
+        match stream.read(&mut tmp_buf) {
+            Ok(0) => {
+                if buffer.is_empty() {
+                    info!("Client closed connection (0 bytes read)");
+                } else {
+                    // The peer already closed its side after sending an
+                    // incomplete request: replying would only hit a broken
+                    // pipe, so there is nothing left worth answering.
+                    debug!(
+                        "Client closed connection after sending {} bytes, skipping reply",
+                        buffer.len()
+                    );
+                }
+                return Ok(None);
+            }
+            Ok(n) => {
+                debug!("Read {n} bytes from client");
+                buffer.extend_from_slice(&tmp_buf[..n]);
+
+                if buffer.len() > MAX_REQUEST_BYTES {
+                    warn!("Request exceeded {MAX_REQUEST_BYTES} bytes before parsing, rejecting");
+                    respond_with_parse_error(stream, &buffer)?;
+                    return Ok(None);
+                }
+
+                if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
+                    debug!("Request parsed successfully");
+                    return Ok(Some(req));
+                }
+            }
+            // With a socket read timeout set (SO_RCVTIMEO), a timed-out read
+            // surfaces as WouldBlock rather than TimedOut on macOS, so an idle
+            // client must fail fast the same way on both: one grace wait for a
+            // slow client's first byte, then the same fail-fast the Windows
+            // path uses.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                if buffer.is_empty() && !waited_for_first_byte {
+                    waited_for_first_byte = true;
+                    debug!("No data yet, waiting briefly for a slow client");
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+                debug!("Socket read timed out, ending read loop");
+                respond_with_parse_error(stream, &buffer)?;
+                return Ok(None);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                debug!("Socket read interrupted, continuing");
+            }
+            Err(e) => {
+                error!("Error reading from client: {e}");
+                return Err(HelperError::Communication(format!(
+                    "Failed to read from socket: {e}"
+                )));
+            }
+        }
+    }
+}
+
 /// The request id an otherwise-unparseable buffer still carries, if it was
 /// at least valid JSON with that field: lets the client correlate the
 /// error with its own request instead of getting an unaddressed one.
@@ -666,14 +708,33 @@ fn respond_with_parse_error(stream: &mut UnixStream, buffer: &[u8]) -> Result<()
         warn!("Failed to serialize parse-error response: {e}");
         HelperError::Communication(format!("Failed to serialize parse-error response: {e}"))
     })?;
-    stream.write_all(&bytes).map_err(|e| {
+    if let Err(e) = stream.write_all(&bytes) {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ) {
+            info!("Client disconnected before parse-error reply could be sent, ignoring: {e}");
+            return Ok(());
+        }
         warn!("Failed to write parse-error response: {e}");
-        HelperError::Communication(format!("Failed to write parse-error response: {e}"))
-    })?;
-    stream.flush().map_err(|e| {
+        return Err(HelperError::Communication(format!(
+            "Failed to write parse-error response: {e}"
+        )));
+    }
+    if let Err(e) = stream.flush() {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ) {
+            info!("Client disconnected before parse-error reply could be flushed, ignoring: {e}");
+            return Ok(());
+        }
         warn!("Failed to flush parse-error response: {e}");
-        HelperError::Communication(format!("Failed to flush parse-error response: {e}"))
-    })
+        return Err(HelperError::Communication(format!(
+            "Failed to flush parse-error response: {e}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -683,6 +744,113 @@ fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error
         .access_inbound(true)
         .access_outbound(true)
         .create(pipe_name)
+}
+
+/// Verifies the named pipe's client process runs as the interactively
+/// logged-in console user, the Windows analogue of the `SO_PEERCRED`/
+/// `LOCAL_PEERCRED` UID check `validate_peer_credentials` does on Unix.
+///
+/// This helper normally runs as `LocalSystem`, so there is no "current
+/// process UID" to compare the peer against the way the Unix non-root
+/// fallback does; the active console session's user is the only identity
+/// on this machine an elevated service can trust without a
+/// per-installation secret.
+#[cfg(target_os = "windows")]
+fn validate_windows_peer(pipe: &NamedPipeServer) -> Result<(), HelperError> {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::{
+        CloseHandle,
+        HANDLE,
+    };
+    use windows::Win32::Security::{
+        EqualSid,
+        GetTokenInformation,
+        TOKEN_QUERY,
+        TOKEN_USER,
+        TokenUser,
+    };
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::RemoteDesktop::{
+        WTSGetActiveConsoleSessionId,
+        WTSQueryUserToken,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess,
+        OpenProcessToken,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    /// A SID is at most 68 bytes; `TokenUser` returns that SID plus one
+    /// pointer-sized header, comfortably inside this buffer.
+    const TOKEN_USER_BUF_LEN: usize = 256;
+
+    struct OwnedHandle(HANDLE);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    fn open_token(process: HANDLE) -> windows::core::Result<OwnedHandle> {
+        let mut token = HANDLE::default();
+        unsafe {
+            OpenProcessToken(process, TOKEN_QUERY, &mut token)?;
+        }
+        Ok(OwnedHandle(token))
+    }
+
+    fn token_user_sid(token: &OwnedHandle) -> windows::core::Result<[u8; TOKEN_USER_BUF_LEN]> {
+        let mut buf = [0u8; TOKEN_USER_BUF_LEN];
+        let mut returned = 0u32;
+        unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                Some(buf.as_mut_ptr().cast()),
+                buf.len() as u32,
+                &mut returned,
+            )?;
+        }
+        Ok(buf)
+    }
+
+    let auth_err = |what: &str, e: windows::core::Error| {
+        HelperError::Authentication(format!("Failed to {what}: {e}"))
+    };
+
+    let pipe_handle = HANDLE(pipe.as_raw_handle());
+    let mut client_pid = 0u32;
+    unsafe { GetNamedPipeClientProcessId(pipe_handle, &mut client_pid) }
+        .map_err(|e| auth_err("get named pipe client PID", e))?;
+
+    let client_process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, client_pid) }
+            .map_err(|e| auth_err("open client process", e))?;
+    let client_process = OwnedHandle(client_process);
+    let client_token =
+        open_token(client_process.0).map_err(|e| auth_err("open client process token", e))?;
+    let client_sid_buf =
+        token_user_sid(&client_token).map_err(|e| auth_err("read client token SID", e))?;
+
+    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+    let mut session_token = HANDLE::default();
+    unsafe { WTSQueryUserToken(session_id, &mut session_token) }
+        .map_err(|e| auth_err("query the active console session", e))?;
+    let session_token = OwnedHandle(session_token);
+    let session_sid_buf =
+        token_user_sid(&session_token).map_err(|e| auth_err("read session token SID", e))?;
+
+    let client_sid = unsafe { (*client_sid_buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    let session_sid = unsafe { (*session_sid_buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+
+    unsafe { EqualSid(client_sid, session_sid) }.map_err(|_| {
+        HelperError::Authentication("Named pipe client is not the active console user".to_owned())
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -771,83 +939,19 @@ async fn handle_windows_connection(
     mut pipe: NamedPipeServer, pool_manager: Arc<AddressPoolManager>,
     network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
 ) -> Result<(), HelperError> {
-    use tokio::io::{
-        AsyncReadExt,
-        AsyncWriteExt,
-    };
+    use tokio::io::AsyncWriteExt;
+
     info!("New connection received on Windows named pipe");
 
-    let mut buffer = Vec::new();
-    let mut tmp_buf = [0u8; 4096];
-    let mut waited_for_first_byte = false;
+    if let Err(e) = validate_windows_peer(&pipe) {
+        error!("Peer identity validation failed: {e}");
+        return Err(e);
+    }
+    debug!("Peer identity validated successfully");
 
-    let timeout = Duration::from_secs(30);
-    let start_time = std::time::Instant::now();
-
-    // Completeness is judged by whether the buffer parses, not by the size
-    // of a single read: a message can arrive in reads of any size, and a
-    // large batch legitimately spans more than one.
-    let request = loop {
-        if start_time.elapsed() > timeout {
-            warn!(
-                "Read operation timed out after {} seconds",
-                timeout.as_secs()
-            );
-            return respond_with_parse_error(&mut pipe, &buffer).await;
-        }
-
-        match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
-            Ok(read_result) => match read_result {
-                Ok(0) => {
-                    if buffer.is_empty() {
-                        info!("Client closed connection (0 bytes read)");
-                        return Ok(());
-                    }
-                    debug!(
-                        "Client closed connection after sending {} bytes",
-                        buffer.len()
-                    );
-                    return respond_with_parse_error(&mut pipe, &buffer).await;
-                }
-                Ok(n) => {
-                    debug!("Read {} bytes from client", n);
-                    buffer.extend_from_slice(&tmp_buf[..n]);
-
-                    if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
-                        debug!("Request parsed successfully");
-                        break req;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    debug!("Pipe would block, waiting briefly");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                    debug!("Pipe read interrupted, continuing");
-                }
-                Err(e) => {
-                    error!("Error reading from client: {}", e);
-                    if buffer.is_empty() {
-                        return Err(HelperError::Communication(format!(
-                            "Failed to read from pipe: {}",
-                            e
-                        )));
-                    }
-                    return respond_with_parse_error(&mut pipe, &buffer).await;
-                }
-            },
-            Err(_) => {
-                debug!("Read operation timed out");
-                if buffer.is_empty() && !waited_for_first_byte {
-                    waited_for_first_byte = true;
-                    debug!("No data yet, waiting briefly for a slow client");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                }
-                debug!("Read timed out, ending read loop");
-                return respond_with_parse_error(&mut pipe, &buffer).await;
-            }
-        }
+    let request = match read_request(&mut pipe).await? {
+        Some(request) => request,
+        None => return Ok(()),
     };
 
     if let Err(e) = validate_request(&request) {
@@ -921,6 +1025,107 @@ async fn handle_windows_connection(
     Ok(())
 }
 
+/// Reads one `HelperRequest` off `pipe`, capping the buffer so a client
+/// that never completes valid JSON cannot grow it without bound.
+///
+/// Returns `Ok(None)` once the read loop already answered the client with
+/// a parse-error reply (the size cap, malformed JSON, or a stalled read),
+/// or gave up without one (an EOF with data already buffered would only
+/// hit a broken pipe), and there is nothing left to process. Returns
+/// `Ok(Some(request))` on a successfully parsed request.
+#[cfg(target_os = "windows")]
+async fn read_request(pipe: &mut NamedPipeServer) -> Result<Option<HelperRequest>, HelperError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut buffer = Vec::new();
+    let mut tmp_buf = [0u8; 4096];
+    let mut waited_for_first_byte = false;
+
+    let timeout = Duration::from_secs(30);
+    let start_time = std::time::Instant::now();
+
+    // Completeness is judged by whether the buffer parses, not by the size
+    // of a single read: a message can arrive in reads of any size, and a
+    // large batch legitimately spans more than one.
+    loop {
+        if start_time.elapsed() > timeout {
+            warn!(
+                "Read operation timed out after {} seconds",
+                timeout.as_secs()
+            );
+            respond_with_parse_error(pipe, &buffer).await?;
+            return Ok(None);
+        }
+
+        match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
+            Ok(read_result) => match read_result {
+                Ok(0) => {
+                    if buffer.is_empty() {
+                        info!("Client closed connection (0 bytes read)");
+                    } else {
+                        // The peer already closed its side after sending an
+                        // incomplete request: replying would only hit a
+                        // broken pipe, so there is nothing left worth
+                        // answering.
+                        debug!(
+                            "Client closed connection after sending {} bytes, skipping reply",
+                            buffer.len()
+                        );
+                    }
+                    return Ok(None);
+                }
+                Ok(n) => {
+                    debug!("Read {} bytes from client", n);
+                    buffer.extend_from_slice(&tmp_buf[..n]);
+
+                    if buffer.len() > MAX_REQUEST_BYTES {
+                        warn!(
+                            "Request exceeded {MAX_REQUEST_BYTES} bytes before parsing, rejecting"
+                        );
+                        respond_with_parse_error(pipe, &buffer).await?;
+                        return Ok(None);
+                    }
+
+                    if let Ok(req) = serde_json::from_slice::<HelperRequest>(&buffer) {
+                        debug!("Request parsed successfully");
+                        return Ok(Some(req));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    debug!("Pipe would block, waiting briefly");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    debug!("Pipe read interrupted, continuing");
+                }
+                Err(e) => {
+                    error!("Error reading from client: {}", e);
+                    if buffer.is_empty() {
+                        return Err(HelperError::Communication(format!(
+                            "Failed to read from pipe: {}",
+                            e
+                        )));
+                    }
+                    respond_with_parse_error(pipe, &buffer).await?;
+                    return Ok(None);
+                }
+            },
+            Err(_) => {
+                debug!("Read operation timed out");
+                if buffer.is_empty() && !waited_for_first_byte {
+                    waited_for_first_byte = true;
+                    debug!("No data yet, waiting briefly for a slow client");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+                debug!("Read timed out, ending read loop");
+                respond_with_parse_error(pipe, &buffer).await?;
+                return Ok(None);
+            }
+        }
+    }
+}
+
 /// Writes an error response for a request that could not be parsed, so an
 /// old or misbehaving client fails fast instead of waiting out its timeout.
 ///
@@ -945,14 +1150,35 @@ async fn respond_with_parse_error(
         warn!("Failed to serialize parse-error response: {}", e);
         HelperError::Communication(format!("Failed to serialize parse-error response: {}", e))
     })?;
-    pipe.write_all(&bytes).await.map_err(|e| {
+    if let Err(e) = pipe.write_all(&bytes).await {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ) {
+            info!("Client disconnected before parse-error reply could be sent, ignoring: {e}");
+            return Ok(());
+        }
         warn!("Failed to write parse-error response: {}", e);
-        HelperError::Communication(format!("Failed to write parse-error response: {}", e))
-    })?;
-    pipe.flush().await.map_err(|e| {
+        return Err(HelperError::Communication(format!(
+            "Failed to write parse-error response: {}",
+            e
+        )));
+    }
+    if let Err(e) = pipe.flush().await {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ) {
+            info!("Client disconnected before parse-error reply could be flushed, ignoring: {e}");
+            return Ok(());
+        }
         warn!("Failed to flush parse-error response: {}", e);
-        HelperError::Communication(format!("Failed to flush parse-error response: {}", e))
-    })
+        return Err(HelperError::Communication(format!(
+            "Failed to flush parse-error response: {}",
+            e
+        )));
+    }
+    Ok(())
 }
 
 async fn process_request(
@@ -1263,5 +1489,59 @@ fn handle_host_command(
                 },
             )
         }
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    use super::*;
+
+    #[test]
+    fn an_oversized_request_is_rejected_instead_of_read_forever() {
+        let (mut client, mut server) = UnixStream::pair().expect("paired sockets");
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        // Short, so a writer blocked on a full send buffer once the reader
+        // stops consuming gives up quickly instead of hanging the test.
+        client
+            .set_write_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+
+        // Five times the cap: an unbounded reader would drain this over a
+        // local socket without ever blocking the writer; a capped reader
+        // stops well short, so the writer fills the kernel send buffer and
+        // times out before sending it all.
+        let target = MAX_REQUEST_BYTES * 5;
+        let writer = std::thread::spawn(move || {
+            // Never valid JSON on its own: keeps the read loop going until
+            // the cap trips instead of a parse succeeding early.
+            let chunk = vec![b'a'; 65536];
+            let mut written = 0usize;
+            while written < target {
+                if client.write_all(&chunk).is_err() {
+                    break;
+                }
+                written += chunk.len();
+            }
+            written
+        });
+
+        let result = read_request(&mut server);
+        let written = writer.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(None)),
+            "a request past the size cap must be rejected with a reply, not read forever: \
+             {result:?}"
+        );
+        assert!(
+            written < target,
+            "the writer must block on a full send buffer once the cap stops the reader \
+             consuming, not finish sending all {target} bytes unchecked: sent {written}"
+        );
     }
 }

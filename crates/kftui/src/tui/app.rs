@@ -89,66 +89,7 @@ pub async fn run_tui(
     .into_iter()
     .find_map(Result::err);
 
-    let mut failures: Vec<String> = Vec::new();
-    let (shutdown_reports, detached_stop_ids) = app.finish_forwarding().await;
-    failures.extend(shutdown_reports);
-    // Bounded like the reconciliation below: a stop waits on lifecycle locks
-    // and hosts-file work, and a stalled one must not keep the process alive.
-    // Ids kftui just detached are excluded: their stop is still running in
-    // the background holding the per-config recovery lock, so re-stopping
-    // them here would only contend for the same lock instead of finishing
-    // sooner.
-    match tokio::time::timeout(
-        CLEANUP_RECONCILE_TIMEOUT,
-        kftray_portforward::kube::stop_all_port_forward_with_mode_excluding(
-            mode,
-            &detached_stop_ids,
-        ),
-    )
-    .await
-    {
-        Ok(Ok(responses)) => {
-            for response in responses {
-                if response.status != 0 {
-                    let message = format!("Error stopping port forward: {:?}", response.stderr);
-                    error!("{message}");
-                    eprintln!("{message}");
-                    failures.push(message);
-                }
-            }
-        }
-        Ok(Err(error)) => {
-            let message = format!("Failed to stop port forwards: {error}");
-            error!("{message}");
-            eprintln!("{message}");
-            failures.push(message);
-        }
-        Err(_) => {
-            let message =
-                "Stopping port forwards did not finish within the shutdown budget".to_owned();
-            error!("{message}");
-            eprintln!("{message}");
-            failures.push(message);
-        }
-    }
-    // A create abandoned on the way out can surface after that first pass.
-    let (still_owed, cleanup_result) =
-        crate::core::port_forward::reconcile_shutdown_cleanup(mode).await;
-    if !still_owed.is_empty() {
-        let message = format!(
-            "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
-             running and are retried on the next stop"
-        );
-        error!("{message}");
-        eprintln!("{message}");
-        failures.push(message);
-    }
-    if let Err(error) = cleanup_result {
-        let message = format!("Failed to clean up configuration states: {error}");
-        error!("{message}");
-        eprintln!("{message}");
-        failures.push(message);
-    }
+    let failures = crate::core::port_forward::shutdown_port_forwarding(&mut app, mode).await;
 
     if let Err(err) = res {
         error!("{err:?}");

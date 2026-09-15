@@ -594,7 +594,7 @@ async fn process_deployment_proxy(
         }
         return Err(error);
     }
-    guard.disarm().await;
+    drop(guard);
     result
 }
 
@@ -776,7 +776,7 @@ async fn process_pod_proxy(
         }
         return Err(error);
     }
-    guard.disarm().await;
+    drop(guard);
     result
 }
 

@@ -232,16 +232,18 @@ impl SharedClientManager {
     /// the caller does not know (or no longer trusts) which context is
     /// current for this kubeconfig. If a context was already resolved for
     /// this kubeconfig path (see `resolved_contexts`), only that exact
-    /// entry is evicted; otherwise fall back to dropping every entry for
-    /// the kubeconfig path, since there is no recorded context to target.
+    /// entry is evicted and the recorded resolution is dropped too, so a
+    /// later `resolve_key` call re-reads the current context from disk
+    /// instead of replaying the stale cached one; otherwise fall back to
+    /// dropping every entry for the kubeconfig path, since there is no
+    /// recorded context to target.
     pub fn invalidate_client(&self, key: &ServiceClientKey) {
         if key.context_name.is_none() {
-            if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
+            if let Some((_, resolved)) = self.resolved_contexts.remove(&key.kubeconfig_path) {
                 let resolved_key = ServiceClientKey {
-                    context_name: Some(resolved.clone()),
+                    context_name: Some(resolved),
                     kubeconfig_path: key.kubeconfig_path.clone(),
                 };
-                drop(resolved);
                 self.clients.remove(&resolved_key);
                 return;
             }
@@ -450,7 +452,7 @@ mod tests {
             .resolved_contexts
             .insert(kubeconfig_path.clone(), "recorded-ctx".to_string());
 
-        manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path));
+        manager.invalidate_client(&ServiceClientKey::new(None, kubeconfig_path.clone()));
 
         assert!(
             !manager.clients.contains_key(&recorded_key),
@@ -460,6 +462,11 @@ mod tests {
             manager.clients.contains_key(&other_key),
             "invalidation with a recorded resolved context must hit only that exact key, not \
              sweep every entry for the kubeconfig path"
+        );
+        assert!(
+            !manager.resolved_contexts.contains_key(&kubeconfig_path),
+            "invalidation must drop the recorded resolved context so a later resolve re-reads \
+             the current context from disk"
         );
     }
 
@@ -518,7 +525,7 @@ mod tests {
         let raw_key = ServiceClientKey::new(None, Some(kubeconfig_path.clone()));
         let resolved_key = ServiceClientKey::new(
             Some("kftray-test-invalidate-context".to_string()),
-            Some(kubeconfig_path),
+            Some(kubeconfig_path.clone()),
         );
 
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
@@ -529,6 +536,10 @@ mod tests {
         manager
             .clients
             .insert(resolved_key.clone(), CachedClient::new(connection));
+        manager.resolved_contexts.insert(
+            Some(kubeconfig_path.clone()),
+            "kftray-test-invalidate-context".to_string(),
+        );
 
         manager.invalidate_client(&raw_key);
 
@@ -536,6 +547,13 @@ mod tests {
             !manager.clients.contains_key(&resolved_key),
             "invalidate_client with a None-context key must remove the entry cached under \
              the resolved current-context key, not just the never-cached raw key"
+        );
+        assert!(
+            !manager
+                .resolved_contexts
+                .contains_key(&Some(kubeconfig_path)),
+            "invalidation must drop the recorded resolved context so a later resolve re-reads \
+             the current context from disk"
         );
     }
 

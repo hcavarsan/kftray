@@ -88,11 +88,28 @@ mod tests {
         (configs, config_states)
     }
 
+    /// Mirrors the real dispatch path in `handle_port_forwarding`: a busy
+    /// indicator is registered before the task is spawned, and released by
+    /// the task itself when it ends, panic included.
     async fn spawn_panicking_task(app: &mut App, config_id: i64) {
-        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
+        struct FinishOnDrop(std::sync::Arc<crate::tui::input::PendingForward>);
+        impl Drop for FinishOnDrop {
+            fn drop(&mut self) {
+                self.0.finish();
+            }
+        }
+
+        let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new(config_id));
+        app.configs_being_processed
+            .insert(config_id, pending.clone());
+
+        let handle = app.forwarding_tasks.spawn(async move {
+            let _finish_on_drop = FinishOnDrop(pending);
+            panic!("boom")
+        });
         app.task_configs.insert(
             handle.id(),
-            crate::tui::input::TaskInfo::new(config_id, false, handle.clone()),
+            crate::tui::input::TaskInfo::new(config_id, false),
         );
 
         // Bounded by a timeout rather than a fixed yield budget: the number
@@ -427,6 +444,10 @@ mod tests {
         app.update_configs(&[], &[]);
         let reported = app.error_message.clone().unwrap();
         assert!(reported.contains("410081"), "{reported}");
+        assert!(
+            !app.configs_being_processed.contains_key(&410_081),
+            "the busy indicator must be released once the panic is observed"
+        );
     }
 
     #[tokio::test]
@@ -482,44 +503,70 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_stop_task_that_outlives_the_shutdown_budget_is_detached_not_aborted() {
+    async fn tasks_that_outlive_the_shutdown_budget_are_detached_not_aborted() {
         let mut app = App::new(test_logger_state());
         let _guard = lock_forwarding_globals().await;
-        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
 
-        // Models a stop that is still doing real cleanup (releasing a relay
-        // or an address claim) when both drain budgets in `drain_forwarding`
+        let (stop_release_tx, stop_release_rx) = tokio::sync::oneshot::channel::<()>();
+        let (stop_done_tx, stop_done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (start_release_tx, start_release_rx) = tokio::sync::oneshot::channel::<()>();
+        let (start_done_tx, start_done_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Models a stop still doing real cleanup (releasing a relay or an
+        // address claim) when both drain budgets in `drain_forwarding`
         // expire: it must never observe an abort.
-        let abort = app.forwarding_tasks.spawn(async move {
-            release_rx.await.expect("release must be sent");
-            done_tx.send(()).expect("receiver must still be listening");
+        let stop_abort = app.forwarding_tasks.spawn(async move {
+            stop_release_rx.await.expect("release must be sent");
+            stop_done_tx
+                .send(())
+                .expect("receiver must still be listening");
         });
         app.task_configs
-            .insert(abort.id(), crate::tui::input::TaskInfo::new(1, true, abort));
+            .insert(stop_abort.id(), crate::tui::input::TaskInfo::new(1, true));
 
-        let detached_stop_ids = app.drain_forwarding().await;
+        // Models a create still in flight past both budgets: the dispatch
+        // contract forbids racing it with cancellation, so it must be
+        // detached rather than aborted, exactly like the stop above.
+        let start_abort = app.forwarding_tasks.spawn(async move {
+            start_release_rx.await.expect("release must be sent");
+            start_done_tx
+                .send(())
+                .expect("receiver must still be listening");
+        });
+        app.task_configs
+            .insert(start_abort.id(), crate::tui::input::TaskInfo::new(2, false));
+
+        let detached_ids = app.drain_forwarding().await;
 
         assert_eq!(
             app.forwarding_tasks.len(),
             0,
-            "a stop task ignored by both budgets must be removed from the \
-             JoinSet so dropping it later cannot abort the stop"
+            "a task ignored by both budgets must be removed from the JoinSet \
+             so dropping it later cannot abort it"
         );
         assert_eq!(
-            detached_stop_ids,
-            std::collections::HashSet::from([1]),
-            "the caller must learn which config ids still have a stop running \
-             detached, so it can skip re-stopping or reconciling them and \
-             contending for their recovery lock"
+            detached_ids,
+            std::collections::HashSet::from([1, 2]),
+            "the caller must learn which config ids still have a start or \
+             stop running detached, so it can skip re-dispatching or \
+             reconciling them and contending for their recovery lock"
         );
-        release_tx
+
+        stop_release_tx
             .send(())
             .expect("a detached stop task must still be alive, not aborted, after the budget");
-        tokio::time::timeout(std::time::Duration::from_secs(1), done_rx)
+        start_release_tx
+            .send(())
+            .expect("a detached start task must still be alive, not aborted, after the budget");
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), stop_done_rx)
             .await
-            .expect("must not time out waiting on a still-running detached task")
+            .expect("must not time out waiting on a still-running detached stop task")
             .expect("the detached stop task must run to completion and report back");
+        tokio::time::timeout(std::time::Duration::from_secs(1), start_done_rx)
+            .await
+            .expect("must not time out waiting on a still-running detached start task")
+            .expect("the detached start task must run to completion and report back");
     }
 
     #[test]
@@ -562,28 +609,34 @@ mod tests {
         // No cancellation and no `drain_forwarding` here: shutdown draining is
         // a separate concern already covered by
         // `finishing_cancels_queued_forwards_without_waiting_for_a_slot`.
-        // Waiting on the pending flag proves the task ran to completion; the
-        // error asserted below proves it was `stop_port_forwarding` itself
-        // that ran, not merely a task that returned early.
-        let pending = app
-            .configs_being_processed
-            .get(&410_061)
-            .expect("the stop must still be tracked as pending until it settles")
-            .clone();
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while pending.is_active() {
-                tokio::task::yield_now().await;
-            }
-        })
+        assert!(
+            app.configs_being_processed.contains_key(&410_061),
+            "the stop must still be tracked as pending until it settles"
+        );
+
+        // Waits on the dispatched task's own completion notification instead
+        // of busy-polling the pending flag with `yield_now` in a loop: the
+        // stop path takes real recovery and config-dir locks with their own
+        // real-time waits, so this stays on real time rather than paused
+        // time, but no longer spins the executor while it waits.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.forwarding_tasks.join_next(),
+        )
         .await
-        .expect("the stop must run to completion while every start permit is held");
+        .expect("the stop must run to completion while every start permit is held")
+        .expect("the dispatched stop task must still be tracked")
+        .expect("the dispatched stop task must not panic or be cancelled");
 
         let receiver = app.error_receiver.as_mut().unwrap();
         let reported = receiver
             .try_recv()
             .expect("stop_port_forwarding must have actually run and reported its outcome");
+        // A substring unique to the real stop path, not merely the config id:
+        // a coincidental id match would not prove `stop_port_forwarding` ran.
         assert!(
-            reported.contains("410061"),
+            reported.contains("Failed to stop port forward")
+                && reported.contains("No port forwarding process found"),
             "the report must come from the real backend call for this config: {reported}"
         );
 

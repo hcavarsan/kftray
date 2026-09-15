@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use kftray_commons::config::get_configs;
@@ -168,7 +169,12 @@ pub(crate) async fn dispatch_stop(config: &Config) -> Result<CustomResponse, Str
 /// clears its rows from `config_state` so the next launch does not see them
 /// as still running. Mirrors kftui's shutdown sequence.
 async fn reconcile_and_cleanup_on_exit() {
-    let still_owed = reconcile_pending_cleanup(DatabaseMode::File, CLEANUP_RECONCILE_TIMEOUT).await;
+    let still_owed = reconcile_pending_cleanup(
+        DatabaseMode::File,
+        CLEANUP_RECONCILE_TIMEOUT,
+        &HashSet::new(),
+    )
+    .await;
     if !still_owed.is_empty() {
         error!(
             "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \

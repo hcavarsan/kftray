@@ -100,7 +100,6 @@ const DeleteDialog = ({
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
-  setSelectedConfigs,
   deleteConfigs,
 }) => {
   const [state, setState] = useState({
@@ -138,7 +137,6 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
 
     if (deleted) {
       setState(prev => ({ ...prev, isDialogOpen: false }))
-      setSelectedConfigs([])
     }
   }
 

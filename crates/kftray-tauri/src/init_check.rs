@@ -9,8 +9,6 @@ use kftray_commons::config_state::{
 };
 use kftray_commons::config_state_model::ConfigState;
 use kftray_commons::models::config_model::Config;
-use kftray_portforward::kube::deploy_and_forward_pod;
-use kftray_portforward::start_port_forward;
 use log::{
     debug,
     error,
@@ -35,10 +33,6 @@ pub trait PortOperations: Send + Sync {
     async fn get_config(&self, id: i64) -> Result<Config, String>;
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
     async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)>;
-    async fn start_port_forward(
-        &self, configs: Vec<Config>, protocol: &str,
-    ) -> Result<Vec<String>, String>;
-    async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
     /// Whether a forward for the configuration is running or currently
     /// starting (queued/pending) in this process.
     async fn is_forward_registered(&self, id: i64) -> bool;
@@ -46,7 +40,10 @@ pub trait PortOperations: Send + Sync {
     /// `is_forward_registered` is true for `id`.
     async fn stop_port_forward(&self, id: i64) -> Result<(), String>;
     /// Starts one configuration through the workload/protocol dispatch used
-    /// by the SSL certificate restart path and the global shortcuts.
+    /// by the SSL certificate restart path, the global shortcuts, and the
+    /// auto-start check on launch. The only place that decides direct vs.
+    /// relay dispatch, so the auto-start path cannot silently diverge from
+    /// it.
     async fn dispatch_start(&self, config: &Config) -> Result<(), String>;
 }
 
@@ -70,20 +67,6 @@ impl PortOperations for RealPortOperations {
         find_process_by_port_internal(port).await
     }
 
-    async fn start_port_forward(
-        &self, configs: Vec<Config>, protocol: &str,
-    ) -> Result<Vec<String>, String> {
-        start_port_forward(configs, protocol)
-            .await
-            .and_then(describe_start_responses)
-    }
-
-    async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String> {
-        deploy_and_forward_pod(configs)
-            .await
-            .and_then(describe_start_responses)
-    }
-
     async fn is_forward_registered(&self, id: i64) -> bool {
         kftray_portforward::port_forward::CHILD_PROCESSES.contains_key(&id)
             || kftray_portforward::kube::is_start_pending(id)
@@ -100,13 +83,6 @@ impl PortOperations for RealPortOperations {
             .await
             .and_then(|responses| kftray_commons::models::response::batch_failure(&responses))
     }
-}
-
-fn describe_start_responses(
-    responses: Vec<kftray_commons::models::response::CustomResponse>,
-) -> Result<Vec<String>, String> {
-    kftray_commons::models::response::batch_failure(&responses)?;
-    Ok(responses.iter().map(|r| format!("{r:?}")).collect())
 }
 
 async fn fetch_configs_in_parallel(
@@ -242,24 +218,13 @@ async fn start_port_forwarding(
         config.alias.as_deref().unwrap_or("unknown")
     );
 
-    let protocol = config.protocol.as_str();
-
-    let configs = vec![config.clone()];
     let config_id = config.id.unwrap();
     let config_alias = config
         .alias
         .clone()
         .unwrap_or_else(|| format!("ID:{config_id}"));
 
-    let result = if crate::commands::portforward::is_direct_tcp_forward(
-        config.workload_type.as_deref(),
-        protocol,
-    ) {
-        port_ops.start_port_forward(configs, protocol).await
-    } else {
-        port_ops.deploy_and_forward_pod(configs).await
-    };
-
+    let result = port_ops.dispatch_start(&config).await;
     match result {
         Ok(_) => {
             let config_state = ConfigState::new(config_id, true);
@@ -415,9 +380,7 @@ mod tests {
             .times(1)
             .returning(|_| None);
 
-        mock.expect_start_port_forward()
-            .times(1)
-            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state()
             .times(1)
@@ -535,9 +498,7 @@ mod tests {
             .times(1)
             .returning(|_| None);
 
-        mock.expect_start_port_forward()
-            .times(1)
-            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state()
             .times(1)
@@ -552,9 +513,7 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
-            .times(1)
-            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -572,34 +531,7 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("proxy"));
 
-        mock.expect_deploy_and_forward_pod()
-            .times(1)
-            .returning(|_| Ok(vec!["Proxy pod deployed and forwarded".to_string()]));
-
-        mock.expect_update_config_state()
-            .with(function(|state: &ConfigState| {
-                state.config_id == 1 && state.is_running
-            }))
-            .times(1)
-            .returning(|_| Ok(()));
-
-        let result = start_port_forwarding(Arc::new(mock), config).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_start_port_forwarding_udp_service_uses_relay_dispatch() {
-        // Regression: auto-start used to send every non-proxy workload
-        // through `start_port_forward(..., protocol)` regardless of
-        // protocol, so a UDP service/pod config bypassed the relay pod
-        // dispatch that shortcuts and SSL restart use for UDP.
-        let mut mock = MockPortOperations::new();
-        let config = create_test_config(1, 8080, "udp", Some("service"));
-
-        mock.expect_deploy_and_forward_pod()
-            .times(1)
-            .returning(|_| Ok(vec!["Relay pod deployed and forwarded".to_string()]));
-        mock.expect_start_port_forward().times(0);
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -617,9 +549,9 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
+        mock.expect_dispatch_start()
             .times(1)
-            .returning(|_, _| Err("Port forwarding is already running for config 1".to_string()));
+            .returning(|_| Err("Port forwarding is already running for config 1".to_string()));
         mock.expect_is_forward_registered()
             .with(eq(1))
             .times(1)
@@ -635,9 +567,9 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
+        mock.expect_dispatch_start()
             .times(1)
-            .returning(|_, _| Err("Port forwarding failed".to_string()));
+            .returning(|_| Err("Port forwarding failed".to_string()));
         mock.expect_is_forward_registered()
             .times(1)
             .returning(|_| false);
@@ -665,9 +597,9 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
+        mock.expect_dispatch_start()
             .times(1)
-            .returning(|_, _| Err("Port forwarding failed".to_string()));
+            .returning(|_| Err("Port forwarding failed".to_string()));
         mock.expect_is_forward_registered()
             .times(1)
             .returning(|_| false);
@@ -685,9 +617,7 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
-            .times(1)
-            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state()
             .times(1)
@@ -739,9 +669,9 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
+        mock.expect_dispatch_start()
             .times(1)
-            .returning(|_, _| Err("Port forwarding failed".to_string()));
+            .returning(|_| Err("Port forwarding failed".to_string()));
         mock.expect_is_forward_registered()
             .times(1)
             .returning(|_| false);
@@ -780,13 +710,11 @@ mod tests {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
-        mock.expect_start_port_forward()
-            .times(1)
-            .returning(move |_, _| {
-                Err(format!(
-                    "Config 1 is being forwarded by another kftray process ({other_pid})"
-                ))
-            });
+        mock.expect_dispatch_start().times(1).returning(move |_| {
+            Err(format!(
+                "Config 1 is being forwarded by another kftray process ({other_pid})"
+            ))
+        });
         mock.expect_is_forward_registered()
             .times(1)
             .returning(|_| false);

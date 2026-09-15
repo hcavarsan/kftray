@@ -45,15 +45,15 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   // even when nothing about the row changed. Cache one stable handler per
   // config id instead, reading the current config through a ref so the
   // cached function never closes over a stale value.
-  const previousHandleSelectionChangeRef = useRef(handleSelectionChange)
+  const handleSelectionChangeRef = useRef(handleSelectionChange)
+
+  useEffect(() => {
+    handleSelectionChangeRef.current = handleSelectionChange
+  }, [handleSelectionChange])
+
   const selectionHandlersRef = useRef(
     new Map<number, (isSelected: boolean) => void>(),
   )
-
-  if (previousHandleSelectionChangeRef.current !== handleSelectionChange) {
-    selectionHandlersRef.current.clear()
-    previousHandleSelectionChangeRef.current = handleSelectionChange
-  }
 
   const contextConfigsRef = useRef(contextConfigs)
 
@@ -79,7 +79,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
         )
 
         if (config) {
-          handleSelectionChange(config, isSelected)
+          handleSelectionChangeRef.current(config, isSelected)
         }
       }
       selectionHandlersRef.current.set(configId, handler)

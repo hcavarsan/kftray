@@ -33,7 +33,6 @@ use ratatui_explorer::{
 use tui_logger::TuiWidgetEvent;
 use tui_logger::TuiWidgetState;
 
-use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
@@ -307,6 +306,11 @@ pub struct App {
     pub update_prompt_pending: bool,
     pub selected_update_button: UpdateButton,
     pub update_progress_message: Option<String>,
+    /// Set once the event loop should end: by Ctrl+C or the menu's exit
+    /// item. `run_app`'s loop checks it on the next `handle_input` return so
+    /// both exits unwind through the same shutdown path in `run_tui`,
+    /// instead of each tearing the process down on its own.
+    pub should_quit: bool,
 }
 
 impl Default for App {
@@ -400,6 +404,7 @@ impl App {
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
             update_progress_message: None,
+            should_quit: false,
         }
     }
 
@@ -407,13 +412,13 @@ impl App {
     /// stalled operation cannot hold the terminal in raw mode on exit.
     ///
     /// Returns whatever reached the error channel and was never shown, plus
-    /// the config ids of any stop task that outran both drain budgets and
-    /// had to be left running detached: their per-config recovery lock is
-    /// still held, so a caller that immediately re-stops or reconciles
-    /// every running config must skip these ids instead of contending for
-    /// the same lock.
+    /// the config ids of any start or stop task that outran both drain
+    /// budgets and had to be left running detached: their per-config
+    /// recovery lock is still held, so a caller that immediately re-stops or
+    /// reconciles every running config must skip these ids instead of
+    /// contending for the same lock.
     pub async fn finish_forwarding(&mut self) -> (Vec<String>, HashSet<i64>) {
-        let detached_stop_ids = self.drain_forwarding().await;
+        let detached_ids = self.drain_forwarding().await;
 
         // The event loop is over, so nothing draws a popup any more: whatever
         // reached the error channel and was never shown goes to the log and to
@@ -423,12 +428,12 @@ impl App {
             log::error!("{report}");
             eprintln!("{report}");
         }
-        (reports, detached_stop_ids)
+        (reports, detached_ids)
     }
 
     /// Cancels and joins every forwarding task, leaving whatever they had to
-    /// report in the error channel. Returns the config ids of any stop task
-    /// still running when it had to be detached instead of joined.
+    /// report in the error channel. Returns the config ids of any start or
+    /// stop task still running when it had to be detached instead of joined.
     pub async fn drain_forwarding(&mut self) -> HashSet<i64> {
         // Signalled before draining: an in-flight startup observes cancellation
         // at its own safe points and runs its own rollback, instead of being
@@ -445,14 +450,18 @@ impl App {
             .await
             .is_err();
         if timed_out {
-            log::warn!("Forwarding tasks did not finish in time; aborting starts still in flight");
-            // Stops are never aborted: a dropped stop can leave a relay or an
-            // address claim behind with nothing left to release it.
-            for info in self.task_configs.values() {
-                if !info.is_stop {
-                    info.abort.abort();
-                }
-            }
+            log::warn!(
+                "Forwarding tasks did not finish within the first shutdown budget; waiting \
+                 once more before detaching what is left"
+            );
+            // Nothing is aborted here, starts included: the dispatch contract
+            // forbids racing a start with cancellation, since dropping it
+            // mid-create would skip its own rollback and orphan a pod or
+            // Deployment nothing else reaps. A dropped stop is just as
+            // unsafe, leaving a relay or an address claim behind with
+            // nothing left to release it. Cooperative cancellation through
+            // `forwarding_cancel` above is the only signal either kind of
+            // task gets.
             timed_out = self
                 .drain_forwarding_tasks(FORWARD_SHUTDOWN_TIMEOUT)
                 .await
@@ -461,20 +470,26 @@ impl App {
         if !timed_out {
             return HashSet::new();
         }
-        log::error!("Abandoning forwarding tasks that ignored abort");
-        // Whatever is still in `forwarding_tasks` at this point is either
-        // an abort-ignoring start or a stop that must be left running:
-        // dropping the `JoinSet` (via `App`'s own drop, on process exit)
-        // aborts everything it still tracks, so remove them from its
-        // bookkeeping and let them finish detached instead.
-        let detached_stop_ids = self
+        let stop_count = self
             .task_configs
             .values()
             .filter(|info| info.is_stop)
+            .count();
+        let start_count = self.task_configs.len() - stop_count;
+        log::error!(
+            "Abandoning {start_count} start(s) and {stop_count} stop(s) that outran both \
+             shutdown budgets"
+        );
+        // Dropping the `JoinSet` (via `App`'s own drop, on process exit)
+        // aborts everything it still tracks, so remove them from its
+        // bookkeeping and let them finish detached instead.
+        let detached_ids = self
+            .task_configs
+            .values()
             .map(|info| info.config_id)
             .collect();
         self.forwarding_tasks.detach_all();
-        detached_stop_ids
+        detached_ids
     }
 
     /// Everything queued for the error popup that was never shown, and the
@@ -994,7 +1009,8 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
             log::debug!("Key pressed: {key:?}");
 
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                stop_all_port_forward_and_exit(app, mode).await;
+                app.should_quit = true;
+                return Ok(true);
             }
 
             match app.state {
@@ -1071,7 +1087,7 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
             app.update_visible_rows(height);
         }
     }
-    Ok(false)
+    Ok(app.should_quit)
 }
 
 pub async fn handle_normal_input(
@@ -1296,7 +1312,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
                 }
                 app.state = AppState::ShowAbout;
             }
-            6 => stop_all_port_forward_and_exit(app, mode).await,
+            6 => app.should_quit = true,
             _ => {}
         },
         _ => {}
@@ -1637,9 +1653,8 @@ impl PendingForward {
     }
 
     pub(crate) fn mark_running_at(&self, at: std::time::Instant) {
-        if let Ok(mut running_since) = self.running_since.lock() {
-            *running_since = Some(at);
-        }
+        let mut running_since = self.running_since.lock().unwrap_or_else(|e| e.into_inner());
+        *running_since = Some(at);
     }
 
     fn mark_running(&self) {
@@ -1663,8 +1678,7 @@ impl PendingForward {
         let stalled = self
             .running_since
             .lock()
-            .ok()
-            .and_then(|running_since| *running_since)
+            .unwrap_or_else(|e| e.into_inner())
             .is_some_and(|started| Self::stalled_for(now.duration_since(started)));
         if !stalled || self.warned.swap(true, Ordering::Relaxed) {
             return None;
@@ -1680,21 +1694,17 @@ impl PendingForward {
 pub type PendingForwards = std::collections::HashMap<i64, Arc<PendingForward>>;
 
 /// Which forwarding task owns a `tokio::task::Id`, so shutdown can join every
-/// task while only ever aborting starts: a dropped stop can leave a relay or
-/// an address claim behind with nothing left to release it.
+/// task and, if a drain budget still leaves it running, detach it instead of
+/// aborting: dropping either a start or a stop can leave cluster resources,
+/// a relay, or an address claim behind with nothing left to release it.
 pub(crate) struct TaskInfo {
     pub(crate) config_id: i64,
     pub(crate) is_stop: bool,
-    abort: tokio::task::AbortHandle,
 }
 
 impl TaskInfo {
-    pub(crate) fn new(config_id: i64, is_stop: bool, abort: tokio::task::AbortHandle) -> Self {
-        Self {
-            config_id,
-            is_stop,
-            abort,
-        }
+    pub(crate) fn new(config_id: i64, is_stop: bool) -> Self {
+        Self { config_id, is_stop }
     }
 }
 
@@ -1849,7 +1859,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         });
         let task_id = handle.id();
         app.task_configs
-            .insert(task_id, TaskInfo::new(config_id, !is_starting, handle));
+            .insert(task_id, TaskInfo::new(config_id, !is_starting));
     }
 
     match app.active_table {

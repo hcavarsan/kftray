@@ -709,49 +709,65 @@ async fn create_deployment(
                 })
             })
     });
-    let mut relay_probe = RelayProbe {
-        container_name: None,
-        readiness_probe_present: false,
-        websocket_port: 9999,
+    let Some(container) = relay else {
+        return Err(
+            "Expose deployment has no container named kftray-server and none with a literal \
+             PROXY_TYPE=reverse_http env entry, so the relay cannot be identified"
+                .into(),
+        );
     };
-    if let Some(container) = relay {
-        relay_probe.container_name = Some(container.name.clone());
-        if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
-            let websocket_port = u16::try_from(websocket_port).map_err(|_| {
-                format!(
-                    "WEBSOCKET_PORT {websocket_port} is not a valid port (must be between 1 \
-                     and 65535)"
-                )
-            })?;
-            relay_probe.websocket_port = websocket_port;
-            container.startup_probe.get_or_insert_with(|| Probe {
-                tcp_socket: Some(TCPSocketAction {
-                    port: IntOrString::Int(websocket_port as i32),
-                    ..Default::default()
-                }),
-                period_seconds: Some(1),
-                timeout_seconds: Some(1),
-                failure_threshold: Some(30),
-                ..Default::default()
-            });
-        }
-        if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
-            let http_port = u16::try_from(http_port).map_err(|_| {
+    // Guessing 9999 here would target the wrong pod port whenever the
+    // template resolves it from a source (`valueFrom`/`envFrom`); the tunnel
+    // would then port-forward to a port the relay never listens on.
+    let websocket_port =
+        container_env_port(container, "WEBSOCKET_PORT", 9999).ok_or_else(|| {
+            "WEBSOCKET_PORT is set from valueFrom/envFrom, which cannot be resolved before the \
+         relay pod exists; the tunnel's target port cannot be determined"
+                .to_string()
+        })?;
+    let websocket_port = u16::try_from(websocket_port)
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| {
+            format!(
+                "WEBSOCKET_PORT {websocket_port} is not a valid port (must be between 1 and \
+                 65535)"
+            )
+        })?;
+    let mut relay_probe = RelayProbe {
+        container_name: Some(container.name.clone()),
+        readiness_probe_present: false,
+        websocket_port,
+    };
+    container.startup_probe.get_or_insert_with(|| Probe {
+        tcp_socket: Some(TCPSocketAction {
+            port: IntOrString::Int(websocket_port as i32),
+            ..Default::default()
+        }),
+        period_seconds: Some(1),
+        timeout_seconds: Some(1),
+        failure_threshold: Some(30),
+        ..Default::default()
+    });
+    if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
+        let http_port = u16::try_from(http_port)
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| {
                 format!("HTTP_PORT {http_port} is not a valid port (must be between 1 and 65535)")
             })?;
-            container.readiness_probe.get_or_insert_with(|| Probe {
-                tcp_socket: Some(TCPSocketAction {
-                    port: IntOrString::Int(http_port as i32),
-                    ..Default::default()
-                }),
-                period_seconds: Some(1),
-                timeout_seconds: Some(1),
-                failure_threshold: Some(3),
+        container.readiness_probe.get_or_insert_with(|| Probe {
+            tcp_socket: Some(TCPSocketAction {
+                port: IntOrString::Int(http_port as i32),
                 ..Default::default()
-            });
-        }
-        relay_probe.readiness_probe_present = container.readiness_probe.is_some();
+            }),
+            period_seconds: Some(1),
+            timeout_seconds: Some(1),
+            failure_threshold: Some(3),
+            ..Default::default()
+        });
     }
+    relay_probe.readiness_probe_present = container.readiness_probe.is_some();
 
     let created = create_bounded(&deployments, ResourceKind::Deployment, &deployment).await?;
 
@@ -1029,8 +1045,12 @@ async fn create_ingress(
 ///
 /// Returns the adopted resource when the object exists and carries this
 /// installation's labels, so the caller can treat the create as succeeded
-/// and track it for rollback. Returns `None` when the object is missing or
-/// belongs to someone else, so the caller clears the stale history record.
+/// and track it for rollback. Returns `None` and clears the history record
+/// only when the object exists and belongs to someone else: that is proof
+/// this attempt's create did not land. A missing object is not the same
+/// proof — eventual consistency and a stale read both look identical from
+/// here — so the history stays and a later check gets another chance to
+/// resolve it.
 async fn resolve_ambiguous_ingress_create(
     ingresses: &Api<Ingress>, ingress_name: &str, config_id: &str, location: &ExposeLocation,
     mode: DatabaseMode,
@@ -1040,7 +1060,6 @@ async fn resolve_ambiguous_ingress_create(
         .await
         .map_err(|error| error.to_string())?;
     let Some(ingress) = found else {
-        forget_ingress_history(config_id, location, mode).await;
         return Ok(None);
     };
     let owner_identity = kftray_commons::utils::config_dir::owner_identity(mode).await?;
@@ -1718,6 +1737,239 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_unresolved_websocket_port_fails_the_deployment_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+
+        // WEBSOCKET_PORT sourced from a ConfigMap: `container_env_port`
+        // cannot resolve it, and guessing 9999 would target the wrong pod
+        // port once the relay is up.
+        let manifest_path =
+            kftray_commons::utils::config_dir::get_expose_deployment_manifest_path().unwrap();
+        let manifest = r#"{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "{deployment_name}",
+    "namespace": "{namespace}",
+    "labels": {"app": "kftray-expose", "config_id": "{config_id}"}
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {"matchLabels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+    "template": {
+      "metadata": {"labels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+      "spec": {
+        "terminationGracePeriodSeconds": 10,
+        "containers": [{
+          "name": "kftray-server",
+          "image": "ghcr.io/hcavarsan/kftray-server:latest",
+          "env": [
+            {"name": "PROXY_TYPE", "value": "reverse_http"},
+            {"name": "HTTP_PORT", "value": "8080"},
+            {"name": "WEBSOCKET_PORT", "valueFrom": {"configMapKeyRef": {"name": "ports", "key": "ws"}}},
+            {"name": "REMOTE_ADDRESS", "value": "localhost"},
+            {"name": "REMOTE_PORT", "value": "{local_port}"},
+            {"name": "LOCAL_PORT", "value": "{local_port}"},
+            {"name": "RUST_LOG", "value": "DEBUG"}
+          ],
+          "ports": [
+            {"containerPort": 8080, "name": "http"},
+            {"containerPort": 9999, "name": "websocket"}
+          ]
+        }]
+      }
+    }
+  }
+}"#;
+        std::fs::write(&manifest_path, manifest).unwrap();
+
+        let config = Config {
+            id: Some(4002),
+            namespace: "default".to_owned(),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        // Never contacted: an unresolved port must be rejected before any
+        // request is sent.
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let result =
+            create_deployment(&client, "default", "myapp-deploy", "4002", &config, mode).await;
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error = result.expect_err(
+            "a WEBSOCKET_PORT this cannot resolve must fail the create instead of keeping 9999 \
+             as the tunnel target",
+        );
+        assert!(
+            error.message.contains("WEBSOCKET_PORT"),
+            "the error must name the offending variable: {}",
+            error.message
+        );
+        assert!(
+            !error.ambiguous,
+            "a template validation failure happens before any request, so it is a definitive \
+             rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_zero_websocket_port_fails_the_deployment_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+
+        let manifest_path =
+            kftray_commons::utils::config_dir::get_expose_deployment_manifest_path().unwrap();
+        let manifest = r#"{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "{deployment_name}",
+    "namespace": "{namespace}",
+    "labels": {"app": "kftray-expose", "config_id": "{config_id}"}
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {"matchLabels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+    "template": {
+      "metadata": {"labels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+      "spec": {
+        "terminationGracePeriodSeconds": 10,
+        "containers": [{
+          "name": "kftray-server",
+          "image": "ghcr.io/hcavarsan/kftray-server:latest",
+          "env": [
+            {"name": "PROXY_TYPE", "value": "reverse_http"},
+            {"name": "HTTP_PORT", "value": "8080"},
+            {"name": "WEBSOCKET_PORT", "value": "0"},
+            {"name": "REMOTE_ADDRESS", "value": "localhost"},
+            {"name": "REMOTE_PORT", "value": "{local_port}"},
+            {"name": "LOCAL_PORT", "value": "{local_port}"},
+            {"name": "RUST_LOG", "value": "DEBUG"}
+          ],
+          "ports": [
+            {"containerPort": 8080, "name": "http"},
+            {"containerPort": 9999, "name": "websocket"}
+          ]
+        }]
+      }
+    }
+  }
+}"#;
+        std::fs::write(&manifest_path, manifest).unwrap();
+
+        let config = Config {
+            id: Some(4003),
+            namespace: "default".to_owned(),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        // Never contacted: port 0 must be rejected before any request is
+        // sent.
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let result =
+            create_deployment(&client, "default", "myapp-deploy", "4003", &config, mode).await;
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let error =
+            result.expect_err("WEBSOCKET_PORT 0 is not a usable port and must fail the create");
+        assert!(
+            error.message.contains("WEBSOCKET_PORT"),
+            "the error must name the offending variable: {}",
+            error.message
+        );
+    }
+
+    #[tokio::test]
+    async fn no_identifiable_relay_container_fails_the_deployment_create() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+
+        // Neither named `kftray-server` nor carrying a literal
+        // PROXY_TYPE=reverse_http entry: nothing identifies this container
+        // as the relay.
+        let manifest_path =
+            kftray_commons::utils::config_dir::get_expose_deployment_manifest_path().unwrap();
+        let manifest = r#"{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "{deployment_name}",
+    "namespace": "{namespace}",
+    "labels": {"app": "kftray-expose", "config_id": "{config_id}"}
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {"matchLabels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+    "template": {
+      "metadata": {"labels": {"app": "kftray-expose", "config_id": "{config_id}"}},
+      "spec": {
+        "terminationGracePeriodSeconds": 10,
+        "containers": [{
+          "name": "custom-relay",
+          "image": "ghcr.io/hcavarsan/kftray-server:latest",
+          "env": [
+            {"name": "REMOTE_ADDRESS", "value": "localhost"},
+            {"name": "REMOTE_PORT", "value": "{local_port}"},
+            {"name": "LOCAL_PORT", "value": "{local_port}"}
+          ]
+        }]
+      }
+    }
+  }
+}"#;
+        std::fs::write(&manifest_path, manifest).unwrap();
+
+        let config = Config {
+            id: Some(4004),
+            namespace: "default".to_owned(),
+            local_port: Some(8080),
+            ..Config::default()
+        };
+
+        // Never contacted: a create with no identifiable relay must be
+        // rejected before any request is sent.
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let result =
+            create_deployment(&client, "default", "myapp-deploy", "4004", &config, mode).await;
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        result.expect_err("a deployment with no identifiable relay container must fail the create");
+    }
+
     #[test]
     fn expose_location_stores_the_canonical_cluster_identity() {
         // `Uri::to_string()` keeps an explicit default port and drops IPv6
@@ -2216,7 +2468,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_ambiguous_ingress_create_forgets_history_when_nothing_landed() {
+    async fn an_ambiguous_ingress_create_keeps_history_after_a_notfound() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_dir = tempfile::tempdir().unwrap();
@@ -2289,14 +2541,15 @@ mod tests {
         }
 
         let error =
-            result.expect_err("nothing landed, so this must still be reported as a failure");
+            result.expect_err("nothing was adopted, so this must still be reported as a failure");
         assert!(
             error.ambiguous,
             "the create itself was never definitively rejected"
         );
         assert!(
-            !ingress_was_created(config_id, &location, mode).await,
-            "the GET proved nothing was created, so the stale history record must be forgotten"
+            ingress_was_created(config_id, &location, mode).await,
+            "a NotFound after an ambiguous create is not proof nothing was created (eventual \
+             consistency, a stale read), so the history must stay for a later check to resolve"
         );
     }
 

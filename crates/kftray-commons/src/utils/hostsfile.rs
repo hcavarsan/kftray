@@ -124,11 +124,20 @@ fn with_hosts_lock<T>(path: &Path, recover: bool, work: impl FnOnce() -> Result<
         unlock,
     };
 
+    /// Releases the lock when dropped, including on unwind, so a panic in
+    /// `work` cannot leave the lock held until the file descriptor closes.
+    struct UnlockOnDrop<'a>(&'a std::fs::File);
+
+    impl Drop for UnlockOnDrop<'_> {
+        fn drop(&mut self) {
+            unlock(self.0, LockRegion::PendingByte);
+        }
+    }
+
     match open_locked(path, recover)? {
         Some(file) => {
-            let result = work();
-            unlock(&file, LockRegion::PendingByte);
-            result
+            let _unlock = UnlockOnDrop(&file);
+            work()
         }
         None => work(),
     }
@@ -311,6 +320,7 @@ fn open_locked(path: &Path, recover: bool) -> Result<Option<std::fs::File>> {
         .map_err(HostsFileError::Io)?;
     if recover {
         let pending = pending_path(path);
+        validate_hosts_path(&pending)?;
         if pending.exists() {
             log::warn!(
                 "Completing an interrupted rewrite of the hosts file from {}",
@@ -506,7 +516,7 @@ impl HostsDocument {
     /// back to merging every copy's body into the first one's place before
     /// it goes on to do its own work through `bounds`, rather than failing
     /// the whole operation over a file a hand edit left duplicated.
-    fn merge_duplicate_sections(&mut self, tag: &str) -> Result<()> {
+    pub fn merge_duplicate_sections(&mut self, tag: &str) -> Result<()> {
         let sections = self.all_bounds(tag)?;
         if sections.len() <= 1 {
             return Ok(());
@@ -814,24 +824,26 @@ impl HostsFile {
         }
     }
 
-    pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> &mut Self {
+    pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> Result<&mut Self> {
+        let hostname = hostname.to_string();
+        validate_hostname(&hostname)?;
         self.entries.push(SectionEntry {
             ip,
-            hostname: hostname.to_string(),
+            hostname,
             owner: None,
         });
-        self
+        Ok(self)
     }
 
-    pub fn add_entries<I, S>(&mut self, ip: IpAddr, hostnames: I) -> &mut Self
+    pub fn add_entries<I, S>(&mut self, ip: IpAddr, hostnames: I) -> Result<&mut Self>
     where
         I: IntoIterator<Item = S>,
         S: ToString,
     {
         for hostname in hostnames {
-            self.add_entry(ip, hostname);
+            self.add_entry(ip, hostname)?;
         }
-        self
+        Ok(self)
     }
 
     /// Adds an entry that records which configuration owns it.
@@ -957,14 +969,25 @@ impl<'a> AtomicFileWriter<'a> {
         let mut staging = pending.as_os_str().to_owned();
         staging.push(".tmp");
         let staging = PathBuf::from(staging);
+
+        validate_hosts_path(&staging)?;
+        if let Err(error) = std::fs::remove_file(&staging)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            log::warn!(
+                "Removing a leftover staged hosts rewrite at {}: {error}",
+                staging.display()
+            );
+        }
         let mut staged = OpenOptions::new()
-            .create(true)
+            .create_new(true)
             .write(true)
-            .truncate(true)
             .open(&staging)?;
         staged.write_all(content)?;
         staged.sync_all()?;
         drop(staged);
+
+        validate_hosts_path(&pending)?;
         // A leftover pending copy can already be here from an earlier write
         // that crashed between publishing it and removing it, or whose
         // removal merely failed and was only logged. `rename` needs the
@@ -1226,6 +1249,29 @@ mod tests {
     }
 
     #[test]
+    fn the_lock_is_released_after_a_panic_in_work() {
+        let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_hosts_lock(&temp_path, true, || -> Result<()> {
+                panic!("work panics before returning");
+            })
+        }));
+        assert!(panicked.is_err(), "the closure above must have panicked");
+
+        // A lock left held by the panicked call would make this block until
+        // the 15s wait budget in `open_locked` expires instead of taking it
+        // right away.
+        let start = std::time::Instant::now();
+        with_hosts_lock(&temp_path, true, || Ok(())).unwrap();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "the lock from the panicked call must be released immediately, not held until its \
+             fd closes"
+        );
+    }
+
+    #[test]
     #[cfg(unix)]
     fn a_symlink_hosts_path_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
@@ -1236,6 +1282,25 @@ mod tests {
 
         let error = read_hosts_at(&link, |document| document.section("test"))
             .expect_err("a symlink must never be followed as the hosts path");
+        assert!(error.to_string().contains("symlink"), "{error}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_pending_sibling_is_refused() {
+        // Windows recovery (`open_locked`) and staging (`AtomicFileWriter`)
+        // both check their `.kftray-pending`/`.tmp` sibling with
+        // `validate_hosts_path`, the same rejection the hosts path itself
+        // gets. This exercises that shared check on a `.kftray-pending`-named
+        // symlink without requiring a Windows target.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real-hosts");
+        std::fs::write(&real, "127.0.0.1 real.local\n").unwrap();
+        let pending = dir.path().join("hosts.kftray-pending");
+        std::os::unix::fs::symlink(&real, &pending).unwrap();
+
+        let error =
+            validate_hosts_path(&pending).expect_err("a symlinked pending sibling must be refused");
         assert!(error.to_string().contains("symlink"), "{error}");
     }
 
@@ -1334,7 +1399,8 @@ mod tests {
             .unwrap()
             .add_owned_entry([127, 0, 0, 1].into(), "b.local", "2")
             .unwrap()
-            .add_entry([127, 0, 0, 1].into(), "plain.local");
+            .add_entry([127, 0, 0, 1].into(), "plain.local")
+            .unwrap();
         earlier.write_to(&temp_path).unwrap();
 
         // Owner 1 changes its alias; owner 3 appears; owner 2 is untouched.
@@ -1416,6 +1482,30 @@ mod tests {
     }
 
     #[test]
+    fn add_entry_rejects_a_bad_hostname() {
+        let mut hosts_file = HostsFile::new("test");
+        assert!(
+            hosts_file
+                .add_entry([127, 0, 0, 1].into(), "a.local#injected")
+                .is_err(),
+            "a `#` would start a comment and swallow the rest of the line"
+        );
+        assert!(
+            hosts_file
+                .add_entry([127, 0, 0, 1].into(), "a.local evil")
+                .is_err(),
+            "whitespace would not stay on the hostname's own column"
+        );
+        assert!(hosts_file.is_empty(), "no rejected hostname is staged");
+        assert!(
+            hosts_file
+                .add_entries([127, 0, 0, 1].into(), ["good.local", "bad host"])
+                .is_err(),
+            "add_entries must validate every hostname it stages"
+        );
+    }
+
+    #[test]
     fn aliases_sharing_an_address_stay_on_their_own_lines() {
         let (_temp_file, temp_path) = tempfile::NamedTempFile::new().unwrap().into_parts();
 
@@ -1427,7 +1517,9 @@ mod tests {
         hosts_file
             .add_owned_entry([127, 0, 0, 1].into(), "b.local", "2")
             .unwrap();
-        hosts_file.add_entry([127, 0, 0, 1].into(), "plain.local");
+        hosts_file
+            .add_entry([127, 0, 0, 1].into(), "plain.local")
+            .unwrap();
         hosts_file.write_to(&temp_path).unwrap();
 
         let entries = HostsFile::new("test")
@@ -1553,7 +1645,9 @@ mod tests {
         temp_file.write_all(b"preexisting\ncontent").unwrap();
 
         let mut hosts_file = HostsFile::new("test");
-        hosts_file.add_entry([1, 1, 1, 1].into(), "example.com");
+        hosts_file
+            .add_entry([1, 1, 1, 1].into(), "example.com")
+            .unwrap();
 
         assert!(hosts_file.write_to(&temp_path).unwrap());
         assert!(!hosts_file.write_to(&temp_path).unwrap());
@@ -1571,7 +1665,9 @@ mod tests {
         let path = dir.path().join("hosts");
 
         let mut hosts = HostsFile::new("test");
-        hosts.add_entry([127, 0, 0, 1].into(), "fresh.local");
+        hosts
+            .add_entry([127, 0, 0, 1].into(), "fresh.local")
+            .unwrap();
         assert!(hosts.write_to(&path).unwrap());
         assert!(
             std::fs::read_to_string(&path)
@@ -1596,7 +1692,9 @@ mod tests {
         let mut hosts_file = HostsFile::new("test");
         hosts_file
             .add_entry([127, 0, 0, 1].into(), "localhost")
-            .add_entries([192, 168, 1, 1].into(), ["router", "gateway"]);
+            .unwrap()
+            .add_entries([192, 168, 1, 1].into(), ["router", "gateway"])
+            .unwrap();
 
         // One entry per hostname: aliases of one address need their own lines
         // so an owner comment cannot swallow the ones after it.

@@ -155,22 +155,19 @@ async fn update_hosts_with_ssl(
         // deferred write's own cleanup, not a chance later start, is what
         // releases it. Taking it here regardless of whether the process is
         // still registered mirrors the non-deferred path, which releases it
-        // right after registration. Whether the waiter is still there says
-        // nothing about ownership: the process was registered before the
-        // write started and may well be running. Only a process that is
-        // gone, checked under the lifecycle lock so a stop or a restart
-        // cannot be halfway through, leaves these lines orphaned. A retry
-        // that has since claimed this id but not yet registered is caught by
-        // the claim, not by `CHILD_PROCESSES` alone: registration only
-        // happens at the very end of its startup. A claim that is no longer
-        // current after the write finished means these lines were written
-        // for an attempt a newer one has already superseded, so they come out
-        // regardless of whether this process is still registered.
+        // right after registration. A registered process is proof this
+        // write has a current owner; so is a claim a newer attempt has
+        // taken and not yet resolved, since that attempt's own deferred
+        // cleanup will decide these lines' fate once it finishes. Only when
+        // neither is true, whether this attempt is still the current claim
+        // holder or a newer one has since given up in turn, does nobody
+        // remain to manage the lines this write just landed.
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
         let guard = lock.lock().await;
-        let claim_was_current =
-            crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
-        if claim_was_current && !CHILD_PROCESSES.contains_key(&id) {
+        crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+        let has_current_owner =
+            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+        if !has_current_owner {
             warn!(
                 "Removing HTTPS hosts entries for config {id} written after it was stopped or \
                  superseded"
@@ -342,24 +339,21 @@ async fn add_host_entry_owned(
             // Under the lifecycle lock: a retry of the same configuration can
             // have started once the abandoned future released it, claimed the
             // same address and written the same lines, and rolling those
-            // back would tear the retry down. A retry in progress holds the
-            // lock until it has registered its process, so once this task
-            // has it, a registered process means the resources have an owner
-            // and nothing here is abandoned any more. A retry that has since
-            // claimed this id but not yet registered is caught by the claim,
-            // not by `CHILD_PROCESSES` alone: registration only happens at
-            // the very end of its startup.
+            // back would tear the retry down. A registered process is proof
+            // these lines have a current owner; so is a claim a newer
+            // attempt has taken and not yet resolved, since that attempt's
+            // own deferred cleanup will decide these lines' fate once it
+            // finishes. Only when neither is true, whether this attempt is
+            // still the current claim holder or a newer one has since given
+            // up in turn, is this write's own rollback the only thing left
+            // to run it.
             let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
             let _guard = lock.lock().await;
-            if CHILD_PROCESSES.contains_key(&id) {
+            crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim);
+            let has_current_owner = CHILD_PROCESSES.contains_key(&id)
+                || crate::kube::stop::host_entry_has_any_claim(id);
+            if has_current_owner {
                 debug!("Config {id} was restarted; leaving its local resources to the new owner");
-                return;
-            }
-            if !crate::kube::stop::take_host_entry_claim_if_current(id, hosts_claim) {
-                debug!(
-                    "Config {id} was claimed by a newer attempt; leaving its local resources to \
-                     the new owner"
-                );
                 return;
             }
             warn!(
@@ -1625,7 +1619,7 @@ mod tests {
     }
 
     #[test]
-    fn a_superseded_ssl_write_leaves_the_newer_attempts_lines() {
+    fn a_superseded_ssl_write_leaves_a_still_claimed_newer_attempts_lines() {
         let id = 918_273_645;
         // Token A: the attempt whose deferred SSL hosts write is still
         // queued. Token B: a newer attempt that starts before A's write
@@ -1642,13 +1636,15 @@ mod tests {
             !claim_was_current,
             "the newer attempt's claim must supersede the stale attempt's token"
         );
-        // Mirrors the removal gate: only a claim that is still current, with
-        // no process registered, removes the hosts entries. A superseded
-        // claim must never remove them, regardless of `CHILD_PROCESSES`.
-        let would_remove = claim_was_current && !CHILD_PROCESSES.contains_key(&id);
+        // Mirrors the removal gate: a registered process or a still-active
+        // newer claim both count as a current owner, and either one leaves
+        // a superseded write's lines alone.
+        let has_current_owner =
+            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
         assert!(
-            !would_remove,
-            "a superseded attempt must leave the newer attempt's HTTPS hosts lines alone"
+            has_current_owner,
+            "the newer attempt's own claim is still active, so a superseded write must leave \
+             its HTTPS hosts lines alone"
         );
         // The newer attempt's own claim is untouched: taking the stale token
         // above only clears the entry it actually matched.
@@ -1658,5 +1654,32 @@ mod tests {
         ));
 
         crate::kube::stop::take_host_entry_claim_if_current(id, current_token);
+    }
+
+    #[test]
+    fn a_superseded_ssl_write_removes_lines_nobody_still_owns() {
+        let id = 918_273_646;
+        let stale_token = crate::kube::stop::claim_host_entries(id);
+        let current_token = crate::kube::stop::claim_host_entries(id);
+
+        // The newer attempt gave up in turn, taking its own claim away
+        // without ever registering a process: nothing is left to manage
+        // these lines once the stale write's cleanup runs.
+        crate::kube::stop::take_host_entry_claim_if_current(id, current_token);
+
+        let claim_was_current =
+            crate::kube::stop::take_host_entry_claim_if_current(id, stale_token);
+        assert!(
+            !claim_was_current,
+            "the token was already superseded before this attempt's own take"
+        );
+        let has_current_owner =
+            CHILD_PROCESSES.contains_key(&id) || crate::kube::stop::host_entry_has_any_claim(id);
+        assert!(
+            !has_current_owner,
+            "neither this attempt's claim nor a newer one is current, and nothing is \
+             registered: the lines this write landed have nobody left to own them and must \
+             come out"
+        );
     }
 }

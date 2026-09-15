@@ -82,6 +82,18 @@ fn looks_like_config_id(id: &str) -> bool {
     matches!(&id[digits.len()..], "" | "-https" | "-https-local")
 }
 
+/// Validates one id the way `validate_config_ids` validates a list: the
+/// plain-token owner alphabet plus the configuration-id shape.
+fn validate_config_id(id: &str) -> Result<(), HostfileError> {
+    validate_owner(id)?;
+    if !looks_like_config_id(id) {
+        return Err(HostfileError::HostsFile(format!(
+            "id {id:?} does not look like a configuration id"
+        )));
+    }
+    Ok(())
+}
+
 /// Validates the ids a `RemoveDirectOwned` request names.
 fn validate_config_ids(ids: &[String]) -> Result<(), HostfileError> {
     if ids.is_empty() || ids.len() > MAX_REMOVAL_ENTRIES {
@@ -90,15 +102,7 @@ fn validate_config_ids(ids: &[String]) -> Result<(), HostfileError> {
             ids.len()
         )));
     }
-    for id in ids {
-        validate_owner(id)?;
-        if !looks_like_config_id(id) {
-            return Err(HostfileError::HostsFile(format!(
-                "id {id:?} does not look like a configuration id"
-            )));
-        }
-    }
-    Ok(())
+    ids.iter().try_for_each(|id| validate_config_id(id))
 }
 
 impl HostfileManager {
@@ -107,6 +111,8 @@ impl HostfileManager {
     }
 
     pub fn add_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileError> {
+        validate_config_id(&id)?;
+        validate_hostname(&entry.hostname)?;
         debug!("Adding host entry for ID {id}: {entry:?}");
 
         // Marked with the configuration it belongs to: an unattributable line
@@ -130,6 +136,7 @@ impl HostfileManager {
     }
 
     pub fn remove_entry(&self, id: &str) -> Result<(), HostfileError> {
+        validate_config_id(id)?;
         debug!("Removing host entry for ID {id}");
 
         edit_hosts(|document| {
@@ -277,6 +284,22 @@ mod tests {
     fn remove_direct_owned_rejects_a_bad_id_before_touching_disk() {
         let err = HostfileManager::new()
             .remove_direct_owned(&["not-a-config-id!".to_owned()], &[])
+            .unwrap_err();
+        assert!(matches!(err, HostfileError::HostsFile(_)));
+    }
+
+    #[test]
+    fn add_entry_rejects_an_owner_that_does_not_look_like_a_config_id() {
+        let err = HostfileManager::new()
+            .add_entry("not-a-config-id!".to_owned(), entry("app.local"))
+            .unwrap_err();
+        assert!(matches!(err, HostfileError::HostsFile(_)));
+    }
+
+    #[test]
+    fn remove_entry_rejects_an_id_that_does_not_look_like_a_config_id() {
+        let err = HostfileManager::new()
+            .remove_entry("not-a-config-id!")
             .unwrap_err();
         assert!(matches!(err, HostfileError::HostsFile(_)));
     }

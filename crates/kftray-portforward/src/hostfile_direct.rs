@@ -74,6 +74,13 @@ impl DirectHostfileManager {
             // Read inside the same edit that drops them: once the owned lines
             // are gone nothing else records which mapping a legacy copy would
             // be, and a failure between the two would lose it.
+            //
+            // A duplicated section (a hand edit, or an older bug) must be
+            // folded into one before it is read: `section` refuses a
+            // duplicated tag outright, while `reconcile_owners` right below
+            // can merge it fine, so reading first without merging would fail
+            // this whole removal over something the next call handles.
+            document.merge_duplicate_sections(KFTRAY_DIRECT_HOSTS_TAG)?;
             let dropping = legacy_mappings_to_prune(
                 &document.section(KFTRAY_DIRECT_HOSTS_TAG)?,
                 ids,
@@ -278,9 +285,11 @@ mod tests {
         let mut legacy = HostsFile::new(KFTRAY_HOSTS_TAG);
         legacy
             .add_entry(addr(1), "shared.local")
+            .unwrap()
             .add_owned_entry(addr(1), "shared.local", "7")
             .unwrap()
-            .add_entry(addr(1), "other.local");
+            .add_entry(addr(1), "other.local")
+            .unwrap();
         legacy.write_to(&temp_path).unwrap();
 
         kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {
@@ -349,7 +358,8 @@ mod tests {
             .unwrap()
             .add_owned_entry(addr(1), "theirs.local", "9")
             .unwrap()
-            .add_entry(addr(1), "unmarked.local");
+            .add_entry(addr(1), "unmarked.local")
+            .unwrap();
         file.write_to(&temp_path).unwrap();
 
         kftray_commons::utils::hostsfile::edit_hosts_at(&temp_path, |document| {

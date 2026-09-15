@@ -477,7 +477,7 @@ pub async fn increment_setting_with_mode(
          ON CONFLICT(key) DO UPDATE SET
          value = CAST(value AS INTEGER) + 1,
          updated_at = CURRENT_TIMESTAMP
-         WHERE value GLOB '[0-9]*'
+         WHERE value NOT GLOB '*[^0-9]*' AND value != ''
          RETURNING value",
     )
     .bind(key)
@@ -1388,32 +1388,32 @@ mod tests {
     async fn test_increment_setting_with_mode_errors_on_a_non_numeric_value_memory_mode() {
         let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
 
-        let key = "junk_counter_test:memory";
-        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+        for junk in ["not-a-number", "12abc"] {
+            let key = format!("junk_counter_test:{junk}:memory");
+            let _ = delete_setting_with_mode(&key, DatabaseMode::Memory).await;
 
-        let context = DatabaseManager::get_context(DatabaseMode::Memory)
-            .await
-            .unwrap();
-        upsert_setting(&context.pool, key, "not-a-number")
-            .await
-            .unwrap();
+            let context = DatabaseManager::get_context(DatabaseMode::Memory)
+                .await
+                .unwrap();
+            upsert_setting(&context.pool, &key, junk).await.unwrap();
 
-        let result = increment_setting_with_mode(key, DatabaseMode::Memory).await;
-        assert!(
-            result.is_err(),
-            "a junk counter value must error instead of silently incrementing from a CAST-to-0"
-        );
+            let result = increment_setting_with_mode(&key, DatabaseMode::Memory).await;
+            assert!(
+                result.is_err(),
+                "a junk counter value ({junk}) must error instead of silently incrementing from a CAST-to-0"
+            );
 
-        let value = get_setting_with_mode(key, DatabaseMode::Memory)
-            .await
-            .unwrap();
-        assert_eq!(
-            value,
-            Some("not-a-number".to_string()),
-            "a rejected increment must leave the junk value untouched"
-        );
+            let value = get_setting_with_mode(&key, DatabaseMode::Memory)
+                .await
+                .unwrap();
+            assert_eq!(
+                value,
+                Some(junk.to_string()),
+                "a rejected increment must leave the junk value ({junk}) untouched"
+            );
 
-        let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
+            let _ = delete_setting_with_mode(&key, DatabaseMode::Memory).await;
+        }
     }
 
     #[tokio::test]
