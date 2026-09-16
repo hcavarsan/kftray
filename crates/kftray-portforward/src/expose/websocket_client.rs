@@ -24,9 +24,13 @@ use log::{
     info,
     warn,
 };
+use tokio::sync::oneshot;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::Message,
+    tungstenite::{
+        Error as WsError,
+        Message,
+    },
 };
 
 pub struct WebSocketTunnelClient {
@@ -46,9 +50,17 @@ impl WebSocketTunnelClient {
         }
     }
 
-    pub async fn start(&self) -> Result<(), String> {
+    pub async fn start(&self, ready: oneshot::Sender<Result<(), String>>) -> Result<(), String> {
+        self.reconnect_loop(ready, 100).await
+    }
+
+    /// The retry loop behind [`Self::start`], with the attempt budget as a
+    /// parameter so a test can exhaust it without waiting on the real one.
+    async fn reconnect_loop(
+        &self, ready: oneshot::Sender<Result<(), String>>, max_retries: u32,
+    ) -> Result<(), String> {
+        let mut ready = Some(ready);
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
-        let max_retries = 100;
         let mut retry_count = 0;
 
         loop {
@@ -59,7 +71,7 @@ impl WebSocketTunnelClient {
                 max_retries
             );
 
-            match self.connect_and_run(&ws_url).await {
+            match self.connect_and_run(&ws_url, &mut ready).await {
                 Ok(_) => {
                     info!("WebSocket tunnel disconnected gracefully");
                 }
@@ -70,10 +82,14 @@ impl WebSocketTunnelClient {
 
             retry_count += 1;
             if retry_count >= max_retries {
-                return Err(format!(
-                    "Max reconnection attempts ({}) reached",
-                    max_retries
-                ));
+                let message = format!("Max reconnection attempts ({}) reached", max_retries);
+                // Every attempt so far was retryable, so `ready` is still
+                // pending: without this, the caller only learns startup
+                // ended through the channel closing, losing why.
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(Err(message.clone()));
+                }
+                return Err(message);
             }
 
             let backoff_secs = std::cmp::min(2_u64.pow(retry_count.min(4)), 30);
@@ -85,11 +101,37 @@ impl WebSocketTunnelClient {
         }
     }
 
-    async fn connect_and_run(&self, ws_url: &str) -> Result<(), String> {
-        // Connect to the port-forwarded WebSocket endpoint
-        let (ws_stream, _) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
+    async fn connect_and_run(
+        &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
+    ) -> Result<(), String> {
+        let (ws_stream, _) = match connect_async(ws_url).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                let message = format!("Failed to connect to WebSocket: {error}");
+                // A rejection the relay may recover from keeps the readiness
+                // sender pending, so the reconnect loop can retry within the
+                // startup timeout instead of tearing the exposure down.
+                let is_permanent = match &error {
+                    WsError::Http(response) => !matches!(
+                        response.status().as_u16(),
+                        408 | 425 | 429 | 500 | 502 | 503 | 504
+                    ),
+                    _ => false,
+                };
+                if is_permanent
+                    && let Some(ready) = ready.take()
+                    && ready.send(Err(message.clone())).is_err()
+                {
+                    return Err(format!("Expose startup was cancelled: {message}"));
+                }
+                return Err(message);
+            }
+        };
+        if let Some(ready) = ready.take() {
+            ready
+                .send(Ok(()))
+                .map_err(|_| "Expose startup was cancelled".to_owned())?;
+        }
 
         info!("WebSocket tunnel connected");
 
@@ -230,20 +272,6 @@ impl WebSocketTunnelClient {
             }
         };
 
-        let service_addr = format!("{}:{}", self.local_service_address, self.local_service_port);
-        match tokio::net::TcpStream::connect(&service_addr).await {
-            Ok(_stream) => {
-                debug!("TCP connection to {} successful", service_addr);
-            }
-            Err(e) => {
-                error!("Cannot establish TCP connection to {}: {}", service_addr, e);
-                return TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!("Cannot connect to local service at {}: {}", service_addr, e),
-                };
-            }
-        }
-
         match http_client.request(request).await {
             Ok(response) => {
                 let status = response.status().as_u16();
@@ -288,5 +316,170 @@ impl WebSocketTunnelClient {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    use super::WebSocketTunnelClient;
+
+    #[tokio::test]
+    async fn startup_waits_for_the_websocket_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, mut ready_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { client.start(ready_tx).await });
+        let (socket, _) = listener.accept().await.unwrap();
+        assert!(matches!(
+            ready_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        let _peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), ready_rx)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn rejected_handshake_fails_startup() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { client.start(ready_tx).await });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), ready_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn transient_connection_failure_retries_before_reporting_readiness() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (first, _) = listener.accept().await.unwrap();
+        drop(first);
+        let peer = async {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio_tungstenite::accept_async(socket).await.unwrap()
+        };
+        let (ready, _peer) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(ready_rx, peer)
+        })
+        .await
+        .unwrap();
+        ready.unwrap().unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn exhausting_every_retry_reports_the_failure_through_ready() {
+        // A port nothing listens on: every attempt is refused immediately,
+        // which classifies as retryable, so the loop runs out its attempt
+        // budget instead of ever reaching a permanent failure that sends
+        // early.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let client = WebSocketTunnelClient::new(port, "127.0.0.1".to_owned(), 8080);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let result =
+            tokio::time::timeout(Duration::from_secs(10), client.reconnect_loop(ready_tx, 2))
+                .await
+                .expect("a 2-attempt budget must not need more than a few seconds");
+        let error = result.expect_err("every attempt was refused");
+        assert!(error.contains("Max reconnection attempts"), "{error}");
+        let ready_result = ready_rx
+            .await
+            .expect("ready must be resolved with the failure, not dropped silently");
+        assert_eq!(ready_result, Err(error));
+    }
+
+    #[tokio::test]
+    async fn forwards_the_request_without_a_disposable_tcp_probe() {
+        use std::collections::HashMap;
+
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper_util::client::legacy::Client;
+        use hyper_util::rt::TokioExecutor;
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            9999,
+            "127.0.0.1".to_owned(),
+            listener.local_addr().unwrap().port(),
+        );
+        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"GET /request HTTP/1.1\r\n"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nresponse",
+                )
+                .await
+                .unwrap();
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.forward_to_local_service(
+                &http_client,
+                "request".to_owned(),
+                "GET".to_owned(),
+                "/request".to_owned(),
+                HashMap::new(),
+                Vec::new(),
+            ),
+        )
+        .await
+        .unwrap();
+        match response {
+            super::TunnelMessage::HttpResponse { status, body, .. } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, b"response");
+            }
+            other => panic!("expected HTTP response, got {other:?}"),
+        }
+        server.await.unwrap();
     }
 }

@@ -124,42 +124,64 @@ pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<Confi
         })
 }
 
-pub async fn cleanup_current_process_config_states() -> Result<(), String> {
-    let current_process_id = std::process::id();
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
-    let affected_rows = sqlx::query(
-        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
-    )
-    .bind(current_process_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?
-    .rows_affected();
-
-    if affected_rows > 0 {
-        log::info!("Cleaned up {affected_rows} config states for process {current_process_id}");
-    }
-
-    Ok(())
-}
-
+/// Marks every configuration this process was running as stopped, except the
+/// ones in `still_owed`: a configuration whose cleanup did not complete keeps
+/// its running state, so the next run's stop-all enumerates and retries it.
 pub async fn cleanup_current_process_config_states_with_mode(
-    mode: DatabaseMode,
+    mode: DatabaseMode, still_owed: &[i64],
 ) -> Result<(), String> {
     let current_process_id = std::process::id();
     let context = DatabaseManager::get_context(mode).await?;
-    let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
+    let mut tx = context.pool.begin().await.map_err(|e| e.to_string())?;
 
-    let affected_rows = sqlx::query(
-        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
-    )
-    .bind(current_process_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?
-    .rows_affected();
+    // The snapshots of the rows about to be marked stopped go with them. Both
+    // statements run in one transaction: a failure between them must not
+    // leave a row marked running with its snapshot already gone, which would
+    // make a later stop fall back to a possibly-edited row.
+    let stopping: Vec<i64> = sqlx::query("SELECT config_id FROM config_state WHERE process_id = ?")
+        .bind(current_process_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter_map(|row| row.try_get::<i64, _>("config_id").ok())
+        .filter(|id| !still_owed.contains(id))
+        .collect();
+
+    if !stopping.is_empty() {
+        let mut delete = sqlx::QueryBuilder::new("DELETE FROM settings WHERE key IN (");
+        let mut keys = delete.separated(", ");
+        for id in &stopping {
+            keys.push_bind(running_snapshot_key(*id, mode));
+        }
+        delete.push(")");
+        delete
+            .build()
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let mut query = sqlx::QueryBuilder::new(
+        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ",
+    );
+    query.push_bind(current_process_id);
+    if !still_owed.is_empty() {
+        query.push(" AND config_id NOT IN (");
+        let mut ids = query.separated(", ");
+        for id in still_owed {
+            ids.push_bind(id);
+        }
+        query.push(")");
+    }
+    let affected_rows = query
+        .build()
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     if affected_rows > 0 {
         log::info!(
@@ -168,6 +190,133 @@ pub async fn cleanup_current_process_config_states_with_mode(
     }
 
     Ok(())
+}
+
+/// Key under which the configuration a running forward was started with is
+/// kept, next to its running state.
+///
+/// The row can be edited while the forward runs, so another process that
+/// needs to know which address and aliases this one holds cannot read the
+/// row for it: the snapshot is what the forward actually owns.
+pub fn running_snapshot_key(id: i64, mode: DatabaseMode) -> String {
+    format!(
+        "running_snapshot:{}:{id}",
+        crate::utils::settings::mode_scope(mode)
+    )
+}
+
+/// Records what a forward that has just registered actually holds. Only the
+/// file database is shared between processes; nothing is written for the
+/// in-memory one.
+pub async fn set_running_snapshot(
+    id: i64, config: &crate::models::config_model::Config, mode: DatabaseMode,
+) -> Result<(), String> {
+    if mode != DatabaseMode::File {
+        return Ok(());
+    }
+    let serialized = serde_json::to_string(config)
+        .map_err(|error| format!("Failed to describe the running config {id}: {error}"))?;
+    crate::utils::settings::set_setting_with_mode(
+        &running_snapshot_key(id, mode),
+        &serialized,
+        mode,
+    )
+    .await
+    .map_err(|error| format!("Failed to record the running config {id}: {error}"))
+}
+
+/// Forgets the snapshot once the forward has stopped.
+pub async fn clear_running_snapshot(id: i64, mode: DatabaseMode) {
+    if mode != DatabaseMode::File {
+        return;
+    }
+    if let Err(error) =
+        crate::utils::settings::delete_setting_with_mode(&running_snapshot_key(id, mode), mode)
+            .await
+    {
+        log::debug!("Failed to clear the running snapshot for config {id}: {error}");
+    }
+}
+
+/// The configuration a running forward was started with, when a snapshot was
+/// recorded for it.
+pub async fn running_snapshot(
+    id: i64, mode: DatabaseMode,
+) -> Option<crate::models::config_model::Config> {
+    if mode != DatabaseMode::File {
+        return None;
+    }
+    let stored =
+        crate::utils::settings::get_setting_with_mode(&running_snapshot_key(id, mode), mode)
+            .await
+            .ok()
+            .flatten()?;
+    serde_json::from_str(&stored).ok()
+}
+
+/// Whether a process that recorded itself as running a forward still exists.
+///
+/// A row whose process is gone is this process's to clean up; one whose
+/// process is alive belongs to it, and its listener cannot be stopped from
+/// here. Only existence is checked: a reused pid is possible but a process
+/// that exited cleanly clears its rows first, so a stale row with a live pid
+/// means a crash followed by pid reuse, and leaving it alone is the safe
+/// reading.
+pub fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // Signal 0 checks for existence without delivering anything. EPERM
+        // means the process exists but belongs to another user.
+        // SAFETY: signal 0 delivers nothing; `pid` is a validated, non-zero
+        // process id.
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{
+            CloseHandle,
+            ERROR_ACCESS_DENIED,
+            WAIT_TIMEOUT,
+        };
+        use windows::Win32::System::Threading::{
+            OpenProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+            WaitForSingleObject,
+        };
+        match unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                pid,
+            )
+        } {
+            Ok(handle) => {
+                let running = unsafe { WaitForSingleObject(handle, 0) } == WAIT_TIMEOUT;
+                let _ = unsafe { CloseHandle(handle) };
+                running
+            }
+            // Access denied still means the process exists. `Error::code`
+            // wraps the Win32 status as an HRESULT, so it must be compared
+            // against `HRESULT::from_win32(ERROR_ACCESS_DENIED.0)`, not the
+            // unrelated COM `E_ACCESSDENIED` constant.
+            Err(error) => error.code() == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        true
+    }
 }
 
 #[cfg(test)]

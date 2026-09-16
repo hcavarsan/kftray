@@ -3,6 +3,8 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+#[cfg(target_os = "macos")]
+use log::warn;
 #[cfg(unix)]
 use log::{
     debug,
@@ -52,7 +54,7 @@ fn validate_timestamp(timestamp: u64) -> Result<(), HelperError> {
 #[cfg(target_os = "linux")]
 pub fn validate_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
-) -> Result<(), HelperError> {
+) -> Result<Option<u32>, HelperError> {
     use std::os::fd::AsRawFd;
 
     let socket_fd = stream.as_raw_fd();
@@ -88,7 +90,7 @@ pub fn validate_peer_credentials(
                 "Peer credentials validated (root accepting authorized user): UID={}, GID={}, PID={}",
                 cred.uid, cred.gid, cred.pid
             );
-            return Ok(());
+            return Ok(Some(cred.pid as u32));
         } else {
             return Err(HelperError::Authentication(format!(
                 "Peer UID {} is not authorized (expected UID {})",
@@ -109,13 +111,13 @@ pub fn validate_peer_credentials(
         cred.uid, cred.gid, cred.pid
     );
 
-    Ok(())
+    Ok(Some(cred.pid as u32))
 }
 
 #[cfg(target_os = "macos")]
 pub fn validate_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
-) -> Result<(), HelperError> {
+) -> Result<Option<u32>, HelperError> {
     use std::os::fd::AsRawFd;
 
     let socket_fd = stream.as_raw_fd();
@@ -152,30 +154,68 @@ pub fn validate_peer_credentials(
     );
 
     if current_uid == 0 {
-        if cred.cr_uid == authorized_uid {
-            info!(
-                "Peer credentials validated (root accepting authorized user): UID={}",
-                cred.cr_uid
-            );
-            return Ok(());
-        } else {
+        if cred.cr_uid != authorized_uid {
             return Err(HelperError::Authentication(format!(
                 "Peer UID {} is not authorized (expected UID {})",
                 cred.cr_uid, authorized_uid
             )));
         }
+        info!(
+            "Peer credentials validated (root accepting authorized user): UID={}",
+            cred.cr_uid
+        );
+    } else {
+        if cred.cr_uid != current_uid {
+            return Err(HelperError::Authentication(format!(
+                "Peer UID {} does not match expected UID {}",
+                cred.cr_uid, current_uid
+            )));
+        }
+        debug!("Peer credentials validated: UID={}", cred.cr_uid);
     }
 
-    if cred.cr_uid != current_uid {
-        return Err(HelperError::Authentication(format!(
-            "Peer UID {} does not match expected UID {}",
-            cred.cr_uid, current_uid
-        )));
+    // The pid is only used for advisory address-pool ownership tracking,
+    // which already treats an unknown pid as "owner unknown" rather than a
+    // conflict. A `LOCAL_PEERPID` failure here must not turn an already
+    // UID-authorized connection into a hard rejection: peer authentication
+    // and pid discovery fail independently.
+    match peer_pid(socket_fd) {
+        Ok(pid) => Ok(Some(pid)),
+        Err(e) => {
+            warn!("Could not determine peer pid, proceeding without it: {e}");
+            Ok(None)
+        }
+    }
+}
+
+/// The pid of the process on the other end of `socket_fd`.
+///
+/// macOS's `xucred` carries no pid, unlike Linux's `ucred`: `LOCAL_PEERPID`
+/// is a separate `SOL_LOCAL` socket option for it.
+#[cfg(target_os = "macos")]
+fn peer_pid(socket_fd: std::os::fd::RawFd) -> Result<u32, HelperError> {
+    const SOL_LOCAL: libc::c_int = 0;
+    const LOCAL_PEERPID: libc::c_int = 0x002;
+
+    let mut pid: libc::pid_t = 0;
+    let mut pid_len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            socket_fd,
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+            &mut pid as *mut _ as *mut libc::c_void,
+            &mut pid_len,
+        )
+    };
+
+    if result != 0 {
+        return Err(HelperError::Authentication(
+            "Failed to get peer pid".to_string(),
+        ));
     }
 
-    debug!("Peer credentials validated: UID={}", cred.cr_uid);
-
-    Ok(())
+    Ok(pid as u32)
 }
 
 #[cfg(unix)]

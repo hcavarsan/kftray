@@ -22,10 +22,33 @@ use crate::logging::{
     TuiLoggerInitializer,
 };
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    let result = runtime.block_on(run());
+
+    // Gives a task a bounded shutdown drain had to detach (a start or stop
+    // that outran its own budget) a further bounded chance to finish its own
+    // rollback or cleanup before the runtime, and everything still running
+    // on it, is torn down. Tokio drops whatever is still running once this
+    // returns, rather than awaiting it further.
+    runtime.shutdown_timeout(crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT);
+
+    result
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     kftray_portforward::ssl::install_default_keyring_store();
     kftray_portforward::ssl::ensure_crypto_provider_installed();
+
+    // Resolves and applies the PATH env fixup once, here, before anything
+    // else on the runtime is running: `create_client_with_specific_context`
+    // does the same lazily via `unsafe` env mutation on first use, which is
+    // racy against any other task already reading the environment once the
+    // runtime has other work in flight.
+    kftray_portforward::warm_up_path_env().await;
 
     let cli = Cli::parse();
 

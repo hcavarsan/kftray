@@ -39,8 +39,9 @@ impl LogConfig {
     }
 
     pub fn default_log_directory() -> Result<PathBuf> {
-        let home_dir = dirs::home_dir().context("Failed to determine home directory")?;
-        Ok(home_dir.join(".kftray").join("http_logs"))
+        kftray_commons::utils::config_dir::get_log_folder_path()
+            .map_err(anyhow::Error::msg)
+            .context("Failed to resolve the HTTP log directory")
     }
 
     pub fn log_dir(&self) -> &Path {
@@ -179,14 +180,6 @@ mod tests {
     }
 
     #[test]
-    fn test_default_log_directory_ok() {
-        let result = LogConfig::default_log_directory();
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.ends_with(".kftray/http_logs"));
-    }
-
-    #[test]
     fn test_create_rotated_log_path() {
         let temp_dir = TempDir::new().unwrap();
         let config = LogConfig::builder(temp_dir.path().to_path_buf())
@@ -222,5 +215,18 @@ mod tests {
 
         assert!(log_subdir.exists());
         assert!(log_subdir.is_dir());
+    }
+
+    #[test]
+    fn test_default_log_directory_uses_kftray_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            temp_dir.path().to_str().unwrap(),
+        );
+
+        let log_dir =
+            LogConfig::default_log_directory().expect("default_log_directory should resolve");
+        assert_eq!(log_dir, temp_dir.path().join("http_logs"));
     }
 }

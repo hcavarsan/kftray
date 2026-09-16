@@ -31,30 +31,9 @@ use log::info;
 pub async fn list_kube_contexts(
     kubeconfig: Option<String>,
 ) -> Result<Vec<KubeContextInfo>, String> {
-    info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
-
-    let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
+    kftray_portforward::list_kube_contexts(kubeconfig)
         .await
-        .map_err(|err| format!("Failed to create client: {err}"))?;
-
-    if let Some(kubeconfig) = kubeconfig {
-        let contexts: Vec<KubeContextInfo> = kubeconfig
-            .contexts
-            .into_iter()
-            .map(|c| KubeContextInfo { name: c.name })
-            .collect();
-
-        Ok(contexts)
-    } else if !contexts.is_empty() {
-        let context_infos: Vec<KubeContextInfo> = contexts
-            .into_iter()
-            .map(|name| KubeContextInfo { name })
-            .collect();
-
-        Ok(context_infos)
-    } else {
-        Err("Failed to retrieve kubeconfig".to_string())
-    }
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -65,13 +44,11 @@ pub async fn list_pods(
         return Err("Namespace parameter cannot be empty".to_string());
     }
 
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
-    let api: Api<Pod> = Api::namespaced(client, namespace);
+    let api: Api<Pod> = Api::namespaced(connection.client, namespace);
 
     let pod_list = api
         .list(&ListParams::default())
@@ -98,13 +75,11 @@ pub async fn list_pods(
 pub async fn list_namespaces(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeNamespaceInfo>, String> {
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
-    let api: Api<Namespace> = Api::all(client);
+    let api: Api<Namespace> = Api::all(connection.client);
 
     let ns_list = api
         .list(&ListParams::default())
@@ -127,13 +102,11 @@ pub async fn list_services(
         return Err("Namespace parameter cannot be empty".to_string());
     }
 
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
-    let api: Api<Service> = Api::namespaced(client, namespace);
+    let api: Api<Service> = Api::namespaced(connection.client, namespace);
 
     let svc_list = api
         .list(&ListParams::default())
@@ -152,14 +125,12 @@ pub async fn list_services(
 pub async fn list_ports(
     context_name: &str, namespace: &str, service_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
-    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
+    let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
-    let client =
-        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
-    let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
-    let api_pod: Api<Pod> = Api::namespaced(client, namespace);
+    let api_svc: Api<Service> = Api::namespaced(connection.client.clone(), namespace);
+    let api_pod: Api<Pod> = Api::namespaced(connection.client, namespace);
 
     match api_svc.get(service_name).await {
         Ok(service) => {

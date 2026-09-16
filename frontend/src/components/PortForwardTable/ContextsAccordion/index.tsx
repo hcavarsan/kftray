@@ -28,15 +28,11 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   selectedConfigs,
   handleSelectionChange,
   handleCheckboxChange,
-  isInitiating,
-  setIsInitiating,
-  isStopping,
-  handleDeleteConfig,
-  confirmDeleteConfig,
+  pendingConfigActions,
+  toggleConfigForward,
+  deleteConfigs,
   handleEditConfig,
   handleDuplicateConfig,
-  isAlertOpen,
-  setIsAlertOpen,
 }) => {
   const isContextSelected = useMemo(() => {
     return contextConfigs.every(config =>
@@ -151,21 +147,15 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 <PortForwardRow
                   key={config.id}
                   config={config}
-                  handleDeleteConfig={handleDeleteConfig}
-                  confirmDeleteConfig={confirmDeleteConfig}
+                  deleteConfigs={deleteConfigs}
                   handleEditConfig={handleEditConfig}
                   handleDuplicateConfig={handleDuplicateConfig}
-                  isAlertOpen={isAlertOpen}
                   selected={selectedConfigs.some(
                     selectedConfig => selectedConfig.id === config.id,
                   )}
-                  onSelectionChange={isSelected =>
-                    handleSelectionChange(config, isSelected)
-                  }
-                  setIsAlertOpen={setIsAlertOpen}
-                  _isInitiating={isInitiating}
-                  setIsInitiating={setIsInitiating}
-                  isStopping={isStopping}
+                  onSelectionChange={handleSelectionChange}
+                  pendingAction={pendingConfigActions.get(config.id) ?? null}
+                  toggleConfigForward={toggleConfigForward}
                 />
               ))}
             </TableBody>

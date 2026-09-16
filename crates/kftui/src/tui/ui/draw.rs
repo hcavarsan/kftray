@@ -65,6 +65,9 @@ const NAVIGATION_HINT: &str = "[PgUp/PgDn:navigate]";
 
 pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.area();
+    // Recorded from the render that actually laid the message out, so input
+    // handling can clamp scrolling to what exists.
+    let mut max_error_scroll = 0;
 
     let background = Block::default().style(Style::default().bg(BASE));
     f.render_widget(background, size);
@@ -187,9 +190,22 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         }
         AppState::ShowErrorPopup => {
             if let Some(error_message) = &app.error_message {
-                let error_area = centered_rect(60, 40, size);
+                // render_error_popup centers its own popup rect inside
+                // whatever area it is given, applying its own width/height
+                // percentages on top of this one. On a short terminal the
+                // usual 60/40 share leaves too few rows after that second
+                // reduction for a message and the hint that says how to
+                // close it, so give it nearly the whole screen instead,
+                // which still gets reduced once more inside
+                // render_error_popup.
+                const MIN_ERROR_POPUP_HEIGHT: u16 = 12;
+                let mut error_area = centered_rect(60, 40, size);
+                if error_area.height < MIN_ERROR_POPUP_HEIGHT {
+                    error_area = centered_rect(95, 95, size);
+                }
                 render_background_overlay(f, size);
-                render_error_popup(f, error_message, error_area, 1);
+                max_error_scroll =
+                    render_error_popup(f, error_message, error_area, 1, app.error_scroll);
             }
         }
         AppState::ShowDeleteConfirmation => {
@@ -243,6 +259,11 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_restart_notification_popup(f, restart_area);
         }
         _ => {}
+    }
+
+    if let AppState::ShowErrorPopup = app.state {
+        app.error_scroll_max = max_error_scroll;
+        app.error_scroll = app.error_scroll.min(max_error_scroll);
     }
 }
 

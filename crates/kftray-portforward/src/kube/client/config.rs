@@ -57,9 +57,8 @@ pub fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Ve
     }
 }
 
-pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, Vec<String>)> {
+pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>)> {
     let mut errors = Vec::new();
-    let mut all_contexts = Vec::new();
     let mut merged_kubeconfig = Kubeconfig::default();
 
     for path in paths {
@@ -67,9 +66,6 @@ pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, 
         match Kubeconfig::read_from(path) {
             Ok(kubeconfig) => {
                 info!("Successfully read kubeconfig from {path:?}");
-                let contexts = crate::kube::operations::list_contexts(&kubeconfig);
-                all_contexts.extend(contexts.clone());
-                info!("Available contexts in {path:?}: {contexts:?}");
                 match merged_kubeconfig.clone().merge(kubeconfig) {
                     Ok(merged) => merged_kubeconfig = merged,
                     Err(e) => {
@@ -87,7 +83,7 @@ pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, 
         }
     }
 
-    Ok((merged_kubeconfig, all_contexts, errors))
+    Ok((merged_kubeconfig, errors))
 }
 
 pub async fn create_config_with_context(
@@ -132,6 +128,7 @@ pub async fn create_config_with_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kube::operations::list_contexts;
 
     #[test]
     fn test_get_kubeconfig_paths_from_option() {
@@ -227,16 +224,16 @@ mod tests {
 
     #[test]
     fn test_merge_kubeconfigs_empty() {
-        let (_config, contexts, errors) = merge_kubeconfigs(&[]).unwrap();
-        assert!(contexts.is_empty());
+        let (config, errors) = merge_kubeconfigs(&[]).unwrap();
+        assert!(list_contexts(&config).is_empty());
         assert!(errors.is_empty());
     }
 
     #[test]
     fn test_merge_kubeconfigs_with_invalid_path() {
         let paths = vec![PathBuf::from("/invalid/path/that/should/not/exist")];
-        let (_config, contexts, errors) = merge_kubeconfigs(&paths).unwrap();
-        assert!(contexts.is_empty());
+        let (config, errors) = merge_kubeconfigs(&paths).unwrap();
+        assert!(list_contexts(&config).is_empty());
         assert!(!errors.is_empty());
     }
 
@@ -458,8 +455,9 @@ users:
 
         std::fs::write(&kubeconfig_path, kubeconfig_content).unwrap();
 
-        let (merged_kubeconfig, contexts, errors) = merge_kubeconfigs(&[kubeconfig_path]).unwrap();
+        let (merged_kubeconfig, errors) = merge_kubeconfigs(&[kubeconfig_path]).unwrap();
 
+        let contexts = list_contexts(&merged_kubeconfig);
         assert_eq!(contexts.len(), 2);
         assert!(contexts.contains(&"secure-context".to_string()));
         assert!(contexts.contains(&"insecure-context".to_string()));

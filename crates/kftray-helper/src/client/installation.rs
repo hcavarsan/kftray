@@ -127,14 +127,37 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
 
     #[cfg(target_os = "windows")]
     {
-        let _args = format!("\"{}\" install", helper_path.to_string_lossy());
+        // The unelevated caller's own SID, computed before elevating:
+        // after `Start-Process -Verb RunAs` the elevated process may run
+        // as a different administrator account than the one installing,
+        // so its own token is not a reliable source for who to trust; see
+        // `win_identity::record_authorized_user_from_string`.
+        let mut install_args = vec!["install".to_string()];
+        match crate::win_identity::current_process_user_sid_string() {
+            Ok(sid) => {
+                install_args.push("--authorized-sid".to_string());
+                install_args.push(sid);
+            }
+            Err(e) => {
+                log::warn!(
+                    "Could not determine the current user's SID before elevating: {e}; the \
+                     elevated process will record its own account's SID instead"
+                );
+            }
+        }
+        let argument_list = install_args
+            .iter()
+            .map(|arg| format!("\"{arg}\""))
+            .collect::<Vec<_>>()
+            .join(",");
 
         let output = Command::new("powershell")
             .args([
                 "-Command",
                 &format!(
-                    "Start-Process -FilePath \"{}\" -ArgumentList \"install\" -Verb RunAs -Wait",
-                    helper_path.to_string_lossy()
+                    "Start-Process -FilePath \"{}\" -ArgumentList {} -Verb RunAs -Wait",
+                    helper_path.to_string_lossy(),
+                    argument_list
                 ),
             ])
             .output()

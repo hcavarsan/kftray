@@ -2,10 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use kube::Client;
-use kube::api::Api;
+use kftray_commons::models::config_model::Config;
 use lazy_static::lazy_static;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -20,52 +18,31 @@ use crate::kube::models::{
     PortForward,
     Target,
 };
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
-};
 
+/// Owns the tasks backing a single forward. Dropping it aborts them, so a
+/// startup future that is cancelled before the process reaches
+/// [`CHILD_PROCESSES`] cannot leave an untracked listener running.
 pub struct PortForwardProcess {
-    pub handle: JoinHandle<anyhow::Result<()>>,
+    handle: Option<JoinHandle<anyhow::Result<()>>>,
     pub direct_forwarder: Option<Arc<PortForwarder>>,
     pub cancellation_token: CancellationToken,
     pub config_id: String,
-    pub ws_client_handle: Option<JoinHandle<()>>,
+    ws_client_handle: Option<JoinHandle<()>>,
+    /// Snapshot taken at registration so a stop can still release cluster
+    /// resources, loopback addresses and host entries when the configuration
+    /// has since been deleted from the database.
+    config: Option<Config>,
 }
 
 impl PortForwardProcess {
     pub fn new(handle: JoinHandle<anyhow::Result<()>>, config_id: String) -> Self {
         Self {
-            handle,
+            handle: Some(handle),
             direct_forwarder: None,
             cancellation_token: CancellationToken::new(),
             config_id,
             ws_client_handle: None,
-        }
-    }
-
-    pub fn new_with_token(
-        handle: JoinHandle<anyhow::Result<()>>, config_id: String,
-        cancellation_token: CancellationToken,
-    ) -> Self {
-        Self {
-            handle,
-            direct_forwarder: None,
-            cancellation_token,
-            config_id,
-            ws_client_handle: None,
-        }
-    }
-
-    pub fn with_forwarder(
-        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
-    ) -> Self {
-        Self {
-            handle,
-            direct_forwarder: Some(forwarder),
-            cancellation_token: CancellationToken::new(),
-            config_id,
-            ws_client_handle: None,
+            config: None,
         }
     }
 
@@ -74,11 +51,12 @@ impl PortForwardProcess {
         cancellation_token: CancellationToken,
     ) -> Self {
         Self {
-            handle,
+            handle: Some(handle),
             direct_forwarder: Some(forwarder),
             cancellation_token,
             config_id,
             ws_client_handle: None,
+            config: None,
         }
     }
 
@@ -86,56 +64,89 @@ impl PortForwardProcess {
         self.ws_client_handle = Some(ws_handle);
     }
 
+    pub fn set_config(&mut self, config: Config) {
+        self.config = Some(config);
+    }
+
+    pub fn config(&self) -> Option<&Config> {
+        self.config.as_ref()
+    }
+
+    /// The API server the forward was established against, when it is known
+    /// to this process.
+    pub fn destination(&self) -> Option<String> {
+        self.direct_forwarder
+            .as_ref()
+            .map(|forwarder| forwarder.cluster_identity())
+    }
+
     /// Cleanup and abort the port forward process.
     /// Uses timeouts to prevent blocking on shutdown operations.
-    pub async fn cleanup_and_abort(self) {
+    pub async fn cleanup_and_abort(&mut self) {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
-        const CANCEL_PROPAGATION_DELAY: Duration = Duration::from_millis(100);
 
-        tracing::info!("Cancelling port forward for config: {}", self.config_id);
-
-        // Signal cancellation
         self.cancellation_token.cancel();
+        let handle = self.handle.take();
+        let ws_client_handle = self.ws_client_handle.take();
+        let direct_forwarder = self.direct_forwarder.take();
 
-        // Brief delay for cancellation to propagate (reduced from 1500ms)
-        tokio::time::sleep(CANCEL_PROPAGATION_DELAY).await;
+        if let Some(handle) = &handle {
+            handle.abort();
+        }
+        if let Some(handle) = &ws_client_handle {
+            handle.abort();
+        }
 
-        // Shutdown forwarder with timeout to prevent blocking
-        if let Some(forwarder) = &self.direct_forwarder {
-            tracing::info!(
-                "Cleaning up forwarder resources for config: {}",
-                self.config_id
-            );
-            if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
-                .await
-                .is_err()
-            {
-                tracing::warn!(
-                    "Forwarder shutdown timed out for config: {}, forcing abort",
-                    self.config_id
-                );
+        let tasks = async {
+            let forwarding = async {
+                if let Some(handle) = handle {
+                    let _ = handle.await;
+                }
+            };
+            let websocket = async {
+                if let Some(handle) = ws_client_handle {
+                    let _ = handle.await;
+                }
+            };
+            tokio::join!(forwarding, websocket);
+        };
+        // Abort synchronously before the first await: if this future is dropped
+        // partway through `shutdown`, the remaining workers, including a
+        // handshake stalled outside any cancellation point, would keep their
+        // sockets and their `Arc<PortForwarder>` forever.
+        if let Some(forwarder) = &direct_forwarder {
+            forwarder.abort_workers();
+        }
+        let shutdown = async {
+            if let Some(forwarder) = direct_forwarder {
+                forwarder.shutdown().await;
             }
-        }
-
-        // Abort the WebSocket client task if it exists
-        if let Some(ws_handle) = self.ws_client_handle {
-            tracing::info!(
-                "Aborting WebSocket client task for config: {}",
+        };
+        let (tasks, shutdown) = tokio::join!(
+            timeout(SHUTDOWN_TIMEOUT, tasks),
+            timeout(SHUTDOWN_TIMEOUT, shutdown)
+        );
+        if tasks.is_err() || shutdown.is_err() {
+            tracing::warn!(
+                "Port-forward shutdown timed out for config: {}",
                 self.config_id
             );
-            ws_handle.abort();
         }
-
-        self.handle.abort();
     }
 
     pub fn cancel(&self) {
         tracing::info!("Cancelling port forward for config: {}", self.config_id);
         self.cancellation_token.cancel();
+        self.abort();
     }
 
     pub fn abort(&self) {
-        self.handle.abort();
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
+        if let Some(handle) = &self.ws_client_handle {
+            handle.abort();
+        }
     }
 
     pub async fn get_current_active_pod(&self) -> Option<String> {
@@ -147,38 +158,121 @@ impl PortForwardProcess {
     }
 }
 
+impl Drop for PortForwardProcess {
+    fn drop(&mut self) {
+        self.cancellation_token.cancel();
+        self.abort();
+        let Some(forwarder) = self.direct_forwarder.take() else {
+            return;
+        };
+        // Connections stalled outside a cancellation point, such as a TLS
+        // handshake, only release their socket when their task is aborted.
+        forwarder.abort_workers();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move { forwarder.shutdown().await });
+        }
+    }
+}
+
 lazy_static! {
-    pub static ref CHILD_PROCESSES: DashMap<String, PortForwardProcess> = DashMap::new();
+    pub static ref CHILD_PROCESSES: DashMap<i64, PortForwardProcess> = DashMap::new();
+}
+
+/// Active pod for every registered forward, gathered by a single pass over
+/// [`CHILD_PROCESSES`] rather than one registry lookup per configuration id.
+/// The forwarder handles are cloned and the registry guard released before
+/// any of them is awaited.
+pub async fn active_pods() -> std::collections::HashMap<i64, Option<String>> {
+    let forwarders: Vec<(i64, Option<Arc<PortForwarder>>)> = CHILD_PROCESSES
+        .iter()
+        .map(|entry| (*entry.key(), entry.value().direct_forwarder.clone()))
+        .collect();
+
+    let mut pods = std::collections::HashMap::with_capacity(forwarders.len());
+    for (id, forwarder) in forwarders {
+        let pod = match forwarder {
+            Some(forwarder) => forwarder.get_current_active_pod().await,
+            None => None,
+        };
+        pods.insert(id, pod);
+    }
+    pods
+}
+
+lazy_static! {
+    /// Serializes tests across this crate (and kftui's, which shares the
+    /// same process-global registries) that touch `CHILD_PROCESSES` or
+    /// other global forwarding state. Compiled unconditionally, mirroring
+    /// `kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX`, so a dependent
+    /// crate's own `#[cfg(test)]` code can synchronize on it too.
+    pub static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+fn pod_readiness_for(workload_type: &str) -> kube_portforward::PodReadiness {
+    // Expose's relay is probed the same relay-aware way a proxy's is (see
+    // `expose::kubernetes::relay_pod_ready`): the aggregate `Ready` condition
+    // waits on every sidecar in the pod, which has nothing to do with the
+    // relay actually listening.
+    if workload_type == "proxy" || workload_type == "expose" {
+        kube_portforward::PodReadiness::Running
+    } else {
+        kube_portforward::PodReadiness::Ready
+    }
+}
+
+/// Outcome of [`PortForward::cleanup_resources`]. A privilege-unavailable
+/// address release is not retryable by trying again, so it must not keep
+/// the configuration recorded as needing cleanup forever; a hosts-file or
+/// retryable address failure must.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CleanupOutcome {
+    /// Nothing left to retry. Carries a privilege-unavailable notice, if
+    /// any, so the caller can still report it once.
+    Settled(Option<String>),
+    /// At least one release needs a retry.
+    Incomplete(String),
+}
+
+/// Combines what cleanup found into one outcome: a privilege-unavailable
+/// address release settles (retrying automatically will not help without
+/// user action), but any other failure, alone or alongside one, keeps the
+/// configuration recorded for a retry.
+fn merge_cleanup_outcome(unsatisfiable: Vec<String>, errors: Vec<String>) -> CleanupOutcome {
+    if errors.is_empty() {
+        if unsatisfiable.is_empty() {
+            CleanupOutcome::Settled(None)
+        } else {
+            CleanupOutcome::Settled(Some(unsatisfiable.join("; ")))
+        }
+    } else {
+        let mut incomplete = unsatisfiable;
+        incomplete.extend(errors);
+        CleanupOutcome::Incomplete(incomplete.join("; "))
+    }
 }
 
 impl PortForward {
-    pub async fn new(
+    pub fn new(
         target: Target, local_port: impl Into<Option<u16>>,
         local_address: impl Into<Option<String>>, context_name: Option<String>,
         kubeconfig: Option<String>, config_id: i64, workload_type: String,
-    ) -> anyhow::Result<Self> {
-        let namespace = target.namespace.name_any();
-
-        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
-        let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
-
-        let shared_client = Client::clone(&client);
-        let pod_api = Api::namespaced(shared_client.clone(), &namespace);
-        let svc_api = Api::namespaced(shared_client.clone(), &namespace);
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             target,
             local_port: local_port.into(),
             local_address: local_address.into(),
-            pod_api,
-            svc_api,
-            client: shared_client,
-            context_name: context_name.clone(),
-            kubeconfig: kubeconfig.clone(),
+            context_name,
+            kubeconfig,
             config_id,
             workload_type,
-            connection: Arc::new(Mutex::new(None)),
-        })
+            expected_destination: None,
+        }
+    }
+
+    /// Requires the connection this forward resolves to reach `destination`.
+    pub fn expecting_destination(mut self, destination: Option<String>) -> Self {
+        self.expected_destination = destination;
+        self
     }
 
     pub fn local_port(&self) -> u16 {
@@ -189,14 +283,51 @@ impl PortForward {
         self.local_address.clone()
     }
 
+    /// Releases everything `start_config` registered outside the process: the
+    /// custom loopback address and the domain alias in the hosts file.
     #[instrument(skip(self), fields(config_id = self.config_id))]
-    pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
+    /// Releases what a startup acquired locally. `config` is the row the
+    /// startup ran with: it names the aliases the hosts-file cleanup has to
+    /// verify gone.
+    pub async fn cleanup_resources(
+        &self, config: Option<&kftray_commons::models::config_model::Config>,
+        mode: kftray_commons::utils::db_mode::DatabaseMode,
+    ) -> CleanupOutcome {
+        let mut errors: Vec<String> = Vec::new();
+        let mut unsatisfiable: Vec<String> = Vec::new();
+        // Routed through the ownership-safe release: two configurations of one
+        // service can share an address, and removing it directly would take the
+        // alias from under the other forward.
         if let Some(addr) = &self.local_address
             && crate::network_utils::is_custom_loopback_address(addr)
+            && let Err(error) =
+                crate::kube::stop::release_address_with_fallback(addr, Some(self.config_id), mode)
+                    .await
         {
-            let _ = crate::network_utils::remove_loopback_address(addr).await;
+            if error.is_unsatisfiable() {
+                unsatisfiable.push(error.to_string());
+            } else {
+                errors.push(error.to_string());
+            }
         }
-        Ok(())
+        // Reported rather than swallowed: this runs when a startup failed or
+        // was cancelled after adding an alias, and the caller keeps the config
+        // tracked for retry when cleanup did not finish.
+        let config_id = self.config_id;
+        let snapshot = config.cloned();
+        let in_use = crate::kube::stop::forwarding_configs(mode).await;
+        match crate::hostsfile::remove_config_host_entries(
+            config_id,
+            snapshot.as_ref(),
+            &in_use,
+            mode,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(error) => errors.push(error.to_string()),
+        }
+        merge_cleanup_outcome(unsatisfiable, errors)
     }
 
     #[instrument(skip(self, tls_acceptor), fields(config_id = self.config_id))]
@@ -211,19 +342,15 @@ impl PortForward {
 
         let namespace = self.target.namespace.name_any();
 
-        let mut direct_forwarder = PortForwarder::new(
+        let direct_forwarder = PortForwarder::new(
             &namespace,
             self.target.clone(),
             self.context_name.clone(),
             self.kubeconfig.clone(),
-            self.config_id,
+            pod_readiness_for(&self.workload_type),
+            self.expected_destination.as_deref(),
         )
         .await?;
-
-        if let Err(e) = direct_forwarder.initialize(&self.target).await {
-            direct_forwarder.shutdown().await;
-            return Err(e);
-        }
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -269,19 +396,15 @@ impl PortForward {
 
         let namespace = self.target.namespace.name_any();
 
-        let mut direct_forwarder = PortForwarder::new(
+        let direct_forwarder = PortForwarder::new(
             &namespace,
             self.target.clone(),
             self.context_name.clone(),
             self.kubeconfig.clone(),
-            self.config_id,
+            pod_readiness_for(&self.workload_type),
+            self.expected_destination.as_deref(),
         )
         .await?;
-
-        if let Err(e) = direct_forwarder.initialize(&self.target).await {
-            direct_forwarder.shutdown().await;
-            return Err(e);
-        }
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -321,133 +444,47 @@ impl PortForward {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use http::{
-        Request,
-        Response,
-        StatusCode,
-    };
-    use k8s_openapi::List;
-    use k8s_openapi::api::core::v1::{
-        Pod,
-        PodCondition,
-        PodSpec,
-        PodStatus,
-        Service,
-        ServicePort,
-        ServiceSpec,
-    };
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-    use kube::Client;
-    use kube::client::Body;
-    use tokio::net::TcpStream;
-    use tokio::time::Duration;
-    use tower_test::mock;
-    use tracing::info;
-    use tracing_subscriber;
-
     use super::*;
-    use crate::kube::models::{
-        NameSpace,
-        Port,
-        TargetSelector,
-    };
 
-    fn mock_pod(
-        name: &str, namespace: &str, labels: Option<BTreeMap<String, String>>, ready: bool,
-    ) -> Pod {
-        let status = if ready {
-            Some(PodStatus {
-                phase: Some("Running".to_string()),
-                conditions: Some(vec![PodCondition {
-                    type_: "Ready".to_string(),
-                    status: "True".to_string(),
-                    last_probe_time: None,
-                    last_transition_time: None,
-                    message: None,
-                    observed_generation: None,
-                    reason: None,
-                }]),
-                ..Default::default()
-            })
-        } else {
-            Some(PodStatus {
-                phase: Some("Pending".to_string()),
-                ..Default::default()
-            })
-        };
-        Pod {
-            metadata: ObjectMeta {
-                name: Some(name.to_string()),
-                namespace: Some(namespace.to_string()),
-                labels,
-                ..Default::default()
-            },
-            spec: Some(PodSpec {
-                ..Default::default()
-            }),
-            status,
-        }
-    }
-
-    fn mock_service(
-        name: &str, namespace: &str, selector: Option<BTreeMap<String, String>>,
-    ) -> Service {
-        Service {
-            metadata: ObjectMeta {
-                name: Some(name.to_string()),
-                namespace: Some(namespace.to_string()),
-                ..Default::default()
-            },
-            spec: Some(ServiceSpec {
-                selector,
-                ports: Some(vec![ServicePort {
-                    port: 80,
-                    ..Default::default()
-                }]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn test_child_processes_map() {
-        CHILD_PROCESSES.clear();
-
-        assert_eq!(CHILD_PROCESSES.len(), 0);
-
-        CHILD_PROCESSES.insert(
-            "test-key".to_string(),
-            PortForwardProcess::new(dummy_handle(), "test-key".to_string()),
+    #[test]
+    fn privilege_only_failure_settles_cleanup() {
+        let outcome = merge_cleanup_outcome(
+            vec!["needs elevated privileges that are not available right now".to_owned()],
+            Vec::new(),
         );
-        assert_eq!(CHILD_PROCESSES.len(), 1);
-        assert!(CHILD_PROCESSES.contains_key("test-key"));
+        assert_eq!(
+            outcome,
+            CleanupOutcome::Settled(Some(
+                "needs elevated privileges that are not available right now".to_owned()
+            ))
+        );
+    }
 
-        let handle = CHILD_PROCESSES.remove("test-key");
-        if let Some((_, h)) = handle {
-            h.abort();
-        }
-        assert_eq!(CHILD_PROCESSES.len(), 0);
+    #[test]
+    fn a_retryable_failure_alongside_a_privilege_notice_stays_incomplete() {
+        let outcome = merge_cleanup_outcome(
+            vec!["needs elevated privileges that are not available right now".to_owned()],
+            vec!["hosts write failed".to_owned()],
+        );
+        assert_eq!(
+            outcome,
+            CleanupOutcome::Incomplete(
+                "needs elevated privileges that are not available right now; hosts write failed"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_left_settles_with_no_notice() {
+        assert_eq!(
+            merge_cleanup_outcome(Vec::new(), Vec::new()),
+            CleanupOutcome::Settled(None)
+        );
     }
 
     fn dummy_handle() -> JoinHandle<anyhow::Result<()>> {
-        use std::pin::Pin;
-        use std::task::{
-            Context,
-            Poll,
-        };
-
-        struct DummyFuture;
-        impl std::future::Future for DummyFuture {
-            type Output = anyhow::Result<()>;
-            fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
-                Poll::Ready(Ok(()))
-            }
-        }
-
-        tokio::task::spawn(DummyFuture)
+        tokio::spawn(async { Ok(()) })
     }
 
     #[tokio::test]
@@ -467,335 +504,56 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
-    #[tokio::test]
-    async fn test_local_port_and_address() {
-        let target = Target {
-            selector: TargetSelector::ServiceName("test-service".to_string()),
-            port: Port::Number(8080),
-            namespace: NameSpace(Some("default".to_string())),
-        };
-
-        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-        let client = Client::new(mock_service, "default");
-
-        let pf_with_port = PortForward {
-            target: target.clone(),
-            local_port: Some(9090),
-            local_address: Some("127.0.0.1".to_string()),
-            pod_api: Api::namespaced(client.clone(), "default"),
-            svc_api: Api::namespaced(client.clone(), "default"),
-            client: client.clone(),
-            context_name: None,
-            kubeconfig: None,
-            config_id: 1,
-            workload_type: "pod".to_string(),
-            connection: Arc::new(Mutex::new(None)),
-        };
-
-        assert_eq!(pf_with_port.local_port(), 9090);
-        assert_eq!(pf_with_port.local_address(), Some("127.0.0.1".to_string()));
-
-        let pf_defaults = PortForward {
-            target: target.clone(),
-            local_port: Some(0),
-            local_address: None,
-            pod_api: Api::namespaced(client.clone(), "default"),
-            svc_api: Api::namespaced(client.clone(), "default"),
-            client: client.clone(),
-            context_name: None,
-            kubeconfig: None,
-            config_id: 2,
-            workload_type: "pod".to_string(),
-            connection: Arc::new(Mutex::new(None)),
-        };
-
-        assert_eq!(pf_defaults.local_port(), 0);
-        assert_eq!(pf_defaults.local_address(), None);
-    }
-
-    #[tokio::test]
-    async fn test_port_forward_new_context_propagation() {
-        let target = Target {
-            selector: TargetSelector::ServiceName("test-service".to_string()),
-            port: Port::Number(8080),
-            namespace: NameSpace(Some("default".to_string())),
-        };
-        let context_name = Some("my-kube-context".to_string());
-        let _kubeconfig = Some("/path/to/config".to_string());
-
-        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-        let client = Client::new(mock_service, "default");
-
-        let pf = PortForward {
-            target,
-            local_port: Some(12345),
-            local_address: None,
-            pod_api: Api::namespaced(client.clone(), "default"),
-            svc_api: Api::namespaced(client.clone(), "default"),
-            client: client.clone(),
-            context_name: context_name.clone(),
-            kubeconfig: None,
-            config_id: 1,
-            workload_type: "service".to_string(),
-            connection: Arc::new(Mutex::new(None)),
-        };
-
-        assert_eq!(pf.context_name, context_name);
-    }
-
-    fn setup_mock_pf_for_api_test() -> (
-        PortForward,
-        Client,
-        mock::Handle<Request<Body>, Response<Body>>,
-    ) {
-        let target = Target {
-            selector: TargetSelector::ServiceName("test-svc".to_string()),
-            port: Port::Number(80),
-            namespace: NameSpace(Some("test-ns".to_string())),
-        };
-
-        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
-        let client = Client::new(mock_service, "test-ns");
-
-        let pf = PortForward {
-            target,
-            local_port: Some(0),
-            local_address: None,
-            pod_api: Api::namespaced(client.clone(), "test-ns"),
-            svc_api: Api::namespaced(client.clone(), "test-ns"),
-            client: client.clone(),
-            context_name: None,
-            kubeconfig: None,
-            config_id: 1,
-            workload_type: "service".to_string(),
-            connection: Arc::new(Mutex::new(None)),
-        };
-        (pf, client, handle)
-    }
-
-    async fn mock_kube_api_calls(handle: &mut mock::Handle<Request<Body>, Response<Body>>) {
-        info!("Mock server: Starting to handle requests");
-
-        let mut service_requests = 0;
-        let mut pod_requests = 0;
-        let mut portforward_requests = 0;
-
-        for i in 0..10 {
-            info!("Mock server: Expecting request {}", i + 1);
-
-            let result =
-                tokio::time::timeout(Duration::from_millis(100), handle.next_request()).await;
-
-            let (request, send) = match result {
-                Ok(Some((req, send))) => (req, send),
-                Ok(None) => {
-                    info!("Mock server: No more requests");
-                    break;
-                }
-                Err(_) => {
-                    info!(
-                        "Mock server: Timeout waiting for request, checking if we have minimum required"
-                    );
-                    if service_requests > 0 && pod_requests > 0 {
-                        info!("Mock server: Have minimum required requests, stopping");
-                        break;
-                    }
-                    continue;
-                }
-            };
-
-            info!(
-                "Mock server: Received request for path: {}",
-                request.uri().path()
-            );
-
-            if request.uri().path().contains("/services/") {
-                service_requests += 1;
-                info!("Mock server: Handling GET Service (#{service_requests})");
-                assert_eq!(request.method(), "GET");
-                let svc = mock_service(
-                    "test-svc",
-                    "test-ns",
-                    Some(
-                        [("app".to_string(), "my-app".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
-                );
-                let response = Response::builder()
-                    .status(200)
-                    .body(Body::from(serde_json::to_vec(&svc).unwrap()))
-                    .unwrap();
-                info!("Mock server: Sending service response");
-                send.send_response(response);
-            } else if request.uri().path().contains("/pods")
-                && !request.uri().path().contains("/portforward")
-            {
-                pod_requests += 1;
-                info!("Mock server: Handling LIST Pods (#{pod_requests})");
-                assert_eq!(request.method(), "GET");
-
-                let pod = mock_pod(
-                    "test-pod-123",
-                    "test-ns",
-                    Some(
-                        [("app".to_string(), "my-app".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
-                    true,
-                );
-                let pod_list: List<Pod> = List {
-                    items: vec![pod],
-                    ..Default::default()
-                };
-                let response = Response::builder()
-                    .status(200)
-                    .body(Body::from(serde_json::to_vec(&pod_list).unwrap()))
-                    .unwrap();
-                info!("Mock server: Sending pods response");
-                send.send_response(response);
-            } else if request.uri().path().contains("/portforward") {
-                portforward_requests += 1;
-                info!("Mock server: Handling GET Portforward (#{portforward_requests})");
-                assert_eq!(request.method(), "GET");
-
-                let response = Response::builder()
-                    .status(StatusCode::SWITCHING_PROTOCOLS)
-                    .header(http::header::UPGRADE, "websocket")
-                    .header(http::header::CONNECTION, "Upgrade")
-                    .header(http::header::SEC_WEBSOCKET_ACCEPT, "dummy_accept_key")
-                    .body(Body::empty())
-                    .unwrap();
-                info!("Mock server: Sending portforward response");
-                send.send_response(response);
-
-                if portforward_requests >= 1 {
-                    info!("Mock server: Got portforward request, can exit");
-                    break;
-                }
-            }
-        }
-
-        info!(
-            "Mock server: Handled {service_requests} service, {pod_requests} pod, {portforward_requests} portforward requests"
+    #[test]
+    fn test_pod_readiness_for_workload_type() {
+        assert_eq!(
+            pod_readiness_for("proxy"),
+            kube_portforward::PodReadiness::Running
+        );
+        assert_eq!(
+            pod_readiness_for("service"),
+            kube_portforward::PodReadiness::Ready
+        );
+        assert_eq!(
+            pod_readiness_for("pod"),
+            kube_portforward::PodReadiness::Ready
+        );
+        assert_eq!(
+            pod_readiness_for("expose"),
+            kube_portforward::PodReadiness::Running
         );
     }
 
     #[tokio::test]
-    async fn test_port_forward_tcp_api_calls() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        info!("Starting test_port_forward_tcp_api_calls");
+    async fn cleanup_finishes_owned_tasks_before_returning() {
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let forwarding_task = handle.abort_handle();
+        let websocket = tokio::spawn(std::future::pending::<()>());
+        let websocket_task = websocket.abort_handle();
+        let mut process = PortForwardProcess::new(handle, "cleanup".to_owned());
+        process.set_ws_client_handle(websocket);
 
-        let (pf_base, _client, _handle) = setup_mock_pf_for_api_test();
+        process.cleanup_and_abort().await;
 
-        let (mock_service_test, mut handle_test) = mock::pair::<Request<Body>, Response<Body>>();
-        let client_test = Client::new(mock_service_test, "test-ns");
-
-        let target_clone = pf_base.target.clone();
-
-        let pf_test = PortForward {
-            target: target_clone,
-            local_port: Some(0),
-            local_address: Some("127.0.0.1".to_string()),
-            pod_api: Api::namespaced(client_test.clone(), "test-ns"),
-            svc_api: Api::namespaced(client_test.clone(), "test-ns"),
-            client: client_test.clone(),
-            context_name: None,
-            kubeconfig: None,
-            config_id: 1,
-            workload_type: "service".to_string(),
-            connection: Arc::new(Mutex::new(None)),
-        };
-
-        info!("Spawning mock server task");
-        let mock_server_task = tokio::spawn(async move {
-            mock_kube_api_calls(&mut handle_test).await;
-        });
-
-        info!("Calling port_forward_tcp");
-        let pf_result = pf_test.port_forward_tcp(None).await;
-        if pf_result.is_err() {
-            info!(
-                "Port forward failed as expected in test environment: {:?}",
-                pf_result.err()
-            );
-            return;
-        }
-        let (bound_port, server_task_handle) = pf_result.unwrap();
-        assert_ne!(bound_port, 0, "Listener did not bind to a dynamic port");
-
-        info!("Simulating client connection");
-        let connect_addr = format!("127.0.0.1:{bound_port}");
-        let connect_task = tokio::spawn(async move {
-            match TcpStream::connect(&connect_addr).await {
-                Ok(stream) => {
-                    drop(stream);
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        });
-
-        let connect_result = tokio::time::timeout(Duration::from_secs(1), connect_task).await;
-        match connect_result {
-            Ok(Ok(Ok(()))) => {
-                info!("Client connection succeeded");
-            }
-            Ok(Ok(Err(e))) => {
-                info!(
-                    "Client connection failed as expected in test environment: {}",
-                    e
-                );
-            }
-            Ok(Err(_)) | Err(_) => {
-                info!("Client connection timed out or failed as expected in test environment");
-            }
-        }
-        info!("Client connection simulated");
-
-        info!("Waiting for mock server task");
-        let mock_server_result =
-            tokio::time::timeout(Duration::from_secs(5), mock_server_task).await;
-        assert!(mock_server_result.is_ok(), "Mock server task timed out");
-        assert!(
-            mock_server_result.unwrap().is_ok(),
-            "Mock server task failed"
-        );
-        info!("Mock server task completed");
-
-        server_task_handle.abort();
-        info!("Finished test_port_forward_tcp_api_calls");
+        assert!(forwarding_task.is_finished());
+        assert!(websocket_task.is_finished());
     }
 
     #[tokio::test]
-    async fn test_port_forward_udp_api_calls() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        info!("Starting test_port_forward_udp_api_calls");
+    async fn dropping_an_unregistered_process_aborts_its_tasks() {
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let forwarding_task = handle.abort_handle();
+        let websocket = tokio::spawn(std::future::pending::<()>());
+        let websocket_task = websocket.abort_handle();
+        let mut process = PortForwardProcess::new(handle, "dropped".to_owned());
+        process.set_ws_client_handle(websocket);
+        let cancellation = process.cancellation_token.clone();
 
-        let (pf, _client, mut handle) = setup_mock_pf_for_api_test();
+        drop(process);
+        tokio::task::yield_now().await;
 
-        info!("Spawning mock server task");
-        let mock_server = tokio::spawn(async move {
-            mock_kube_api_calls(&mut handle).await;
-        });
-
-        info!("Calling port_forward_udp");
-        let result = tokio::time::timeout(Duration::from_secs(5), pf.port_forward_udp()).await;
-        info!("port_forward_udp call returned");
-
-        info!("Waiting for mock server task");
-        let mock_server_result = mock_server.await;
-        assert!(
-            mock_server_result.is_ok(),
-            "Mock server did not handle all requests"
-        );
-
-        assert!(result.is_ok(), "port_forward_udp timed out unexpectedly");
-        assert!(
-            result.unwrap().is_err(),
-            "port_forward_udp succeeded unexpectedly, expected error after API calls"
-        );
-        info!("Finished test_port_forward_udp_api_calls");
+        assert!(cancellation.is_cancelled());
+        assert!(forwarding_task.is_finished());
+        assert!(websocket_task.is_finished());
     }
 }

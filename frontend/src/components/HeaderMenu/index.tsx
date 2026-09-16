@@ -2,7 +2,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RefreshCw, X } from 'lucide-react'
 
-import { Box, Group } from '@chakra-ui/react'
+import { Box, chakra, Group } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -38,6 +38,26 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   }) => {
     setSelectedConfigs(checked === true ? configs : [])
   }
+
+  const isStartBusy =
+    isInitiating ||
+    (selectedConfigs.length > 0
+      ? selectedConfigs.every(selected => {
+          const currentConfig = configs.find(c => c.id === selected.id)
+
+          return currentConfig?.is_running
+        })
+      : configs.every(config => config.is_running))
+
+  const isStopBusy =
+    isStopping ||
+    (selectedConfigs.length > 0
+      ? selectedConfigs.every(selected => {
+          const currentConfig = configs.find(c => c.id === selected.id)
+
+          return currentConfig && !currentConfig.is_running
+        })
+      : configs.every(config => !config.is_running))
 
   return (
     <Box
@@ -105,34 +125,23 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             <Button
               size='xs'
               variant='ghost'
-              disabled={
-                isInitiating ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig?.is_running
-                    })
-                  : configs.every(config => config.is_running))
-              }
+              disabled={isStartBusy}
               onClick={
                 selectedConfigs.length > 0
-                  ? startSelectedPortForwarding
+                  ? () => void startSelectedPortForwarding()
                   : () =>
-                      initiatePortForwarding(
+                      void initiatePortForwarding(
                         configs.filter(config => !config.is_running),
                       )
               }
               _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
+              _disabled={{ cursor: 'not-allowed' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
-              cursor={isInitiating ? 'default' : undefined}
             >
               {isInitiating ? (
                 <>
@@ -150,29 +159,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Starting...</span>
-                  <Tooltip
-                    content='Cancel'
-                    portalled
-                    contentProps={{ zIndex: 101 }}
-                  >
-                    <Box
-                      as='span'
-                      display='inline-flex'
-                      alignItems='center'
-                      justifyContent='center'
-                      marginLeft={1.5}
-                      padding='2px'
-                      borderRadius='sm'
-                      cursor='pointer'
-                      _hover={{ bg: 'red.700' }}
-                      onClick={e => {
-                        e.stopPropagation()
-                        abortStartOperation()
-                      }}
-                    >
-                      <Box as={X} width='10px' height='10px' color='red.300' />
-                    </Box>
-                  </Tooltip>
                 </>
               ) : (
                 <>
@@ -199,6 +185,27 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             </Button>
           </Tooltip>
 
+          {isInitiating && (
+            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+              <chakra.button
+                type='button'
+                aria-label='Cancel'
+                display='inline-flex'
+                alignItems='center'
+                justifyContent='center'
+                padding='6px'
+                borderRadius='sm'
+                cursor='pointer'
+                bg='transparent'
+                border='none'
+                _hover={{ bg: 'red.700' }}
+                onClick={() => abortStartOperation()}
+              >
+                <Box as={X} width='10px' height='10px' color='red.300' />
+              </chakra.button>
+            </Tooltip>
+          )}
+
           <Tooltip
             content={
               isStopping
@@ -220,31 +227,20 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             <Button
               size='xs'
               variant='ghost'
-              disabled={
-                isStopping ||
-                (selectedConfigs.length > 0
-                  ? selectedConfigs.every(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig && !currentConfig.is_running
-                    })
-                  : configs.every(config => !config.is_running))
-              }
+              disabled={isStopBusy}
               onClick={
                 selectedConfigs.length > 0
-                  ? stopSelectedPortForwarding
-                  : stopAllPortForwarding
+                  ? () => void stopSelectedPortForwarding()
+                  : () => void stopAllPortForwarding()
               }
               _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
+              _disabled={{ cursor: 'not-allowed' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
-              cursor={isStopping ? 'default' : undefined}
             >
               {isStopping ? (
                 <>
@@ -262,29 +258,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Stopping...</span>
-                  <Tooltip
-                    content='Cancel'
-                    portalled
-                    contentProps={{ zIndex: 101 }}
-                  >
-                    <Box
-                      as='span'
-                      display='inline-flex'
-                      alignItems='center'
-                      justifyContent='center'
-                      marginLeft={1.5}
-                      padding='2px'
-                      borderRadius='sm'
-                      cursor='pointer'
-                      _hover={{ bg: 'red.700' }}
-                      onClick={e => {
-                        e.stopPropagation()
-                        abortStopOperation()
-                      }}
-                    >
-                      <Box as={X} width='10px' height='10px' color='red.300' />
-                    </Box>
-                  </Tooltip>
                 </>
               ) : (
                 <>
@@ -305,6 +278,27 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               )}
             </Button>
           </Tooltip>
+
+          {isStopping && (
+            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+              <chakra.button
+                type='button'
+                aria-label='Cancel'
+                display='inline-flex'
+                alignItems='center'
+                justifyContent='center'
+                padding='6px'
+                borderRadius='sm'
+                cursor='pointer'
+                bg='transparent'
+                border='none'
+                _hover={{ bg: 'red.700' }}
+                onClick={() => abortStopOperation()}
+              >
+                <Box as={X} width='10px' height='10px' color='red.300' />
+              </chakra.button>
+            </Tooltip>
+          )}
         </Group>
       </Group>
 

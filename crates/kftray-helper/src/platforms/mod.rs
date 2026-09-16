@@ -11,24 +11,29 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-pub fn install_platform_service(service_name: &str) -> Result<(), HelperError> {
+pub fn install_platform_service(
+    service_name: &str, authorized_sid: Option<&str>,
+) -> Result<(), HelperError> {
     #[cfg(target_os = "macos")]
     {
+        let _ = authorized_sid;
         macos::install_service(service_name)
     }
 
     #[cfg(target_os = "linux")]
     {
+        let _ = authorized_sid;
         linux::install_service(service_name)
     }
 
     #[cfg(target_os = "windows")]
     {
-        windows::install_service(service_name)
+        windows::install_service(service_name, authorized_sid)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
+        let _ = (service_name, authorized_sid);
         Err(HelperError::UnsupportedPlatform)
     }
 }

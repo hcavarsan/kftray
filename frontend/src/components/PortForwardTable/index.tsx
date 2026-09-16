@@ -16,8 +16,9 @@ import type { Config, TableProps } from '@/types'
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
   isInitiating,
-  setIsInitiating,
   isStopping,
+  pendingConfigActions,
+  toggleConfigForward,
   initiatePortForwarding,
   startSelectedPortForwarding,
   stopSelectedPortForwarding,
@@ -26,10 +27,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   abortStopOperation,
   handleEditConfig,
   handleDuplicateConfig,
-  handleDeleteConfig,
-  confirmDeleteConfig,
-  isAlertOpen,
-  setIsAlertOpen,
+  deleteConfigs,
   selectedConfigs,
   setSelectedConfigs,
   openSettingsModal,
@@ -85,9 +83,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [selectedConfigs, configs, configsByContext])
 
   useEffect(() => {
-    setSelectedConfigs(prev =>
-      prev.map(selected => configs.find(c => c.id === selected.id) || selected),
-    )
+    setSelectedConfigs(prev => {
+      const next = prev
+        .map(selected => configs.find(c => c.id === selected.id))
+        .filter((config): config is Config => config !== undefined)
+
+      if (
+        next.length === prev.length &&
+        next.every((config, index) => config.id === prev[index].id)
+      ) {
+        return prev
+      }
+
+      return next
+    })
   }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
@@ -142,24 +151,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   )
 
   const handleSelectionChange = useCallback(
-    (config: Config, isSelected: boolean) => {
-      const newSelection = isSelected
-        ? [...selectedConfigs, config]
-        : selectedConfigs.filter(c => c.id !== config.id)
+    (id: number, isSelected: boolean) => {
+      setSelectedConfigs(prev => {
+        if (!isSelected) {
+          return prev.filter(c => c.id !== id)
+        }
+        if (prev.some(c => c.id === id)) {
+          return prev
+        }
+        const config = configs.find(c => c.id === id)
 
-      setSelectedConfigs(newSelection)
-
-      const contextConfigs = configs.filter(c => c.context === config.context)
-      const allContextSelected = contextConfigs.every(contextConfig =>
-        newSelection.some(selected => selected.id === contextConfig.id),
-      )
-
-      setSelectedConfigsByContext(prev => ({
-        ...prev,
-        [config.context]: allContextSelected,
-      }))
+        return config ? [...prev, config] : prev
+      })
     },
-    [configs, selectedConfigs, setSelectedConfigs],
+    [configs, setSelectedConfigs],
   )
 
   return (
@@ -226,18 +231,14 @@ const PortForwardTable: React.FC<TableProps> = ({
               context={context}
               contextConfigs={contextConfigs}
               selectedConfigs={selectedConfigs}
-              handleDeleteConfig={handleDeleteConfig}
-              confirmDeleteConfig={confirmDeleteConfig}
+              deleteConfigs={deleteConfigs}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}
-              isAlertOpen={isAlertOpen}
-              setIsAlertOpen={setIsAlertOpen}
               handleSelectionChange={handleSelectionChange}
               selectedConfigsByContext={selectedConfigsByContext}
               handleCheckboxChange={handleCheckboxChange}
-              isInitiating={isInitiating}
-              setIsInitiating={setIsInitiating}
-              isStopping={isStopping}
+              pendingConfigActions={pendingConfigActions}
+              toggleConfigForward={toggleConfigForward}
             />
           ))}
         </AccordionRoot>

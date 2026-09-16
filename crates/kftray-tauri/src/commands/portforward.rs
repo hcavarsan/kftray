@@ -1,17 +1,21 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_commons::utils::config_state::{
-    cleanup_current_process_config_states,
+    cleanup_current_process_config_states_with_mode,
     get_configs_state,
 };
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::{
     deploy_and_forward_pod,
+    reconcile_pending_cleanup,
     start_port_forward,
     stop_all_port_forward,
+    stop_all_port_forward_with_deadline,
     stop_port_forward,
     stop_proxy_forward,
 };
@@ -58,17 +62,12 @@ pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
                 continue;
             }
         };
+        let all_active_pods = kftray_portforward::port_forward::active_pods().await;
         let mut current_active_pods = HashMap::new();
         for state in &current_config_states {
             if state.is_running {
-                match get_active_pod_cmd(state.config_id.to_string()).await {
-                    Ok(pod_name) => {
-                        current_active_pods.insert(state.config_id.to_string(), pod_name);
-                    }
-                    Err(_) => {
-                        current_active_pods.insert(state.config_id.to_string(), None);
-                    }
-                }
+                let pod_name = all_active_pods.get(&state.config_id).cloned().flatten();
+                current_active_pods.insert(state.config_id.to_string(), pod_name);
             }
         }
         let mut prev_pods = previous_active_pods.lock().await;
@@ -128,18 +127,87 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
     true
 }
 
+/// Bounds the exit-time reconciliation below: a stop or a pending-create
+/// wait up against lifecycle locks and cluster deletes, and a stalled one
+/// must not keep the process from exiting. Mirrors kftui's
+/// `CLEANUP_RECONCILE_TIMEOUT`.
+const CLEANUP_RECONCILE_TIMEOUT: Duration =
+    kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
+
+/// Whether a config is started as a plain TCP port-forward rather than
+/// deployed through a relay pod: expose and tcp service/pod configs take
+/// the direct path, everything else (proxy, udp service/pod) goes through
+/// the relay. A missing workload type is treated like `service`/`pod`,
+/// matching kftui and the old auto-start check. Shared by `dispatch_start`
+/// and the auto-start check on launch so the two cannot silently diverge on
+/// which configs get which treatment.
+pub(crate) fn is_direct_tcp_forward(workload_type: Option<&str>, protocol: &str) -> bool {
+    workload_type == Some("expose")
+        || (matches!(workload_type, None | Some("service" | "pod")) && protocol == "tcp")
+}
+
+/// Starts one configuration through the dispatch its kind uses. Shared by
+/// the global shortcut handlers and the SSL certificate restart path so the
+/// two cannot silently diverge on which configs get which treatment.
+pub(crate) async fn dispatch_start(config: &Config) -> Result<Vec<CustomResponse>, String> {
+    if is_direct_tcp_forward(config.workload_type.as_deref(), &config.protocol) {
+        start_port_forward(vec![config.clone()], "tcp").await
+    } else {
+        deploy_and_forward_pod(vec![config.clone()]).await
+    }
+}
+
+/// Stops one configuration, regardless of its kind: `stop_port_forward` looks
+/// the row up by id and unwinds whatever it started (direct forward, proxy
+/// relay, or expose), so callers no longer need to branch on workload type
+/// to pick a stop command. Shared by the global shortcut handlers so stop
+/// and toggle cannot silently diverge from that.
+pub(crate) async fn dispatch_stop(config: &Config) -> Result<CustomResponse, String> {
+    stop_port_forward(config.id.unwrap_or(0).to_string()).await
+}
+
+/// Reconciles anything this process still owes a cluster delete for, then
+/// clears its rows from `config_state` so the next launch does not see them
+/// as still running. Mirrors kftui's shutdown sequence. `exclude` names
+/// configs whose stop is still running past the shutdown deadline: they are
+/// left out of the reconcile pass rather than raced by a second stop
+/// attempt, and keep their row and running snapshot so the next launch
+/// retries them instead of treating the abandoned stop as complete.
+async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
+    let still_owed =
+        reconcile_pending_cleanup(DatabaseMode::File, CLEANUP_RECONCILE_TIMEOUT, exclude).await;
+    if !still_owed.is_empty() {
+        error!(
+            "Cleanup for configuration(s) {still_owed:?} did not complete; they stay marked \
+             running and are retried on the next stop"
+        );
+    }
+    let keep_running: Vec<i64> = still_owed
+        .iter()
+        .chain(exclude.iter())
+        .copied()
+        .collect::<HashSet<i64>>()
+        .into_iter()
+        .collect();
+    if let Err(e) =
+        cleanup_current_process_config_states_with_mode(DatabaseMode::File, &keep_running).await
+    {
+        error!("Failed to cleanup config states: {e}");
+    }
+}
+
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp").await
+    start_port_forward(configs, "udp").await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp").await
+    start_port_forward(configs, "tcp").await
 }
 
 #[tauri::command]
@@ -153,14 +221,14 @@ pub async fn stop_all_port_forward_cmd(
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id.clone()).await
+    stop_port_forward(config_id).await
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone()).await
+    deploy_and_forward_pod(configs).await
 }
 
 #[tauri::command]
@@ -178,21 +246,16 @@ pub async fn stop_proxy_forward_cmd(
 pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
     use kftray_portforward::port_forward::CHILD_PROCESSES;
 
-    let handle_key = format!("config:{}:service:", config_id);
-
-    let matching_forwarders: Vec<_> = CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&handle_key) || entry.key() == &config_id)
-        .filter_map(|entry| entry.value().direct_forwarder.clone())
-        .collect();
-
-    for forwarder in matching_forwarders {
-        if let Some(pod_name) = forwarder.get_current_active_pod().await {
-            return Ok(Some(pod_name));
-        }
+    let config_id = config_id
+        .parse::<i64>()
+        .map_err(|e| format!("Invalid config ID: {e}"))?;
+    let forwarder = CHILD_PROCESSES
+        .get(&config_id)
+        .and_then(|process| process.direct_forwarder.clone());
+    match forwarder {
+        Some(forwarder) => Ok(forwarder.get_current_active_pod().await),
+        None => Ok(None),
     }
-
-    Ok(None)
 }
 
 #[tauri::command]
@@ -210,9 +273,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             let any_running = config_states.iter().any(|config| config.is_running);
 
             if !any_running {
-                if let Err(e) = cleanup_current_process_config_states().await {
-                    error!("Failed to cleanup config states: {e}");
-                }
+                reconcile_and_cleanup_on_exit(&HashSet::new()).await;
                 // Stop MCP server if running
                 if let Err(e) = crate::mcp::stop().await {
                     error!("Failed to stop MCP server: {e}");
@@ -231,17 +292,26 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                         // User clicked "Yes" - stop all port forwards
                         info!("User chose to stop all port forwards before closing.");
                         tauri::async_runtime::spawn(async move {
-                            match stop_all_port_forward().await {
-                                Ok(responses) => {
-                                    info!("Successfully stopped all port forwards: {responses:?}");
+                            let unfinished = match stop_all_port_forward_with_deadline(
+                                DatabaseMode::File,
+                                &HashSet::new(),
+                                CLEANUP_RECONCILE_TIMEOUT,
+                            )
+                            .await
+                            {
+                                Ok((responses, unfinished)) => {
+                                    info!(
+                                        "Successfully stopped all port forwards: {responses:?}"
+                                    );
+                                    unfinished
                                 }
                                 Err(err) => {
                                     error!("Failed to stop port forwards: {err:?}");
+                                    Vec::new()
                                 }
-                            }
-                            if let Err(e) = cleanup_current_process_config_states().await {
-                                error!("Failed to cleanup config states: {e}");
-                            }
+                            };
+                            reconcile_and_cleanup_on_exit(&unfinished.into_iter().collect())
+                                .await;
                             // Stop MCP server if running
                             if let Err(e) = crate::mcp::stop().await {
                                 error!("Failed to stop MCP server: {e}");
@@ -265,9 +335,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
         }
         _ => {
             error!("No windows found, exiting application.");
-            if let Err(e) = cleanup_current_process_config_states().await {
-                error!("Failed to cleanup config states: {e}");
-            }
+            reconcile_and_cleanup_on_exit(&HashSet::new()).await;
             // Stop MCP server if running
             if let Err(e) = crate::mcp::stop().await {
                 error!("Failed to stop MCP server: {e}");
@@ -398,5 +466,40 @@ mod tests {
             Some(config_states[1].config_id),
             "Config ID should match ConfigState config_id"
         );
+    }
+
+    #[test]
+    fn none_workload_type_dispatches_like_service_or_pod() {
+        // Regression: a config with no workload_type (the common case for
+        // configs created before the field existed, and for every kftui
+        // config) used to be treated as a relay deploy for both protocols,
+        // while kftui and the old auto-start check treated it like
+        // `service`/`pod`: a direct TCP forward, a relay for UDP.
+        assert!(
+            is_direct_tcp_forward(None, "tcp"),
+            "a None workload type with tcp must take the direct forward path, like service/pod"
+        );
+        assert!(
+            !is_direct_tcp_forward(None, "udp"),
+            "a None workload type with udp must still go through the relay, like service/pod"
+        );
+    }
+
+    #[test]
+    fn service_and_pod_workload_types_match_none() {
+        assert_eq!(
+            is_direct_tcp_forward(Some("service"), "tcp"),
+            is_direct_tcp_forward(None, "tcp")
+        );
+        assert_eq!(
+            is_direct_tcp_forward(Some("pod"), "udp"),
+            is_direct_tcp_forward(None, "udp")
+        );
+    }
+
+    #[test]
+    fn expose_is_always_direct_and_proxy_never_is() {
+        assert!(is_direct_tcp_forward(Some("expose"), "udp"));
+        assert!(!is_direct_tcp_forward(Some("proxy"), "tcp"));
     }
 }

@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import {
   ClipboardIcon,
   Copy,
@@ -39,20 +39,19 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { PortForwardRowProps } from '@/types'
+import type { PortForwardRowProps, PortForwardToggleAction } from '@/types'
 
 import '../../styles.css'
 
-const PortForwardRow: React.FC<PortForwardRowProps> = ({
+const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   config,
-  confirmDeleteConfig,
-  handleDeleteConfig,
+  deleteConfigs,
   handleEditConfig,
   handleDuplicateConfig,
   selected,
   onSelectionChange,
-  _isInitiating,
-  setIsInitiating,
+  pendingAction,
+  toggleConfigForward,
 }) => {
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
     [key: string]: boolean
@@ -60,7 +59,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
   const [activePod, setActivePod] = useState<string | null>(null)
-  const [localInitiating, setLocalInitiating] = useState(false)
+  const isPending = pendingAction !== null
 
   useEffect(() => {
     const fallback = config.http_logs_enabled ?? false
@@ -81,25 +80,37 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }, [config.id, config.http_logs_enabled])
 
   useEffect(() => {
-    if (!config.is_running && !localInitiating) {
+    if (!config.is_running) {
       setActivePod(null)
-    } else if (config.is_running) {
-      const fetchInitialPod = async () => {
-        try {
-          const podName = await invoke<string | null>('get_active_pod_cmd', {
-            configId: config.id.toString(),
-          })
 
+      return
+    }
+
+    let cancelled = false
+
+    const fetchInitialPod = async () => {
+      try {
+        const podName = await invoke<string | null>('get_active_pod_cmd', {
+          configId: config.id.toString(),
+        })
+
+        if (!cancelled) {
           setActivePod(podName)
-        } catch (error) {
-          console.error('Error fetching initial active pod:', error)
+        }
+      } catch (error) {
+        console.error('Error fetching initial active pod:', error)
+        if (!cancelled) {
           setActivePod(null)
         }
       }
-
-      fetchInitialPod()
     }
-  }, [config.is_running, config.id, localInitiating])
+
+    fetchInitialPod()
+
+    return () => {
+      cancelled = true
+    }
+  }, [config.is_running, config.id])
 
   useEffect(() => {
     const setupListener = async () => {
@@ -210,87 +221,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
-    setIsInitiating(true)
-    setLocalInitiating(true)
-    try {
-      if (isChecked) {
-        await startPortForwarding()
-      } else {
-        await stopPortForwarding()
-      }
-    } catch (error) {
-      console.error('Error toggling port-forwarding:', error)
-    } finally {
-      setIsInitiating(false)
-      setLocalInitiating(false)
-    }
-  }
+    const action: PortForwardToggleAction = isChecked ? 'starting' : 'stopping'
 
-  const startPortForwarding = async () => {
-    try {
-      if (config.workload_type === 'expose') {
-        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-      } else if (
-        (config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-        config.protocol === 'tcp'
-      ) {
-        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
-        await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
-      } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
-      }
-    } catch (error) {
-      toaster.error({
-        title: 'Error starting port forwarding',
-        description: error instanceof Error ? error.message : String(error),
-        duration: 1000,
-      })
-    }
-  }
-
-  const stopPortForwarding = async () => {
-    try {
-      if (
-        config.workload_type === 'expose' ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'tcp')
-      ) {
-        await invoke('stop_port_forward_cmd', {
-          serviceName: config.service,
-          configId: config.id.toString(),
-        })
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
-        await invoke('stop_proxy_forward_cmd', {
-          configId: config.id.toString(),
-          namespace: config.namespace,
-          serviceName: config.service,
-          localPort: config.local_port,
-          remoteAddress: config.remote_address,
-          protocol: 'tcp',
-        })
-      } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
-      }
-    } catch (error) {
-      toaster.error({
-        title: 'Error stopping port forwarding',
-        description: error instanceof Error ? error.message : String(error),
-        duration: 1000,
-      })
-    }
+    await toggleConfigForward(config, action)
   }
 
   const handleOpenChange = (details: { open: boolean }) => {
@@ -298,7 +231,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const handleOpenDeleteDialog = () => {
-    handleDeleteConfig(config.id)
     setIsDeleteDialogOpen(true)
   }
 
@@ -375,6 +307,55 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const getStatusInfo = () => {
+    if (pendingAction?.timedOut) {
+      return {
+        color: 'rgba(217, 119, 6, 0.7)',
+        status: 'Unresponsive',
+        description:
+          pendingAction.action === 'starting'
+            ? 'Start is taking longer than expected...'
+            : pendingAction.action === 'stopping'
+              ? 'Stop is taking longer than expected...'
+              : 'This action is taking longer than expected...',
+      }
+    }
+
+    if (pendingAction?.action === 'starting') {
+      return {
+        color: 'rgba(59, 130, 246, 0.8)',
+        status: 'Starting',
+        description:
+          config.workload_type === 'expose'
+            ? 'Expose tunnel is starting...'
+            : 'Port forward is starting...',
+      }
+    }
+
+    if (pendingAction?.action === 'stopping') {
+      return {
+        color: 'rgba(59, 130, 246, 0.8)',
+        status: 'Stopping',
+        description:
+          config.workload_type === 'expose'
+            ? 'Expose tunnel is stopping...'
+            : 'Port forward is stopping...',
+      }
+    }
+
+    if (
+      pendingAction?.action === 'saving' ||
+      pendingAction?.action === 'deleting'
+    ) {
+      return {
+        color: 'rgba(100, 116, 139, 0.6)',
+        status: 'Busy',
+        description:
+          pendingAction.action === 'saving'
+            ? 'Saving configuration...'
+            : 'Deleting configuration...',
+      }
+    }
+
     // Follow same logic as checkbox: config.is_running
     if (config.is_running) {
       // Orange: Running but has specific issues
@@ -388,48 +369,22 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
       // For expose workload, if is_running is true, it's running
       if (config.workload_type === 'expose') {
-        const status = localInitiating
-          ? config.is_running
-            ? 'Stopping'
-            : 'Starting'
-          : 'Running'
-
-        const description = localInitiating
-          ? config.is_running
-            ? 'Expose tunnel is stopping...'
-            : 'Expose tunnel is starting...'
-          : activePod
-            ? `Tunnel active via ${activePod}`
-            : 'Expose tunnel is active'
-
         return {
           color: 'rgba(59, 130, 246, 0.8)',
-          status,
-          description,
+          status: 'Running',
+          description: activePod
+            ? `Tunnel active via ${activePod}`
+            : 'Expose tunnel is active',
         }
       }
 
       // Blue: Running (default for any running state)
-      const status = localInitiating
-        ? config.is_running
-          ? 'Stopping'
-          : 'Starting'
-        : activePod
-          ? 'Running'
-          : 'Pending'
-
-      const description = localInitiating
-        ? config.is_running
-          ? 'Port forward is stopping...'
-          : 'Port forward is starting...'
-        : activePod
-          ? `Connected to ${activePod}`
-          : 'Waiting for healthy pod...'
-
       return {
         color: 'rgba(59, 130, 246, 0.8)',
-        status,
-        description,
+        status: activePod ? 'Running' : 'Pending',
+        description: activePod
+          ? `Connected to ${activePod}`
+          : 'Waiting for healthy pod...',
       }
     }
 
@@ -543,7 +498,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   size='xs'
                   checked={selected}
                   onCheckedChange={e => {
-                    onSelectionChange(e.checked === true)
+                    onSelectionChange(config.id, e.checked === true)
                   }}
                   className='checkbox'
                 />
@@ -576,9 +531,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             <Switch
               size='sm'
               checked={config.is_running}
-              onCheckedChange={details => togglePortForwarding(details.checked)}
-              disabled={localInitiating}
-              data-loading={localInitiating ? '' : undefined}
+              onCheckedChange={details =>
+                void togglePortForwarding(details.checked)
+              }
+              disabled={isPending}
+              data-loading={isPending ? '' : undefined}
               unstyled={true}
               className='switch'
             />
@@ -654,7 +611,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='edit'
-                onClick={() => handleEditConfig(config.id)}
+                disabled={isPending}
+                onClick={() => void handleEditConfig(config.id)}
               >
                 <Box as={Pencil} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
@@ -664,7 +622,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='duplicate'
-                onClick={() => handleDuplicateConfig(config.id)}
+                disabled={isPending}
+                onClick={() => void handleDuplicateConfig(config.id)}
               >
                 <Box as={Copy} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
@@ -674,6 +633,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='delete'
+                disabled={isPending}
                 onClick={handleOpenDeleteDialog}
               >
                 <Box as={Trash2} width='12px' height='12px' />
@@ -750,9 +710,15 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <Button
                 size='xs'
                 className='dialog-button dialog-button-primary'
+                disabled={isPending}
                 onClick={() => {
-                  confirmDeleteConfig()
-                  setIsDeleteDialogOpen(false)
+                  void (async () => {
+                    const success = await deleteConfigs([config.id])
+
+                    if (success) {
+                      setIsDeleteDialogOpen(false)
+                    }
+                  })()
                 }}
               >
                 Delete
@@ -772,4 +738,4 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   )
 }
 
-export default PortForwardRow
+export default memo(PortForwardRowComponent)

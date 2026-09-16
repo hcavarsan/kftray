@@ -663,6 +663,59 @@ pub async fn update_config_with_mode(config: Config, mode: DatabaseMode) -> Resu
     update_config_with_pool(config, &context.pool).await
 }
 
+/// Outcome of [`set_allocated_local_address`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocatedAddressWrite {
+    /// The address was written.
+    Written,
+    /// The configuration still exists but no longer asks for an allocated
+    /// address, or was edited to opt out concurrently with the write.
+    NotRequested,
+    /// The configuration row no longer exists.
+    RowMissing,
+}
+
+/// Records an auto-allocated loopback address without touching any other field.
+///
+/// The write is conditional on the stored configuration still asking for an
+/// allocated address: a read-modify-write of the whole record would lose an
+/// edit made while the allocation was in flight, and would overwrite an address
+/// the user chose manually in the meantime.
+pub async fn set_allocated_local_address(
+    id: i64, address: &str, mode: DatabaseMode,
+) -> Result<AllocatedAddressWrite, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
+    let updated = sqlx::query(
+        "UPDATE configs
+         SET data = json_set(data, '$.local_address', ?1)
+         WHERE id = ?2
+           AND json_extract(data, '$.auto_loopback_address') IN (1, 'true')",
+    )
+    .bind(address)
+    .bind(id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if updated.rows_affected() > 0 {
+        return Ok(AllocatedAddressWrite::Written);
+    }
+
+    let exists = sqlx::query("SELECT 1 FROM configs WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some();
+
+    Ok(if exists {
+        AllocatedAddressWrite::NotRequested
+    } else {
+        AllocatedAddressWrite::RowMissing
+    })
+}
+
 pub async fn export_configs_with_mode(mode: DatabaseMode) -> Result<String, String> {
     let context = DatabaseManager::get_context(mode).await?;
     export_configs_with_pool(&context.pool).await
