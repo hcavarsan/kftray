@@ -3496,7 +3496,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-commons"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -3516,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-helper"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "clap",
  "dirs 7.0.0",
@@ -3536,7 +3536,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-http-logs"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "brotli",
@@ -3557,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-mcp"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3581,7 +3581,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-network-monitor"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "futures",
  "kftray-commons",
@@ -3592,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-portforward"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -3653,7 +3653,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-shortcuts"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3693,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3743,7 +3743,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.27.32"
+version = "0.27.33"
 dependencies = [
  "anyhow",
  "built",
