@@ -916,9 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_restart_forgets_a_persisted_id_that_never_reached_disk() {
-        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let mode = DatabaseMode::Memory;
 
         // A crash between `add_ssl_host_entry` persisting the id and its
@@ -1012,9 +1010,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_ssl_ids_survive_a_failed_second_write_whose_rollback_also_fails() {
-        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let mode = DatabaseMode::Memory;
 
         // What `add_ssl_host_entry` does before attempting the write: both
@@ -1042,9 +1038,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_ssl_ids_are_forgotten_once_a_failed_writes_rollback_is_verified() {
-        let _lock = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let mode = DatabaseMode::Memory;
 
         persist_ssl_id_written("82-https", mode).await;

@@ -978,6 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_global_certificate_for_all_configs() {
+        let _db = kftray_commons::test_utils::test_db().await;
         use crate::ssl::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,

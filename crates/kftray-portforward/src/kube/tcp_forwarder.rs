@@ -978,6 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_logger_state() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let mut forwarder = TcpForwarder::new(1, "pod".to_string());
 
         let result = forwarder.initialize_logger(8080).await;

@@ -644,6 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_saturated_start_batch_does_not_block_stopping() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let mut app = App::new(test_logger_state());
         let _guard = lock_forwarding_globals().await;
         let slots = app.forwarding_slots.available_permits() as u32;

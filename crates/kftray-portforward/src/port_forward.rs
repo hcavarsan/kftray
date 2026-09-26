@@ -203,7 +203,7 @@ lazy_static! {
     /// Serializes tests across this crate (and kftui's, which shares the
     /// same process-global registries) that touch `CHILD_PROCESSES` or
     /// other global forwarding state. Compiled unconditionally, mirroring
-    /// `kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX`, so a dependent
+    /// `kftray_commons::test_utils::test_db`, so a dependent
     /// crate's own `#[cfg(test)]` code can synchronize on it too.
     pub static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }

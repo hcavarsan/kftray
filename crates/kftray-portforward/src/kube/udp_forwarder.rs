@@ -889,6 +889,25 @@ pub(crate) mod tests {
         }
     }
 
+    /// Binds `port` to prove the forwarder released it. Parallel tests bind
+    /// ephemeral ports too and can briefly land on the one just freed, so an
+    /// `AddrInUse` gets retried for a short while before it counts as a leak.
+    async fn assert_port_released(port: u16) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match UdpSocket::bind(("127.0.0.1", port)).await {
+                Ok(_) => return,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AddrInUse
+                        && Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => panic!("port {port} was not released: {error}"),
+            }
+        }
+    }
+
     async fn read_frame(stream: &mut DuplexStream) -> Vec<u8> {
         UdpForwarder::read_tcp_length_and_packet(stream)
             .await
@@ -1556,7 +1575,7 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        UdpSocket::bind(("127.0.0.1", port)).await.unwrap();
+        assert_port_released(port).await;
     }
 
     #[tokio::test]
@@ -1588,9 +1607,7 @@ pub(crate) mod tests {
         assert!(owner.await.unwrap_err().is_cancelled());
         drop(stuck);
 
-        UdpSocket::bind(("127.0.0.1", port))
-            .await
-            .expect("aborting the owner must release the port even with a wedged session");
+        assert_port_released(port).await;
     }
 
     #[tokio::test]

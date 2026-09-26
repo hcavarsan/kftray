@@ -208,6 +208,7 @@ fn view_items_toggle_filters() {
 
 #[tokio::test]
 async fn tag_editor_saves_parsed_tags() {
+    let _db = kftray_commons::test_utils::test_db().await;
     let mode = DatabaseMode::Memory;
     let original = new_config("tag-editor", &[("old", "")]);
     let id = insert_config_with_mode(original.clone(), mode)

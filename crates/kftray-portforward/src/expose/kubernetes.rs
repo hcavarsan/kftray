@@ -2126,6 +2126,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_attempts_all_resources_and_ignores_not_found() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = kube::Client::new(mock_service, "default");
@@ -2225,6 +2226,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pre_history_exposure_cannot_start_privately_without_verifying_its_ingress() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         // An exposure that existed before ingress history was recorded: it
@@ -2370,6 +2372,7 @@ mod tests {
     }
     #[tokio::test]
     async fn a_confirmed_ingress_rollback_clears_its_history() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_id = "2002";
@@ -2440,6 +2443,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_409_on_ingress_create_keeps_its_history() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_dir = tempfile::tempdir().unwrap();
@@ -2512,6 +2516,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_ambiguous_ingress_create_keeps_history_after_a_notfound() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_dir = tempfile::tempdir().unwrap();
@@ -2598,6 +2603,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_ambiguous_ingress_create_owned_by_another_installation_is_definitive() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_dir = tempfile::tempdir().unwrap();
@@ -2693,6 +2699,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_readiness_wait_rolls_back_the_created_deployment() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mode = DatabaseMode::Memory;
         let config_dir = tempfile::tempdir().unwrap();

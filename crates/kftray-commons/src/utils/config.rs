@@ -1689,7 +1689,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_with_mode_memory() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -1722,7 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_operations_with_mode_memory() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -1761,7 +1761,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_update() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -1793,7 +1793,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_inserting() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -1828,7 +1828,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_different_namespace() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -1864,7 +1864,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kftui_incremental_import_multiple_ports() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 

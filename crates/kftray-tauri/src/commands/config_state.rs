@@ -24,9 +24,7 @@ mod tests {
     async fn test_get_config_states() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config1 = Config {
@@ -70,9 +68,7 @@ mod tests {
     async fn test_get_config_states_with_running_state() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config = Config {
@@ -115,9 +111,7 @@ mod tests {
     async fn test_get_config_states_with_no_configs() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let states =
