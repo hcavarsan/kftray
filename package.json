@@ -26,8 +26,8 @@
     "knip": "pnpm --filter @kftray/ui run knip"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
+    "@biomejs/biome": "2.5.14",
     "@codecov/vite-plugin": "2.0.1",
-    "@tauri-apps/cli": "^2.11.4"
+    "@tauri-apps/cli": "^2.12.0"
   }
 }
