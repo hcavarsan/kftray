@@ -25,6 +25,7 @@ use crate::tui::input::{
     AppState,
     ViewItem,
     handle_tag_editor_input,
+    handle_view_settings_input,
     open_tag_editor,
     view_items,
 };
@@ -219,6 +220,7 @@ async fn tag_editor_saves_parsed_tags() {
         ..original
     }];
     app.table_state_stopped.select(Some(0));
+    app.selected_rows_stopped = HashSet::from([0]);
 
     open_tag_editor(&mut app);
     assert_eq!(app.state, AppState::ShowTagEditor);
@@ -229,6 +231,7 @@ async fn tag_editor_saves_parsed_tags() {
         .await
         .unwrap();
     assert_eq!(app.state, AppState::Normal);
+    assert!(app.selected_rows_stopped.is_empty());
 
     let saved = get_config_with_mode(id, mode).await.unwrap();
     assert_eq!(
@@ -239,6 +242,35 @@ async fn tag_editor_saves_parsed_tags() {
         ]
         .into()
     );
+}
+
+#[tokio::test]
+async fn changing_the_view_drops_marked_rows() {
+    let mut app = App::new(test_logger_state());
+    app.all_configs = vec![config(1, "a", &[("team", "core")])];
+    app.selected_rows_stopped = HashSet::from([0, 2]);
+    app.selected_rows_running = HashSet::from([1]);
+    app.state = AppState::ShowViewSettings;
+
+    handle_view_settings_input(&mut app, KeyCode::Char('c'), DatabaseMode::Memory)
+        .await
+        .unwrap();
+
+    assert!(app.selected_rows_stopped.is_empty());
+    assert!(app.selected_rows_running.is_empty());
+}
+
+#[tokio::test]
+async fn moving_in_the_view_popup_keeps_marked_rows() {
+    let mut app = App::new(test_logger_state());
+    app.selected_rows_stopped = HashSet::from([0]);
+    app.state = AppState::ShowViewSettings;
+
+    handle_view_settings_input(&mut app, KeyCode::Down, DatabaseMode::Memory)
+        .await
+        .unwrap();
+
+    assert_eq!(app.selected_rows_stopped, HashSet::from([0]));
 }
 
 #[tokio::test]

@@ -350,25 +350,40 @@ pub fn validate_tags(tags: &BTreeMap<String, String>) -> Result<(), String> {
 }
 
 /// Trims values and lowercases keys, dropping entries with an empty key.
-pub fn normalize_tags(tags: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    tags.into_iter()
-        .map(|(key, value)| (key.trim().to_lowercase(), value.trim().to_string()))
-        .filter(|(key, _)| !key.is_empty())
-        .collect()
+/// Fails when two keys end up the same after that, since one value would be
+/// lost.
+pub fn normalize_tags<I>(tags: I) -> Result<BTreeMap<String, String>, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut normalized = BTreeMap::new();
+    for (key, value) in tags {
+        let key = key.trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        if normalized
+            .insert(key.clone(), value.trim().to_string())
+            .is_some()
+        {
+            return Err(format!("tag key '{key}' is set more than once"));
+        }
+    }
+    Ok(normalized)
 }
 
 /// Parses `key=value, other, k2=v2` into a normalized, validated tag map.
 pub fn parse_tags(input: &str) -> Result<BTreeMap<String, String>, String> {
-    let tags = input
-        .split(',')
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| {
-            let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-            (key.to_string(), value.to_string())
-        })
-        .collect();
-    let tags = normalize_tags(tags);
+    let tags = normalize_tags(
+        input
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+                (key.to_string(), value.to_string())
+            }),
+    )?;
     validate_tags(&tags)?;
     Ok(tags)
 }
@@ -609,5 +624,15 @@ mod tests {
         assert_eq!(format_tags(&tags), "env=prod, pinned, team=payments");
         assert!(parse_tags("bad key=x").is_err());
         assert!(parse_tags("k=a=b").is_err());
+        assert!(parse_tags("env=dev, Env=prod").is_err());
+    }
+
+    #[test]
+    fn normalize_tags_rejects_keys_that_collide() {
+        let tags = [
+            ("Team".to_string(), "core".to_string()),
+            ("team".to_string(), "payments".to_string()),
+        ];
+        assert!(normalize_tags(tags).is_err());
     }
 }

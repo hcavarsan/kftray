@@ -36,6 +36,7 @@ import type {
 
 import { selectStyles, tagSelectStyles } from './styles'
 import {
+  duplicateTagKey,
   optionsToTags,
   tagSuggestions,
   tagsError,
@@ -101,6 +102,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     kubeConfig: 'default',
   })
   const [isSaving, setIsSaving] = useState(false)
+  const [duplicateTagError, setDuplicateTagError] = useState<string | null>(
+    null,
+  )
 
   useEffect(() => {
     if (formState.selectedWorkloadType?.value === 'expose') {
@@ -197,7 +201,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }
 
-  const tagError = tagsError(newConfig.tags)
+  const tagError = duplicateTagError ?? tagsError(newConfig.tags)
 
   const tagOptionsQuery = useQuery({
     queryKey: ['config-tag-options'],
@@ -389,6 +393,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       isFormValid: false,
       kubeConfig: 'default',
     }))
+    setDuplicateTagError(null)
   }, [])
 
   useEffect(() => {
@@ -747,12 +752,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     isMulti
                     name='tags'
                     value={tagsToOptions(newConfig.tags)}
-                    onChange={options =>
+                    onChange={options => {
+                      const duplicate = duplicateTagKey(options)
+
+                      if (duplicate) {
+                        setDuplicateTagError(
+                          `Tag "${duplicate}" already has a value. Remove it first to change it.`,
+                        )
+
+                        return
+                      }
+                      setDuplicateTagError(null)
                       setNewConfig(prev => ({
                         ...prev,
                         tags: optionsToTags(options),
                       }))
-                    }
+                    }}
                     options={tagOptionsQuery.data}
                     styles={tagSelectStyles}
                     placeholder='team=payments, env=dev, pinned'

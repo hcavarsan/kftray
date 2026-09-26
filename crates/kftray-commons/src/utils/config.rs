@@ -338,7 +338,7 @@ pub async fn export_configs() -> Result<String, String> {
 }
 
 fn validate_imported_config(config: &Config) -> Result<(), String> {
-    validate_tags(&normalize_tags(config.tags.clone()))?;
+    validate_tags(&normalize_tags(config.tags.clone())?)?;
 
     if config.namespace.is_empty() {
         return Err("Namespace is required and cannot be empty".to_string());
@@ -763,7 +763,7 @@ fn pick_unused_local_port() -> Option<u16> {
 }
 
 fn prepare_config(mut config: Config) -> Result<Config, String> {
-    config.tags = normalize_tags(std::mem::take(&mut config.tags));
+    config.tags = normalize_tags(std::mem::take(&mut config.tags))?;
     validate_tags(&config.tags)?;
 
     if let Some(ref mut alias) = config.alias {

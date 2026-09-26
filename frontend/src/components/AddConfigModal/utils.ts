@@ -47,16 +47,34 @@ export const tagsToOptions = (
     return { label: tag, value: tag }
   })
 
+const parseTag = (value: string): [string, string] => {
+  const [key, ...rest] = value.split('=')
+
+  return [key.trim().toLowerCase(), rest.join('=').trim()]
+}
+
 export const optionsToTags = (
   options: readonly StringOption[],
 ): Record<string, string> =>
-  Object.fromEntries(
-    options.map(({ value }) => {
-      const [key, ...rest] = value.split('=')
+  Object.fromEntries(options.map(({ value }) => parseTag(value)))
 
-      return [key.trim().toLowerCase(), rest.join('=').trim()]
-    }),
-  )
+/** Returns the first key that shows up twice once keys are normalized. */
+export const duplicateTagKey = (
+  options: readonly StringOption[],
+): string | null => {
+  const seen = new Set<string>()
+
+  for (const { value } of options) {
+    const [key] = parseTag(value)
+
+    if (seen.has(key)) {
+      return key
+    }
+    seen.add(key)
+  }
+
+  return null
+}
 
 export const tagSuggestions = (facets: Facet[]): StringOption[] =>
   facets

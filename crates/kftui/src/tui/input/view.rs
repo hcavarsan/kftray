@@ -123,11 +123,23 @@ pub async fn handle_view_settings_input(
         _ => false,
     };
 
-    if changed && let Err(e) = set_config_view_with_mode(&app.config_view, mode).await {
+    if !changed {
+        return Ok(());
+    }
+    clear_marked_rows(app);
+    if let Err(e) = set_config_view_with_mode(&app.config_view, mode).await {
         app.error_message = Some(format!("Failed to save view: {e}"));
         app.state = AppState::ShowErrorPopup;
     }
     Ok(())
+}
+
+/// Marked rows are stored as row indices, so anything that reorders or
+/// refilters the tables has to drop them. Otherwise a bulk delete or start
+/// would act on whatever configs moved into those rows.
+fn clear_marked_rows(app: &mut App) {
+    app.selected_rows_stopped.clear();
+    app.selected_rows_running.clear();
 }
 
 pub fn open_tag_editor(app: &mut App) {
@@ -174,7 +186,10 @@ pub async fn save_tags(app: &mut App, mode: DatabaseMode) {
     };
 
     match result {
-        Ok(()) => app.state = AppState::Normal,
+        Ok(()) => {
+            clear_marked_rows(app);
+            app.state = AppState::Normal;
+        }
         Err(e) => {
             app.error_message = Some(format!("Failed to save tags: {e}"));
             app.state = AppState::ShowErrorPopup;
