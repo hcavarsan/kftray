@@ -184,12 +184,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{
-        AtomicBool,
-        Ordering,
-    };
-
-    use kftray_commons::db::init;
     use kftray_commons::models::{
         config_model::Config,
         config_state_model::ConfigState,
@@ -213,20 +207,6 @@ mod tests {
         LoggerState::new(LogConfig::new(log::LevelFilter::Off))
     }
 
-    static DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-    fn initialize_test_db() {
-        if !DB_INITIALIZED.load(Ordering::SeqCst) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
-                match init().await {
-                    Ok(_) => DB_INITIALIZED.store(true, Ordering::SeqCst),
-                    Err(e) => panic!("Failed to initialize DB for test: {e:?}"),
-                }
-            });
-        }
-    }
-
     /// Regression for a clamp that used to run unconditionally every frame:
     /// `app.error_scroll_max`/`app.error_scroll` were reset to 0 whenever
     /// any state other than `ShowErrorPopup` rendered, even though the error
@@ -234,7 +214,6 @@ mod tests {
     /// (e.g. a confirmation briefly covering an open error popup).
     #[test]
     fn error_scroll_state_is_preserved_when_another_popup_covers_the_error_popup() {
-        initialize_test_db();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(test_logger_state());
@@ -276,7 +255,6 @@ mod tests {
 
     #[test]
     fn test_draw_ui_initial_state() {
-        initialize_test_db();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(test_logger_state());
@@ -293,7 +271,6 @@ mod tests {
 
     #[test]
     fn test_draw_ui_with_data() {
-        initialize_test_db();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(test_logger_state());

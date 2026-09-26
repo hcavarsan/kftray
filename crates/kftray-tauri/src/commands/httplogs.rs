@@ -888,9 +888,7 @@ mod tests {
     async fn test_http_logs_config_persistence() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config_id = create_test_config()
@@ -943,9 +941,7 @@ mod tests {
     async fn test_http_logs_direct_database_integration() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config_id = create_test_config()
@@ -1003,9 +999,7 @@ mod tests {
     async fn test_http_logs_config_validation() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config_id = create_test_config()
@@ -1066,9 +1060,7 @@ mod tests {
     async fn test_http_logs_state_load_from_database() {
         use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
-            .lock()
-            .await;
+        let _db = kftray_commons::test_utils::test_db().await;
         setup_isolated_test_db().await;
 
         let config_id = create_test_config()

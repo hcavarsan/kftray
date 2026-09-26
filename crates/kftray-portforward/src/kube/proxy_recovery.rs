@@ -974,6 +974,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_loop_exhausts_retries_and_sets_failed() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         tokio::time::pause();
 

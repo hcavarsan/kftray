@@ -70,6 +70,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_export_input_prompt() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let mut app = setup_file_explorer_app();
         app.state = AppState::ShowInputPrompt;
         app.input_buffer = "test.json".to_string();

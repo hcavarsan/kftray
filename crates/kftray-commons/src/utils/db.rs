@@ -14,7 +14,6 @@ use log::{
     warn,
 };
 use sqlx::SqlitePool;
-use tokio::sync::OnceCell;
 
 use crate::config_dir::{
     get_db_file_path,
@@ -34,6 +33,7 @@ use crate::utils::manifests::{
     migrate_proxy_deployment_manifest_if_previous_default,
     proxy_deployment_manifest_exists,
 };
+use crate::utils::pool_slot::PoolSlot;
 
 lazy_static! {
     static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -92,25 +92,34 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
+static DB_POOL: PoolSlot = PoolSlot::new();
 
 pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
-    DB_POOL
-        .get_or_try_init(|| async {
-            let db_dir = get_db_file_path().map_err(|e| {
-                error!("Failed to get DB file path: {e}");
-                e.to_string()
-            })?;
-            let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
-            info!("Database file path: {db_dir_str}");
-            let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
-                error!("Failed to connect to DB: {e}");
-                e.to_string()
-            })?;
-            Ok(Arc::new(pool))
-        })
-        .await
-        .map(Arc::clone)
+    DB_POOL.get_or_init(connect_file_pool).await
+}
+
+async fn connect_file_pool() -> Result<Arc<SqlitePool>, String> {
+    let db_dir = get_db_file_path().map_err(|e| {
+        error!("Failed to get DB file path: {e}");
+        e.to_string()
+    })?;
+    let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
+    info!("Database file path: {db_dir_str}");
+    let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
+        error!("Failed to connect to DB: {e}");
+        e.to_string()
+    })?;
+    Ok(Arc::new(pool))
+}
+
+/// Replaces the file database pool. Meant for tests that point the app at an
+/// in-memory database.
+pub fn set_db_pool(pool: Arc<SqlitePool>) {
+    DB_POOL.set(pool);
+}
+
+pub fn clear_db_pool() {
+    DB_POOL.clear();
 }
 
 pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
