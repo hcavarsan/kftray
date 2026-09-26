@@ -61,6 +61,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_logging_enabled() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let handler = HttpRequestHandler::new(123);
 
         assert!(!handler.is_logging_enabled().await.unwrap());

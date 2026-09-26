@@ -1446,6 +1446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
+        let _db = kftray_commons::test_utils::test_db().await;
         // Shares the process-wide startup registry with the stop-all tests,
         // which cancel everything they find registered there.
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
@@ -1466,6 +1467,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_config_does_not_hide_its_siblings_results() {
+        let _db = kftray_commons::test_utils::test_db().await;
         // Shares the process-wide startup registry with the stop-all tests,
         // which cancel everything they find registered there.
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
@@ -1586,6 +1588,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejected_duplicate_start_keeps_the_existing_listener_alive() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_031;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

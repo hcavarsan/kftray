@@ -66,9 +66,7 @@ mod tests {
         Ordering,
     };
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
-    use tokio::sync::Mutex;
     use tokio::time::{
         Duration,
         sleep,
@@ -76,25 +74,21 @@ mod tests {
 
     use super::*;
     use crate::utils::db::{
-        DB_POOL,
         create_db_table,
+        set_db_pool,
     };
     use crate::utils::settings::set_disconnect_timeout;
-
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
 
     async fn setup_test_db() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         create_db_table(&pool).await.unwrap();
         let arc_pool = Arc::new(pool);
-        let _ = DB_POOL.set(arc_pool);
+        set_db_pool(arc_pool);
     }
 
     #[tokio::test]
     async fn test_timeout_functions() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
         setup_test_db().await;
         set_disconnect_timeout(1).await.unwrap(); // Set 1 minute timeout
 

@@ -22,6 +22,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_configs_to_file() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_export.json");
         let file_path_str = file_path.to_str().unwrap();
@@ -42,6 +43,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_configs_to_file_error() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let file_path = "/non/existent/directory/test_export.json";
 
         let result = export_configs_to_file(file_path, DatabaseMode::File).await;

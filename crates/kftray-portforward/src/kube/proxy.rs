@@ -1048,6 +1048,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deploy_and_forward_pod_invalid_kubeconfig() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let config = Config {
             id: Some(1),
             context: Some("invalid-context".to_string()),
@@ -1160,6 +1161,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_proxy_forward_invalid_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let result = stop_proxy_forward(999, "default", "nonexistent-service".to_string()).await;
         assert!(result.is_err());
     }
@@ -1209,11 +1211,13 @@ mod tests {
 
     #[tokio::test]
     async fn stop_all_cancels_proxy_pod_discovery() {
+        let _db = kftray_commons::test_utils::test_db().await;
         assert_startup_wait_is_cancelled(420_001, false).await;
     }
 
     #[tokio::test]
     async fn stop_cancels_proxy_listener_readiness() {
+        let _db = kftray_commons::test_utils::test_db().await;
         assert_startup_wait_is_cancelled(420_002, true).await;
     }
 

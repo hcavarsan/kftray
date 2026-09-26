@@ -1053,7 +1053,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_with_mode_memory() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
         set_setting_with_mode("memory_test", "test_value", DatabaseMode::Memory)
             .await
             .unwrap();
@@ -1082,7 +1082,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_isolation_between_modes() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
         let memory_context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
             .unwrap();
@@ -1114,7 +1114,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lazy_baseline_never_marks_row_created_after_failed_init_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
@@ -1201,7 +1201,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_failed_snapshot_query_leaves_lazy_baseline_unrestricted_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
@@ -1288,7 +1288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_is_recorded_in_memory_even_when_persisting_it_fails_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
@@ -1358,7 +1358,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_persisted_baseline_allow_list_survives_a_restart_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
@@ -1476,7 +1476,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_malformed_persisted_allow_list_errors_and_leaves_the_pending_key_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
@@ -1547,7 +1547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_setting_with_mode_errors_on_a_non_numeric_value_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         for junk in ["not-a-number", "12abc"] {
             let key = format!("junk_counter_test:{junk}:memory");
@@ -1579,7 +1579,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_setting_with_mode_increments_a_numeric_value_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let key = "numeric_counter_test:memory";
         let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;
@@ -1599,7 +1599,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_setting_with_mode_rejects_an_already_maxed_counter_memory_mode() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let key = "maxed_counter_test:memory";
         let _ = delete_setting_with_mode(key, DatabaseMode::Memory).await;

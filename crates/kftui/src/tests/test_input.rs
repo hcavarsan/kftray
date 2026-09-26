@@ -417,6 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_menu_input() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let mut app = setup_app();
         app.state = AppState::Normal;
         app.active_component = ActiveComponent::Menu;

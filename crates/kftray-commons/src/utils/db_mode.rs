@@ -1,8 +1,4 @@
 use std::sync::Arc;
-use std::sync::{
-    LazyLock,
-    Mutex,
-};
 
 use sqlx::SqlitePool;
 
@@ -10,6 +6,7 @@ use crate::db::{
     create_db_table,
     get_db_pool,
 };
+use crate::utils::pool_slot::PoolSlot;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Copy)]
 pub enum DatabaseMode {
@@ -25,34 +22,7 @@ pub struct DatabaseContext {
 
 pub struct DatabaseManager;
 
-static MEMORY_DB_POOL: LazyLock<Mutex<Option<Arc<SqlitePool>>>> =
-    LazyLock::new(|| Mutex::new(None));
-
-/// Serializes creation of the memory pool so concurrent first callers share
-/// one pool instead of each creating one and the last write winning.
-static MEMORY_DB_INIT: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
-
-type PoolSlot = Mutex<Option<Arc<SqlitePool>>>;
-
-async fn get_or_init_pool<F, Fut>(
-    slot: &PoolSlot, init_lock: &tokio::sync::Mutex<()>, init: F,
-) -> Result<Arc<SqlitePool>, String>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Arc<SqlitePool>, String>>,
-{
-    if let Some(pool) = slot.lock().unwrap().clone() {
-        return Ok(pool);
-    }
-    let _init = init_lock.lock().await;
-    if let Some(pool) = slot.lock().unwrap().clone() {
-        return Ok(pool);
-    }
-    let pool = init().await?;
-    *slot.lock().unwrap() = Some(pool.clone());
-    Ok(pool)
-}
+static MEMORY_DB_POOL: PoolSlot = PoolSlot::new();
 
 async fn create_memory_pool() -> Result<Arc<SqlitePool>, String> {
     let pool = Arc::new(
@@ -84,16 +54,13 @@ impl DatabaseManager {
     pub async fn get_context(mode: DatabaseMode) -> Result<DatabaseContext, String> {
         let pool = match mode {
             DatabaseMode::File => get_db_pool().await.map_err(|e| e.to_string())?,
-            DatabaseMode::Memory => {
-                get_or_init_pool(&MEMORY_DB_POOL, &MEMORY_DB_INIT, create_memory_pool).await?
-            }
+            DatabaseMode::Memory => MEMORY_DB_POOL.get_or_init(create_memory_pool).await?,
         };
         Ok(DatabaseContext { pool, mode })
     }
 
     pub fn cleanup_memory_pools() {
-        let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();
-        *pool_guard = None;
+        MEMORY_DB_POOL.clear();
     }
 }
 
@@ -109,6 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_context_memory() {
+        let _db = crate::test_utils::test_db().await;
         let context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
             .unwrap();
@@ -117,35 +85,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_concurrent_first_callers_share_one_pool() {
-        use std::sync::atomic::{
-            AtomicUsize,
-            Ordering,
-        };
-
-        let slot = PoolSlot::default();
-        let init_lock = tokio::sync::Mutex::new(());
-        let inits = AtomicUsize::new(0);
-        let init = || async {
-            inits.fetch_add(1, Ordering::SeqCst);
-            tokio::task::yield_now().await;
-            SqlitePool::connect("sqlite::memory:")
-                .await
-                .map(Arc::new)
-                .map_err(|e| e.to_string())
-        };
-
-        let pools =
-            futures::future::join_all((0..8).map(|_| get_or_init_pool(&slot, &init_lock, init)))
-                .await;
-        let pools: Vec<_> = pools.into_iter().map(Result::unwrap).collect();
-
-        assert_eq!(inits.load(Ordering::SeqCst), 1);
-        assert!(pools.windows(2).all(|w| Arc::ptr_eq(&w[0], &w[1])));
-    }
-
-    #[tokio::test]
     async fn test_database_context_file() {
+        let _db = crate::test_utils::test_db().await;
         let context = DatabaseManager::get_context(DatabaseMode::File).await;
         if let Ok(ctx) = context {
             assert_eq!(ctx.mode, DatabaseMode::File);

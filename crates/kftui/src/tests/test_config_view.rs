@@ -209,6 +209,7 @@ fn view_items_toggle_filters() {
 
 #[tokio::test]
 async fn tag_editor_saves_parsed_tags() {
+    let _db = kftray_commons::test_utils::test_db().await;
     let mode = DatabaseMode::Memory;
     let original = new_config("tag-editor", &[("old", "")]);
     let id = insert_config_with_mode(original.clone(), mode)
@@ -246,6 +247,7 @@ async fn tag_editor_saves_parsed_tags() {
 
 #[tokio::test]
 async fn changing_the_view_drops_marked_rows() {
+    let _db = kftray_commons::test_utils::test_db().await;
     let mut app = App::new(test_logger_state());
     app.all_configs = vec![config(1, "a", &[("team", "core")])];
     app.selected_rows_stopped = HashSet::from([0, 2]);
