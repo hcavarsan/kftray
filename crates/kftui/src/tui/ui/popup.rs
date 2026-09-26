@@ -14,6 +14,7 @@ use ratatui::widgets::{
     Clear,
     List,
     ListItem,
+    ListState,
     Paragraph,
     Row,
     Table,
@@ -24,6 +25,10 @@ use crate::tui::input::App;
 use crate::tui::input::DeleteButton;
 #[cfg(debug_assertions)]
 use crate::tui::input::UpdateInfo;
+use crate::tui::input::{
+    ViewItem,
+    view_items,
+};
 use crate::tui::ui::centered_rect;
 use crate::tui::ui::{
     BASE,
@@ -100,16 +105,9 @@ fn render_popup(
     render_shadow_layers(f, popup_shadow_layers);
 }
 
-pub fn render_input_prompt(f: &mut Frame, input_buffer: &str, area: Rect) {
+pub fn render_input_prompt(f: &mut Frame, title: &str, input_buffer: &str, area: Rect) {
     let input_paragraph = Text::raw(input_buffer);
-    render_popup(
-        f,
-        area,
-        "Enter file name",
-        PINK,
-        input_paragraph,
-        Alignment::Left,
-    );
+    render_popup(f, area, title, PINK, input_paragraph, Alignment::Left);
 }
 
 pub fn render_confirmation_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
@@ -396,6 +394,11 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
             "o: Open HTTP Log File",
             Style::default().fg(YELLOW),
         )),
+        Line::from(Span::styled(
+            "v: View (Group By/Filters)",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled("t: Edit Tags", Style::default().fg(YELLOW))),
         Line::from(Span::styled(
             "PageUp/PageDown: Scroll Page Up/Down",
             Style::default().fg(YELLOW),
@@ -982,6 +985,38 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
 
     f.render_widget(auto_import_settings_paragraph, settings_area);
     f.render_widget(explanation_paragraph, explanation_area);
+}
+
+pub fn render_view_settings_popup(f: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = view_items(&app.all_configs)
+        .iter()
+        .map(|item| {
+            let color = match item {
+                ViewItem::GroupBy(_) => TEAL,
+                ViewItem::ClearFilters => PINK,
+                _ => TEXT,
+            };
+            ListItem::new(item.label(&app.config_view)).style(Style::default().fg(color))
+        })
+        .collect();
+    let mut state = ListState::default().with_selected(Some(app.view_selected));
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("View", Style::default().fg(MAUVE)))
+                .title_bottom(Span::styled(
+                    "↑/↓: navigate | enter/space: toggle | c: clear filters | esc: close",
+                    Style::default().fg(SUBTEXT0),
+                ))
+                .style(Style::default().bg(BASE).fg(TEXT)),
+        )
+        .highlight_style(Style::default().bg(SURFACE1).add_modifier(Modifier::BOLD))
+        .highlight_symbol(">> ");
+
+    f.render_widget(Clear, area);
+    f.render_stateful_widget(list, area, &mut state);
 }
 
 pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {

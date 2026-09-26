@@ -254,6 +254,10 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
     }
   }
 
+  const tagsLabel = Object.entries(config.tags ?? {})
+    .map(([key, value]) => (value ? `${key}=${value}` : key))
+    .join(', ')
+
   const handleCopyConfigDetails = async () => {
     try {
       let details = `Status: ${getStatusInfo().status}\n`
@@ -285,6 +289,9 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
 
       details += `Context: ${config.context}\n`
       details += `Namespace: ${config.namespace}\n`
+      if (tagsLabel) {
+        details += `Tags: ${tagsLabel}\n`
+      }
 
       if (activePod) {
         details += `Active Pod: ${activePod}\n`
@@ -488,6 +495,11 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                     <Text fontSize='xs'>
                       <strong>Namespace:</strong> {config.namespace}
                     </Text>
+                    {tagsLabel && (
+                      <Text fontSize='xs'>
+                        <strong>Tags:</strong> {tagsLabel}
+                      </Text>
+                    )}
                   </Box>
                 </Box>
               }

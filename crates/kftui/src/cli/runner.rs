@@ -59,15 +59,28 @@ impl PortForwardRunner {
     async fn get_config_ids_to_start(
         cli: &Cli, mode: DatabaseMode, imported_config_ids: Vec<i64>,
     ) -> Result<Vec<i64>, Box<dyn std::error::Error>> {
-        if cli.has_config_source() {
-            Ok(imported_config_ids)
-        } else {
-            let configs = read_configs_with_mode(mode).await.map_err(|e| {
-                eprintln!("Error: Failed to read configurations: {e}");
-                e
-            })?;
-            Ok(configs.into_iter().filter_map(|config| config.id).collect())
+        if cli.has_config_source() && cli.filters.is_empty() {
+            return Ok(imported_config_ids);
         }
+
+        let configs = read_configs_with_mode(mode).await.map_err(|e| {
+            eprintln!("Error: Failed to read configurations: {e}");
+            e
+        })?;
+        Ok(Self::select_config_ids(cli, &configs, imported_config_ids))
+    }
+
+    /// Ids of `configs` matching `--filter`, restricted to the imported ones
+    /// when a config source was given.
+    pub(crate) fn select_config_ids(
+        cli: &Cli, configs: &[Config], imported_config_ids: Vec<i64>,
+    ) -> Vec<i64> {
+        let imported: HashSet<i64> = imported_config_ids.into_iter().collect();
+        cli.filter_view()
+            .filter(configs)
+            .filter_map(|config| config.id)
+            .filter(|id| !cli.has_config_source() || imported.contains(id))
+            .collect()
     }
 
     async fn start_port_forwards(

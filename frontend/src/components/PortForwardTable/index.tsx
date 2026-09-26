@@ -1,17 +1,21 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Box } from '@chakra-ui/react'
+import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
-import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
-import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
+import ActiveFilters from '@/components/PortForwardTable/ActiveFilters'
+import GroupAccordion from '@/components/PortForwardTable/GroupAccordion'
+import {
+  ALL_GROUP_ID,
+  useConfigView,
+} from '@/components/PortForwardTable/useConfigView'
 import {
   AccordionRoot,
   type ValueChangeDetails,
 } from '@/components/ui/accordion'
-import type { Config, TableProps } from '@/types'
+import type { Config, ResolvedGroup, TableProps } from '@/types'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -37,9 +41,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
   const prevSelectedConfigsRef = useRef<Config[]>(selectedConfigs)
   const [isSelectAllChecked, setIsSelectAllChecked] = useState<boolean>(false)
-  const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
-    Record<string, boolean>
-  >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
 
   const filteredConfigs = useMemo(() => {
@@ -51,7 +52,10 @@ const PortForwardTable: React.FC<TableProps> = ({
           config.alias.toLowerCase().includes(searchLower) ||
           config.context.toLowerCase().includes(searchLower) ||
           config.remote_address?.toLowerCase().includes(searchLower) ||
-          config.local_port.toString().includes(searchLower),
+          config.local_port.toString().includes(searchLower) ||
+          Object.entries(config.tags ?? {}).some(([key, value]) =>
+            `${key}=${value}`.toLowerCase().includes(searchLower),
+          ),
       )
       .sort(
         (a, b) =>
@@ -59,20 +63,22 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
   }, [configs, search])
 
-  const configsByContext = useConfigsByContext(filteredConfigs)
+  const { view, facets, groups, setView } = useConfigView(
+    configs,
+    filteredConfigs,
+  )
+  const groupBy = view?.group_by
+  const visibleConfigs = useMemo(
+    () => groups.flatMap(group => group.configs),
+    [groups],
+  )
+
+  useEffect(() => {
+    setExpandedIndices(groupBy === null ? [ALL_GROUP_ID] : [])
+  }, [groupBy])
 
   useEffect(() => {
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      const newSelectedConfigsByContext = Object.fromEntries(
-        Object.entries(configsByContext).map(([context, contextConfigs]) => [
-          context,
-          contextConfigs.every(config =>
-            selectedConfigs.some(selected => selected.id === config.id),
-          ),
-        ]),
-      )
-
-      setSelectedConfigsByContext(newSelectedConfigsByContext)
       setIsSelectAllChecked(
         configs.every(config =>
           selectedConfigs.some(selected => selected.id === config.id),
@@ -80,7 +86,7 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
       prevSelectedConfigsRef.current = selectedConfigs
     }
-  }, [selectedConfigs, configs, configsByContext])
+  }, [selectedConfigs, configs])
 
   useEffect(() => {
     setSelectedConfigs(prev => {
@@ -100,10 +106,10 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
-    const allContexts = Object.keys(configsByContext)
+    const allGroups = groups.map(group => group.id)
 
     setExpandedIndices(current =>
-      current.length === allContexts.length ? [] : allContexts,
+      current.length === allGroups.length ? [] : allGroups,
     )
   }
 
@@ -114,40 +120,25 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   const handleCheckboxChange = useCallback(
-    (context: string, isChecked: boolean) => {
+    (group: ResolvedGroup, isChecked: boolean) => {
       setIsCheckboxAction(true)
-      const contextConfigs = filteredConfigs.filter(
-        config => config.context === context,
-      )
+      const groupIds = new Set(group.configs.map(config => config.id))
 
       setSelectedConfigs(prev => {
         if (isChecked) {
-          const newSelections = [...prev]
+          const selectedIds = new Set(prev.map(config => config.id))
 
-          contextConfigs.forEach(config => {
-            if (!prev.some(p => p.id === config.id)) {
-              newSelections.push(config)
-            }
-          })
-
-          return newSelections
+          return [
+            ...prev,
+            ...group.configs.filter(config => !selectedIds.has(config.id)),
+          ]
         }
 
-        const configIdsFiltered = new Set(
-          prev
-            .filter(
-              config =>
-                config.context !== context ||
-                !filteredConfigs.some(fc => fc.id === config.id),
-            )
-            .map(config => config.id),
-        )
-
-        return prev.filter(config => configIdsFiltered.has(config.id))
+        return prev.filter(config => !groupIds.has(config.id))
       })
       setIsCheckboxAction(false)
     },
-    [filteredConfigs, setSelectedConfigs],
+    [setSelectedConfigs],
   )
 
   const handleSelectionChange = useCallback(
@@ -189,7 +180,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           <HeaderMenu
             isSelectAllChecked={isSelectAllChecked}
             setIsSelectAllChecked={setIsSelectAllChecked}
-            configs={search ? filteredConfigs : configs}
+            configs={visibleConfigs}
             selectedConfigs={selectedConfigs}
             setSelectedConfigs={setSelectedConfigs}
             initiatePortForwarding={initiatePortForwarding}
@@ -202,8 +193,12 @@ const PortForwardTable: React.FC<TableProps> = ({
             isStopping={isStopping}
             toggleExpandAll={toggleExpandAll}
             expandedIndices={expandedIndices}
-            configsByContext={configsByContext}
+            groupCount={groups.length}
+            view={view}
+            facets={facets}
+            setView={setView}
           />
+          {view && <ActiveFilters view={view} setView={setView} />}
         </Box>
       </Box>
 
@@ -219,23 +214,53 @@ const PortForwardTable: React.FC<TableProps> = ({
           border: '1px solid rgba(255, 255, 255, 0.08)',
         }}
       >
+        {groups.length === 0 && configs.length > 0 && (
+          <Flex
+            direction='column'
+            align='center'
+            justify='center'
+            gap={2}
+            height='100%'
+            minHeight='120px'
+          >
+            <Text fontSize='xs' color='whiteAlpha.600'>
+              No configs match your search or filters
+            </Text>
+            <Button
+              size='xs'
+              variant='ghost'
+              height='24px'
+              px={2}
+              fontSize='11px'
+              bg='whiteAlpha.50'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+              _hover={{ bg: 'whiteAlpha.100' }}
+              onClick={() => {
+                setSearch('')
+                if (view?.filters.length) {
+                  setView({ ...view, filters: [] })
+                }
+              }}
+            >
+              Clear search and filters
+            </Button>
+          </Flex>
+        )}
         <AccordionRoot
           className='accordion-root'
           multiple
           value={expandedIndices}
           onValueChange={handleAccordionChange}
         >
-          {Object.entries(configsByContext).map(([context, contextConfigs]) => (
-            <ContextsAccordion
-              key={context}
-              context={context}
-              contextConfigs={contextConfigs}
+          {groups.map(group => (
+            <GroupAccordion
+              key={group.id}
+              group={group}
               selectedConfigs={selectedConfigs}
               deleteConfigs={deleteConfigs}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}
               handleSelectionChange={handleSelectionChange}
-              selectedConfigsByContext={selectedConfigsByContext}
               handleCheckboxChange={handleCheckboxChange}
               pendingConfigActions={pendingConfigActions}
               toggleConfigForward={toggleConfigForward}

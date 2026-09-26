@@ -16,6 +16,10 @@ use crate::db::{
 use crate::hostsfile::HostsFile;
 use crate::migration::migrate_configs;
 use crate::models::config_model::Config;
+use crate::utils::config_view::{
+    normalize_tags,
+    validate_tags,
+};
 use crate::utils::db_mode::{
     DatabaseManager,
     DatabaseMode,
@@ -79,7 +83,7 @@ pub async fn delete_all_configs() -> Result<(), String> {
 
 /// Insert a new config and return its assigned ID.
 pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Result<i64, String> {
-    let config = prepare_config(config);
+    let config = prepare_config(config)?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
     create_db_table(pool).await.map_err(|e| e.to_string())?;
@@ -123,7 +127,7 @@ pub(crate) async fn insert_config_with_pool_and_mode(
 ) -> Result<i64, String> {
     match mode {
         DatabaseMode::Memory => {
-            let config = prepare_config(config);
+            let config = prepare_config(config)?;
             let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
             create_db_table(pool).await.map_err(|e| e.to_string())?;
 
@@ -295,7 +299,7 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
 pub(crate) async fn update_config_with_pool(
     config: Config, pool: &SqlitePool,
 ) -> Result<(), String> {
-    let config = prepare_config(config);
+    let config = prepare_config(config)?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
     let data = json!(config).to_string();
     sqlx::query("UPDATE configs SET data = ?1 WHERE id = ?2")
@@ -334,6 +338,8 @@ pub async fn export_configs() -> Result<String, String> {
 }
 
 fn validate_imported_config(config: &Config) -> Result<(), String> {
+    validate_tags(&normalize_tags(config.tags.clone()))?;
+
     if config.namespace.is_empty() {
         return Err("Namespace is required and cannot be empty".to_string());
     }
@@ -756,7 +762,10 @@ fn pick_unused_local_port() -> Option<u16> {
     None
 }
 
-fn prepare_config(mut config: Config) -> Config {
+fn prepare_config(mut config: Config) -> Result<Config, String> {
+    config.tags = normalize_tags(std::mem::take(&mut config.tags));
+    validate_tags(&config.tags)?;
+
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
     }
@@ -802,7 +811,7 @@ fn prepare_config(mut config: Config) -> Config {
         config.http_logs_auto_cleanup = Some(true);
     }
 
-    config
+    Ok(config)
 }
 
 async fn sync_http_logs_config_from_config(
@@ -847,9 +856,25 @@ mod tests {
             kubeconfig: Some("  kube  ".to_string()),
             ..Config::default()
         };
-        let prepared = prepare_config(config);
+        let prepared = prepare_config(config).unwrap();
         assert_eq!(prepared.alias, Some("alias".to_string()));
         assert_eq!(prepared.kubeconfig, Some("kube".to_string()));
+    }
+
+    #[test]
+    fn test_prepare_config_normalizes_tags() {
+        let config = Config {
+            tags: [(" Team ".to_string(), " core ".to_string())].into(),
+            ..Config::default()
+        };
+        let prepared = prepare_config(config).unwrap();
+        assert_eq!(prepared.tags.get("team").map(String::as_str), Some("core"));
+
+        let invalid = Config {
+            tags: [("bad key".to_string(), String::new())].into(),
+            ..Config::default()
+        };
+        assert!(prepare_config(invalid).is_err());
     }
 
     #[test]
@@ -858,14 +883,14 @@ mod tests {
             kubeconfig: Some("".to_string()),
             ..Config::default()
         };
-        let prepared_empty = prepare_config(config_empty);
+        let prepared_empty = prepare_config(config_empty).unwrap();
         assert_eq!(prepared_empty.kubeconfig, Some("default".to_string()));
 
         let config_none = Config {
             kubeconfig: None,
             ..Config::default()
         };
-        let prepared_none = prepare_config(config_none);
+        let prepared_none = prepare_config(config_none).unwrap();
         assert_eq!(prepared_none.kubeconfig, Some("default".to_string()));
     }
 
@@ -878,7 +903,7 @@ mod tests {
             local_port: Some(8080),
             ..Config::default()
         };
-        let prepared_empty = prepare_config(config_empty);
+        let prepared_empty = prepare_config(config_empty).unwrap();
         assert_eq!(
             prepared_empty.alias,
             Some("deployment-TCP-8080".to_string())
@@ -891,7 +916,7 @@ mod tests {
             local_port: Some(9090),
             ..Config::default()
         };
-        let prepared_none = prepare_config(config_none);
+        let prepared_none = prepare_config(config_none).unwrap();
         assert_eq!(prepared_none.alias, Some("pod-UDP-9090".to_string()));
     }
 
@@ -902,7 +927,7 @@ mod tests {
             remote_port: Some(8000),
             ..Config::default()
         };
-        let prepared0 = prepare_config(config0);
+        let prepared0 = prepare_config(config0).unwrap();
         assert!(prepared0.local_port.is_some());
         assert_ne!(prepared0.local_port, Some(0));
 
@@ -911,7 +936,7 @@ mod tests {
             remote_port: Some(9000),
             ..Config::default()
         };
-        let prepared_none = prepare_config(config_none);
+        let prepared_none = prepare_config(config_none).unwrap();
         assert!(prepared_none.local_port.is_some());
     }
 
@@ -1642,7 +1667,7 @@ mod tests {
             ..Config::default()
         };
 
-        let prepared = prepare_config(config);
+        let prepared = prepare_config(config).unwrap();
 
         assert!(prepared.local_port.is_some());
 

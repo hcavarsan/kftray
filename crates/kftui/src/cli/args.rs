@@ -1,4 +1,25 @@
+use std::str::FromStr;
+
 use clap::Parser;
+use kftray_commons::utils::config_view::{
+    Condition,
+    ConfigView,
+    Field,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupBy(pub Option<Field>);
+
+impl FromStr for GroupBy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "none" => Ok(GroupBy(None)),
+            field => field.parse().map(|field| GroupBy(Some(field))),
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "kftui")]
@@ -94,6 +115,20 @@ pub struct Cli {
         help = "Enable auto loopback address for all discovered configs (requires --auto-discover)"
     )]
     pub auto_loopback: bool,
+
+    #[arg(
+        long = "filter",
+        value_name = "COND",
+        help = "Filter configs, e.g. tag:env=dev or namespace=a,b (repeatable, AND-ed)"
+    )]
+    pub filters: Vec<Condition>,
+
+    #[arg(
+        long,
+        value_name = "FIELD",
+        help = "Group configs by context, namespace, kubeconfig, workload_type, protocol, tag:<key> or none"
+    )]
+    pub group_by: Option<GroupBy>,
 }
 
 impl Cli {
@@ -111,6 +146,23 @@ impl Cli {
             || self.json.is_some()
             || self.stdin
             || self.auto_discover
+    }
+
+    pub fn filter_view(&self) -> ConfigView {
+        ConfigView {
+            group_by: None,
+            filters: self.filters.clone(),
+        }
+    }
+
+    pub fn apply_view_overrides(&self, mut view: ConfigView) -> ConfigView {
+        if !self.filters.is_empty() {
+            view.filters = self.filters.clone();
+        }
+        if let Some(GroupBy(group_by)) = &self.group_by {
+            view.group_by = group_by.clone();
+        }
+        view
     }
 
     pub fn get_config_path(&self) -> Option<&str> {

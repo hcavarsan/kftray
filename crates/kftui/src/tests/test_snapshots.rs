@@ -68,6 +68,7 @@ fn create_test_config() -> Config {
         cert_issuer_kind: None,
         ingress_class: None,
         ingress_annotations: None,
+        tags: Default::default(),
     }
 }
 
@@ -418,7 +419,7 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let input_buffer = "test input";
-                render_input_prompt(frame, input_buffer, area);
+                render_input_prompt(frame, "Enter file name", input_buffer, area);
             })
             .unwrap();
         assert_snapshot!("render_input_prompt", terminal.backend());
@@ -510,6 +511,7 @@ mod tests {
                     &selected_rows,
                     &std::collections::HashMap::new(),
                     &throbber_widgets_tui::ThrobberState::default(),
+                    None,
                 );
             })
             .unwrap();

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod config_dir;
 pub mod config_state;
+pub mod config_view;
 pub mod db;
 pub mod db_mode;
 pub mod error;
