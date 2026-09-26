@@ -5,7 +5,6 @@ import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
-import ActiveFilters from '@/components/PortForwardTable/ActiveFilters'
 import GroupAccordion from '@/components/PortForwardTable/GroupAccordion'
 import {
   ALL_GROUP_ID,
@@ -198,7 +197,6 @@ const PortForwardTable: React.FC<TableProps> = ({
             facets={facets}
             setView={setView}
           />
-          {view && <ActiveFilters view={view} setView={setView} />}
         </Box>
       </Box>
 

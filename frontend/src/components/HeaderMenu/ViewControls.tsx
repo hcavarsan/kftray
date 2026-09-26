@@ -4,6 +4,7 @@ import { Filter, Layers } from 'lucide-react'
 
 import { Box, Flex, IconButton, Menu, Portal, Text } from '@chakra-ui/react'
 
+import ActiveFilterChips from '@/components/HeaderMenu/ActiveFilterChips'
 import {
   fieldLabel,
   isTagField,
@@ -91,7 +92,8 @@ const contentProps = {
   border: '1px solid rgba(255, 255, 255, 0.08)',
   borderRadius: 'md',
   boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
-  minW: '188px',
+  minW: '200px',
+  maxW: '260px',
   maxH: '300px',
   overflowY: 'auto' as const,
   py: 1,
@@ -244,26 +246,50 @@ const FilterMenu = ({
       <Portal>
         <Menu.Positioner>
           <Menu.Content {...contentProps}>
-            <Flex align='center' justify='space-between' ps={3.5} pe={2.5}>
-              <Text {...sectionLabelProps} ps={0} pe={0}>
-                Filter
-              </Text>
-              {filterCount > 0 && (
-                <Menu.Item
-                  value='clear'
-                  onClick={() => setFilters([])}
-                  fontSize='10px'
-                  color='blue.300'
-                  minH='auto'
-                  px={1}
-                  py={0.5}
-                  bg='transparent'
-                  _highlighted={{ bg: 'whiteAlpha.100' }}
-                >
-                  Clear
-                </Menu.Item>
-              )}
-            </Flex>
+            <Box
+              position='sticky'
+              top={-1}
+              zIndex={1}
+              mt={-1}
+              pt={1}
+              mb={filterCount > 0 ? 1 : 0}
+              bg='#1A1A1A'
+              borderBottom={
+                filterCount > 0 ? '1px solid rgba(255, 255, 255, 0.06)' : 'none'
+              }
+            >
+              <Flex
+                align='center'
+                justify='space-between'
+                gap={3}
+                ps={3.5}
+                pe={2}
+              >
+                <Text {...sectionLabelProps} ps={0} pe={0} whiteSpace='nowrap'>
+                  {filterCount > 0 ? 'Active filters' : 'Filter by'}
+                </Text>
+                {filterCount > 0 && (
+                  <Menu.Item
+                    value='clear'
+                    onClick={() => setFilters([])}
+                    fontSize='10px'
+                    color='blue.300'
+                    flex='none'
+                    w='auto'
+                    whiteSpace='nowrap'
+                    minH='auto'
+                    px={1.5}
+                    py={0.5}
+                    borderRadius='sm'
+                    bg='transparent'
+                    _highlighted={{ bg: 'whiteAlpha.100' }}
+                  >
+                    Clear all
+                  </Menu.Item>
+                )}
+              </Flex>
+              <ActiveFilterChips view={view} setView={setView} />
+            </Box>
             {sections.length === 0 && (
               <Text fontSize='11px' color='whiteAlpha.500' px={3.5} py={1.5}>
                 Nothing to filter yet

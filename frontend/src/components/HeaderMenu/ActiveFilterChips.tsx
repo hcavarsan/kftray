@@ -3,16 +3,15 @@ import { X } from 'lucide-react'
 
 import { chakra, Flex, Text } from '@chakra-ui/react'
 
-import type { ConfigView, ViewCondition } from '@/types'
-
 import {
   fieldLabel,
   isTagField,
   toggleFilterAny,
   toggleFilterValue,
-} from './viewUtils'
+} from '@/components/PortForwardTable/viewUtils'
+import type { ConfigView, ViewCondition } from '@/types'
 
-interface ActiveFiltersProps {
+interface ActiveFilterChipsProps {
   view: ConfigView
   setView: (view: ConfigView) => void
 }
@@ -37,7 +36,10 @@ const chipLabel = ({ field, value }: FilterChip) => {
     : { name: `${name}:`, value }
 }
 
-const ActiveFilters: React.FC<ActiveFiltersProps> = ({ view, setView }) => {
+const ActiveFilterChips: React.FC<ActiveFilterChipsProps> = ({
+  view,
+  setView,
+}) => {
   if (view.filters.length === 0) {
     return null
   }
@@ -51,7 +53,7 @@ const ActiveFilters: React.FC<ActiveFiltersProps> = ({ view, setView }) => {
     )
 
   return (
-    <Flex wrap='wrap' align='center' gap={1} px={1} pt={1.5}>
+    <Flex wrap='wrap' align='center' gap={1} ps={3.5} pe={2.5} pt={0.5} pb={2}>
       {chips(view.filters).map(chip => {
         const label = chipLabel(chip)
 
@@ -95,22 +97,8 @@ const ActiveFilters: React.FC<ActiveFiltersProps> = ({ view, setView }) => {
           </Flex>
         )
       })}
-      <chakra.button
-        type='button'
-        fontSize='10px'
-        color='whiteAlpha.500'
-        cursor='pointer'
-        px={1}
-        h='18px'
-        borderRadius='sm'
-        _hover={{ color: 'whiteAlpha.900' }}
-        _focusVisible={{ outline: '1px solid rgb(59, 130, 246)' }}
-        onClick={() => setFilters([])}
-      >
-        Clear
-      </chakra.button>
     </Flex>
   )
 }
 
-export default ActiveFilters
+export default ActiveFilterChips
