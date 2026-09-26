@@ -1,8 +1,12 @@
 pub mod file_explorer;
 pub mod navigation;
 mod popup;
+mod view;
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{
@@ -21,6 +25,7 @@ use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
+use kftray_commons::utils::config_view::ConfigView;
 use kftray_commons::utils::db_mode::DatabaseMode;
 pub use popup::*;
 use ratatui::widgets::ListState;
@@ -32,6 +37,7 @@ use ratatui_explorer::{
 };
 use tui_logger::TuiWidgetEvent;
 use tui_logger::TuiWidgetState;
+pub use view::*;
 
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
@@ -216,6 +222,8 @@ pub enum AppState {
     ShowSettings,
     ShowHttpLogsConfig,
     ShowHttpLogsViewer,
+    ShowViewSettings,
+    ShowTagEditor,
     #[cfg_attr(debug_assertions, allow(dead_code))]
     ShowUpdateConfirmation,
     #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -302,6 +310,11 @@ pub struct App {
     pub search_focused: bool,
     pub filtered_stopped_configs: Vec<Config>,
     pub filtered_running_configs: Vec<Config>,
+    pub all_configs: Vec<Config>,
+    pub config_view: ConfigView,
+    pub group_labels: HashMap<i64, String>,
+    pub view_selected: usize,
+    pub tag_editor_config: Option<Config>,
     pub update_info: Option<UpdateInfo>,
     pub update_prompt_pending: bool,
     pub selected_update_button: UpdateButton,
@@ -400,6 +413,11 @@ impl App {
             search_focused: false,
             filtered_stopped_configs: Vec::new(),
             filtered_running_configs: Vec::new(),
+            all_configs: Vec::new(),
+            config_view: ConfigView::default(),
+            group_labels: HashMap::new(),
+            view_selected: 0,
+            tag_editor_config: None,
             update_info: None,
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
@@ -599,6 +617,8 @@ impl App {
 
         let stopped_len = self.filtered_stopped_configs.len();
         let running_len = self.filtered_running_configs.len();
+        self.selected_rows_stopped.retain(|&row| row < stopped_len);
+        self.selected_rows_running.retain(|&row| row < running_len);
 
         if self.selected_row_stopped >= stopped_len && stopped_len > 0 {
             self.selected_row_stopped = 0;
@@ -615,6 +635,20 @@ impl App {
             self.table_state_running.select(None);
             self.selected_rows_running.clear();
         }
+    }
+
+    pub fn selected_config(&self) -> Option<&Config> {
+        let (configs, state) = match self.active_table {
+            ActiveTable::Stopped if self.search_query.is_empty() => {
+                (&self.stopped_configs, &self.table_state_stopped)
+            }
+            ActiveTable::Stopped => (&self.filtered_stopped_configs, &self.table_state_stopped),
+            ActiveTable::Running if self.search_query.is_empty() => {
+                (&self.running_configs, &self.table_state_running)
+            }
+            ActiveTable::Running => (&self.filtered_running_configs, &self.table_state_running),
+        };
+        configs.get(state.selected().unwrap_or(0))
     }
 
     pub fn update_http_logs_viewer(&mut self) {
@@ -813,9 +847,22 @@ impl App {
             .filter(|state| state.is_running)
             .map(|state| state.config_id)
             .collect();
+        self.all_configs = configs.to_vec();
+        self.group_labels.clear();
+        let by_id: HashMap<i64, &Config> = configs
+            .iter()
+            .filter_map(|config| Some((config.id?, config)))
+            .collect();
+        let mut ordered = Vec::new();
+        for group in self.config_view.group(configs) {
+            for id in group.config_ids {
+                ordered.extend(by_id.get(&id).copied());
+                self.group_labels.insert(id, group.label.clone());
+            }
+        }
         self.stopped_configs.clear();
         self.running_configs.clear();
-        for config in configs {
+        for config in ordered {
             if config.id.is_some_and(|id| running_ids.contains(&id)) {
                 self.running_configs.push(config.clone());
             } else {
@@ -1072,6 +1119,14 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
                 AppState::ShowHttpLogsViewer => {
                     log::debug!("Handling ShowHttpLogsViewer state");
                     handle_http_logs_viewer_input(app, key.code).await?;
+                }
+                AppState::ShowViewSettings => {
+                    log::debug!("Handling ShowViewSettings state");
+                    handle_view_settings_input(app, key.code, mode).await?;
+                }
+                AppState::ShowTagEditor => {
+                    log::debug!("Handling ShowTagEditor state");
+                    handle_tag_editor_input(app, key.code, mode).await?;
                 }
                 AppState::ShowUpdateConfirmation => {
                     log::debug!("Handling ShowUpdateConfirmation state");
@@ -1376,6 +1431,8 @@ pub async fn handle_stopped_table_input(
         KeyCode::Char('L') => handle_http_logs_config(app, mode).await?,
         KeyCode::Char('o') => handle_open_http_logs(app, mode).await?,
         KeyCode::Char('V') => handle_view_http_logs(app, mode).await?,
+        KeyCode::Char('v') => open_view_settings(app),
+        KeyCode::Char('t') => open_tag_editor(app),
         _ => {}
     }
     Ok(())
@@ -1431,6 +1488,8 @@ pub async fn handle_running_table_input(
         KeyCode::Char('L') => handle_http_logs_config(app, mode).await?,
         KeyCode::Char('o') => handle_open_http_logs(app, mode).await?,
         KeyCode::Char('V') => handle_view_http_logs(app, mode).await?,
+        KeyCode::Char('v') => open_view_settings(app),
+        KeyCode::Char('t') => open_tag_editor(app),
         _ => {}
     }
     Ok(())

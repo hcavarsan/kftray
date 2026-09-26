@@ -173,10 +173,13 @@ Both tools share the same JSON configuration format. Here's a example:
     "remote_port": 8080,
     "service": "argocd-server",
     "workload_type": "service",
-    "http_logs_enabled": true
+    "http_logs_enabled": true,
+    "tags": { "team": "platform", "env": "dev" }
   }
 ]
 ```
+
+`tags` is optional. Both apps can group and filter configs by context, namespace, kubeconfig, workload type, protocol or any tag key, and kftui can auto-start only matching configs with `--filter tag:env=dev`.
 
 You can import configs from:
 

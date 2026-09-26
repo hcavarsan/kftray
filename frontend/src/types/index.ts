@@ -22,6 +22,46 @@ export interface Config {
   cert_issuer_kind?: string
   ingress_class?: string
   ingress_annotations?: string
+  tags?: Record<string, string>
+}
+
+export interface ViewCondition {
+  field: string
+  values: string[]
+}
+
+export interface ConfigView {
+  group_by: string | null
+  filters: ViewCondition[]
+}
+
+export interface ConfigGroup {
+  key: string | null
+  label: string
+  config_ids: number[]
+}
+
+export interface FacetValue {
+  value: string
+  count: number
+}
+
+export interface Facet {
+  field: string
+  count: number
+  values: FacetValue[]
+}
+
+export interface ConfigViewResult {
+  view: ConfigView
+  groups: ConfigGroup[]
+  facets: Facet[]
+}
+
+export interface ResolvedGroup {
+  id: string
+  label: string
+  configs: Config[]
 }
 
 export type PortForwardAction = 'starting' | 'stopping' | 'saving' | 'deleting'
@@ -164,10 +204,6 @@ export interface CustomConfigProps {
   setNewConfig: React.Dispatch<React.SetStateAction<Config>>
 }
 
-export interface ConfigsByContext {
-  [key: string]: Config[]
-}
-
 export interface HeaderProps {
   search: string
   setSearch: React.Dispatch<React.SetStateAction<string>>
@@ -190,7 +226,10 @@ export interface HeaderMenuProps {
   isStopping: boolean
   toggleExpandAll: () => void
   expandedIndices: string[]
-  configsByContext: ConfigsByContext
+  groupCount: number
+  view: ConfigView | null
+  facets: Facet[]
+  setView: (view: ConfigView) => void
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
 }
 
@@ -199,16 +238,14 @@ export interface BulkDeleteButtonProps {
   deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
-export interface ContextsAccordionProps {
-  context: string
-  contextConfigs: Config[]
+export interface GroupAccordionProps {
+  group: ResolvedGroup
   selectedConfigs: Config[]
   deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => Promise<void>
   handleDuplicateConfig: (id: number) => Promise<void>
   handleSelectionChange: (id: number, isSelected: boolean) => void
-  selectedConfigsByContext: Record<string, boolean>
-  handleCheckboxChange: (context: string, isChecked: boolean) => void
+  handleCheckboxChange: (group: ResolvedGroup, isChecked: boolean) => void
   pendingConfigActions: Map<number, PendingConfigAction>
   toggleConfigForward: (
     config: Config,

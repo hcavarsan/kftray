@@ -27,14 +27,23 @@ import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import type {
   Config,
+  ConfigViewResult,
   CustomConfigProps,
   PortOption,
   ServiceData,
   StringOption,
 } from '@/types'
 
-import { selectStyles } from './styles'
-import { trimConfigValues, validateFormFields } from './utils'
+import { selectStyles, tagSelectStyles } from './styles'
+import {
+  duplicateTagKey,
+  optionsToTags,
+  tagSuggestions,
+  tagsError,
+  tagsToOptions,
+  trimConfigValues,
+  validateFormFields,
+} from './utils'
 
 const handleError = (error: unknown, title: string) => {
   console.error(`Error: ${title}`, error)
@@ -93,6 +102,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     kubeConfig: 'default',
   })
   const [isSaving, setIsSaving] = useState(false)
+  const [duplicateTagError, setDuplicateTagError] = useState<string | null>(
+    null,
+  )
 
   useEffect(() => {
     if (formState.selectedWorkloadType?.value === 'expose') {
@@ -116,7 +128,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
       setUiState(prev => ({
         ...prev,
-        isFormValid: validateFormFields(exposeRequiredFields),
+        isFormValid:
+          validateFormFields(exposeRequiredFields) &&
+          !tagsError(newConfig.tags),
       }))
     } else {
       const requiredFields = [
@@ -132,7 +146,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
       setUiState(prev => ({
         ...prev,
-        isFormValid: validateFormFields(requiredFields),
+        isFormValid:
+          validateFormFields(requiredFields) && !tagsError(newConfig.tags),
       }))
     }
   }, [formState, newConfig])
@@ -185,6 +200,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       }))
     }
   }
+
+  const tagError = duplicateTagError ?? tagsError(newConfig.tags)
+
+  const tagOptionsQuery = useQuery({
+    queryKey: ['config-tag-options'],
+    queryFn: () =>
+      invoke<ConfigViewResult>('query_config_view_cmd', { view: null }),
+    select: result => tagSuggestions(result.facets),
+    enabled: isModalOpen,
+  })
 
   const contextQuery = useQuery<{ name: string }[]>({
     queryKey: ['kube-contexts', uiState.kubeConfig],
@@ -368,6 +393,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       isFormValid: false,
       kubeConfig: 'default',
     }))
+    setDuplicateTagError(null)
   }, [])
 
   useEffect(() => {
@@ -717,6 +743,42 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     )}
                   </Stack>
                 </Grid>
+
+                <Stack gap={1.5}>
+                  <Text fontSize='xs' color='gray.400'>
+                    Tags
+                  </Text>
+                  <CreatableSelect<StringOption, true>
+                    isMulti
+                    name='tags'
+                    value={tagsToOptions(newConfig.tags)}
+                    onChange={options => {
+                      const duplicate = duplicateTagKey(options)
+
+                      if (duplicate) {
+                        setDuplicateTagError(
+                          `Tag "${duplicate}" already has a value. Remove it first to change it.`,
+                        )
+
+                        return
+                      }
+                      setDuplicateTagError(null)
+                      setNewConfig(prev => ({
+                        ...prev,
+                        tags: optionsToTags(options),
+                      }))
+                    }}
+                    options={tagOptionsQuery.data}
+                    styles={tagSelectStyles}
+                    placeholder='team=payments, env=dev, pinned'
+                    formatCreateLabel={inputValue => `Add "${inputValue}"`}
+                  />
+                  {tagError && (
+                    <Text color='red.300' fontSize='xs'>
+                      {tagError}
+                    </Text>
+                  )}
+                </Stack>
 
                 {/* Expose-specific options */}
                 {newConfig.workload_type === 'expose' && (

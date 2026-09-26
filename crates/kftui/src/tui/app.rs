@@ -11,6 +11,7 @@ use crossterm::{
 };
 use kftray_commons::utils::config::read_configs_with_mode;
 use kftray_commons::utils::config_state::read_config_states_with_mode;
+use kftray_commons::utils::config_view::ConfigView;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use log::error;
 use ratatui::{
@@ -37,7 +38,7 @@ type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 pub(crate) use crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT;
 
 pub async fn run_tui(
-    mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
+    mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool, config_view: ConfigView,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -46,6 +47,7 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(logger_state);
+    app.config_view = config_view;
 
     if let Ok(size) = terminal.size() {
         app.update_visible_rows(size.height);

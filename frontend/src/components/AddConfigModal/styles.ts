@@ -77,3 +77,47 @@ export const selectStyles: StylesConfig<StringOption | PortOption> = {
     padding: '0 4px',
   }),
 }
+
+export const tagSelectStyles: StylesConfig<StringOption, true> = {
+  ...(selectStyles as unknown as StylesConfig<StringOption, true>),
+  control: base => ({
+    ...base,
+    background: '#161616',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    minHeight: '30px',
+    fontSize: '12px',
+    boxShadow: 'none',
+    '&:hover': {
+      borderColor: 'rgba(255, 255, 255, 0.15)',
+    },
+  }),
+  valueContainer: base => ({
+    ...base,
+    padding: '2px 8px',
+    gap: '4px',
+  }),
+  indicatorsContainer: base => base,
+  placeholder: base => ({
+    ...base,
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: '12px',
+  }),
+  multiValue: base => ({
+    ...base,
+    background: 'rgba(59, 130, 246, 0.15)',
+    border: '1px solid rgba(59, 130, 246, 0.3)',
+    borderRadius: '4px',
+    margin: 0,
+  }),
+  multiValueLabel: base => ({
+    ...base,
+    color: 'rgba(147, 197, 253, 1)',
+    fontSize: '11px',
+    padding: '0 4px',
+  }),
+  multiValueRemove: base => ({
+    ...base,
+    color: 'rgba(147, 197, 253, 0.8)',
+    ':hover': { background: 'rgba(59, 130, 246, 0.3)', color: 'white' },
+  }),
+}

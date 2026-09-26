@@ -69,6 +69,7 @@ mod tests {
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
+            tags: Default::default(),
         }
     }
 
@@ -150,6 +151,7 @@ mod tests {
                     &selected_rows,
                     &std::collections::HashMap::new(),
                     &throbber_widgets_tui::ThrobberState::default(),
+                    None,
                 );
             })
             .unwrap();
