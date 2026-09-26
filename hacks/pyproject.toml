@@ -4,5 +4,5 @@ version = "0.1.0"
 description = "Release maintenance scripts for kftray"
 requires-python = ">=3.12"
 dependencies = [
-  "requests>=2.32.5",
+  "requests>=2.34.2",
 ]
