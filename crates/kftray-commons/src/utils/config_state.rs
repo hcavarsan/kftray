@@ -662,6 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_state_public_wrapper() {
+        let _db = crate::test_utils::test_db().await;
         let pool = setup_test_db().await;
 
         let config_data = Config {
@@ -697,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_state_with_mode_memory() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = config::delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
@@ -743,7 +744,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_state_with_mode_memory() {
-        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+        let _db = crate::test_utils::test_db().await;
 
         let _ = config::delete_all_configs_with_mode(DatabaseMode::Memory).await;
 

@@ -13,7 +13,34 @@ pub mod test_utils {
     use tokio::sync::Mutex as AsyncMutex;
 
     lazy_static! {
-        pub static ref MEMORY_MODE_TEST_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
+        static ref DB_TEST_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
+    }
+
+    /// Serializes a test that touches the database and gives it fresh pools
+    /// created on its own runtime, clearing them again when dropped. Every
+    /// `#[tokio::test]` has its own runtime, and a pool that outlives the
+    /// runtime that used it leaks connections until later tests hang on
+    /// `acquire`. Hold it for the whole test and take it before any other
+    /// test lock.
+    pub struct TestDb {
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    pub async fn test_db() -> TestDb {
+        let lock = DB_TEST_MUTEX.lock().await;
+        clear_pools();
+        TestDb { _lock: lock }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            clear_pools();
+        }
+    }
+
+    fn clear_pools() {
+        crate::utils::db::clear_db_pool();
+        crate::utils::db_mode::DatabaseManager::cleanup_memory_pools();
     }
 
     /// Serializes environment-variable mutation across tests: `std::env` is

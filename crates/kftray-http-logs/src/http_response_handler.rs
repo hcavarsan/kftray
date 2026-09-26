@@ -647,6 +647,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_response_logging_status() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let handler = HttpResponseHandler::new(123);
 
         let buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";

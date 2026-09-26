@@ -363,15 +363,9 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
 mod tests {
     use std::sync::Arc;
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
-    use tokio::sync::Mutex;
 
     use super::*;
-
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
 
     async fn setup_isolated_test_db() -> Arc<SqlitePool> {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -385,14 +379,14 @@ mod tests {
         let arc_pool = Arc::new(pool);
 
         // Set this as the global pool for command functions to use
-        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
+        kftray_commons::utils::db::set_db_pool(arc_pool.clone());
 
         arc_pool
     }
 
     #[tokio::test]
     async fn test_delete_config_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config::default();
@@ -417,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_configs_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config1 = Config {
@@ -453,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_all_configs_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config1 = Config::default();
@@ -486,7 +480,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_enumerated_configs_leaves_a_row_added_after_enumeration() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         insert_config_cmd(Config::default())
@@ -524,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_all_configs_cmd_propagates_get_configs_error() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         // `delete_all_configs_cmd` used to call `get_configs().unwrap_or_default()`,
@@ -579,7 +573,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_all_configs_cmd_skips_running() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config::default();
@@ -618,7 +612,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_config_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let test_config = Config {
@@ -644,7 +638,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {
@@ -671,7 +665,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {
@@ -708,7 +702,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_config_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {
@@ -744,7 +738,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_configs_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {
@@ -773,7 +767,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_configs_cmd() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let test_config_json = serde_json::json!([{
@@ -808,7 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_configs_cmd_error() {
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let invalid_json = "{\"service\": \"malformed\",";
@@ -849,12 +843,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_cmd_format() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
         let _ = get_configs_cmd().await;
     }
 
     #[tokio::test]
     async fn test_get_config_cmd_format() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = get_config_cmd(id).await;
@@ -862,6 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_config_cmd_format() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = delete_config_cmd(id).await;
@@ -873,7 +870,7 @@ mod tests {
         // attempt (so it is no longer registered) must still be started
         // here, not skipped because a stop was attempted and failed with
         // "no process found".
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {
@@ -928,7 +925,7 @@ mod tests {
         // finds no candidates and returns `Ok(vec![])`. Treating that as
         // "all restarted" ended the loop before a later attempt could see
         // the config once it actually started running.
-        let _guard = TEST_MUTEX.lock().await;
+        let _db = kftray_commons::test_utils::test_db().await;
         let _pool = setup_isolated_test_db().await;
 
         let config = Config {

@@ -2554,6 +2554,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_releases_listener_and_websocket_owner_before_returning() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_011;
         let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2583,6 +2584,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_stop_that_acts_on_an_id_advances_its_generation() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_012;
         let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
@@ -2609,6 +2611,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_uses_the_retained_config_when_the_database_lookup_fails() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_051;
         let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
@@ -2637,6 +2640,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_all_releases_every_transport_in_memory_mode() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let mut addresses = Vec::new();
         for id in [410_021, 410_022] {
@@ -2678,6 +2682,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_cluster_cleanup_clears_running_but_keeps_pending_cleanup() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             namespace: "default".to_string(),
@@ -2724,6 +2729,7 @@ mod tests {
 
     #[tokio::test]
     async fn unresolved_cleanup_does_not_record_a_cluster_obligation_for_a_plain_forward() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_071;
         PENDING_CLEANUP.remove(&id);
@@ -2749,6 +2755,7 @@ mod tests {
 
     #[tokio::test]
     async fn stopping_an_already_stopped_proxy_by_row_alone_does_not_need_cluster_access() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             namespace: "default".to_string(),
@@ -2783,6 +2790,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_settled_create_keeps_its_local_cleanup_recorded() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let id = -9_312;
         PENDING_CLEANUP.remove(&id);
         let config = Config {
@@ -2815,6 +2823,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_local_cleanup_obligation_survives_a_simulated_restart() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = -9_313;
         PENDING_CLEANUP.remove(&id);
@@ -2945,6 +2954,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_retry_settling_does_not_answer_for_an_earlier_unanswered_create() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             id: Some(730_412),
@@ -3005,6 +3015,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rejected_retry_after_a_restart_keeps_the_persisted_unanswered_create() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             id: Some(730_413),
@@ -3057,6 +3068,7 @@ mod tests {
 
     #[tokio::test]
     async fn settle_clears_the_durable_record_under_the_callers_own_mode() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             id: Some(730_414),
@@ -3100,6 +3112,7 @@ mod tests {
 
     #[tokio::test]
     async fn settle_forgets_the_record_only_for_a_matching_destination() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_dir = tempfile::tempdir().unwrap();
         let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
@@ -3165,6 +3178,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_rows_on_two_servers_are_two_cleanup_targets() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             id: Some(730_411),
@@ -3228,6 +3242,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_cleanup_keeps_its_snapshot_after_the_config_is_edited() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             namespace: "original-namespace".to_string(),
@@ -3281,6 +3296,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unremovable_alias_does_not_block_deleting_a_stopped_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_131;
         let config = Config {
@@ -3314,6 +3330,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_startup_leaves_its_resources_for_stop_all() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_130;
         let config = Config {
@@ -3343,6 +3360,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_uncertain_create_survives_an_empty_cleanup_pass() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_160;
         let config = Config {
@@ -3405,6 +3423,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_restart_after_failed_cleanup_keeps_both_resource_sets() {
+        let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let id = 410_140;
         let orphaned = Config {

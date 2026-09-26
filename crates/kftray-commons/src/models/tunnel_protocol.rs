@@ -40,36 +40,6 @@ impl TunnelMessage {
     }
 }
 
-#[allow(dead_code)]
-pub fn create_http_request(
-    id: String, method: String, path: String, headers: HashMap<String, String>, body: Vec<u8>,
-) -> TunnelMessage {
-    TunnelMessage::HttpRequest {
-        id,
-        method,
-        path,
-        headers,
-        body,
-    }
-}
-
-#[allow(dead_code)]
-pub fn create_http_response(
-    id: String, status: u16, headers: HashMap<String, String>, body: Vec<u8>,
-) -> TunnelMessage {
-    TunnelMessage::HttpResponse {
-        id,
-        status,
-        headers,
-        body,
-    }
-}
-
-#[allow(dead_code)]
-pub fn create_error(id: Option<String>, message: String) -> TunnelMessage {
-    TunnelMessage::Error { id, message }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,13 +61,13 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 
-        let msg = create_http_request(
-            "req-123".to_string(),
-            "GET".to_string(),
-            "/api/test".to_string(),
-            headers.clone(),
-            vec![1, 2, 3],
-        );
+        let msg = TunnelMessage::HttpRequest {
+            id: "req-123".to_string(),
+            method: "GET".to_string(),
+            path: "/api/test".to_string(),
+            headers: headers.clone(),
+            body: vec![1, 2, 3],
+        };
 
         let serialized = msg.serialize().unwrap();
         let deserialized = TunnelMessage::deserialize(&serialized).unwrap();
@@ -125,12 +95,12 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "text/html".to_string());
 
-        let msg = create_http_response(
-            "req-123".to_string(),
-            200,
-            headers.clone(),
-            vec![72, 101, 108, 108, 111],
-        );
+        let msg = TunnelMessage::HttpResponse {
+            id: "req-123".to_string(),
+            status: 200,
+            headers: headers.clone(),
+            body: vec![72, 101, 108, 108, 111],
+        };
 
         let serialized = msg.serialize().unwrap();
         let deserialized = TunnelMessage::deserialize(&serialized).unwrap();
@@ -153,7 +123,10 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_error() {
-        let msg = create_error(Some("req-456".to_string()), "Test error".to_string());
+        let msg = TunnelMessage::Error {
+            id: Some("req-456".to_string()),
+            message: "Test error".to_string(),
+        };
 
         let serialized = msg.serialize().unwrap();
         let deserialized = TunnelMessage::deserialize(&serialized).unwrap();
