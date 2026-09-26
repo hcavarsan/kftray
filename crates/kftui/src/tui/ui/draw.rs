@@ -27,7 +27,6 @@ use ratatui::{
 use tui_logger::TuiLoggerLevelOutput;
 use tui_logger::TuiLoggerWidget;
 
-use crate::tui::input::ActiveTable;
 use crate::tui::input::{
     ActiveComponent,
     App,
@@ -43,6 +42,7 @@ use crate::tui::ui::render_restart_notification_popup;
 use crate::tui::ui::render_settings_popup;
 use crate::tui::ui::render_update_confirmation_popup;
 use crate::tui::ui::render_update_progress_popup;
+use crate::tui::ui::render_view_settings_popup;
 use crate::tui::ui::{
     BASE,
     TEXT,
@@ -109,28 +109,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
         .split(main_chunks[1]);
 
-    let selected_config = match app.active_table {
-        ActiveTable::Stopped => {
-            let configs = if app.search_query.is_empty() {
-                &app.stopped_configs
-            } else {
-                &app.filtered_stopped_configs
-            };
-            configs
-                .get(app.table_state_stopped.selected().unwrap_or(0))
-                .cloned()
-        }
-        ActiveTable::Running => {
-            let configs = if app.search_query.is_empty() {
-                &app.running_configs
-            } else {
-                &app.filtered_running_configs
-            };
-            configs
-                .get(app.table_state_running.selected().unwrap_or(0))
-                .cloned()
-        }
-    };
+    let selected_config = app.selected_config().cloned();
 
     if let Some(config) = selected_config {
         render_details(
@@ -181,7 +160,22 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         AppState::ShowInputPrompt => {
             let input_area = centered_rect(40, 20, size);
             render_background_overlay(f, size);
-            render_input_prompt(f, &app.input_buffer, input_area);
+            render_input_prompt(f, "Enter file name", &app.input_buffer, input_area);
+        }
+        AppState::ShowTagEditor => {
+            let input_area = centered_rect(50, 20, size);
+            render_background_overlay(f, size);
+            render_input_prompt(
+                f,
+                "Tags (key=value, key, ...)",
+                &app.input_buffer,
+                input_area,
+            );
+        }
+        AppState::ShowViewSettings => {
+            let view_area = centered_rect(50, 60, size);
+            render_background_overlay(f, size);
+            render_view_settings_popup(f, app, view_area);
         }
         AppState::ShowConfirmationPopup => {
             let confirmation_area = centered_rect(50, 30, size);

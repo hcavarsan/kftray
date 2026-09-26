@@ -371,6 +371,8 @@ fn main() {
             commands::httplogs::get_http_logs_config_cmd,
             commands::httplogs::update_http_logs_config_cmd,
             commands::config::get_configs_cmd,
+            commands::config_view::query_config_view_cmd,
+            commands::config_view::set_config_view_cmd,
             commands::config::insert_config_cmd,
             commands::config::delete_config_cmd,
             commands::config::get_config_cmd,

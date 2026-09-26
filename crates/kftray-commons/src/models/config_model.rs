@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{
     Deserialize,
     Deserializer,
@@ -143,6 +145,9 @@ pub struct Config {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress_annotations: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -173,6 +178,7 @@ impl Default for Config {
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
+            tags: Default::default(),
         }
     }
 }

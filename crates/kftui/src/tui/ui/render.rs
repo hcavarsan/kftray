@@ -1,4 +1,5 @@
 use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::utils::config_view::Field;
 use ratatui::prelude::Alignment;
 use ratatui::widgets::FrameExt;
 use ratatui::{
@@ -41,7 +42,7 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
 
     let menu_legend = "←/→: navigate | enter: open | tab: switch to configs tab";
 
-    let table_legend = "pageup/down: scroll | ↑/↓: navigate | ←/→: switch table | space: select | f: start/stop | d: delete | l: http logs | L: logs config | ctrla: select all | tab: switch to details";
+    let table_legend = "pageup/down: scroll | ↑/↓: navigate | ←/→: switch table | space: select | f: start/stop | d: delete | v: view | t: tags | l: http logs | L: logs config | ctrla: select all | tab: switch to details";
 
     let details_legend = "pageup/pagedown: scroll | ←/→: switch tabs | tab: switch to menu";
 
@@ -246,6 +247,13 @@ pub fn draw_configs_tab(
         format!("Running Configs ({})", app.filtered_running_configs.len())
     };
 
+    let group_labels = app
+        .config_view
+        .group_by
+        .as_ref()
+        .is_some_and(|field| *field != Field::Context)
+        .then_some(&app.group_labels);
+
     draw_configs_table(
         f,
         tables_chunks[0],
@@ -257,6 +265,7 @@ pub fn draw_configs_tab(
         &app.selected_rows_stopped,
         &app.configs_being_processed,
         &app.throbber_state,
+        group_labels,
     );
 
     draw_configs_table(
@@ -270,5 +279,6 @@ pub fn draw_configs_tab(
         &app.selected_rows_running,
         &app.configs_being_processed,
         &app.throbber_state,
+        group_labels,
     );
 }

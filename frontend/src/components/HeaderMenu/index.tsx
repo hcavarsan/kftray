@@ -1,9 +1,19 @@
 import type React from 'react'
 import { useMemo } from 'react'
-import { ChevronDown, ChevronUp, Loader2, RefreshCw, X } from 'lucide-react'
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Loader2,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 
 import { Box, chakra, Group } from '@chakra-ui/react'
 
+import ViewControls, {
+  ToolbarIconButton,
+  WithTooltip,
+} from '@/components/HeaderMenu/ViewControls'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -22,12 +32,23 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   isStopping,
   toggleExpandAll,
   expandedIndices,
-  configsByContext,
+  groupCount,
+  view,
+  facets,
+  setView,
   setSelectedConfigs,
 }) => {
+  const isAllExpanded = expandedIndices.length === groupCount
+  const expandLabel = isAllExpanded
+    ? 'Collapse all groups'
+    : 'Expand all groups'
+
   const isSelectAllChecked = useMemo(() => {
-    return configs.every(config =>
-      selectedConfigs.some(selected => selected.id === config.id),
+    return (
+      configs.length > 0 &&
+      configs.every(config =>
+        selectedConfigs.some(selected => selected.id === config.id),
+      )
     )
   }, [configs, selectedConfigs])
 
@@ -302,45 +323,18 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
         </Group>
       </Group>
 
-      {/* Expand/Collapse Button */}
-      <Tooltip
-        content={
-          expandedIndices.length === Object.keys(configsByContext).length
-            ? 'Collapse all contexts'
-            : 'Expand all contexts'
-        }
-        portalled={true}
-        contentProps={{ zIndex: 100 }}
-      >
-        <Button
-          size='xs'
-          variant='ghost'
-          onClick={toggleExpandAll}
-          _hover={{ bg: 'whiteAlpha.100' }}
-          height='26px'
-          minWidth='90px'
-          bg='whiteAlpha.50'
-          px={2}
-          borderRadius='md'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-        >
-          <span style={{ fontSize: '11px' }}>
-            {expandedIndices.length === Object.keys(configsByContext).length
-              ? 'Collapse All'
-              : 'Expand All'}
-          </span>
-          <Box
-            as={
-              expandedIndices.length === Object.keys(configsByContext).length
-                ? ChevronUp
-                : ChevronDown
-            }
-            width='12px'
-            height='12px'
-            marginLeft={1.5}
-          />
-        </Button>
-      </Tooltip>
+      <Group display='flex' alignItems='center' gap={1.5}>
+        <ViewControls view={view} facets={facets} setView={setView} />
+        <WithTooltip content={expandLabel}>
+          <ToolbarIconButton aria-label={expandLabel} onClick={toggleExpandAll}>
+            {isAllExpanded ? (
+              <ChevronsDownUp size={13} />
+            ) : (
+              <ChevronsUpDown size={13} />
+            )}
+          </ToolbarIconButton>
+        </WithTooltip>
+      </Group>
     </Box>
   )
 }

@@ -164,6 +164,7 @@ fn parse_configs(
                 cert_issuer_kind: None,
                 ingress_class: None,
                 ingress_annotations: None,
+                tags: Default::default(),
             })
         })
         .collect()
@@ -201,6 +202,7 @@ fn create_default_configs(
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
+            tags: Default::default(),
         })
         .collect()
 }

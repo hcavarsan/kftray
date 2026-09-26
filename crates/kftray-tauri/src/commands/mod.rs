@@ -1,5 +1,6 @@
 pub mod config;
 pub mod config_state;
+pub mod config_view;
 pub mod github;
 pub mod helper;
 pub mod httplogs;
