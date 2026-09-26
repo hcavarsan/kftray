@@ -185,11 +185,11 @@ pub async fn save_tags(app: &mut App, mode: DatabaseMode) {
         Err(e) => Err(e),
     };
 
+    // A failed save can still have written the tags, since the row is updated
+    // before the http logs sync that may fail after it.
+    clear_marked_rows(app);
     match result {
-        Ok(()) => {
-            clear_marked_rows(app);
-            app.state = AppState::Normal;
-        }
+        Ok(()) => app.state = AppState::Normal,
         Err(e) => {
             app.error_message = Some(format!("Failed to save tags: {e}"));
             app.state = AppState::ShowErrorPopup;

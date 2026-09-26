@@ -277,6 +277,7 @@ async fn moving_in_the_view_popup_keeps_marked_rows() {
 async fn tag_editor_reports_invalid_tags() {
     let mut app = App::new(test_logger_state());
     app.stopped_configs = vec![config(1, "a", &[])];
+    app.selected_rows_stopped = HashSet::from([0]);
     open_tag_editor(&mut app);
     app.input_buffer = "bad key=x".to_string();
 
@@ -286,6 +287,7 @@ async fn tag_editor_reports_invalid_tags() {
 
     assert_eq!(app.state, AppState::ShowErrorPopup);
     assert!(app.error_message.unwrap().contains("tag key"));
+    assert!(app.selected_rows_stopped.is_empty());
 }
 
 #[test]
