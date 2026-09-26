@@ -1,7 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::utils::config_view::format_tags;
 use ratatui::prelude::Alignment;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::TableState;
@@ -54,7 +58,11 @@ pub fn draw_configs_table(
     state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
     configs_being_processed: &crate::tui::input::PendingForwards,
     throbber_state: &throbber_widgets_tui::ThrobberState,
+    group_labels: Option<&HashMap<i64, String>>,
 ) {
+    let group_of = |config: &Config| {
+        group_labels.and_then(|labels| labels.get(&config.id?).map(String::as_str))
+    };
     let rows: Vec<Row> = configs
         .iter()
         .enumerate()
@@ -94,7 +102,17 @@ pub fn draw_configs_table(
                 config.alias.clone().unwrap_or_default()
             };
 
-            Row::new(vec![
+            let mut cells = Vec::with_capacity(5);
+            if group_labels.is_some() {
+                let group = group_of(config);
+                let first_in_group = i == 0 || group_of(&configs[i - 1]) != group;
+                cells.push(Cell::from(if first_in_group {
+                    group.unwrap_or_default().to_string()
+                } else {
+                    String::new()
+                }));
+            }
+            cells.extend([
                 Cell::from(alias_text),
                 Cell::from(config.workload_type.clone().unwrap_or_default()),
                 Cell::from(
@@ -103,8 +121,8 @@ pub fn draw_configs_table(
                         .map_or_else(|| "".to_string(), |port| port.to_string()),
                 ),
                 Cell::from(config.context.clone().unwrap_or_default()),
-            ])
-            .style(row_style)
+            ]);
+            Row::new(cells).style(row_style)
         })
         .collect();
 
@@ -115,37 +133,27 @@ pub fn draw_configs_table(
         Modifier::empty()
     };
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ],
-    )
-    .header(
-        Row::new(vec![
-            Cell::from("Alias"),
-            Cell::from("Workload"),
-            Cell::from("Local Port"),
-            Cell::from("Context"),
-        ])
-        .style(style_bold().fg(MAUVE)),
-    )
-    .block(
-        Block::default()
-            .border_type(BorderType::Rounded)
-            .borders(Borders::ALL)
-            .title_alignment(Alignment::Left)
-            .border_style(
-                Style::default()
-                    .fg(focus_color)
-                    .add_modifier(border_modifier),
-            )
-            .title(Span::styled(title, Style::default().fg(MAUVE))),
-    )
-    .row_highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
+    let mut headers = vec!["Alias", "Workload", "Local Port", "Context"];
+    if group_labels.is_some() {
+        headers.insert(0, "Group");
+    }
+    let widths = vec![Constraint::Ratio(1, headers.len() as u32); headers.len()];
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(headers).style(style_bold().fg(MAUVE)))
+        .block(
+            Block::default()
+                .border_type(BorderType::Rounded)
+                .borders(Borders::ALL)
+                .title_alignment(Alignment::Left)
+                .border_style(
+                    Style::default()
+                        .fg(focus_color)
+                        .add_modifier(border_modifier),
+                )
+                .title(Span::styled(title, Style::default().fg(MAUVE))),
+        )
+        .row_highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
 
     frame.render_stateful_widget(table, area, state);
 
@@ -252,6 +260,10 @@ pub fn render_details(
         Line::from(vec![
             Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(config.context.as_deref().unwrap_or_default()),
+        ]),
+        Line::from(vec![
+            Span::styled("Tags: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format_tags(&config.tags)),
         ]),
         Line::from(vec![
             Span::styled("Alias: ", Style::default().add_modifier(Modifier::BOLD)),

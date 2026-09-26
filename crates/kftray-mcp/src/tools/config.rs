@@ -289,6 +289,7 @@ impl McpTool for CreateConfigTool {
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
+            tags: Default::default(),
         };
 
         match kftray_commons::config::insert_config(config).await {

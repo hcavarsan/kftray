@@ -65,7 +65,7 @@ mod tests {
             .draw(|frame| {
                 let area = Rect::new(10, 10, 50, 20);
                 let input_buffer = "test input";
-                render_input_prompt(frame, input_buffer, area);
+                render_input_prompt(frame, "Enter file name", input_buffer, area);
             })
             .unwrap();
 

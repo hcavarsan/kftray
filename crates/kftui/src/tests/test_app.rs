@@ -57,6 +57,7 @@ mod tests {
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
+            tags: Default::default(),
         }
     }
 
@@ -148,9 +149,8 @@ mod tests {
 
         app.update_configs(&configs, &config_states);
 
-        assert!(app.selected_rows_stopped.contains(&0));
-        assert!(app.selected_rows_stopped.contains(&2));
-        assert!(app.selected_rows_running.contains(&1));
+        assert_eq!(app.selected_rows_stopped, [0].into());
+        assert_eq!(app.selected_rows_running, [1].into());
     }
 
     #[test]

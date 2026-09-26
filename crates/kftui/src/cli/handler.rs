@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::read_configs_with_mode;
+use kftray_commons::utils::config_view::get_config_view_with_mode;
 use kftray_commons::utils::db::init as init_db;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::migration::migrate_configs;
@@ -173,10 +174,14 @@ impl CliHandler {
             PortForwardRunner::run_non_interactive_mode(&self.cli, self.mode, imported_config_ids)
                 .await
         } else {
+            let config_view = self
+                .cli
+                .apply_view_overrides(get_config_view_with_mode(self.mode).await);
             run_tui(
                 self.mode,
                 self.logger_state.clone(),
                 self.cli.no_update_check,
+                config_view,
             )
             .await
         }

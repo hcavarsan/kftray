@@ -92,6 +92,14 @@ echo '[{"alias":"api",...}]' | kftui --stdin
 **`--kubeconfig <PATH>`**: Path to kubeconfig file for auto-discovery (default: system default)
 **`--alias-as-domain`**: Enable alias-as-domain for all discovered configs
 **`--auto-loopback`**: Enable auto loopback address for all discovered configs
+**`--filter <COND>`**: Only show and auto-start matching configs. Repeatable, conditions are AND-ed (e.g. `--filter tag:env=dev --filter namespace=api,web`, or `--filter tag:pinned` for "has tag")
+**`--group-by <FIELD>`**: Group the tables by `context`, `namespace`, `kubeconfig`, `workload_type`, `protocol`, `tag:<key>` or `none` for this session
+
+Start only the configs tagged `team=payments`, headless:
+
+```bash
+kftui --auto-start --non-interactive --filter tag:team=payments
+```
 
 ## Service Auto-Discovery
 
@@ -246,6 +254,8 @@ Press `L` to configure HTTP logging behavior:
 | `L` | Configure HTTP logging |
 | `V` | View HTTP logs |
 | `o` | Open HTTP logs in external editor |
+| `v` | Group by and filter configs (saved and shared with the desktop app) |
+| `t` | Edit tags of the selected config (`key=value, key, ...`) |
 | `↑/↓` | Navigate within sections |
 | `PageUp/PageDown` | Scroll through content |
 | `Home/End` | Jump to first/last item |
@@ -266,7 +276,8 @@ Configuration files use JSON format with the following fields:
   "workload_type": "service",     // Target type: "service" or "pod"
   "context": "prod-cluster",      // Kubernetes context
   "kubeconfig": "/path/to/config", // Kubeconfig file path
-  "http_logs_enabled": true       // Enable HTTP logging
+  "http_logs_enabled": true,      // Enable HTTP logging
+  "tags": { "team": "payments" }  // Optional labels for grouping and filtering
 }
 ```
 

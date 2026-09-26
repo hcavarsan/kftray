@@ -308,6 +308,7 @@ impl McpTool for StartPortForwardTool {
                 cert_issuer_kind: None,
                 ingress_class: None,
                 ingress_annotations: None,
+                tags: Default::default(),
             };
 
             // Insert the config first and get its ID

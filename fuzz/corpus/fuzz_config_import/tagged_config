@@ -1,0 +1,1 @@
+{"service":"api","namespace":"payments","local_port":9090,"remote_port":80,"context":"prod","workload_type":"service","protocol":"tcp","alias":"api","tags":{"team":"payments","env":"prod","pinned":""}}
