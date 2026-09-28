@@ -199,7 +199,7 @@ const Footer: React.FC<FooterProps> = ({
         <Box fontSize='11px'>Server Resources</Box>
       </MenuItem>
 
-      <MenuSeparator />
+      <MenuSeparator borderColor='rgba(255, 255, 255, 0.08)' my={1} />
 
       <MenuItem value='settings' onClick={openSettingsModal}>
         <Box as={Settings} width='12px' height='12px' />
