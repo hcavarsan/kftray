@@ -215,6 +215,16 @@ fn raise_main_window(window: &WebviewWindow<Wry>) {
         warn!("Failed to show window: {e}");
     }
 
+    if crate::tray_mode::current(window.app_handle()) == crate::tray_mode::TrayMode::Window {
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window: {e}");
+        }
+        return;
+    }
+
     // On Linux, we need a more aggressive approach to ensure the window gets focus
     #[cfg(target_os = "linux")]
     {
