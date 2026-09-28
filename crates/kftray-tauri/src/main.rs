@@ -78,7 +78,7 @@ fn init_file_logger() -> anyhow::Result<()> {
         jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
     );
 
-    flexi_logger::Logger::try_with_str("info")?
+    flexi_logger::Logger::try_with_str("info, zbus=warn")?
         .log_to_file(
             flexi_logger::FileSpec::default()
                 .directory(log_dir)

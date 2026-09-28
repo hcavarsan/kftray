@@ -64,7 +64,16 @@ pub async fn save_window_position_async(position_data: WindowPosition) {
     }
 }
 
+pub fn position_is_compositor_managed() -> bool {
+    cfg!(target_os = "linux")
+        && (std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland"))
+}
+
 pub async fn load_window_position() -> Option<WindowPosition> {
+    if position_is_compositor_managed() {
+        return None;
+    }
     match get_window_state_path() {
         Ok(home_path) => {
             if !home_path.exists() {

@@ -9,6 +9,7 @@ use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use kftray_commons::models::window::WindowPosition;
 use log::{
+    debug,
     error,
     info,
     warn,
@@ -394,7 +395,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         refresh_tray_icon_for_theme(window.app_handle());
     }
 
-    info!("event: {:?}", event);
+    debug!("event: {:?}", event);
     let app_state = webview_window.state::<AppState>();
 
     if let WindowEvent::Focused(is_focused) = event
@@ -458,7 +459,9 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
                 app_state.positioning_active.store(false, Ordering::SeqCst);
             }
 
-            if !app_state.positioning_active.load(Ordering::SeqCst) {
+            if !app_state.positioning_active.load(Ordering::SeqCst)
+                && !crate::window::position_is_compositor_managed()
+            {
                 let x = physical_position.x;
                 let y = physical_position.y;
 
