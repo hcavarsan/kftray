@@ -68,8 +68,10 @@ impl WindowSize {
 }
 
 pub async fn load() -> Option<WindowSize> {
-    if let Ok(Some(value)) = get_setting(SETTING_KEY).await {
-        return WindowSize::parse(&value);
+    if let Ok(Some(value)) = get_setting(SETTING_KEY).await
+        && let Some(size) = WindowSize::parse(&value)
+    {
+        return Some(size);
     }
     let legacy = get_setting(LEGACY_PRESET_KEY).await.ok().flatten()?;
     let size = WindowSize::from_legacy_preset(&legacy)?;

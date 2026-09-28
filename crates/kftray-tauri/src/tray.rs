@@ -8,10 +8,11 @@ use std::time::Duration;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use kftray_commons::models::window::WindowPosition;
+#[cfg(not(target_os = "linux"))]
+use log::info;
 use log::{
     debug,
     error,
-    info,
     warn,
 };
 use tauri::PhysicalPosition;
