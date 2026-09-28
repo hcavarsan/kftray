@@ -59,7 +59,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [logTotalSize, setLogTotalSize] = useState<number>(0)
   const [isCleaningLogs, setIsCleaningLogs] = useState(false)
 
-  const [saved, setSaved] = useState(DEFAULT_SAVED)
+  const [saved, setSaved] = useState<typeof DEFAULT_SAVED | null>(null)
   const [appMode, setAppMode] = useState(DEFAULT_SAVED.appMode)
   const [sizePreset, setSizePreset] = useState(DEFAULT_SAVED.sizePreset)
   const [mcpEnabled, setMcpEnabled] = useState(DEFAULT_SAVED.mcpEnabled)
@@ -136,6 +136,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         setMcpRunning(mcp.running === 'true')
       } catch (windowError) {
         console.error('Error loading window and MCP settings:', windowError)
+        setSaved(null)
+        toaster.error({
+          title: 'Error',
+          description: 'Failed to load window and MCP settings',
+          duration: 3000,
+        })
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -300,6 +306,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   }
 
   const saveWindowSettings = async () => {
+    if (!saved) {
+      return false
+    }
     try {
       if (sizePreset !== saved.sizePreset) {
         await invoke('set_window_size_preset_cmd', { preset: sizePreset })
@@ -322,6 +331,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   }
 
   const saveMcpSettings = async (port: number) => {
+    if (!saved) {
+      return false
+    }
     try {
       if (!Number.isNaN(port) && String(port) !== saved.mcpPort) {
         await invoke('update_mcp_server_port', { port })
