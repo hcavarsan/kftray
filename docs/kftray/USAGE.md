@@ -45,6 +45,15 @@ In a few simple steps, you can configure your first port forward:
 - During a bulk action, the cancel button discards queued operations. Operations already in progress finish normally. Failed configurations are reported without blocking the rest of the batch.
 - Stop All also stops expose tunnels. Stopping a configuration cancels its recovery before releasing its listeners and Kubernetes resources.
 
+## App mode
+
+kftray runs in one of two modes, selected in **Settings > App Mode**:
+
+- **Tray** (default): the window opens from the tray icon or the global shortcut and hides when it loses focus. When no system tray is available (for example, GNOME without the AppIndicator extension), kftray runs in Window mode until a tray appears.
+- **Window**: kftray runs as a regular app with a taskbar or Dock entry and stays open when it loses focus.
+
+In both modes the `–` button in the header hides the window (Tray) or minimizes it (Window), and the `×` button quits kftray. Launching kftray again while it is running brings the existing window to the front. Window size and position can be changed in **Settings > Window**.
+
 ## Export configurations to a JSON file
 
 1. Open the main menu in the footer
