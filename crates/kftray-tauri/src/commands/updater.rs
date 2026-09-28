@@ -27,12 +27,21 @@ fn get_current_timestamp() -> i64 {
 }
 
 fn relaunch(app: &AppHandle) -> ! {
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(e) => {
+            error!("Failed to locate the kftray executable for restart: {e}");
+            std::process::exit(1);
+        }
+    };
+
     tauri_plugin_single_instance::destroy(app);
 
     // Use process restart instead of app.restart() for more reliable restart
-    std::process::Command::new(std::env::current_exe().unwrap())
-        .spawn()
-        .expect("Failed to restart application");
+    if let Err(e) = std::process::Command::new(executable).spawn() {
+        error!("Failed to restart application: {e}");
+        std::process::exit(1);
+    }
 
     std::process::exit(0);
 }
