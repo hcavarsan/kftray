@@ -1289,8 +1289,6 @@ const KFTray = () => {
               deleteConfigs={deleteConfigs}
               selectedConfigs={selectedConfigs}
               setSelectedConfigs={setSelectedConfigs}
-              openSettingsModal={openSettingsModal}
-              openServerResourcesModal={openServerResourcesModal}
             />
           </Box>
 
@@ -1320,6 +1318,8 @@ const KFTray = () => {
               openShortcutModal={openShortcutModal}
               setIsAutoImportModalOpen={setIsAutoImportModalOpen}
               deleteConfigs={deleteConfigs}
+              openSettingsModal={openSettingsModal}
+              openServerResourcesModal={openServerResourcesModal}
             />
           </Box>
         </Box>

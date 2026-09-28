@@ -1,15 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import {
-  GripVertical,
-  Minus,
-  Pin,
-  PinOff,
-  Search,
-  Server,
-  Settings,
-  X,
-} from 'lucide-react'
+import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
@@ -26,12 +17,7 @@ const appWindow = getCurrentWebviewWindow()
 
 type TrayMode = 'tray' | 'window'
 
-const Header: React.FC<HeaderProps> = ({
-  search,
-  setSearch,
-  openSettingsModal,
-  openServerResourcesModal,
-}) => {
+const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
@@ -217,56 +203,6 @@ const Header: React.FC<HeaderProps> = ({
 
       {/* Right Section - Window Controls */}
       <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
-        <Tooltip
-          content='Manage Server Resources'
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={openServerResourcesModal}
-            height='28px'
-            width='28px'
-            minWidth='28px'
-            p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
-          >
-            <Box
-              as={Server}
-              width='16px'
-              height='16px'
-              color='whiteAlpha.700'
-            />
-          </Button>
-        </Tooltip>
-
-        <Tooltip
-          content='Settings'
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={openSettingsModal}
-            height='28px'
-            width='28px'
-            minWidth='28px'
-            p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
-          >
-            <Box
-              as={Settings}
-              width='16px'
-              height='16px'
-              color='whiteAlpha.700'
-            />
-          </Button>
-        </Tooltip>
-
         <Tooltip
           content={isPinned ? 'Unpin Window' : 'Pin Window'}
           portalled={true}

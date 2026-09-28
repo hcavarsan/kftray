@@ -129,8 +129,6 @@ export interface TableProps {
   handleDuplicateConfig: (id: number) => Promise<void>
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-  openSettingsModal: () => void
-  openServerResourcesModal: () => void
 }
 
 export interface PortForwardRowProps {
@@ -171,6 +169,8 @@ export interface FooterProps {
   openShortcutModal: () => void
   setIsAutoImportModalOpen: (open: boolean) => void
   deleteConfigs: (ids: number[]) => Promise<boolean>
+  openSettingsModal: () => void
+  openServerResourcesModal: () => void
 }
 
 export interface SyncConfigsButtonProps {
@@ -207,8 +207,6 @@ export interface CustomConfigProps {
 export interface HeaderProps {
   search: string
   setSearch: React.Dispatch<React.SetStateAction<string>>
-  openSettingsModal: () => void
-  openServerResourcesModal: () => void
 }
 
 export interface HeaderMenuProps {
