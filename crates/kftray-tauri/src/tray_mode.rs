@@ -1,5 +1,7 @@
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 
+use kftray_commons::models::window::AppState;
 use log::{
     info,
     warn,
@@ -103,10 +105,13 @@ pub fn preference(app: &AppHandle<Wry>) -> AppMode {
 }
 
 pub fn set_preference(app: &AppHandle<Wry>, preference: AppMode) {
-    if let Some(mode) = app
-        .state::<TrayModeState>()
-        .update(|inputs| inputs.preference = preference)
-    {
+    let state = app.state::<TrayModeState>();
+    let changed = state.preference() != preference;
+    let switched = state.update(|inputs| inputs.preference = preference);
+    if changed {
+        crate::tray::set_tray_icon_visible(app, preference == AppMode::Tray);
+    }
+    if let Some(mode) = switched {
         switch_to(app, mode);
     }
 }
@@ -155,8 +160,18 @@ fn switch_to(app: &AppHandle<Wry>, mode: TrayMode) {
         if let Err(e) = window.set_skip_taskbar(mode == TrayMode::Tray) {
             warn!("Failed to update taskbar visibility: {e}");
         }
-        if mode == TrayMode::Window {
-            crate::window::show_main_window(&window);
+        if let Err(e) = window.set_resizable(mode == TrayMode::Window) {
+            warn!("Failed to update window resizability: {e}");
+        }
+        match mode {
+            TrayMode::Window => crate::window::show_centered_main_window(&window),
+            TrayMode::Tray => {
+                crate::window::forget_window_position(&window);
+                let pinned = window.state::<AppState>().pinned.load(Ordering::SeqCst);
+                if !pinned && let Err(e) = window.hide() {
+                    warn!("Failed to hide window: {e}");
+                }
+            }
         }
     }
 

@@ -109,6 +109,20 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+pub fn set_tray_icon_visible(app: &tauri::AppHandle<Wry>, visible: bool) {
+    crate::tray_linux::set_visible(app, visible);
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_tray_icon_visible(app: &tauri::AppHandle<Wry>, visible: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID)
+        && let Err(e) = tray.set_visible(visible)
+    {
+        warn!("Failed to update tray icon visibility: {e}");
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{
+    AtomicBool,
     AtomicU64,
     Ordering,
 };
@@ -214,29 +215,58 @@ fn toggle_main_window(app: &AppHandle<Wry>) {
     }
 }
 
-pub fn spawn(app: &tauri::App<Wry>) {
-    let handle = app.handle().clone();
-    let icon: Vec<Icon> = TRAY_PNG_VARIANTS
-        .iter()
-        .filter_map(|bytes| decode_tray_icon(bytes))
-        .collect();
-    let tray = KftrayTray {
-        app: handle.clone(),
-        icon,
-        offline_generation: Arc::default(),
-    };
+#[derive(Default)]
+pub struct LinuxTray {
+    handle: tokio::sync::Mutex<Option<ksni::Handle<KftrayTray>>>,
+    hidden: AtomicBool,
+    offline_generation: Arc<AtomicU64>,
+}
 
+pub fn spawn(app: &tauri::App<Wry>) {
+    app.manage(LinuxTray::default());
+    set_visible(app.handle(), true);
+}
+
+pub fn set_visible(app: &AppHandle<Wry>, visible: bool) {
+    app.state::<LinuxTray>()
+        .hidden
+        .store(!visible, Ordering::SeqCst);
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let state = app.state::<LinuxTray>();
+        let mut handle = state.handle.lock().await;
+        if state.hidden.load(Ordering::SeqCst) {
+            if let Some(tray) = handle.take() {
+                state.offline_generation.fetch_add(1, Ordering::SeqCst);
+                tray.shutdown().await;
+            }
+            return;
+        }
+        if handle.is_some() {
+            return;
+        }
+        let tray = KftrayTray {
+            app: app.clone(),
+            icon: TRAY_PNG_VARIANTS
+                .iter()
+                .filter_map(|bytes| decode_tray_icon(bytes))
+                .collect(),
+            offline_generation: Arc::clone(&state.offline_generation),
+        };
+        let before = state.offline_generation.load(Ordering::SeqCst);
         match tray.assume_sni_available(true).spawn().await {
-            Ok(tray_handle) => {
+            Ok(tray) => {
                 info!("SNI tray service started");
-                std::mem::forget(tray_handle);
+                if state.offline_generation.load(Ordering::SeqCst) == before {
+                    tray_mode::set_tray_available(&app, true);
+                }
+                *handle = Some(tray);
             }
             Err(e) => {
                 warn!(
                     "SNI tray service failed to start ({e}); kftray will run without a tray icon"
                 );
-                tray_mode::set_tray_available(&handle, false);
+                tray_mode::set_tray_available(&app, false);
             }
         }
     });

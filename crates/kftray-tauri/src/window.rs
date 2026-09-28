@@ -168,9 +168,49 @@ pub fn hide_main_window(window: &WebviewWindow<Wry>) {
 }
 
 fn show_main_window_with_mode(window: &WebviewWindow<Wry>, from_tray: bool) {
+    set_position_before_show_with_mode(window.clone(), from_tray);
+    raise_main_window(window);
+}
+
+pub fn show_centered_main_window(window: &WebviewWindow<Wry>) {
+    let (positioning_active, runtime) = {
+        let app_state = window.state::<AppState>();
+        app_state.positioning_active.store(true, Ordering::SeqCst);
+        (
+            app_state.positioning_active.clone(),
+            app_state.runtime.clone(),
+        )
+    };
+    let window = window.clone();
+    runtime.spawn(async move {
+        let preset = load_saved_window_size_preset().await;
+        apply_window_size_on_main_thread(&window, preset).await;
+        let target = window.clone();
+        let centered = window.app_handle().run_on_main_thread(move || {
+            let monitor = target
+                .current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| target.primary_monitor().ok().flatten());
+            if let Some(monitor) = monitor {
+                let (width, height) = preset.dimensions(&target);
+                let size = tauri::LogicalSize::new(width, height)
+                    .to_physical::<u32>(monitor.scale_factor());
+                center_sized_on_monitor(&target, &monitor, size);
+            }
+            raise_main_window(&target);
+        });
+        if let Err(e) = centered {
+            warn!("Failed to dispatch window centering to main thread: {e}");
+        }
+        sleep(Duration::from_millis(150)).await;
+        positioning_active.store(false, Ordering::SeqCst);
+    });
+}
+
+fn raise_main_window(window: &WebviewWindow<Wry>) {
     let pinned = window.state::<AppState>().pinned.load(Ordering::SeqCst);
 
-    set_position_before_show_with_mode(window.clone(), from_tray);
     if let Err(e) = window.show() {
         warn!("Failed to show window: {e}");
     }
@@ -256,6 +296,7 @@ fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: boo
             Some(position)
                 if is_valid_position(&window_clone, position.x, position.y)
                     && (!from_tray
+                        || tray_mode::current(window_clone.app_handle()) == TrayMode::Window
                         || is_on_tray_monitor(&window_clone, position.x, position.y)) =>
             {
                 info!(
@@ -272,6 +313,12 @@ fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: boo
                         positioning_active.store(false, Ordering::SeqCst);
                     }
                 });
+            }
+            _ if tray_mode::current(window_clone.app_handle()) == TrayMode::Window => {
+                info!("No usable saved position, centering the window");
+                center_on_current_monitor(&window_clone);
+                sleep(Duration::from_millis(150)).await;
+                positioning_active.store(false, Ordering::SeqCst);
             }
             _ => {
                 info!("No usable saved position, using tray positioning");
@@ -390,7 +437,10 @@ pub async fn apply_window_size_preset(
             warn!(
                 "Failed to persist window size preset: {e}; keeping in-memory size for this session"
             );
-            position_from_tray(window);
+            match tray_mode::current(window.app_handle()) {
+                TrayMode::Window => center_on_current_monitor(window),
+                TrayMode::Tray => position_from_tray(window),
+            }
         }
     }
 }
@@ -748,7 +798,12 @@ fn center_on_specific_monitor(window: &WebviewWindow<Wry>, monitor: &tauri::Moni
         warn!("Failed to get window size for centering");
         return;
     };
+    center_sized_on_monitor(window, monitor, window_size);
+}
 
+fn center_sized_on_monitor(
+    window: &WebviewWindow<Wry>, monitor: &tauri::Monitor, window_size: PhysicalSize<u32>,
+) {
     let monitor_size = monitor.size();
     let monitor_pos = monitor.position();
 
@@ -769,6 +824,13 @@ fn center_on_specific_monitor(window: &WebviewWindow<Wry>, monitor: &tauri::Moni
     }
 }
 
+fn center_on_current_monitor(window: &WebviewWindow<Wry>) {
+    match window.current_monitor().ok().flatten() {
+        Some(monitor) => center_on_specific_monitor(window, &monitor),
+        None => center_on_primary_monitor(window),
+    }
+}
+
 fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     let Ok(monitors) = window.available_monitors() else {
         warn!("Failed to get monitors for centering");
@@ -782,6 +844,13 @@ fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     };
 
     center_on_specific_monitor(window, &monitor);
+}
+
+pub fn forget_window_position(window: &WebviewWindow<Wry>) {
+    window
+        .state::<AppState>()
+        .runtime
+        .spawn(remove_position_file());
 }
 
 pub fn reset_window_position(window: WebviewWindow<Wry>) {
@@ -798,7 +867,10 @@ pub fn reset_window_position(window: WebviewWindow<Wry>) {
 
     runtime.spawn(async move {
         remove_position_file().await;
-        position_from_tray(&window_clone);
+        match tray_mode::current(window_clone.app_handle()) {
+            TrayMode::Window => center_on_current_monitor(&window_clone),
+            TrayMode::Tray => position_from_tray(&window_clone),
+        }
         sleep(Duration::from_millis(150)).await;
         positioning_active.store(false, Ordering::SeqCst);
     });
