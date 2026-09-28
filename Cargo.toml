@@ -110,6 +110,7 @@ tauri-plugin-os = "2.3.2"
 tauri-plugin-positioner = { version = "2.3.4", features = ["tray-icon"] }
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.6"
+tauri-plugin-single-instance = "2.5.0"
 tauri-plugin-updater = "2.12.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"

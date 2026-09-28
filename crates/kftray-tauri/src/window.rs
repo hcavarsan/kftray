@@ -23,6 +23,14 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
+use crate::tray_mode::{
+    self,
+    ToggleAction,
+    TrayMode,
+    WindowSnapshot,
+    toggle_action,
+};
+
 pub async fn save_window_position_async(position_data: WindowPosition) {
     let position_json = match serde_json::to_string(&position_data) {
         Ok(json) => json,
@@ -122,77 +130,106 @@ pub fn toggle_window_visibility_from_tray(window: &WebviewWindow<Wry>) {
 }
 
 fn toggle_window_visibility_with_position(window: &WebviewWindow<Wry>, from_tray: bool) {
-    let app_state = window.state::<AppState>();
-    let is_visible = window.is_visible().unwrap_or(false);
+    let snapshot = WindowSnapshot {
+        visible: window.is_visible().unwrap_or(false),
+        minimized: window.is_minimized().unwrap_or(false),
+        focused: window.is_focused().unwrap_or(false),
+        pinned: window.state::<AppState>().pinned.load(Ordering::SeqCst),
+    };
 
-    if is_visible {
-        if !app_state.pinned.load(Ordering::SeqCst)
-            && let Err(e) = window.hide()
-        {
-            warn!("Failed to hide window: {e}");
+    match toggle_action(tray_mode::current(window.app_handle()), snapshot) {
+        ToggleAction::Show => show_main_window_with_mode(window, from_tray),
+        ToggleAction::Hide => {
+            if let Err(e) = window.hide() {
+                warn!("Failed to hide window: {e}");
+            }
         }
-    } else {
-        set_position_before_show_with_mode(window.clone(), from_tray);
-        if let Err(e) = window.show() {
-            warn!("Failed to show window: {e}");
+        ToggleAction::Minimize => {
+            if let Err(e) = window.minimize() {
+                warn!("Failed to minimize window: {e}");
+            }
+        }
+        ToggleAction::Keep => {}
+    }
+}
+
+pub fn show_main_window(window: &WebviewWindow<Wry>) {
+    show_main_window_with_mode(window, false);
+}
+
+pub fn hide_main_window(window: &WebviewWindow<Wry>) {
+    let result = match tray_mode::current(window.app_handle()) {
+        TrayMode::Tray => window.hide(),
+        TrayMode::Window => window.minimize(),
+    };
+    if let Err(e) = result {
+        warn!("Failed to hide window: {e}");
+    }
+}
+
+fn show_main_window_with_mode(window: &WebviewWindow<Wry>, from_tray: bool) {
+    let pinned = window.state::<AppState>().pinned.load(Ordering::SeqCst);
+
+    set_position_before_show_with_mode(window.clone(), from_tray);
+    if let Err(e) = window.show() {
+        warn!("Failed to show window: {e}");
+    }
+
+    // On Linux, we need a more aggressive approach to ensure the window gets focus
+    #[cfg(target_os = "linux")]
+    {
+        // First, set always on top to bring it to front
+        if let Err(e) = window.set_always_on_top(true) {
+            warn!("Failed to set window always on top: {e}");
         }
 
-        // On Linux, we need a more aggressive approach to ensure the window gets focus
-        #[cfg(target_os = "linux")]
-        {
-            // First, set always on top to bring it to front
-            if let Err(e) = window.set_always_on_top(true) {
-                warn!("Failed to set window always on top: {e}");
+        // Immediately request focus
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window (first attempt): {e}");
+        }
+
+        // On Linux, also try to unminimize the window in case it's minimized
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
+        }
+
+        // Use a non-blocking approach to avoid blocking the UI thread
+        let window_clone = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Second focus attempt with unminimize
+            if let Err(e) = window_clone.unminimize() {
+                warn!("Failed to unminimize window (second attempt): {e}");
+            }
+            if let Err(e) = window_clone.set_focus() {
+                warn!("Failed to focus window (second attempt): {e}");
             }
 
-            // Immediately request focus
-            if let Err(e) = window.set_focus() {
-                warn!("Failed to focus window (first attempt): {e}");
-            }
-
-            // On Linux, also try to unminimize the window in case it's minimized
-            if let Err(e) = window.unminimize() {
-                warn!("Failed to unminimize window: {e}");
-            }
-
-            // Use a non-blocking approach to avoid blocking the UI thread
-            let window_clone = window.clone();
-            let pinned = app_state.pinned.load(Ordering::SeqCst);
-            std::thread::spawn(move || {
+            // Remove always on top if not pinned
+            if !pinned {
                 std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Err(e) = window_clone.set_always_on_top(false) {
+                    warn!("Failed to unset window always on top: {e}");
+                }
+            }
+        });
+    }
 
-                // Second focus attempt with unminimize
-                if let Err(e) = window_clone.unminimize() {
-                    warn!("Failed to unminimize window (second attempt): {e}");
-                }
-                if let Err(e) = window_clone.set_focus() {
-                    warn!("Failed to focus window (second attempt): {e}");
-                }
-
-                // Remove always on top if not pinned
-                if !pinned {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    if let Err(e) = window_clone.set_always_on_top(false) {
-                        warn!("Failed to unset window always on top: {e}");
-                    }
-                }
-            });
+    // For other platforms, use the original approach
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
         }
-
-        // For other platforms, use the original approach
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Err(e) = window.set_always_on_top(true) {
-                warn!("Failed to set window always on top: {e}");
-            }
-            if let Err(e) = window.set_focus() {
-                warn!("Failed to focus window: {e}");
-            }
-            if !app_state.pinned.load(Ordering::SeqCst)
-                && let Err(e) = window.set_always_on_top(false)
-            {
-                warn!("Failed to unset window always on top: {e}");
-            }
+        if let Err(e) = window.set_always_on_top(true) {
+            warn!("Failed to set window always on top: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window: {e}");
+        }
+        if !pinned && let Err(e) = window.set_always_on_top(false) {
+            warn!("Failed to unset window always on top: {e}");
         }
     }
 }

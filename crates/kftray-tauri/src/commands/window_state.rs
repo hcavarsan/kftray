@@ -5,10 +5,25 @@ use kftray_commons::models::window::SaveDialogState;
 use log::error;
 use tauri::State;
 use tauri::{
+    AppHandle,
     Emitter,
+    Manager,
     WebviewWindow,
     Wry,
 };
+
+use crate::tray_mode::{
+    self,
+    AppMode,
+    TrayMode,
+};
+use crate::window::{
+    apply_window_size_preset,
+    hide_main_window,
+    load_saved_window_size_preset,
+    reset_window_position,
+};
+use crate::window_size::WindowSizePreset;
 
 #[tauri::command]
 pub fn open_save_dialog(state: State<SaveDialogState>) {
@@ -48,6 +63,54 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow
     if let Err(e) = window.emit("pin-state-changed", new_pin_state) {
         error!("Failed to emit pin state event: {e:?}");
     }
+}
+
+#[tauri::command]
+pub fn hide_main_window_cmd(window: WebviewWindow<Wry>) {
+    hide_main_window(&window);
+}
+
+#[tauri::command]
+pub fn get_tray_mode_cmd(app: AppHandle<Wry>) -> TrayMode {
+    tray_mode::current(&app)
+}
+
+#[tauri::command]
+pub fn get_app_mode_cmd(app: AppHandle<Wry>) -> AppMode {
+    tray_mode::preference(&app)
+}
+
+#[tauri::command]
+pub async fn set_app_mode_cmd(app: AppHandle<Wry>, mode: AppMode) -> Result<(), String> {
+    kftray_commons::utils::settings::set_setting(tray_mode::APP_MODE_SETTING_KEY, mode.as_id())
+        .await
+        .map_err(|e| format!("Failed to save app mode: {e}"))?;
+    tray_mode::set_preference(&app, mode);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_window_size_preset_cmd() -> String {
+    load_saved_window_size_preset().await.as_id().to_string()
+}
+
+#[tauri::command]
+pub async fn set_window_size_preset_cmd(app: AppHandle<Wry>, preset: String) -> Result<(), String> {
+    let preset = WindowSizePreset::from_id(&preset)
+        .ok_or_else(|| format!("Unknown window size preset: {preset}"))?;
+    apply_window_size_preset(&main_window(&app)?, preset).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_window_position_cmd(app: AppHandle<Wry>) -> Result<(), String> {
+    reset_window_position(main_window(&app)?);
+    Ok(())
+}
+
+fn main_window(app: &AppHandle<Wry>) -> Result<WebviewWindow<Wry>, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())
 }
 
 #[cfg(test)]

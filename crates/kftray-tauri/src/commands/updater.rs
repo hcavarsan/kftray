@@ -26,6 +26,17 @@ fn get_current_timestamp() -> i64 {
         .as_secs() as i64
 }
 
+fn relaunch(app: &AppHandle) -> ! {
+    tauri_plugin_single_instance::destroy(app);
+
+    // Use process restart instead of app.restart() for more reliable restart
+    std::process::Command::new(std::env::current_exe().unwrap())
+        .spawn()
+        .expect("Failed to restart application");
+
+    std::process::exit(0);
+}
+
 #[command]
 pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
     info!("Checking for application updates...");
@@ -85,12 +96,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
                             .kind(MessageDialogKind::Info)
                             .blocking_show();
 
-                        // Use process restart instead of app.restart() for more reliable restart
-                        std::process::Command::new(std::env::current_exe().unwrap())
-                            .spawn()
-                            .expect("Failed to restart application");
-
-                        std::process::exit(0);
+                        relaunch(&app);
                     }
                     Err(e) => {
                         error!("Failed to download or install update: {}", e);
@@ -201,12 +207,7 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
                 Ok(_) => {
                     info!("Update installed successfully, restarting app");
 
-                    // Use process restart instead of app.restart() for more reliable restart
-                    std::process::Command::new(std::env::current_exe().unwrap())
-                        .spawn()
-                        .expect("Failed to restart application");
-
-                    std::process::exit(0);
+                    relaunch(&app);
                 }
                 Err(e) => {
                     error!("Failed to download or install update: {}", e);

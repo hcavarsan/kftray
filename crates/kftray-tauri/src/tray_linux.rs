@@ -1,6 +1,14 @@
+use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
+use std::time::Duration;
+
 use kftray_commons::models::window::AppState;
 use ksni::{
     Icon,
+    OfflineReason,
     TrayMethods,
     menu::{
         MenuItem,
@@ -22,6 +30,7 @@ use tauri_plugin_positioner::Position;
 
 use crate::commands::portforward::handle_exit_app;
 use crate::commands::window_state::toggle_pin_state;
+use crate::tray_mode;
 use crate::window::{
     apply_window_size_preset,
     reset_window_position,
@@ -39,9 +48,12 @@ const TRAY_PNG_VARIANTS: &[&[u8]] = &[
     include_bytes!("../icons/tray-64.png"),
 ];
 
+const WINDOW_MODE_GRACE: Duration = Duration::from_secs(2);
+
 struct KftrayTray {
     app: AppHandle<Wry>,
     icon: Vec<Icon>,
+    offline_generation: Arc<AtomicU64>,
 }
 
 impl ksni::Tray for KftrayTray {
@@ -59,6 +71,25 @@ impl ksni::Tray for KftrayTray {
 
     fn activate(&mut self, _x: i32, _y: i32) {
         toggle_main_window(&self.app);
+    }
+
+    fn watcher_online(&self) {
+        self.offline_generation.fetch_add(1, Ordering::SeqCst);
+        tray_mode::set_tray_available(&self.app, true);
+    }
+
+    fn watcher_offline(&self, reason: OfflineReason) -> bool {
+        warn!("StatusNotifierWatcher is offline ({reason:?})");
+        let generation = self.offline_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let offline_generation = Arc::clone(&self.offline_generation);
+        let app = self.app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(WINDOW_MODE_GRACE).await;
+            if offline_generation.load(Ordering::SeqCst) == generation {
+                tray_mode::set_tray_available(&app, false);
+            }
+        });
+        true
     }
 
     fn secondary_activate(&mut self, _x: i32, _y: i32) {
@@ -189,18 +220,23 @@ pub fn spawn(app: &tauri::App<Wry>) {
         .iter()
         .filter_map(|bytes| decode_tray_icon(bytes))
         .collect();
-    let tray = KftrayTray { app: handle, icon };
+    let tray = KftrayTray {
+        app: handle.clone(),
+        icon,
+        offline_generation: Arc::default(),
+    };
 
     tauri::async_runtime::spawn(async move {
-        match tray.spawn().await {
-            Ok(handle) => {
+        match tray.assume_sni_available(true).spawn().await {
+            Ok(tray_handle) => {
                 info!("SNI tray service started");
-                std::mem::forget(handle);
+                std::mem::forget(tray_handle);
             }
             Err(e) => {
                 warn!(
                     "SNI tray service failed to start ({e}); kftray will run without a tray icon"
                 );
+                tray_mode::set_tray_available(&handle, false);
             }
         }
     });

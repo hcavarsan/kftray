@@ -21,6 +21,7 @@ mod shortcuts;
 mod tray;
 #[cfg(target_os = "linux")]
 mod tray_linux;
+mod tray_mode;
 #[cfg(target_os = "windows")]
 mod tray_theme;
 mod validation;
@@ -46,6 +47,7 @@ use crate::tray::{
     handle_run_event,
     handle_window_event,
 };
+use crate::tray_mode::TrayModeState;
 
 /// Sets an environment variable only if it isn't already defined.
 /// Respects user overrides for power users who know their system works
@@ -142,8 +144,14 @@ fn main() {
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                window::show_main_window(&window);
+            }
+        }))
         .manage(SaveDialogState::default())
         .manage(TrayPositionState::default())
+        .manage(TrayModeState::default())
         .manage(AppState {
             positioning_active: positioning_active.clone(),
             pinned: pinned.clone(),
@@ -322,6 +330,11 @@ fn main() {
                 error!("Failed to create tray icon: {e}");
             }
 
+            let app_handle_mode = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tray_mode::load_preference(&app_handle_mode).await;
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
@@ -391,6 +404,13 @@ fn main() {
             commands::github::get_key,
             commands::github::delete_key,
             commands::window_state::toggle_pin_state,
+            commands::window_state::hide_main_window_cmd,
+            commands::window_state::get_tray_mode_cmd,
+            commands::window_state::get_app_mode_cmd,
+            commands::window_state::set_app_mode_cmd,
+            commands::window_state::get_window_size_preset_cmd,
+            commands::window_state::set_window_size_preset_cmd,
+            commands::window_state::reset_window_position_cmd,
             commands::config_state::get_config_states,
             commands::helper::install_helper,
             commands::helper::remove_helper,

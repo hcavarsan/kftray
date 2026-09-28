@@ -13,7 +13,7 @@
         "hiddenTitle": true,
         "resizable": false,
         "skipTaskbar": true,
-        "title": "menubar",
+        "title": "kftray",
         "transparent": true,
         "useHttpsScheme": true,
         "visible": false,

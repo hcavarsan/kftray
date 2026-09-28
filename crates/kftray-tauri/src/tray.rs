@@ -50,6 +50,10 @@ pub struct TrayPositionState {
 use crate::commands::portforward::handle_exit_app;
 #[cfg(not(target_os = "linux"))]
 use crate::commands::window_state::toggle_pin_state;
+use crate::tray_mode::{
+    self,
+    TrayMode,
+};
 use crate::window::{
     is_valid_position,
     save_window_position_async,
@@ -383,6 +387,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         && !is_focused
         && !app_state.pinned.load(Ordering::SeqCst)
         && webview_window.label() == "main"
+        && tray_mode::current(webview_window.app_handle()) == TrayMode::Tray
     {
         let app_handle = webview_window.app_handle();
 
@@ -474,6 +479,12 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
         }
         RunEvent::Exit => {
             tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
+        }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                crate::window::show_main_window(&window);
+            }
         }
         _ => {}
     }
