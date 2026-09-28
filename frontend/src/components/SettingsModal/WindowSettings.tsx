@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { LocateFixed } from 'lucide-react'
 
 import { Box, Flex, NativeSelect, Text } from '@chakra-ui/react'
@@ -10,6 +10,10 @@ import { toaster } from '@/components/ui/toaster'
 
 interface WindowSettingsProps {
   isLoading: boolean
+  appMode: string
+  sizePreset: string
+  onAppModeChange: (mode: string) => void
+  onSizePresetChange: (preset: string) => void
 }
 
 interface SelectOption {
@@ -66,54 +70,14 @@ const CompactSelect: React.FC<CompactSelectProps> = ({
   </NativeSelect.Root>
 )
 
-const WindowSettings: React.FC<WindowSettingsProps> = ({ isLoading }) => {
-  const [appMode, setAppMode] = useState('tray')
-  const [sizePreset, setSizePreset] = useState('default')
-  const [isApplying, setIsApplying] = useState(false)
+const WindowSettings: React.FC<WindowSettingsProps> = ({
+  isLoading,
+  appMode,
+  sizePreset,
+  onAppModeChange,
+  onSizePresetChange,
+}) => {
   const [isResettingPosition, setIsResettingPosition] = useState(false)
-
-  const loadWindowSettings = useCallback(async () => {
-    try {
-      const [mode, preset] = await Promise.all([
-        invoke<string>('get_app_mode_cmd'),
-        invoke<string>('get_window_size_preset_cmd'),
-      ])
-
-      setAppMode(mode)
-      setSizePreset(preset)
-    } catch (error) {
-      console.error('Error loading window settings:', error)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadWindowSettings()
-  }, [loadWindowSettings])
-
-  const applySetting = async (
-    value: string,
-    previous: string,
-    setValue: (value: string) => void,
-    command: string,
-    args: Record<string, string>,
-    errorMessage: string,
-  ) => {
-    setValue(value)
-    setIsApplying(true)
-    try {
-      await invoke(command, args)
-    } catch (error) {
-      console.error(`${errorMessage}:`, error)
-      setValue(previous)
-      toaster.error({
-        title: 'Error',
-        description: errorMessage,
-        duration: 3000,
-      })
-    } finally {
-      setIsApplying(false)
-    }
-  }
 
   const resetPosition = async () => {
     setIsResettingPosition(true)
@@ -158,17 +122,8 @@ const WindowSettings: React.FC<WindowSettingsProps> = ({ isLoading }) => {
             <CompactSelect
               value={appMode}
               options={APP_MODES}
-              disabled={isLoading || isApplying}
-              onChange={mode =>
-                applySetting(
-                  mode,
-                  appMode,
-                  setAppMode,
-                  'set_app_mode_cmd',
-                  { mode },
-                  'Failed to change app mode',
-                )
-              }
+              disabled={isLoading}
+              onChange={onAppModeChange}
             />
           </Flex>
         </Box>
@@ -197,17 +152,8 @@ const WindowSettings: React.FC<WindowSettingsProps> = ({ isLoading }) => {
             <CompactSelect
               value={sizePreset}
               options={SIZE_PRESETS}
-              disabled={isLoading || isApplying}
-              onChange={preset =>
-                applySetting(
-                  preset,
-                  sizePreset,
-                  setSizePreset,
-                  'set_window_size_preset_cmd',
-                  { preset },
-                  'Failed to apply window size',
-                )
-              }
+              disabled={isLoading}
+              onChange={onSizePresetChange}
             />
           </Flex>
           <Flex align='center' justify='flex-end'>
