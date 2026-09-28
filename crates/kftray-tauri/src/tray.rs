@@ -55,10 +55,7 @@ use crate::tray_mode::{
     self,
     TrayMode,
 };
-use crate::window::{
-    is_valid_position,
-    save_window_position_async,
-};
+use crate::window::is_valid_position;
 #[cfg(not(target_os = "linux"))]
 use crate::window::{
     reset_window_position,
@@ -455,11 +452,10 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
                 let y = physical_position.y;
 
                 if is_valid_position(&webview_window, x, y) {
-                    let runtime = app_state.runtime.clone();
-                    runtime.spawn(async move {
-                        sleep(Duration::from_millis(500)).await;
-                        save_window_position_async(WindowPosition { x, y }).await;
-                    });
+                    crate::window::save_window_position_after_move(
+                        &app_state.runtime,
+                        WindowPosition { x, y },
+                    );
                 } else {
                     warn!("Position ({}, {}) failed validation", x, y);
                 }

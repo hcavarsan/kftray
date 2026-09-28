@@ -82,7 +82,7 @@ pub async fn set_app_mode_cmd(app: AppHandle<Wry>, mode: AppMode) -> Result<(), 
     kftray_commons::utils::settings::set_setting(tray_mode::APP_MODE_SETTING_KEY, mode.as_id())
         .await
         .map_err(|e| format!("Failed to save app mode: {e}"))?;
-    tray_mode::set_preference(&app, mode);
+    tray_mode::set_preference(&app, mode, true);
     Ok(())
 }
 

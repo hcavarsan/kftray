@@ -1,6 +1,9 @@
 use std::io::ErrorKind;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
@@ -62,6 +65,20 @@ pub async fn save_window_position_async(position_data: WindowPosition) {
         }
         Err(err) => warn!("Failed to get window state path: {err}"),
     }
+}
+
+static PENDING_POSITION_SAVE: AtomicU64 = AtomicU64::new(0);
+
+pub fn save_window_position_after_move(
+    runtime: &tokio::runtime::Runtime, position: WindowPosition,
+) {
+    let generation = PENDING_POSITION_SAVE.fetch_add(1, Ordering::SeqCst) + 1;
+    runtime.spawn(async move {
+        sleep(Duration::from_millis(500)).await;
+        if PENDING_POSITION_SAVE.load(Ordering::SeqCst) == generation {
+            save_window_position_async(position).await;
+        }
+    });
 }
 
 pub fn position_is_compositor_managed() -> bool {
