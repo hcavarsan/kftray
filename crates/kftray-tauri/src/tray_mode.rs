@@ -104,7 +104,7 @@ pub fn preference(app: &AppHandle<Wry>) -> AppMode {
         .map_or(AppMode::Tray, |state| state.preference())
 }
 
-pub fn set_preference(app: &AppHandle<Wry>, preference: AppMode) {
+pub fn set_preference(app: &AppHandle<Wry>, preference: AppMode, center: bool) {
     let state = app.state::<TrayModeState>();
     let changed = state.preference() != preference;
     let switched = state.update(|inputs| inputs.preference = preference);
@@ -112,7 +112,7 @@ pub fn set_preference(app: &AppHandle<Wry>, preference: AppMode) {
         crate::tray::set_tray_icon_visible(app, preference == AppMode::Tray);
     }
     if let Some(mode) = switched {
-        switch_to(app, mode);
+        switch_to(app, mode, center);
     }
 }
 
@@ -127,14 +127,14 @@ pub fn set_tray_available(app: &AppHandle<Wry>, available: bool) {
         .state::<TrayModeState>()
         .update(|inputs| inputs.tray_unavailable = !available)
     {
-        switch_to(app, mode);
+        switch_to(app, mode, false);
     }
 }
 
 pub async fn load_preference(app: &AppHandle<Wry>) {
     match kftray_commons::utils::settings::get_setting(APP_MODE_SETTING_KEY).await {
         Ok(Some(value)) => match AppMode::from_id(&value) {
-            Some(preference) => set_preference(app, preference),
+            Some(preference) => set_preference(app, preference, false),
             None => warn!("Ignoring unknown app mode setting: {value}"),
         },
         Ok(None) => {}
@@ -142,7 +142,7 @@ pub async fn load_preference(app: &AppHandle<Wry>) {
     }
 }
 
-fn switch_to(app: &AppHandle<Wry>, mode: TrayMode) {
+fn switch_to(app: &AppHandle<Wry>, mode: TrayMode, center: bool) {
     info!("Switching kftray to {mode:?} mode");
 
     #[cfg(target_os = "macos")]
@@ -160,8 +160,11 @@ fn switch_to(app: &AppHandle<Wry>, mode: TrayMode) {
         if let Err(e) = window.set_skip_taskbar(mode == TrayMode::Tray) {
             warn!("Failed to update taskbar visibility: {e}");
         }
+        #[cfg(target_os = "macos")]
+        set_standard_window_chrome(&window, mode == TrayMode::Window);
         match mode {
-            TrayMode::Window => crate::window::show_centered_main_window(&window),
+            TrayMode::Window if center => crate::window::show_centered_main_window(&window),
+            TrayMode::Window => crate::window::show_main_window(&window),
             TrayMode::Tray => {
                 crate::window::forget_window_position(&window);
                 let pinned = window.state::<AppState>().pinned.load(Ordering::SeqCst);
@@ -174,6 +177,55 @@ fn switch_to(app: &AppHandle<Wry>, mode: TrayMode) {
 
     if let Err(e) = app.emit("tray-mode-changed", mode) {
         warn!("Failed to emit tray mode event: {e}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_standard_window_chrome(window: &tauri::WebviewWindow<Wry>, standard: bool) {
+    use objc2_app_kit::{
+        NSWindow,
+        NSWindowButton,
+        NSWindowCollectionBehavior,
+        NSWindowStyleMask,
+        NSWindowTitleVisibility,
+    };
+
+    let target = window.clone();
+    let dispatched = window.run_on_main_thread(move || {
+        let Ok(handle) = target.ns_window() else {
+            warn!("Failed to get the native window");
+            return;
+        };
+        let ns_window = unsafe { &*handle.cast::<NSWindow>() };
+        let chrome = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable
+            | NSWindowStyleMask::FullSizeContentView;
+        let mut mask = ns_window.styleMask();
+        let mut behavior = ns_window.collectionBehavior();
+        if standard {
+            mask |= chrome;
+            behavior |= NSWindowCollectionBehavior::FullScreenPrimary;
+        } else {
+            mask &= !chrome;
+            behavior &= !NSWindowCollectionBehavior::FullScreenPrimary;
+        }
+        ns_window.setStyleMask(mask);
+        ns_window.setCollectionBehavior(behavior);
+        ns_window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        ns_window.setTitlebarAppearsTransparent(true);
+        for button in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = ns_window.standardWindowButton(button) {
+                button.setHidden(true);
+            }
+        }
+    });
+    if let Err(e) = dispatched {
+        warn!("Failed to dispatch window chrome update: {e}");
     }
 }
 

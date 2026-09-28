@@ -3702,6 +3702,7 @@ dependencies = [
  "log",
  "mockall",
  "netstat2",
+ "objc2-app-kit",
  "open",
  "png 0.18.1",
  "serde",
