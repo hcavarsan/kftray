@@ -1,113 +1,32 @@
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
 import { Server } from 'lucide-react'
 
 import { Box, Flex, Input, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { toaster } from '@/components/ui/toaster'
 
 interface McpServerSettingsProps {
   isLoading: boolean
-}
-
-interface McpStatus {
-  enabled: string
+  enabled: boolean
   port: string
-  running: string
+  running: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onPortChange: (port: string) => void
 }
 
-const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
-  const [mcpServerEnabled, setMcpServerEnabled] = useState<boolean>(false)
-  const [mcpServerPort, setMcpServerPort] = useState<string>('3000')
-  const [mcpServerRunning, setMcpServerRunning] = useState<boolean>(false)
-  const [isMcpToggling, setIsMcpToggling] = useState(false)
-
-  const loadMcpStatus = useCallback(async () => {
-    try {
-      const status = await invoke<McpStatus>('get_mcp_server_status')
-
-      setMcpServerEnabled(status.enabled === 'true')
-      setMcpServerPort(status.port || '3000')
-      setMcpServerRunning(status.running === 'true')
-    } catch (error) {
-      console.error('Error loading MCP status:', error)
-      setMcpServerEnabled(false)
-      setMcpServerPort('3000')
-      setMcpServerRunning(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadMcpStatus()
-  }, [loadMcpStatus])
-
-  const toggleMcpServer = async (enabled: boolean) => {
-    try {
-      setIsMcpToggling(true)
-      await invoke('update_mcp_server_enabled', { enabled })
-      setMcpServerEnabled(enabled)
-      await loadMcpStatus()
-
-      toaster.success({
-        title: enabled ? 'MCP Server Started' : 'MCP Server Stopped',
-        description: enabled
-          ? `Server running at http://127.0.0.1:${mcpServerPort}`
-          : 'MCP server has been stopped',
-        duration: 3000,
-      })
-    } catch (error) {
-      console.error('Error toggling MCP server:', error)
-      toaster.error({
-        title: 'Error',
-        description: `Failed to ${enabled ? 'start' : 'stop'} MCP server: ${error}`,
-        duration: 4000,
-      })
-    } finally {
-      setIsMcpToggling(false)
-    }
-  }
-
-  const handleMcpPortChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+const McpServerSettings: React.FC<McpServerSettingsProps> = ({
+  isLoading,
+  enabled: mcpServerEnabled,
+  port: mcpServerPort,
+  running: mcpServerRunning,
+  onEnabledChange,
+  onPortChange,
+}) => {
+  const handlePortChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
 
     if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 65535)) {
-      setMcpServerPort(value)
-    }
-  }
-
-  const saveMcpPort = async () => {
-    const portValue = parseInt(mcpServerPort, 10)
-
-    if (Number.isNaN(portValue) || portValue < 1 || portValue > 65535) {
-      toaster.error({
-        title: 'Invalid Port',
-        description: 'Port must be between 1 and 65535',
-        duration: 3000,
-      })
-
-      return
-    }
-
-    try {
-      await invoke('update_mcp_server_port', { port: portValue })
-      await loadMcpStatus()
-
-      toaster.success({
-        title: 'Port Updated',
-        description: mcpServerRunning
-          ? `Server restarted on port ${portValue}`
-          : `Port set to ${portValue}`,
-        duration: 3000,
-      })
-    } catch (error) {
-      console.error('Error updating MCP port:', error)
-      toaster.error({
-        title: 'Error',
-        description: `Failed to update port: ${error}`,
-        duration: 4000,
-      })
+      onPortChange(value)
     }
   }
 
@@ -147,8 +66,8 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
             </Text>
             <Checkbox
               checked={mcpServerEnabled}
-              onCheckedChange={e => toggleMcpServer(e.checked === true)}
-              disabled={isLoading || isMcpToggling}
+              onCheckedChange={e => onEnabledChange(e.checked === true)}
+              disabled={isLoading}
               size='sm'
             />
           </Flex>
@@ -181,8 +100,7 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
             </Text>
             <Input
               value={mcpServerPort}
-              onChange={handleMcpPortChange}
-              onBlur={saveMcpPort}
+              onChange={handlePortChange}
               placeholder='3000'
               size='xs'
               width='55px'

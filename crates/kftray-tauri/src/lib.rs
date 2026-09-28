@@ -7,6 +7,7 @@ pub mod shortcuts;
 pub mod tray;
 #[cfg(target_os = "linux")]
 pub mod tray_linux;
+pub mod tray_mode;
 #[cfg(target_os = "windows")]
 pub mod tray_theme;
 pub mod validation;

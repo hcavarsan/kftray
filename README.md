@@ -29,9 +29,9 @@
 </div>
 
 <p align="center">
-<div align="center">
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftools.webp" alt="Kftray github"/>
-</div>
+  <a href="https://kftray.app">
+    <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/video/kftray-intro-v1-readme.webp" alt="kftray and kftui demo" width="960"/>
+  </a>
 </p>
 
 ## About

@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
 import McpServerSettings from '@/components/SettingsModal/McpServerSettings'
+import WindowSettings from '@/components/SettingsModal/WindowSettings'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
@@ -16,6 +17,18 @@ import { toaster } from '@/components/ui/toaster'
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
+}
+
+interface McpStatus {
+  enabled: string
+  port: string
+  running: string
+}
+
+const DEFAULT_SAVED = {
+  appMode: 'tray',
+  mcpEnabled: false,
+  mcpPort: '3000',
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
@@ -44,6 +57,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [logFileCount, setLogFileCount] = useState<number>(0)
   const [logTotalSize, setLogTotalSize] = useState<number>(0)
   const [isCleaningLogs, setIsCleaningLogs] = useState(false)
+
+  const [saved, setSaved] = useState<typeof DEFAULT_SAVED | null>(null)
+  const [appMode, setAppMode] = useState(DEFAULT_SAVED.appMode)
+  const [mcpEnabled, setMcpEnabled] = useState(DEFAULT_SAVED.mcpEnabled)
+  const [mcpPort, setMcpPort] = useState(DEFAULT_SAVED.mcpPort)
+  const [mcpRunning, setMcpRunning] = useState(false)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -92,6 +111,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         console.error('Error loading log settings:', logError)
         setLogRetentionCount('10')
         setLogRetentionDays('7')
+      }
+
+      try {
+        const [mode, mcp] = await Promise.all([
+          invoke<string>('get_app_mode_cmd'),
+          invoke<McpStatus>('get_mcp_server_status'),
+        ])
+        const loaded = {
+          appMode: mode,
+          mcpEnabled: mcp.enabled === 'true',
+          mcpPort: mcp.port || '3000',
+        }
+
+        setSaved(loaded)
+        setAppMode(loaded.appMode)
+        setMcpEnabled(loaded.mcpEnabled)
+        setMcpPort(loaded.mcpPort)
+        setMcpRunning(mcp.running === 'true')
+      } catch (windowError) {
+        console.error('Error loading window and MCP settings:', windowError)
+        setSaved(null)
+        toaster.error({
+          title: 'Error',
+          description: 'Failed to load window and MCP settings',
+          duration: 3000,
+        })
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -255,6 +300,53 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     }
   }
 
+  const saveWindowSettings = async () => {
+    if (!saved) {
+      return false
+    }
+    try {
+      if (appMode !== saved.appMode) {
+        await invoke('set_app_mode_cmd', { mode: appMode })
+      }
+
+      return true
+    } catch (error) {
+      console.error('Error saving window settings:', error)
+      toaster.error({
+        title: 'Window Settings Error',
+        description: `Failed to apply window settings: ${error}`,
+        duration: 4000,
+      })
+
+      return false
+    }
+  }
+
+  const saveMcpSettings = async (port: number) => {
+    if (!saved) {
+      return false
+    }
+    try {
+      if (!Number.isNaN(port) && String(port) !== saved.mcpPort) {
+        await invoke('update_mcp_server_port', { port })
+      }
+      if (mcpEnabled !== saved.mcpEnabled) {
+        await invoke('update_mcp_server_enabled', { enabled: mcpEnabled })
+      }
+
+      return true
+    } catch (error) {
+      console.error('Error saving MCP settings:', error)
+      toaster.error({
+        title: 'MCP Server Error',
+        description: `Failed to apply MCP server settings: ${error}`,
+        duration: 4000,
+      })
+
+      return false
+    }
+  }
+
   const saveSettings = async () => {
     try {
       setIsSaving(true)
@@ -309,6 +401,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         toaster.error({
           title: 'Invalid Input',
           description: 'Log retention days must be between 1 and 365',
+          duration: 3000,
+        })
+
+        return
+      }
+
+      const mcpPortValue = parseInt(mcpPort, 10)
+
+      if (
+        mcpEnabled &&
+        (Number.isNaN(mcpPortValue) || mcpPortValue < 1 || mcpPortValue > 65535)
+      ) {
+        toaster.error({
+          title: 'Invalid Port',
+          description: 'MCP server port must be between 1 and 65535',
           duration: 3000,
         })
 
@@ -370,7 +477,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         })
       }
 
+      const appliedWindow = await saveWindowSettings()
+      const appliedMcp = await saveMcpSettings(mcpPortValue)
+
       await loadSettings()
+
+      if (!appliedWindow || !appliedMcp) {
+        return
+      }
 
       if (!(wasDisabled && willBeEnabled)) {
         toaster.success({
@@ -988,8 +1102,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                   </Box>
                 </Box>
 
+                <WindowSettings
+                  isLoading={isLoading}
+                  appMode={appMode}
+                  onAppModeChange={setAppMode}
+                />
+
                 {/* MCP Server Settings */}
-                <McpServerSettings isLoading={isLoading} />
+                <McpServerSettings
+                  isLoading={isLoading}
+                  enabled={mcpEnabled}
+                  port={mcpPort}
+                  running={mcpRunning}
+                  onEnabledChange={setMcpEnabled}
+                  onPortChange={setMcpPort}
+                />
               </Box>
             </Stack>
           </Dialog.Body>

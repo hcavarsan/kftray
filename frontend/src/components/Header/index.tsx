@@ -1,14 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import {
-  GripVertical,
-  Pin,
-  PinOff,
-  Search,
-  Server,
-  Settings,
-  X,
-} from 'lucide-react'
+import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
@@ -23,26 +15,31 @@ import type { HeaderProps } from '@/types'
 
 const appWindow = getCurrentWebviewWindow()
 
-const Header: React.FC<HeaderProps> = ({
-  search,
-  setSearch,
-  openSettingsModal,
-  openServerResourcesModal,
-}) => {
+type TrayMode = 'tray' | 'window'
+
+const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
+  const [trayMode, setTrayMode] = useState<TrayMode>('tray')
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
 
-    const unlisten = listen<boolean>('pin-state-changed', event => {
+    const unlistenPin = listen<boolean>('pin-state-changed', event => {
       setIsPinned(event.payload)
     })
 
+    invoke<TrayMode>('get_tray_mode_cmd').then(setTrayMode).catch(console.error)
+
+    const unlistenTrayMode = listen<TrayMode>('tray-mode-changed', event => {
+      setTrayMode(event.payload)
+    })
+
     return () => {
-      unlisten.then(unlistenFn => unlistenFn())
+      unlistenPin.then(unlistenFn => unlistenFn())
+      unlistenTrayMode.then(unlistenFn => unlistenFn())
     }
   }, [])
 
@@ -92,6 +89,14 @@ const Header: React.FC<HeaderProps> = ({
     if (!isPinned) {
       await appWindow.show()
       await appWindow.setFocus()
+    }
+  }
+
+  const hideWindow = async () => {
+    try {
+      await invoke('hide_main_window_cmd')
+    } catch (error) {
+      console.error('Error hiding window:', error)
     }
   }
 
@@ -158,7 +163,7 @@ const Header: React.FC<HeaderProps> = ({
         </Box>
 
         {/* Search Input */}
-        <Box position='relative' width='200px' ml={12}>
+        <Box position='relative' width='200px' ml={5}>
           <Box
             as={Search}
             position='absolute'
@@ -199,56 +204,6 @@ const Header: React.FC<HeaderProps> = ({
       {/* Right Section - Window Controls */}
       <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
         <Tooltip
-          content='Manage Server Resources'
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={openServerResourcesModal}
-            height='28px'
-            width='28px'
-            minWidth='28px'
-            p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
-          >
-            <Box
-              as={Server}
-              width='16px'
-              height='16px'
-              color='whiteAlpha.700'
-            />
-          </Button>
-        </Tooltip>
-
-        <Tooltip
-          content='Settings'
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={openSettingsModal}
-            height='28px'
-            width='28px'
-            minWidth='28px'
-            p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
-          >
-            <Box
-              as={Settings}
-              width='16px'
-              height='16px'
-              color='whiteAlpha.700'
-            />
-          </Button>
-        </Tooltip>
-
-        <Tooltip
           content={isPinned ? 'Unpin Window' : 'Pin Window'}
           portalled={true}
           contentProps={{ zIndex: 100 }}
@@ -274,7 +229,28 @@ const Header: React.FC<HeaderProps> = ({
         </Tooltip>
 
         <Tooltip
-          content='Close Window'
+          content={trayMode === 'window' ? 'Minimize Window' : 'Hide Window'}
+          portalled={true}
+          contentProps={{ zIndex: 100 }}
+        >
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={hideWindow}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            ml={-1.5}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box as={Minus} width='15px' height='15px' color='whiteAlpha.700' />
+          </Button>
+        </Tooltip>
+
+        <Tooltip
+          content='Quit kftray'
           portalled={true}
           contentProps={{ zIndex: 100 }}
         >

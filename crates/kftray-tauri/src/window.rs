@@ -1,6 +1,9 @@
 use std::io::ErrorKind;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
@@ -22,6 +25,14 @@ use tauri_plugin_positioner::{
     WindowExt,
 };
 use tokio::time::sleep;
+
+use crate::tray_mode::{
+    self,
+    ToggleAction,
+    TrayMode,
+    WindowSnapshot,
+    toggle_action,
+};
 
 pub async fn save_window_position_async(position_data: WindowPosition) {
     let position_json = match serde_json::to_string(&position_data) {
@@ -56,7 +67,30 @@ pub async fn save_window_position_async(position_data: WindowPosition) {
     }
 }
 
+static PENDING_POSITION_SAVE: AtomicU64 = AtomicU64::new(0);
+
+pub fn save_window_position_after_move(
+    runtime: &tokio::runtime::Runtime, position: WindowPosition,
+) {
+    let generation = PENDING_POSITION_SAVE.fetch_add(1, Ordering::SeqCst) + 1;
+    runtime.spawn(async move {
+        sleep(Duration::from_millis(500)).await;
+        if PENDING_POSITION_SAVE.load(Ordering::SeqCst) == generation {
+            save_window_position_async(position).await;
+        }
+    });
+}
+
+pub fn position_is_compositor_managed() -> bool {
+    cfg!(target_os = "linux")
+        && (std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland"))
+}
+
 pub async fn load_window_position() -> Option<WindowPosition> {
+    if position_is_compositor_managed() {
+        return None;
+    }
     match get_window_state_path() {
         Ok(home_path) => {
             if !home_path.exists() {
@@ -122,83 +156,162 @@ pub fn toggle_window_visibility_from_tray(window: &WebviewWindow<Wry>) {
 }
 
 fn toggle_window_visibility_with_position(window: &WebviewWindow<Wry>, from_tray: bool) {
-    let app_state = window.state::<AppState>();
-    let is_visible = window.is_visible().unwrap_or(false);
+    let snapshot = WindowSnapshot {
+        visible: window.is_visible().unwrap_or(false),
+        minimized: window.is_minimized().unwrap_or(false),
+        focused: window.is_focused().unwrap_or(false),
+        pinned: window.state::<AppState>().pinned.load(Ordering::SeqCst),
+    };
 
-    if is_visible {
-        if !app_state.pinned.load(Ordering::SeqCst)
-            && let Err(e) = window.hide()
-        {
-            warn!("Failed to hide window: {e}");
-        }
-    } else {
-        set_position_before_show_with_mode(window.clone(), from_tray);
-        if let Err(e) = window.show() {
-            warn!("Failed to show window: {e}");
-        }
-
-        // On Linux, we need a more aggressive approach to ensure the window gets focus
-        #[cfg(target_os = "linux")]
-        {
-            // First, set always on top to bring it to front
-            if let Err(e) = window.set_always_on_top(true) {
-                warn!("Failed to set window always on top: {e}");
-            }
-
-            // Immediately request focus
-            if let Err(e) = window.set_focus() {
-                warn!("Failed to focus window (first attempt): {e}");
-            }
-
-            // On Linux, also try to unminimize the window in case it's minimized
-            if let Err(e) = window.unminimize() {
-                warn!("Failed to unminimize window: {e}");
-            }
-
-            // Use a non-blocking approach to avoid blocking the UI thread
-            let window_clone = window.clone();
-            let pinned = app_state.pinned.load(Ordering::SeqCst);
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-
-                // Second focus attempt with unminimize
-                if let Err(e) = window_clone.unminimize() {
-                    warn!("Failed to unminimize window (second attempt): {e}");
-                }
-                if let Err(e) = window_clone.set_focus() {
-                    warn!("Failed to focus window (second attempt): {e}");
-                }
-
-                // Remove always on top if not pinned
-                if !pinned {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    if let Err(e) = window_clone.set_always_on_top(false) {
-                        warn!("Failed to unset window always on top: {e}");
-                    }
-                }
-            });
-        }
-
-        // For other platforms, use the original approach
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Err(e) = window.set_always_on_top(true) {
-                warn!("Failed to set window always on top: {e}");
-            }
-            if let Err(e) = window.set_focus() {
-                warn!("Failed to focus window: {e}");
-            }
-            if !app_state.pinned.load(Ordering::SeqCst)
-                && let Err(e) = window.set_always_on_top(false)
-            {
-                warn!("Failed to unset window always on top: {e}");
+    match toggle_action(tray_mode::current(window.app_handle()), snapshot) {
+        ToggleAction::Show => show_main_window_with_mode(window, from_tray),
+        ToggleAction::Hide => {
+            if let Err(e) = window.hide() {
+                warn!("Failed to hide window: {e}");
             }
         }
+        ToggleAction::Minimize => {
+            if let Err(e) = window.minimize() {
+                warn!("Failed to minimize window: {e}");
+            }
+        }
+        ToggleAction::Keep => {}
     }
 }
 
-pub fn set_position_before_show(window: WebviewWindow<Wry>) {
-    set_position_before_show_with_mode(window, false);
+pub fn show_main_window(window: &WebviewWindow<Wry>) {
+    show_main_window_with_mode(window, false);
+}
+
+pub fn hide_main_window(window: &WebviewWindow<Wry>) {
+    let result = match tray_mode::current(window.app_handle()) {
+        TrayMode::Tray => window.hide(),
+        TrayMode::Window => window.minimize(),
+    };
+    if let Err(e) = result {
+        warn!("Failed to hide window: {e}");
+    }
+}
+
+fn show_main_window_with_mode(window: &WebviewWindow<Wry>, from_tray: bool) {
+    set_position_before_show_with_mode(window.clone(), from_tray);
+    raise_main_window(window);
+}
+
+pub fn show_centered_main_window(window: &WebviewWindow<Wry>) {
+    let (positioning_active, runtime) = {
+        let app_state = window.state::<AppState>();
+        app_state.positioning_active.store(true, Ordering::SeqCst);
+        (
+            app_state.positioning_active.clone(),
+            app_state.runtime.clone(),
+        )
+    };
+    let window = window.clone();
+    runtime.spawn(async move {
+        let applied = apply_saved_window_size(&window).await;
+        let target = window.clone();
+        let centered = window.app_handle().run_on_main_thread(move || {
+            let monitor = target
+                .current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| target.primary_monitor().ok().flatten());
+            if let Some(monitor) = monitor {
+                let size = applied
+                    .map(|size| {
+                        tauri::LogicalSize::new(size.width, size.height)
+                            .to_physical::<u32>(monitor.scale_factor())
+                    })
+                    .or_else(|| target.outer_size().ok());
+                if let Some(size) = size {
+                    center_sized_on_monitor(&target, &monitor, size);
+                }
+            }
+            raise_main_window(&target);
+        });
+        if let Err(e) = centered {
+            warn!("Failed to dispatch window centering to main thread: {e}");
+        }
+        sleep(Duration::from_millis(150)).await;
+        positioning_active.store(false, Ordering::SeqCst);
+    });
+}
+
+fn raise_main_window(window: &WebviewWindow<Wry>) {
+    let pinned = window.state::<AppState>().pinned.load(Ordering::SeqCst);
+
+    if let Err(e) = window.show() {
+        warn!("Failed to show window: {e}");
+    }
+
+    if crate::tray_mode::current(window.app_handle()) == crate::tray_mode::TrayMode::Window {
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window: {e}");
+        }
+        return;
+    }
+
+    // On Linux, we need a more aggressive approach to ensure the window gets focus
+    #[cfg(target_os = "linux")]
+    {
+        // First, set always on top to bring it to front
+        if let Err(e) = window.set_always_on_top(true) {
+            warn!("Failed to set window always on top: {e}");
+        }
+
+        // Immediately request focus
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window (first attempt): {e}");
+        }
+
+        // On Linux, also try to unminimize the window in case it's minimized
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
+        }
+
+        // Use a non-blocking approach to avoid blocking the UI thread
+        let window_clone = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Second focus attempt with unminimize
+            if let Err(e) = window_clone.unminimize() {
+                warn!("Failed to unminimize window (second attempt): {e}");
+            }
+            if let Err(e) = window_clone.set_focus() {
+                warn!("Failed to focus window (second attempt): {e}");
+            }
+
+            // Remove always on top if not pinned
+            if !pinned {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Err(e) = window_clone.set_always_on_top(false) {
+                    warn!("Failed to unset window always on top: {e}");
+                }
+            }
+        });
+    }
+
+    // For other platforms, use the original approach
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Err(e) = window.unminimize() {
+            warn!("Failed to unminimize window: {e}");
+        }
+        if let Err(e) = window.set_always_on_top(true) {
+            warn!("Failed to set window always on top: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window: {e}");
+        }
+        if !pinned && let Err(e) = window.set_always_on_top(false) {
+            warn!("Failed to unset window always on top: {e}");
+        }
+    }
 }
 
 fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: bool) {
@@ -219,6 +332,7 @@ fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: boo
             Some(position)
                 if is_valid_position(&window_clone, position.x, position.y)
                     && (!from_tray
+                        || tray_mode::current(window_clone.app_handle()) == TrayMode::Window
                         || is_on_tray_monitor(&window_clone, position.x, position.y)) =>
             {
                 info!(
@@ -235,6 +349,12 @@ fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: boo
                         positioning_active.store(false, Ordering::SeqCst);
                     }
                 });
+            }
+            _ if tray_mode::current(window_clone.app_handle()) == TrayMode::Window => {
+                info!("No usable saved position, centering the window");
+                center_on_current_monitor(&window_clone);
+                sleep(Duration::from_millis(150)).await;
+                positioning_active.store(false, Ordering::SeqCst);
             }
             _ => {
                 info!("No usable saved position, using tray positioning");
@@ -262,100 +382,53 @@ fn is_on_tray_monitor(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
     }
 }
 
-pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
-    match kftray_commons::utils::settings::get_setting(crate::window_size::SETTING_KEY).await {
-        Ok(Some(value)) => {
-            crate::window_size::WindowSizePreset::from_id(&value).unwrap_or_default()
-        }
-        _ => crate::window_size::WindowSizePreset::default(),
-    }
-}
-
-/// Applies a window size preset on the Tauri main thread.
+/// Applies the saved window size on the Tauri main thread.
 ///
-/// On Linux, `WebviewWindow::current_monitor`, `outer_size`, and `set_size`
-/// are Xlib/GTK calls that corrupt the xcb request queue when invoked from a
-/// worker thread (see commit 2f120f1 for the same class of bug on
-/// `WindowEvent::Moved`). Dispatching the work via `run_on_main_thread` keeps
-/// every Xlib call on the GTK main thread; on macOS/Windows it is still the
-/// correct thread for window APIs, so the same code path works on every
-/// platform.
+/// On Linux, `WebviewWindow::current_monitor` and `set_size` are Xlib/GTK
+/// calls that corrupt the xcb request queue when invoked from a worker thread
+/// (see commit 2f120f1 for the same class of bug on `WindowEvent::Moved`).
+/// Dispatching the work via `run_on_main_thread` keeps every Xlib call on the
+/// GTK main thread; on macOS/Windows it is still the correct thread for window
+/// APIs, so the same code path works on every platform.
 ///
-/// Sizes are applied in logical pixels so the same preset renders at the
-/// same visual size across every DPI (1x, 1.5x HiDPI, 2x Retina, ...). The
-/// preset's `dimensions()` already returns logical values matching the
-/// `tauri.conf.json` window declaration, so passing them through
-/// `tauri::Size::Logical` keeps units consistent end to end.
-///
-/// Returns `true` when the size was applied (or was already correct), `false`
-/// when the dispatch or the underlying `set_size` failed.
-async fn apply_window_size_on_main_thread(
-    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
-) -> bool {
+/// Returns the logical size that was applied, or `None` when nothing is saved
+/// or the resize failed.
+pub async fn apply_saved_window_size(
+    window: &WebviewWindow<Wry>,
+) -> Option<crate::window_size::WindowSize> {
+    let saved = crate::window_size::load().await?;
     let window_clone = window.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    let (tx, rx) = tokio::sync::oneshot::channel();
 
     let dispatch = window.app_handle().run_on_main_thread(move || {
-        let (w, h) = preset.dimensions(&window_clone);
-
-        if let (Ok(current), Ok(Some(monitor))) =
-            (window_clone.outer_size(), window_clone.current_monitor())
-        {
-            let logical = current.to_logical::<u32>(monitor.scale_factor());
-            if logical.width == w && logical.height == h {
-                let _ = tx.send(true);
-                return;
-            }
-        }
-
-        match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-            w as f64, h as f64,
-        ))) {
-            Ok(()) => {
-                let _ = tx.send(true);
-            }
+        let available = window_clone
+            .current_monitor()
+            .ok()
+            .flatten()
+            .map(|monitor| {
+                let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
+                (logical.width, logical.height)
+            });
+        let size = saved.fit_within(available);
+        let applied = window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            size.width as f64,
+            size.height as f64,
+        )));
+        let _ = tx.send(match applied {
+            Ok(()) => Some(size),
             Err(e) => {
-                warn!("Failed to set window size for preset {preset:?}: {e}");
-                let _ = tx.send(false);
+                warn!("Failed to restore window size: {e}");
+                None
             }
-        }
+        });
     });
 
     if let Err(e) = dispatch {
-        warn!("Failed to dispatch window size apply to main thread: {e}");
-        return false;
+        warn!("Failed to dispatch window size restore to main thread: {e}");
+        return None;
     }
 
-    rx.await.unwrap_or(false)
-}
-
-pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
-    let preset = load_saved_window_size_preset().await;
-    apply_window_size_on_main_thread(window, preset).await;
-}
-
-pub async fn apply_window_size_preset(
-    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
-) {
-    if !apply_window_size_on_main_thread(window, preset).await {
-        return;
-    }
-    match kftray_commons::utils::settings::set_setting(
-        crate::window_size::SETTING_KEY,
-        preset.as_id(),
-    )
-    .await
-    {
-        Ok(()) => {
-            set_position_before_show(window.clone());
-        }
-        Err(e) => {
-            warn!(
-                "Failed to persist window size preset: {e}; keeping in-memory size for this session"
-            );
-            position_from_tray(window);
-        }
-    }
+    rx.await.ok().flatten()
 }
 
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
@@ -711,7 +784,12 @@ fn center_on_specific_monitor(window: &WebviewWindow<Wry>, monitor: &tauri::Moni
         warn!("Failed to get window size for centering");
         return;
     };
+    center_sized_on_monitor(window, monitor, window_size);
+}
 
+fn center_sized_on_monitor(
+    window: &WebviewWindow<Wry>, monitor: &tauri::Monitor, window_size: PhysicalSize<u32>,
+) {
     let monitor_size = monitor.size();
     let monitor_pos = monitor.position();
 
@@ -732,6 +810,13 @@ fn center_on_specific_monitor(window: &WebviewWindow<Wry>, monitor: &tauri::Moni
     }
 }
 
+fn center_on_current_monitor(window: &WebviewWindow<Wry>) {
+    match window.current_monitor().ok().flatten() {
+        Some(monitor) => center_on_specific_monitor(window, &monitor),
+        None => center_on_primary_monitor(window),
+    }
+}
+
 fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     let Ok(monitors) = window.available_monitors() else {
         warn!("Failed to get monitors for centering");
@@ -745,6 +830,13 @@ fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     };
 
     center_on_specific_monitor(window, &monitor);
+}
+
+pub fn forget_window_position(window: &WebviewWindow<Wry>) {
+    window
+        .state::<AppState>()
+        .runtime
+        .spawn(remove_position_file());
 }
 
 pub fn reset_window_position(window: WebviewWindow<Wry>) {
@@ -761,7 +853,10 @@ pub fn reset_window_position(window: WebviewWindow<Wry>) {
 
     runtime.spawn(async move {
         remove_position_file().await;
-        position_from_tray(&window_clone);
+        match tray_mode::current(window_clone.app_handle()) {
+            TrayMode::Window => center_on_current_monitor(&window_clone),
+            TrayMode::Tray => position_from_tray(&window_clone),
+        }
         sleep(Duration::from_millis(150)).await;
         positioning_active.store(false, Ordering::SeqCst);
     });

@@ -51,6 +51,7 @@ tauri-plugin-os = { workspace = true }
 tauri-plugin-positioner = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-shell = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
@@ -69,6 +70,9 @@ inotify = "0.11.5"
 ksni = "0.3"
 libc = { workspace = true }
 png = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true }

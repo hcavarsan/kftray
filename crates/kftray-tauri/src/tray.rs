@@ -8,9 +8,11 @@ use std::time::Duration;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use kftray_commons::models::window::WindowPosition;
+#[cfg(not(target_os = "linux"))]
+use log::info;
 use log::{
+    debug,
     error,
-    info,
     warn,
 };
 use tauri::PhysicalPosition;
@@ -50,10 +52,11 @@ pub struct TrayPositionState {
 use crate::commands::portforward::handle_exit_app;
 #[cfg(not(target_os = "linux"))]
 use crate::commands::window_state::toggle_pin_state;
-use crate::window::{
-    is_valid_position,
-    save_window_position_async,
+use crate::tray_mode::{
+    self,
+    TrayMode,
 };
+use crate::window::is_valid_position;
 #[cfg(not(target_os = "linux"))]
 use crate::window::{
     reset_window_position,
@@ -103,6 +106,20 @@ pub fn refresh_tray_icon_for_theme(app: &tauri::AppHandle<Wry>) {
 pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     crate::tray_linux::spawn(app);
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_tray_icon_visible(app: &tauri::AppHandle<Wry>, visible: bool) {
+    crate::tray_linux::set_visible(app, visible);
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_tray_icon_visible(app: &tauri::AppHandle<Wry>, visible: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID)
+        && let Err(e) = tray.set_visible(visible)
+    {
+        warn!("Failed to update tray icon visibility: {e}");
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -164,21 +181,6 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&reset_position)
         .build()?;
 
-    let set_size_xs = MenuItemBuilder::with_id("set_size_xs", "Extra Small").build(app)?;
-    let set_size_small = MenuItemBuilder::with_id("set_size_small", "Small").build(app)?;
-    let set_size_default = MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
-    let set_size_medium = MenuItemBuilder::with_id("set_size_medium", "Medium").build(app)?;
-    let set_size_large = MenuItemBuilder::with_id("set_size_large", "Large").build(app)?;
-    let set_size_xl = MenuItemBuilder::with_id("set_size_xl", "Extra Large").build(app)?;
-    let set_window_size_submenu = SubmenuBuilder::new(app, "Set Window Size")
-        .item(&set_size_xs)
-        .item(&set_size_small)
-        .item(&set_size_default)
-        .item(&set_size_medium)
-        .item(&set_size_large)
-        .item(&set_size_xl)
-        .build()?;
-
     let main_separator = PredefinedMenuItem::separator(app)?;
     let logs_separator = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
@@ -186,7 +188,6 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&main_separator)
         .item(&pin)
         .item(&set_window_position_submenu)
-        .item(&set_window_size_submenu)
         .item(&logs_separator)
         .item(&view_logs)
         .item(&quit)
@@ -255,20 +256,6 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
             "view_logs" => {
                 if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
                     error!("Failed to open log viewer window: {e}");
-                }
-            }
-            id if id.starts_with("set_size_") => {
-                let preset_id = id.trim_start_matches("set_size_");
-                if let Some(preset) = crate::window_size::WindowSizePreset::from_id(preset_id) {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let app_state = window.state::<AppState>();
-                        let runtime = app_state.runtime.clone();
-                        runtime.spawn(async move {
-                            crate::window::apply_window_size_preset(&window, preset).await;
-                        });
-                    } else {
-                        error!("Main window not found on size preset event");
-                    }
                 }
             }
             _ => {}
@@ -376,13 +363,14 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         refresh_tray_icon_for_theme(window.app_handle());
     }
 
-    info!("event: {:?}", event);
+    debug!("event: {:?}", event);
     let app_state = webview_window.state::<AppState>();
 
     if let WindowEvent::Focused(is_focused) = event
         && !is_focused
         && !app_state.pinned.load(Ordering::SeqCst)
         && webview_window.label() == "main"
+        && tray_mode::current(webview_window.app_handle()) == TrayMode::Tray
     {
         let app_handle = webview_window.app_handle();
 
@@ -413,6 +401,25 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
+    if let WindowEvent::Resized(size) = event
+        && webview_window.label() == "main"
+        && size.width > 0
+        && size.height > 0
+        && webview_window.is_visible().unwrap_or(false)
+        && !webview_window.is_minimized().unwrap_or(false)
+        && !webview_window.is_maximized().unwrap_or(false)
+        && !webview_window.is_fullscreen().unwrap_or(false)
+    {
+        let logical = size.to_logical::<u32>(webview_window.scale_factor().unwrap_or(1.0));
+        crate::window_size::save_after_resize(
+            &webview_window.state::<AppState>().runtime,
+            crate::window_size::WindowSize {
+                width: logical.width,
+                height: logical.height,
+            },
+        );
+    }
+
     if let WindowEvent::Moved(physical_position) = event {
         #[warn(unused_must_use)]
         let _ = webview_window.with_webview(|_webview| {
@@ -439,16 +446,17 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
                 app_state.positioning_active.store(false, Ordering::SeqCst);
             }
 
-            if !app_state.positioning_active.load(Ordering::SeqCst) {
+            if !app_state.positioning_active.load(Ordering::SeqCst)
+                && !crate::window::position_is_compositor_managed()
+            {
                 let x = physical_position.x;
                 let y = physical_position.y;
 
                 if is_valid_position(&webview_window, x, y) {
-                    let runtime = app_state.runtime.clone();
-                    runtime.spawn(async move {
-                        sleep(Duration::from_millis(500)).await;
-                        save_window_position_async(WindowPosition { x, y }).await;
-                    });
+                    crate::window::save_window_position_after_move(
+                        &app_state.runtime,
+                        WindowPosition { x, y },
+                    );
                 } else {
                     warn!("Position ({}, {}) failed validation", x, y);
                 }
@@ -474,6 +482,12 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
         }
         RunEvent::Exit => {
             tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
+        }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                crate::window::show_main_window(&window);
+            }
         }
         _ => {}
     }

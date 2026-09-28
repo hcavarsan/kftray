@@ -196,6 +196,17 @@ async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
     }
 }
 
+fn hide_for_exit(app: &AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
+    if let Err(e) = window.hide() {
+        error!("Failed to hide window before exit: {e}");
+    }
+    crate::tray::set_tray_icon_visible(app, false);
+    #[cfg(target_os = "macos")]
+    if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Accessory) {
+        error!("Failed to hide dock icon before exit: {e}");
+    }
+}
+
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
@@ -273,6 +284,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             let any_running = config_states.iter().any(|config| config.is_running);
 
             if !any_running {
+                hide_for_exit(&app_handle, &window);
                 reconcile_and_cleanup_on_exit(&HashSet::new()).await;
                 // Stop MCP server if running
                 if let Err(e) = crate::mcp::stop().await {
@@ -291,6 +303,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                     true => {
                         // User clicked "Yes" - stop all port forwards
                         info!("User chose to stop all port forwards before closing.");
+                        hide_for_exit(&app_handle, &window);
                         tauri::async_runtime::spawn(async move {
                             let unfinished = match stop_all_port_forward_with_deadline(
                                 DatabaseMode::File,

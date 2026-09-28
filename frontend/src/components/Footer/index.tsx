@@ -2,10 +2,13 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import {
   Download,
+  Eraser,
+  FolderSync,
   GitBranch,
   Keyboard,
   Menu as MenuIcon,
   Plus,
+  Server,
   Settings,
   Upload,
   Wrench,
@@ -29,6 +32,7 @@ import {
   MenuContent,
   MenuItem,
   MenuRoot,
+  MenuSeparator,
   MenuTrigger,
   MenuTriggerItem,
 } from '@/components/ui/menu'
@@ -51,6 +55,8 @@ const Footer: React.FC<FooterProps> = ({
   openShortcutModal,
   setIsAutoImportModalOpen,
   deleteConfigs,
+  openSettingsModal,
+  openServerResourcesModal,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
@@ -156,7 +162,7 @@ const Footer: React.FC<FooterProps> = ({
         onClick={handleClearLogs}
         disabled={logState.size === 0 || logState.fetchError}
       >
-        <Box as={Settings} width='12px' height='12px' />
+        <Box as={Eraser} width='12px' height='12px' />
         <Box fontSize='11px'>
           Prune Logs ({(logState.size / (1024 * 1024)).toFixed(2)} MB)
         </Box>
@@ -166,7 +172,7 @@ const Footer: React.FC<FooterProps> = ({
         value='auto-import'
         onClick={() => setIsAutoImportModalOpen(true)}
       >
-        <Box as={Settings} width='12px' height='12px' />
+        <Box as={FolderSync} width='12px' height='12px' />
         <Box fontSize='11px'>Auto Import</Box>
       </MenuItem>
 
@@ -187,6 +193,18 @@ const Footer: React.FC<FooterProps> = ({
           </MenuItem>
         </MenuContent>
       </MenuRoot>
+
+      <MenuItem value='server-resources' onClick={openServerResourcesModal}>
+        <Box as={Server} width='12px' height='12px' />
+        <Box fontSize='11px'>Server Resources</Box>
+      </MenuItem>
+
+      <MenuSeparator borderColor='rgba(255, 255, 255, 0.08)' my={1} />
+
+      <MenuItem value='settings' onClick={openSettingsModal}>
+        <Box as={Settings} width='12px' height='12px' />
+        <Box fontSize='11px'>Settings</Box>
+      </MenuItem>
     </>
   )
 
