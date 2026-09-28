@@ -1,11 +1,17 @@
 import type React from 'react'
 import { useState } from 'react'
-import { LocateFixed } from 'lucide-react'
+import { Check, ChevronDown, LocateFixed } from 'lucide-react'
 
-import { Box, Flex, NativeSelect, Text } from '@chakra-ui/react'
+import { Box, Flex, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
 import { toaster } from '@/components/ui/toaster'
 
 interface WindowSettingsProps {
@@ -48,26 +54,45 @@ const CompactSelect: React.FC<CompactSelectProps> = ({
   disabled,
   onChange,
 }) => (
-  <NativeSelect.Root size='xs' width='110px' disabled={disabled}>
-    <NativeSelect.Field
-      value={value}
-      onChange={e => onChange(e.currentTarget.value)}
-      height='22px'
-      bg='#111111'
-      border='1px solid rgba(255, 255, 255, 0.08)'
-      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-      color='white'
-      fontSize='xs'
-    >
+  <MenuRoot positioning={{ sameWidth: true }}>
+    <MenuTrigger asChild disabled={disabled}>
+      <Button
+        size='xs'
+        width='110px'
+        height='22px'
+        px={2}
+        justifyContent='space-between'
+        bg='#111111'
+        border='1px solid rgba(255, 255, 255, 0.08)'
+        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+        _expanded={{ borderColor: 'blue.400' }}
+        color='white'
+        fontSize='xs'
+        fontWeight='normal'
+      >
+        {options.find(option => option.id === value)?.label ?? value}
+        <Box
+          as={ChevronDown}
+          width='12px'
+          height='12px'
+          color='whiteAlpha.500'
+        />
+      </Button>
+    </MenuTrigger>
+    <MenuContent portalled={false} minWidth='110px'>
       {options.map(option => (
-        <option key={option.id} value={option.id}>
-          {option.label}
-        </option>
+        <MenuItem
+          key={option.id}
+          value={option.id}
+          onClick={() => onChange(option.id)}
+          justifyContent='space-between'
+        >
+          <Box fontSize='11px'>{option.label}</Box>
+          {option.id === value && <Box as={Check} width='12px' height='12px' />}
+        </MenuItem>
       ))}
-    </NativeSelect.Field>
-    <NativeSelect.Indicator color='whiteAlpha.500' />
-  </NativeSelect.Root>
+    </MenuContent>
+  </MenuRoot>
 )
 
 const WindowSettings: React.FC<WindowSettingsProps> = ({
