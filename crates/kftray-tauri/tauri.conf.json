@@ -11,7 +11,7 @@
         "fullscreen": false,
         "height": 500,
         "hiddenTitle": true,
-        "resizable": false,
+        "resizable": true,
         "skipTaskbar": true,
         "title": "kftray",
         "transparent": true,

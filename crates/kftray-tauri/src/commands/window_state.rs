@@ -18,12 +18,9 @@ use crate::tray_mode::{
     TrayMode,
 };
 use crate::window::{
-    apply_window_size_preset,
     hide_main_window,
-    load_saved_window_size_preset,
     reset_window_position,
 };
-use crate::window_size::WindowSizePreset;
 
 #[tauri::command]
 pub fn open_save_dialog(state: State<SaveDialogState>) {
@@ -86,19 +83,6 @@ pub async fn set_app_mode_cmd(app: AppHandle<Wry>, mode: AppMode) -> Result<(), 
         .await
         .map_err(|e| format!("Failed to save app mode: {e}"))?;
     tray_mode::set_preference(&app, mode);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_window_size_preset_cmd() -> String {
-    load_saved_window_size_preset().await.as_id().to_string()
-}
-
-#[tauri::command]
-pub async fn set_window_size_preset_cmd(app: AppHandle<Wry>, preset: String) -> Result<(), String> {
-    let preset = WindowSizePreset::from_id(&preset)
-        .ok_or_else(|| format!("Unknown window size preset: {preset}"))?;
-    apply_window_size_preset(&main_window(&app)?, preset).await;
     Ok(())
 }
 

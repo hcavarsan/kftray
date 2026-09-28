@@ -192,8 +192,7 @@ pub fn show_centered_main_window(window: &WebviewWindow<Wry>) {
     };
     let window = window.clone();
     runtime.spawn(async move {
-        let preset = load_saved_window_size_preset().await;
-        apply_window_size_on_main_thread(&window, preset).await;
+        let applied = apply_saved_window_size(&window).await;
         let target = window.clone();
         let centered = window.app_handle().run_on_main_thread(move || {
             let monitor = target
@@ -202,10 +201,15 @@ pub fn show_centered_main_window(window: &WebviewWindow<Wry>) {
                 .flatten()
                 .or_else(|| target.primary_monitor().ok().flatten());
             if let Some(monitor) = monitor {
-                let (width, height) = preset.dimensions(&target);
-                let size = tauri::LogicalSize::new(width, height)
-                    .to_physical::<u32>(monitor.scale_factor());
-                center_sized_on_monitor(&target, &monitor, size);
+                let size = applied
+                    .map(|size| {
+                        tauri::LogicalSize::new(size.width, size.height)
+                            .to_physical::<u32>(monitor.scale_factor())
+                    })
+                    .or_else(|| target.outer_size().ok());
+                if let Some(size) = size {
+                    center_sized_on_monitor(&target, &monitor, size);
+                }
             }
             raise_main_window(&target);
         });
@@ -293,10 +297,6 @@ fn raise_main_window(window: &WebviewWindow<Wry>) {
     }
 }
 
-pub fn set_position_before_show(window: WebviewWindow<Wry>) {
-    set_position_before_show_with_mode(window, false);
-}
-
 fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: bool) {
     let (positioning_active, runtime) = {
         let app_state = window.state::<AppState>();
@@ -365,103 +365,53 @@ fn is_on_tray_monitor(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
     }
 }
 
-pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
-    match kftray_commons::utils::settings::get_setting(crate::window_size::SETTING_KEY).await {
-        Ok(Some(value)) => {
-            crate::window_size::WindowSizePreset::from_id(&value).unwrap_or_default()
-        }
-        _ => crate::window_size::WindowSizePreset::default(),
-    }
-}
-
-/// Applies a window size preset on the Tauri main thread.
+/// Applies the saved window size on the Tauri main thread.
 ///
-/// On Linux, `WebviewWindow::current_monitor`, `outer_size`, and `set_size`
-/// are Xlib/GTK calls that corrupt the xcb request queue when invoked from a
-/// worker thread (see commit 2f120f1 for the same class of bug on
-/// `WindowEvent::Moved`). Dispatching the work via `run_on_main_thread` keeps
-/// every Xlib call on the GTK main thread; on macOS/Windows it is still the
-/// correct thread for window APIs, so the same code path works on every
-/// platform.
+/// On Linux, `WebviewWindow::current_monitor` and `set_size` are Xlib/GTK
+/// calls that corrupt the xcb request queue when invoked from a worker thread
+/// (see commit 2f120f1 for the same class of bug on `WindowEvent::Moved`).
+/// Dispatching the work via `run_on_main_thread` keeps every Xlib call on the
+/// GTK main thread; on macOS/Windows it is still the correct thread for window
+/// APIs, so the same code path works on every platform.
 ///
-/// Sizes are applied in logical pixels so the same preset renders at the
-/// same visual size across every DPI (1x, 1.5x HiDPI, 2x Retina, ...). The
-/// preset's `dimensions()` already returns logical values matching the
-/// `tauri.conf.json` window declaration, so passing them through
-/// `tauri::Size::Logical` keeps units consistent end to end.
-///
-/// Returns `true` when the size was applied (or was already correct), `false`
-/// when the dispatch or the underlying `set_size` failed.
-async fn apply_window_size_on_main_thread(
-    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
-) -> bool {
+/// Returns the logical size that was applied, or `None` when nothing is saved
+/// or the resize failed.
+pub async fn apply_saved_window_size(
+    window: &WebviewWindow<Wry>,
+) -> Option<crate::window_size::WindowSize> {
+    let saved = crate::window_size::load().await?;
     let window_clone = window.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    let (tx, rx) = tokio::sync::oneshot::channel();
 
     let dispatch = window.app_handle().run_on_main_thread(move || {
-        let (w, h) = preset.dimensions(&window_clone);
-
-        if let (Ok(current), Ok(Some(monitor))) =
-            (window_clone.outer_size(), window_clone.current_monitor())
-        {
-            let logical = current.to_logical::<u32>(monitor.scale_factor());
-            if logical.width == w && logical.height == h {
-                let _ = tx.send(true);
-                return;
-            }
-        }
-
-        match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-            w as f64, h as f64,
-        ))) {
-            Ok(()) => {
-                let _ = tx.send(true);
-            }
+        let available = window_clone
+            .current_monitor()
+            .ok()
+            .flatten()
+            .map(|monitor| {
+                let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
+                (logical.width, logical.height)
+            });
+        let size = saved.fit_within(available);
+        let applied = window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            size.width as f64,
+            size.height as f64,
+        )));
+        let _ = tx.send(match applied {
+            Ok(()) => Some(size),
             Err(e) => {
-                warn!("Failed to set window size for preset {preset:?}: {e}");
-                let _ = tx.send(false);
+                warn!("Failed to restore window size: {e}");
+                None
             }
-        }
+        });
     });
 
     if let Err(e) = dispatch {
-        warn!("Failed to dispatch window size apply to main thread: {e}");
-        return false;
+        warn!("Failed to dispatch window size restore to main thread: {e}");
+        return None;
     }
 
-    rx.await.unwrap_or(false)
-}
-
-pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
-    let preset = load_saved_window_size_preset().await;
-    apply_window_size_on_main_thread(window, preset).await;
-}
-
-pub async fn apply_window_size_preset(
-    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
-) {
-    if !apply_window_size_on_main_thread(window, preset).await {
-        return;
-    }
-    match kftray_commons::utils::settings::set_setting(
-        crate::window_size::SETTING_KEY,
-        preset.as_id(),
-    )
-    .await
-    {
-        Ok(()) => {
-            set_position_before_show(window.clone());
-        }
-        Err(e) => {
-            warn!(
-                "Failed to persist window size preset: {e}; keeping in-memory size for this session"
-            );
-            match tray_mode::current(window.app_handle()) {
-                TrayMode::Window => center_on_current_monitor(window),
-                TrayMode::Tray => position_from_tray(window),
-            }
-        }
-    }
+    rx.await.ok().flatten()
 }
 
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {

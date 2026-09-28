@@ -33,12 +33,10 @@ use crate::commands::portforward::handle_exit_app;
 use crate::commands::window_state::toggle_pin_state;
 use crate::tray_mode;
 use crate::window::{
-    apply_window_size_preset,
     reset_window_position,
     set_window_position,
     toggle_window_visibility,
 };
-use crate::window_size::WindowSizePreset;
 
 const TRAY_PNG_VARIANTS: &[&[u8]] = &[
     include_bytes!("../icons/tray-16.png"),
@@ -139,19 +137,6 @@ impl ksni::Tray for KftrayTray {
                 ..Default::default()
             }
             .into(),
-            SubMenu {
-                label: "Set Window Size".into(),
-                submenu: vec![
-                    size_item("Extra Small", WindowSizePreset::ExtraSmall),
-                    size_item("Small", WindowSizePreset::Small),
-                    size_item("Default", WindowSizePreset::Default),
-                    size_item("Medium", WindowSizePreset::Medium),
-                    size_item("Large", WindowSizePreset::Large),
-                    size_item("Extra Large", WindowSizePreset::ExtraLarge),
-                ],
-                ..Default::default()
-            }
-            .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "View Logs".into(),
@@ -184,23 +169,6 @@ fn position_item(label: &str, make: fn() -> Position) -> MenuItem<KftrayTray> {
         activate: Box::new(move |t: &mut KftrayTray| {
             if let Some(window) = t.app.get_webview_window("main") {
                 set_window_position(&window, make());
-            }
-        }),
-        ..Default::default()
-    }
-    .into()
-}
-
-fn size_item(label: &str, preset: WindowSizePreset) -> MenuItem<KftrayTray> {
-    StandardItem {
-        label: label.into(),
-        activate: Box::new(move |t: &mut KftrayTray| {
-            if let Some(window) = t.app.get_webview_window("main") {
-                let app_state = window.state::<AppState>();
-                let runtime = app_state.runtime.clone();
-                runtime.spawn(async move {
-                    apply_window_size_preset(&window, preset).await;
-                });
             }
         }),
         ..Default::default()

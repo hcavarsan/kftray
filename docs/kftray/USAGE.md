@@ -52,7 +52,7 @@ kftray runs in one of two modes. To change the mode, open the footer menu (☰) 
 - **Tray** (default): the window opens from the tray icon or the global shortcut and hides when it loses focus. When no system tray is available (for example, GNOME without the AppIndicator extension), kftray runs in Window mode until a tray appears.
 - **Window**: kftray runs as a regular app. The tray icon goes away, the window opens in the center of the screen with a taskbar or Dock entry, and it stays open when it loses focus.
 
-In both modes the `–` button in the header hides the window (Tray) or minimizes it (Window), and the `×` button quits kftray. Launching kftray again while it is running brings the existing window to the front. Window size and position can be changed in **Settings > Window**.
+In both modes the `–` button in the header hides the window (Tray) or minimizes it (Window), and the `×` button quits kftray. Launching kftray again while it is running brings the existing window to the front. Drag the window edges to resize it. kftray keeps the size for the next start. **Settings > Window > Reset Position** moves the window back to its default position.
 
 ## Export configurations to a JSON file
 

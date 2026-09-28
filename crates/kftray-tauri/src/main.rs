@@ -408,8 +408,6 @@ fn main() {
             commands::window_state::get_tray_mode_cmd,
             commands::window_state::get_app_mode_cmd,
             commands::window_state::set_app_mode_cmd,
-            commands::window_state::get_window_size_preset_cmd,
-            commands::window_state::set_window_size_preset_cmd,
             commands::window_state::reset_window_position_cmd,
             commands::config_state::get_config_states,
             commands::helper::install_helper,

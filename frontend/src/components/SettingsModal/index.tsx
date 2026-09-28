@@ -27,7 +27,6 @@ interface McpStatus {
 
 const DEFAULT_SAVED = {
   appMode: 'tray',
-  sizePreset: 'default',
   mcpEnabled: false,
   mcpPort: '3000',
 }
@@ -61,7 +60,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
   const [saved, setSaved] = useState<typeof DEFAULT_SAVED | null>(null)
   const [appMode, setAppMode] = useState(DEFAULT_SAVED.appMode)
-  const [sizePreset, setSizePreset] = useState(DEFAULT_SAVED.sizePreset)
   const [mcpEnabled, setMcpEnabled] = useState(DEFAULT_SAVED.mcpEnabled)
   const [mcpPort, setMcpPort] = useState(DEFAULT_SAVED.mcpPort)
   const [mcpRunning, setMcpRunning] = useState(false)
@@ -116,21 +114,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       }
 
       try {
-        const [mode, preset, mcp] = await Promise.all([
+        const [mode, mcp] = await Promise.all([
           invoke<string>('get_app_mode_cmd'),
-          invoke<string>('get_window_size_preset_cmd'),
           invoke<McpStatus>('get_mcp_server_status'),
         ])
         const loaded = {
           appMode: mode,
-          sizePreset: preset,
           mcpEnabled: mcp.enabled === 'true',
           mcpPort: mcp.port || '3000',
         }
 
         setSaved(loaded)
         setAppMode(loaded.appMode)
-        setSizePreset(loaded.sizePreset)
         setMcpEnabled(loaded.mcpEnabled)
         setMcpPort(loaded.mcpPort)
         setMcpRunning(mcp.running === 'true')
@@ -310,9 +305,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       return false
     }
     try {
-      if (sizePreset !== saved.sizePreset) {
-        await invoke('set_window_size_preset_cmd', { preset: sizePreset })
-      }
       if (appMode !== saved.appMode) {
         await invoke('set_app_mode_cmd', { mode: appMode })
       }
@@ -1113,9 +1105,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 <WindowSettings
                   isLoading={isLoading}
                   appMode={appMode}
-                  sizePreset={sizePreset}
                   onAppModeChange={setAppMode}
-                  onSizePresetChange={setSizePreset}
                 />
 
                 {/* MCP Server Settings */}

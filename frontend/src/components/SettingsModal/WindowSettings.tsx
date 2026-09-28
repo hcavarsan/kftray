@@ -17,9 +17,7 @@ import { toaster } from '@/components/ui/toaster'
 interface WindowSettingsProps {
   isLoading: boolean
   appMode: string
-  sizePreset: string
   onAppModeChange: (mode: string) => void
-  onSizePresetChange: (preset: string) => void
 }
 
 interface SelectOption {
@@ -30,15 +28,6 @@ interface SelectOption {
 const APP_MODES: SelectOption[] = [
   { id: 'tray', label: 'Tray' },
   { id: 'window', label: 'Window' },
-]
-
-const SIZE_PRESETS: SelectOption[] = [
-  { id: 'xs', label: 'Extra Small' },
-  { id: 'small', label: 'Small' },
-  { id: 'default', label: 'Default' },
-  { id: 'medium', label: 'Medium' },
-  { id: 'large', label: 'Large' },
-  { id: 'xl', label: 'Extra Large' },
 ]
 
 interface CompactSelectProps {
@@ -98,9 +87,7 @@ const CompactSelect: React.FC<CompactSelectProps> = ({
 const WindowSettings: React.FC<WindowSettingsProps> = ({
   isLoading,
   appMode,
-  sizePreset,
   onAppModeChange,
-  onSizePresetChange,
 }) => {
   const [isResettingPosition, setIsResettingPosition] = useState(false)
 
@@ -167,20 +154,10 @@ const WindowSettings: React.FC<WindowSettingsProps> = ({
           Window
         </Text>
         <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
-          Size of the main window and its saved position.
+          Drag the window edges to resize it. kftray keeps its size and
+          position.
         </Text>
         <Box borderTop='1px solid rgba(255, 255, 255, 0.06)' mt={3} pt={3}>
-          <Flex align='center' justify='flex-end' gap={2} mb={1}>
-            <Text fontSize='xs' color='whiteAlpha.500'>
-              Size:
-            </Text>
-            <CompactSelect
-              value={sizePreset}
-              options={SIZE_PRESETS}
-              disabled={isLoading}
-              onChange={onSizePresetChange}
-            />
-          </Flex>
           <Flex align='center' justify='flex-end'>
             <Button
               size='2xs'

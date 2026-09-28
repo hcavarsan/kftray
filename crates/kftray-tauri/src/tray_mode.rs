@@ -160,9 +160,6 @@ fn switch_to(app: &AppHandle<Wry>, mode: TrayMode) {
         if let Err(e) = window.set_skip_taskbar(mode == TrayMode::Tray) {
             warn!("Failed to update taskbar visibility: {e}");
         }
-        if let Err(e) = window.set_resizable(mode == TrayMode::Window) {
-            warn!("Failed to update window resizability: {e}");
-        }
         match mode {
             TrayMode::Window => crate::window::show_centered_main_window(&window),
             TrayMode::Tray => {

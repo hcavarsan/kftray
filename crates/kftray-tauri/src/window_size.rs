@@ -1,83 +1,100 @@
-use tauri::{
-    WebviewWindow,
-    Wry,
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
 };
+use std::time::Duration;
 
-const BASE_WIDTH: u32 = 450;
-const BASE_HEIGHT: u32 = 500;
-const MONITOR_FILL_RATIO: f32 = 0.9;
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::settings::{
+    delete_setting_with_mode,
+    get_setting,
+    set_setting,
+};
+use log::warn;
 
-pub const SETTING_KEY: &str = "window_size_preset";
+const SETTING_KEY: &str = "window_size";
+const LEGACY_PRESET_KEY: &str = "window_size_preset";
+const BASE_WIDTH: f64 = 450.0;
+const BASE_HEIGHT: f64 = 500.0;
+const SAVE_DELAY: Duration = Duration::from_millis(500);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum WindowSizePreset {
-    ExtraSmall,
-    Small,
-    #[default]
-    Default,
-    Medium,
-    Large,
-    ExtraLarge,
+static PENDING_SAVE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowSize {
+    pub width: u32,
+    pub height: u32,
 }
 
-impl WindowSizePreset {
-    pub fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "xs" => Some(Self::ExtraSmall),
-            "small" => Some(Self::Small),
-            "default" => Some(Self::Default),
-            "medium" => Some(Self::Medium),
-            "large" => Some(Self::Large),
-            "xl" => Some(Self::ExtraLarge),
-            _ => None,
-        }
+impl WindowSize {
+    fn parse(value: &str) -> Option<Self> {
+        let (width, height) = value.split_once('x')?;
+        let size = Self {
+            width: width.parse().ok()?,
+            height: height.parse().ok()?,
+        };
+        (size.width > 0 && size.height > 0).then_some(size)
     }
 
-    pub fn as_id(self) -> &'static str {
-        match self {
-            Self::ExtraSmall => "xs",
-            Self::Small => "small",
-            Self::Default => "default",
-            Self::Medium => "medium",
-            Self::Large => "large",
-            Self::ExtraLarge => "xl",
-        }
+    fn from_legacy_preset(id: &str) -> Option<Self> {
+        let scale = match id {
+            "xs" => 0.5,
+            "small" => 0.75,
+            "default" => 1.0,
+            "medium" => 1.5,
+            "large" => 2.0,
+            "xl" => 2.5,
+            _ => return None,
+        };
+        Some(Self {
+            width: (BASE_WIDTH * scale).round() as u32,
+            height: (BASE_HEIGHT * scale).round() as u32,
+        })
     }
 
-    pub fn scale(self) -> f32 {
-        match self {
-            Self::ExtraSmall => 0.5,
-            Self::Small => 0.75,
-            Self::Default => 1.0,
-            Self::Medium => 1.5,
-            Self::Large => 2.0,
-            Self::ExtraLarge => 2.5,
-        }
+    fn to_setting(self) -> String {
+        format!("{}x{}", self.width, self.height)
     }
 
-    pub fn dimensions(self, window: &WebviewWindow<Wry>) -> (u32, u32) {
-        let available_logical = window.current_monitor().ok().flatten().map(|monitor| {
-            let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
-            (logical.width, logical.height)
-        });
-        compute_dimensions(self.scale(), available_logical)
+    pub fn fit_within(self, available: Option<(f64, f64)>) -> Self {
+        match available {
+            Some((width, height)) if width > 0.0 && height > 0.0 => Self {
+                width: self.width.min(width.floor() as u32),
+                height: self.height.min(height.floor() as u32),
+            },
+            _ => self,
+        }
     }
 }
 
-fn compute_dimensions(base_scale: f32, available_logical: Option<(f64, f64)>) -> (u32, u32) {
-    let mut s = base_scale;
-    if let Some((avail_w, avail_h)) = available_logical
-        && avail_w > 0.0
-        && avail_h > 0.0
-    {
-        let max_w = (avail_w as f32) * MONITOR_FILL_RATIO / BASE_WIDTH as f32;
-        let max_h = (avail_h as f32) * MONITOR_FILL_RATIO / BASE_HEIGHT as f32;
-        s = s.min(max_w).min(max_h);
+pub async fn load() -> Option<WindowSize> {
+    if let Ok(Some(value)) = get_setting(SETTING_KEY).await {
+        return WindowSize::parse(&value);
     }
-    (
-        (BASE_WIDTH as f32 * s).round() as u32,
-        (BASE_HEIGHT as f32 * s).round() as u32,
-    )
+    let legacy = get_setting(LEGACY_PRESET_KEY).await.ok().flatten()?;
+    let size = WindowSize::from_legacy_preset(&legacy)?;
+    match set_setting(SETTING_KEY, &size.to_setting()).await {
+        Ok(()) => {
+            if let Err(e) = delete_setting_with_mode(LEGACY_PRESET_KEY, DatabaseMode::File).await {
+                warn!("Failed to remove legacy window size preset: {e}");
+            }
+        }
+        Err(e) => warn!("Failed to migrate window size preset {legacy}: {e}"),
+    }
+    Some(size)
+}
+
+pub fn save_after_resize(runtime: &tokio::runtime::Runtime, size: WindowSize) {
+    let generation = PENDING_SAVE.fetch_add(1, Ordering::SeqCst) + 1;
+    runtime.spawn(async move {
+        tokio::time::sleep(SAVE_DELAY).await;
+        if PENDING_SAVE.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if let Err(e) = set_setting(SETTING_KEY, &size.to_setting()).await {
+            warn!("Failed to save window size: {e}");
+        }
+    });
 }
 
 #[cfg(test)]
@@ -85,101 +102,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_ids() {
-        for preset in [
-            WindowSizePreset::ExtraSmall,
-            WindowSizePreset::Small,
-            WindowSizePreset::Default,
-            WindowSizePreset::Medium,
-            WindowSizePreset::Large,
-            WindowSizePreset::ExtraLarge,
-        ] {
-            assert_eq!(WindowSizePreset::from_id(preset.as_id()), Some(preset));
-        }
+    fn parses_saved_sizes() {
+        assert_eq!(
+            WindowSize::parse("675x750"),
+            Some(WindowSize {
+                width: 675,
+                height: 750
+            })
+        );
+        assert_eq!(WindowSize::parse("0x750"), None);
+        assert_eq!(WindowSize::parse("675"), None);
+        assert_eq!(WindowSize::parse("axb"), None);
     }
 
     #[test]
-    fn unknown_id_is_none() {
-        assert_eq!(WindowSizePreset::from_id("xxl"), None);
-        assert_eq!(WindowSizePreset::from_id("xxs"), None);
-        assert_eq!(WindowSizePreset::from_id(""), None);
+    fn saved_size_round_trips() {
+        let size = WindowSize {
+            width: 1200,
+            height: 80,
+        };
+        assert_eq!(WindowSize::parse(&size.to_setting()), Some(size));
     }
 
     #[test]
-    fn scales_match_ladder() {
-        assert_eq!(WindowSizePreset::ExtraSmall.scale(), 0.5);
-        assert_eq!(WindowSizePreset::Small.scale(), 0.75);
-        assert_eq!(WindowSizePreset::Default.scale(), 1.0);
-        assert_eq!(WindowSizePreset::Medium.scale(), 1.5);
-        assert_eq!(WindowSizePreset::Large.scale(), 2.0);
-        assert_eq!(WindowSizePreset::ExtraLarge.scale(), 2.5);
+    fn legacy_presets_keep_their_size() {
+        let size = |id| WindowSize::from_legacy_preset(id).map(|s| (s.width, s.height));
+        assert_eq!(size("xs"), Some((225, 250)));
+        assert_eq!(size("small"), Some((338, 375)));
+        assert_eq!(size("default"), Some((450, 500)));
+        assert_eq!(size("medium"), Some((675, 750)));
+        assert_eq!(size("large"), Some((900, 1000)));
+        assert_eq!(size("xl"), Some((1125, 1250)));
+        assert_eq!(size("xxl"), None);
     }
 
     #[test]
-    fn scale_ladder_is_strictly_increasing() {
-        let ladder = [
-            WindowSizePreset::ExtraSmall.scale(),
-            WindowSizePreset::Small.scale(),
-            WindowSizePreset::Default.scale(),
-            WindowSizePreset::Medium.scale(),
-            WindowSizePreset::Large.scale(),
-            WindowSizePreset::ExtraLarge.scale(),
-        ];
-        for window in ladder.windows(2) {
-            assert!(window[0] < window[1], "ladder must be increasing");
-        }
-    }
-
-    #[test]
-    fn compute_dimensions_smaller_presets_match_expected_logical_sizes() {
-        assert_eq!(compute_dimensions(0.5, None), (225, 250));
-        assert_eq!(compute_dimensions(0.75, None), (338, 375));
-    }
-
-    #[test]
-    fn compute_dimensions_default_is_unchanged_by_smaller_presets_addition() {
-        assert_eq!(compute_dimensions(1.0, None), (450, 500));
-    }
-
-    #[test]
-    fn compute_dimensions_returns_base_when_no_monitor_info() {
-        assert_eq!(compute_dimensions(1.0, None), (450, 500));
-        assert_eq!(compute_dimensions(2.5, None), (1125, 1250));
-    }
-
-    #[test]
-    fn compute_dimensions_zero_size_monitor_falls_back_to_base() {
-        assert_eq!(compute_dimensions(1.0, Some((0.0, 0.0))), (450, 500));
-        assert_eq!(compute_dimensions(1.0, Some((1920.0, 0.0))), (450, 500));
-    }
-
-    #[test]
-    fn compute_dimensions_default_preset_unchanged_on_typical_displays() {
-        assert_eq!(compute_dimensions(1.0, Some((1920.0, 1080.0))), (450, 500));
-        assert_eq!(compute_dimensions(1.0, Some((1512.0, 982.0))), (450, 500));
-        assert_eq!(compute_dimensions(1.0, Some((3840.0, 2160.0))), (450, 500));
-        assert_eq!(compute_dimensions(1.0, Some((1366.0, 768.0))), (450, 500));
-    }
-
-    #[test]
-    fn compute_dimensions_clamps_when_monitor_too_small() {
-        let (w, h) = compute_dimensions(1.0, Some((600.0, 400.0)));
-        assert_eq!((w, h), (324, 360));
-    }
-
-    #[test]
-    fn compute_dimensions_xl_preset_clamps_to_monitor_height() {
-        let unclamped = compute_dimensions(2.5, None);
-        assert_eq!(unclamped, (1125, 1250));
-
-        let (w, h) = compute_dimensions(2.5, Some((1512.0, 982.0)));
-        assert_eq!((w, h), (795, 884));
-        assert!((w as f32) < 1125.0 && (h as f32) < 1250.0);
-    }
-
-    #[test]
-    fn compute_dimensions_uses_full_scale_when_monitor_is_large_enough() {
-        assert_eq!(compute_dimensions(1.5, Some((3840.0, 2160.0))), (675, 750));
-        assert_eq!(compute_dimensions(2.0, Some((3840.0, 2160.0))), (900, 1000));
+    fn fits_within_the_monitor() {
+        let size = WindowSize {
+            width: 1125,
+            height: 1250,
+        };
+        assert_eq!(
+            size.fit_within(Some((1512.0, 982.0))),
+            WindowSize {
+                width: 1125,
+                height: 982
+            }
+        );
+        assert_eq!(size.fit_within(None), size);
+        assert_eq!(size.fit_within(Some((0.0, 0.0))), size);
     }
 }
