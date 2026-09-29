@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.28.0"
+version = "0.29.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
@@ -72,7 +72,14 @@ libc = { workspace = true }
 png = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSButton",
+  "NSControl",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true }
