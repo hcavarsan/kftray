@@ -364,6 +364,8 @@ jobs:
               -name 'libwayland-server.so*' \
               \) -delete
 
+          chmod -R u+rwX,go+rX,go-w squashfs-root
+
           curl -fsSL --retry 3 -o appimagetool.AppImage \
               "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch_kernel}.AppImage"
           chmod +x appimagetool.AppImage
