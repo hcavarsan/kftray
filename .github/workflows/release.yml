@@ -370,8 +370,10 @@ jobs:
               "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch_kernel}.AppImage"
           chmod +x appimagetool.AppImage
 
-          rm -f "$appimage" "$appimage.sig"
-          ARCH="$arch_kernel" ./appimagetool.AppImage --no-appstream squashfs-root "$appimage"
+          rm -f "$appimage" "$appimage.sig" "$appimage.zsync"
+          update_info="gh-releases-zsync|${GITHUB_REPOSITORY%%/*}|${GITHUB_REPOSITORY#*/}|latest|${asset_name/$version/*[0-9]}.zsync"
+          ARCH="$arch_kernel" ./appimagetool.AppImage --no-appstream -u "$update_info" squashfs-root "$appimage"
+          [ -f "$work/$asset_name.zsync" ] && mv "$work/$asset_name.zsync" "$appimage.zsync"
           popd >/dev/null
 
           npx --yes @tauri-apps/cli@^2 signer sign \
@@ -379,8 +381,8 @@ jobs:
               --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
               "$appimage"
 
-          gh release upload "${{ github.ref_name }}" "$appimage" "$appimage.sig" --clobber
-          echo "Re-uploaded $asset_name (libglvnd-free) with regenerated signature"
+          gh release upload "${{ github.ref_name }}" "$appimage" "$appimage.sig" "$appimage.zsync" --clobber
+          echo "Re-uploaded $asset_name (libglvnd-free) with regenerated signature and zsync"
 
           rm -rf "$work"
 
