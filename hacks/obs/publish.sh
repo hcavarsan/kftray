@@ -31,7 +31,7 @@ show_usage() {
     echo ""
     echo "Optional:"
     echo "  OBS_PROJECT         - Project name (default: home:\${OBS_USER}:kftray)"
-    echo "  OBS_RESULTS_TIMEOUT - Wait budget per package for OBS builds (default: 30m)"
+    echo "  OBS_RESULTS_TIMEOUT - Wait budget per package for OBS builds (default: 60m)"
     echo "  GITHUB_TOKEN        - Authenticates GitHub API calls (avoids anonymous rate limits)"
     echo "  --dry-run           - Validate and prepare packages without contacting OBS"
     echo ""
@@ -80,7 +80,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="${VERSION#v}"
 OBS_PROJECT="${OBS_PROJECT:-home:${OBS_USER:-dryrun}:kftray}"
-OBS_RESULTS_TIMEOUT="${OBS_RESULTS_TIMEOUT:-30m}"
+OBS_RESULTS_TIMEOUT="${OBS_RESULTS_TIMEOUT:-60m}"
 if [[ "$OBS_RESULTS_TIMEOUT" =~ ^([0-9]+)([smhd]?)$ ]]; then
     case "${BASH_REMATCH[2]}" in
         m) OBS_RESULTS_TIMEOUT_SECONDS=$((BASH_REMATCH[1] * 60)) ;;

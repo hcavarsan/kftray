@@ -61,7 +61,7 @@ All selected packages are prepared before any OBS write. The publisher then:
 2. Makes each OBS package mirror the rendered templates and generated archives
    exactly; files from earlier versions are deleted.
 3. Commits, waits until the OBS scheduler has picked up the new revision, then
-   waits for the builds (`OBS_RESULTS_TIMEOUT`, default `30m` per package).
+   waits for the builds (`OBS_RESULTS_TIMEOUT`, default `60m` per package).
    Failed, broken, unresolved, unfinished, or empty build results fail the
    command, so every target in `distros.conf` must build.
 
