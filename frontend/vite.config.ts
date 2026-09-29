@@ -1,97 +1,33 @@
 import { visualizer } from 'rollup-plugin-visualizer'
-import { defineConfig, type Plugin, type UserConfig } from 'vite'
+import { defineConfig } from 'vite'
 
 import { codecovVitePlugin } from '@codecov/vite-plugin'
-import terser from '@rollup/plugin-terser'
 import react from '@vitejs/plugin-react'
 
 import { resolve } from 'node:path'
 
-const asPlugin = (p: any) => p as Plugin
-
-const terserConfig = {
-  mangle: true,
-  output: { comments: false },
-  compress: {
-    drop_console: true,
-    drop_debugger: true,
-    pure_funcs: ['console.info', 'console.debug', 'console.warn'],
-    passes: 2,
-  },
-}
-
-const createManualChunks = (id: string) => {
-  if (!id.includes('node_modules')) {
-    return
-  }
-  if (
-    id.includes('@chakra-ui') ||
-    id.includes('@emotion') ||
-    id.includes('@ark-ui') ||
-    id.includes('@zag-js') ||
-    id.includes('framer-motion')
-  ) {
-    return 'chakra-ui'
-  }
-
-  if (id.includes('lucide-react')) {
-    return 'icons'
-  }
-
-  if (id.includes('@tanstack/react-query')) {
-    return 'react-query'
-  }
-
-  if (id.includes('react-select') || id.includes('next-themes')) {
-    return 'utils'
-  }
-
-  if (
-    id.includes('/react/') ||
-    id.includes('/react-dom/') ||
-    id.includes('/scheduler/') ||
-    id.match(/\/react\/index\.js/) ||
-    id.match(/\/react-dom\/index\.js/)
-  ) {
-    return 'react-vendor'
-  }
-
-  if (id.includes('@tauri-apps')) {
-    return 'tauri'
-  }
-
-  if (id.includes('lodash')) {
-    return 'utils'
-  }
-
-  return 'vendor'
-}
+const isDebug = process.env.TAURI_ENV_DEBUG === 'true'
 
 export default defineConfig({
   resolve: {
-    alias: { '@': resolve(import.meta.dirname, 'src') },
     tsconfigPaths: true,
   },
 
   plugins: [
-    asPlugin(react()),
-    ...(!process.env.TAURI_DEBUG ? [asPlugin(terser(terserConfig))] : []),
+    react(),
     codecovVitePlugin({
       enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
       bundleName: 'kftray',
       uploadToken: process.env.CODECOV_TOKEN,
       gitService: 'github',
     }),
-    ...(process.env.ANALYZE
-      ? [
-          visualizer({
-            open: true,
-            gzipSize: true,
-            brotliSize: true,
-            filename: 'dist/stats.html',
-          }),
-        ]
-      : []),
+    process.env.ANALYZE &&
+      visualizer({
+        open: true,
+        gzipSize: true,
+        brotliSize: true,
+        filename: 'dist/stats.html',
+      }),
   ],
 
   clearScreen: false,
@@ -99,33 +35,37 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    open: process.env.TAURI_ARCH === undefined,
+    open: process.env.TAURI_ENV_ARCH === undefined,
   },
-
-  envPrefix: ['VITE_', 'TAURI_'],
 
   build: {
     outDir: 'dist',
     emptyOutDir: false,
-    chunkSizeWarningLimit: 500,
-    target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'terser' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
-    rollupOptions: {
+    target:
+      process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
+    minify: !isDebug,
+    sourcemap: isDebug,
+    rolldownOptions: {
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         logs: resolve(import.meta.dirname, 'logs.html'),
       },
       output: {
-        manualChunks: createManualChunks,
-        chunkFileNames: 'assets/[name]-[hash].js',
-        entryFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
-      },
-      treeshake: {
-        moduleSideEffects: 'no-external',
-        propertyReadSideEffects: false,
+        codeSplitting: {
+          groups: [
+            {
+              name: 'chakra-ui',
+              test: /node_modules[\\/](@chakra-ui|@emotion|@ark-ui|@zag-js)/,
+            },
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            { name: 'tauri', test: /node_modules[\\/]@tauri-apps/ },
+            { name: 'vendor', test: /node_modules/ },
+          ],
+        },
       },
     },
   },
-} as UserConfig)
+})
