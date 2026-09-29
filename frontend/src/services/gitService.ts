@@ -1,41 +1,64 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import type { GitConfig } from '@/types'
+import type { AuthMethod } from '@/types'
+
+export interface GitConfig {
+  repoUrl: string
+  configPaths: string[]
+  authMethod: AuthMethod
+  token?: string
+  isPrivate?: boolean
+  pollingInterval: number
+  flush?: boolean
+}
+
+type StoredGitConfig = Omit<GitConfig, 'configPaths'> & {
+  configPaths?: string[]
+  configPath?: string
+}
+
+const SERVICE_NAME = 'kftray'
+const ACCOUNT_NAME = 'github_config'
 
 export const gitService = {
-  async saveCredentials(
-    serviceName: string,
-    accountName: string,
-    credentials: GitConfig,
-  ) {
+  async getCredentials(): Promise<GitConfig | null> {
+    try {
+      const credentialsString = await invoke<string>('get_key', {
+        service: SERVICE_NAME,
+        name: ACCOUNT_NAME,
+      })
+
+      if (!credentialsString) {
+        return null
+      }
+      const { configPath, configPaths, ...stored }: StoredGitConfig =
+        JSON.parse(credentialsString)
+
+      return {
+        ...stored,
+        configPaths: configPaths ?? (configPath ? [configPath] : []),
+      }
+    } catch (error) {
+      if (String(error).includes('No matching entry')) {
+        return null
+      }
+      throw error
+    }
+  },
+
+  async saveCredentials(credentials: GitConfig) {
     await invoke('store_key', {
-      service: serviceName,
-      name: accountName,
+      service: SERVICE_NAME,
+      name: ACCOUNT_NAME,
       password: JSON.stringify(credentials),
     })
   },
 
-  async getCredentials(
-    serviceName: string,
-    accountName: string,
-  ): Promise<GitConfig | null> {
-    try {
-      const credentialsString = await invoke<string>('get_key', {
-        service: serviceName,
-        name: accountName,
-      })
-
-      return JSON.parse(credentialsString)
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        !error.toString().includes('No matching entry')
-      ) {
-        throw error
-      }
-
-      return null
-    }
+  async deleteCredentials() {
+    await invoke('delete_key', {
+      service: SERVICE_NAME,
+      name: ACCOUNT_NAME,
+    })
   },
 
   async importConfigs(credentials: GitConfig) {
@@ -46,13 +69,6 @@ export const gitService = {
       flush: credentials.flush ?? false,
       githubToken:
         credentials.authMethod === 'token' ? credentials.token : null,
-    })
-  },
-
-  async deleteCredentials(serviceName: string, accountName: string) {
-    await invoke('delete_key', {
-      service: serviceName,
-      name: accountName,
     })
   },
 }

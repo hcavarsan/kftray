@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
 
-import { COLORS, LEVEL_COLORS } from './constants'
+import { LEVEL_COLORS } from './constants'
 import type { FilterChipsProps, LogLevel } from './types'
 
 function Chip({
@@ -74,7 +74,6 @@ function FilterChipsComponent({
 
   return (
     <Flex align='center' gap={1.5} flexWrap='wrap' pt={2}>
-      {/* Level chips */}
       {selectedLevels.map(level => {
         const colors = LEVEL_COLORS[level as LogLevel]
 
@@ -90,7 +89,6 @@ function FilterChipsComponent({
         )
       })}
 
-      {/* Module chips */}
       {selectedModules.map(module => {
         const formatModuleName = (mod: string): string => {
           const formatted = mod
@@ -111,15 +109,14 @@ function FilterChipsComponent({
           <Chip
             key={`module-${module}`}
             label={displayName}
-            bg='rgba(34, 211, 238, 0.1)'
-            color={COLORS.accentCyan}
-            borderColor='rgba(34, 211, 238, 0.2)'
+            bg='cyan.400/10'
+            color='cyan.300'
+            borderColor='cyan.400/20'
             onRemove={() => onRemoveModule(module)}
           />
         )
       })}
 
-      {/* Search chip */}
       {searchText.trim() && (
         <Chip
           label={`"${searchText.length > 15 ? `${searchText.slice(0, 12)}...` : searchText}"`}
@@ -130,7 +127,6 @@ function FilterChipsComponent({
         />
       )}
 
-      {/* Clear all button */}
       {(selectedLevels.length + selectedModules.length > 1 ||
         (selectedLevels.length + selectedModules.length >= 1 &&
           searchText.trim())) && (

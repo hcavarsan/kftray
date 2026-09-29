@@ -1,14 +1,24 @@
-import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { FileText } from 'lucide-react'
 
-import { Box, Dialog, Flex, Grid, Input, Stack, Text } from '@chakra-ui/react'
+import {
+  Box,
+  Dialog,
+  Field,
+  Flex,
+  Grid,
+  Input,
+  Stack,
+  Text,
+} from '@chakra-ui/react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
-import { DialogCloseTrigger, DialogContent } from '@/components/ui/dialog'
+import { AppDialog } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
+import { errorMessage } from '@/lib/errors'
 
 interface HttpLogsConfig {
   config_id: number
@@ -20,392 +30,336 @@ interface HttpLogsConfig {
 
 interface HttpLogsConfigModalProps {
   configId: number
-  isOpen: boolean
   onClose: () => void
-  onSave?: () => void
+  onSaved?: () => void
 }
 
-const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
+interface Draft {
+  enabled: boolean
+  auto_cleanup: boolean
+  maxFileSizeMb: string
+  retentionDays: string
+}
+
+type NumericField = 'maxFileSizeMb' | 'retentionDays'
+
+type DraftErrors = Partial<Record<NumericField, string>>
+
+const MB = 1024 * 1024
+
+const toDraft = (config: HttpLogsConfig): Draft => ({
+  enabled: config.enabled,
+  auto_cleanup: config.auto_cleanup,
+  maxFileSizeMb: String(config.max_file_size / MB),
+  retentionDays: String(config.retention_days),
+})
+
+const parseInRange = (value: string, min: number, max: number) => {
+  const trimmed = value.trim()
+  const n = Number(trimmed)
+
+  return trimmed !== '' && Number.isInteger(n) && n >= min && n <= max
+    ? n
+    : null
+}
+
+const formatFileSize = (bytes: number) => {
+  if (bytes >= MB) {
+    return `${(bytes / MB).toFixed(1)} MB`
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+
+  return `${bytes} bytes`
+}
+
+const cardProps = {
+  bg: 'app.panel',
+  p: 2.5,
+  borderRadius: 'md',
+  border: '1px solid',
+  borderColor: 'app.border',
+  height: 'fit-content',
+}
+
+const numberInputProps = {
+  type: 'number',
+  size: 'xs',
+  width: '60px',
+  height: '24px',
+  bg: 'app.bg',
+  border: '1px solid',
+  borderColor: 'app.border',
+  _hover: { borderColor: 'app.borderStrong' },
+  _focus: { borderColor: 'blue.400', boxShadow: 'none' },
+  _invalid: { borderColor: 'red.400' },
+  color: 'white',
+  _placeholder: { color: 'whiteAlpha.500' },
+  textAlign: 'center',
+  fontSize: 'xs',
+} as const
+
+export default function HttpLogsConfigModal({
   configId,
-  isOpen,
   onClose,
-  onSave,
-}) => {
-  const [config, setConfig] = useState<HttpLogsConfig>({
-    config_id: configId,
-    enabled: false,
-    max_file_size: 10 * 1024 * 1024, // 10MB
-    retention_days: 7,
-    auto_cleanup: true,
+  onSaved,
+}: HttpLogsConfigModalProps) {
+  const queryClient = useQueryClient()
+  const queryKey = ['http-logs-config', configId]
+  const configQuery = useQuery({
+    queryKey,
+    queryFn: () =>
+      invoke<HttpLogsConfig>('get_http_logs_config_cmd', { configId }),
   })
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
+  const [edits, setEdits] = useState<Partial<Draft>>({})
+  const [errors, setErrors] = useState<DraftErrors>({})
 
-  const loadConfig = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const httpConfig = await invoke<HttpLogsConfig>(
-        'get_http_logs_config_cmd',
-        {
-          configId: configId,
-        },
-      )
+  const draft: Draft | undefined = configQuery.data && {
+    ...toDraft(configQuery.data),
+    ...edits,
+  }
 
-      setConfig(httpConfig)
-    } catch (error) {
-      console.error('Failed to load HTTP logs config:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to load HTTP logs configuration',
-        duration: 3000,
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [configId])
+  const update = (patch: Partial<Draft>) =>
+    setEdits(prev => ({ ...prev, ...patch }))
 
-  useEffect(() => {
-    if (isOpen) {
-      loadConfig()
-    }
-  }, [isOpen, loadConfig])
+  const updateNumber = (field: NumericField, value: string) => {
+    update({ [field]: value })
+    setErrors(prev => ({ ...prev, [field]: undefined }))
+  }
 
-  const handleSave = async () => {
-    const mb = config.max_file_size / (1024 * 1024)
-    const invalid =
-      mb < 1 ||
-      mb > 100 ||
-      config.retention_days < 1 ||
-      config.retention_days > 365
-
-    if (invalid) {
-      toaster.error({
-        title: 'Invalid settings',
-        description: 'Please fix highlighted fields before saving',
-        duration: 3000,
-      })
-
-      return
-    }
-    setIsSaving(true)
-    try {
-      await invoke('update_http_logs_config_cmd', { config })
+  const saveMutation = useMutation({
+    mutationFn: (config: HttpLogsConfig) =>
+      invoke('update_http_logs_config_cmd', { config }),
+    onSuccess: (_, config) => {
+      queryClient.setQueryData(queryKey, config)
       toaster.success({
         title: 'Settings Saved',
         description: 'HTTP logs configuration has been saved successfully',
         duration: 3000,
       })
-      onSave?.()
+      onSaved?.()
       onClose()
-    } catch (error) {
-      console.error('Failed to save HTTP logs config:', error)
+    },
+    onError: error => {
       toaster.error({
-        title: 'Error',
-        description: 'Failed to save HTTP logs configuration',
+        title: 'Failed to save HTTP logs configuration',
+        description: errorMessage(error),
         duration: 3000,
       })
-    } finally {
-      setIsSaving(false)
+    },
+  })
+
+  const handleSave = () => {
+    if (!draft) {
+      return
     }
+    const mb = parseInRange(draft.maxFileSizeMb, 1, 100)
+    const days = parseInRange(draft.retentionDays, 1, 365)
+    const nextErrors: DraftErrors = {
+      ...(mb === null && {
+        maxFileSizeMb: 'Enter a whole number from 1 to 100',
+      }),
+      ...(days === null && {
+        retentionDays: 'Enter a whole number from 1 to 365',
+      }),
+    }
+
+    setErrors(nextErrors)
+    if (mb === null || days === null) {
+      return
+    }
+    saveMutation.mutate({
+      config_id: configId,
+      enabled: draft.enabled,
+      auto_cleanup: draft.auto_cleanup,
+      max_file_size: mb * MB,
+      retention_days: days,
+    })
   }
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes >= 1024 * 1024) {
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-    }
-    if (bytes >= 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`
-    }
-
-    return `${bytes} bytes`
-  }
-
-  const handleFileSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    const numValue = parseInt(value, 10)
-
-    if (!Number.isNaN(numValue)) {
-      const mb = Math.min(100, Math.max(1, numValue))
-
-      setConfig(prev => ({ ...prev, max_file_size: mb * 1024 * 1024 }))
-    }
-  }
-
-  const handleRetentionDaysChange = (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const value = e.target.value
-    const numValue = parseInt(value, 10)
-
-    if (!Number.isNaN(numValue)) {
-      const days = Math.min(365, Math.max(1, numValue))
-
-      setConfig(prev => ({ ...prev, retention_days: days }))
-    }
-  }
+  const fileSizeMb = draft && parseInRange(draft.maxFileSizeMb, 1, 100)
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={({ open }) => !open && onClose()}>
-      <DialogContent
-        maxWidth='420px'
-        width='90vw'
-        bg='#111111'
-        border='1px solid rgba(255, 255, 255, 0.08)'
-        borderRadius='lg'
-        p={0}
-        boxShadow='0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)'
-        css={{
+    <AppDialog
+      title={
+        <Flex align='center' gap={2}>
+          <Box as={FileText} width='14px' height='14px' color='blue.400' />
+          <Text as='span' fontWeight='600' color='white'>
+            HTTP Logs Configuration
+          </Text>
+        </Flex>
+      }
+      onClose={onClose}
+      maxWidth='420px'
+      contentProps={{
+        boxShadow:
+          '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+        css: {
           '&::-webkit-scrollbar': { display: 'none' },
           msOverflowStyle: 'none',
           scrollbarWidth: 'none',
-        }}
-      >
-        <DialogCloseTrigger
-          style={{
-            marginTop: '-4px',
-          }}
-        />
-
-        {/* Header */}
-        <Box
-          bg='#161616'
-          px={4}
-          py={3}
-          borderBottom='1px solid rgba(255, 255, 255, 0.08)'
-          borderTopRadius='lg'
-        >
-          <Flex align='center' gap={3}>
-            <Box
-              as={FileText}
-              width='14px'
-              height='14px'
-              color='blue.400'
-              ml={2}
-            />
-            <Text fontSize='sm' fontWeight='600' color='white'>
-              HTTP Logs Configuration
+        },
+      }}
+    >
+      <Dialog.Body px={4} py={3}>
+        {!draft ? (
+          <Box py={6} textAlign='center'>
+            <Text color={configQuery.isError ? 'red.300' : 'whiteAlpha.600'}>
+              {configQuery.isError
+                ? `Failed to load configuration: ${errorMessage(configQuery.error)}`
+                : 'Loading configuration...'}
             </Text>
-          </Flex>
-        </Box>
+          </Box>
+        ) : (
+          <Stack gap={3}>
+            <Grid templateColumns='1fr 1fr' gap={3}>
+              <Box {...cardProps}>
+                <Flex direction='column' gap={2}>
+                  <Text fontSize='sm' fontWeight='500' color='white'>
+                    Enable HTTP Logs
+                  </Text>
+                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+                    Enable HTTP request/response logging for this configuration
+                  </Text>
+                  <Box alignSelf='flex-start'>
+                    <Switch
+                      aria-label='Enable HTTP Logs'
+                      checked={draft.enabled}
+                      onCheckedChange={details =>
+                        update({ enabled: details.checked })
+                      }
+                      colorPalette='blue'
+                    />
+                  </Box>
+                </Flex>
+              </Box>
 
-        {/* Content */}
-        <Box px={4} py={3}>
-          {isLoading ? (
-            <Box py={6} textAlign='center'>
-              <Text color='whiteAlpha.600'>Loading configuration...</Text>
-            </Box>
-          ) : (
-            <Stack gap={3}>
-              <Grid templateColumns='1fr 1fr' gap={3}>
-                {/* Enable HTTP Logs */}
-                <Box
-                  bg='#161616'
-                  p={2.5}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  height='fit-content'
-                >
-                  <Flex direction='column' gap={2}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Enable HTTP Logs
+              <Box {...cardProps}>
+                <Flex direction='column' gap={2}>
+                  <Text fontSize='sm' fontWeight='500' color='white'>
+                    Automatic Cleanup
+                  </Text>
+                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+                    Automatically remove old log files based on retention period
+                  </Text>
+                  <Box alignSelf='flex-start'>
+                    <Switch
+                      aria-label='Automatic Cleanup'
+                      checked={draft.auto_cleanup}
+                      onCheckedChange={details =>
+                        update({ auto_cleanup: details.checked })
+                      }
+                      colorPalette='blue'
+                    />
+                  </Box>
+                </Flex>
+              </Box>
+
+              <Field.Root {...cardProps} invalid={!!errors.maxFileSizeMb}>
+                <Flex direction='column' gap={2}>
+                  <Field.Label fontSize='sm' fontWeight='500' color='white'>
+                    Maximum File Size
+                  </Field.Label>
+                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+                    Maximum file size before rotation. Current:{' '}
+                    {formatFileSize(
+                      fileSizeMb
+                        ? fileSizeMb * MB
+                        : (configQuery.data?.max_file_size ?? 0),
+                    )}
+                  </Text>
+                  <Flex align='center' gap={1}>
+                    <Input
+                      {...numberInputProps}
+                      value={draft.maxFileSizeMb}
+                      onChange={e =>
+                        updateNumber('maxFileSizeMb', e.target.value)
+                      }
+                      placeholder='10'
+                      min={1}
+                      max={100}
+                    />
+                    <Text fontSize='xs' color='whiteAlpha.600'>
+                      MB
                     </Text>
-                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                      Enable HTTP request/response logging for this
-                      configuration
-                    </Text>
-                    <Box alignSelf='flex-start'>
-                      <Switch
-                        checked={config.enabled}
-                        onCheckedChange={details =>
-                          setConfig(prev => ({
-                            ...prev,
-                            enabled: details.checked,
-                          }))
-                        }
-                        disabled={isLoading}
-                        colorPalette='blue'
-                      />
-                    </Box>
                   </Flex>
-                </Box>
+                  <Field.ErrorText fontSize='xs'>
+                    {errors.maxFileSizeMb}
+                  </Field.ErrorText>
+                </Flex>
+              </Field.Root>
 
-                {/* Automatic Cleanup */}
-                <Box
-                  bg='#161616'
-                  p={2.5}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  height='fit-content'
-                >
-                  <Flex direction='column' gap={2}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Automatic Cleanup
+              <Field.Root {...cardProps} invalid={!!errors.retentionDays}>
+                <Flex direction='column' gap={2}>
+                  <Field.Label fontSize='sm' fontWeight='500' color='white'>
+                    Retention Period
+                  </Field.Label>
+                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+                    Days to keep log files before cleanup
+                  </Text>
+                  <Flex align='center' gap={1}>
+                    <Input
+                      {...numberInputProps}
+                      value={draft.retentionDays}
+                      onChange={e =>
+                        updateNumber('retentionDays', e.target.value)
+                      }
+                      placeholder='7'
+                      min={1}
+                      max={365}
+                    />
+                    <Text fontSize='xs' color='whiteAlpha.600'>
+                      days
                     </Text>
-                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                      Automatically remove old log files based on retention
-                      period
-                    </Text>
-                    <Box alignSelf='flex-start'>
-                      <Switch
-                        checked={config.auto_cleanup}
-                        onCheckedChange={details =>
-                          setConfig(prev => ({
-                            ...prev,
-                            auto_cleanup: details.checked,
-                          }))
-                        }
-                        disabled={isLoading}
-                        colorPalette='blue'
-                      />
-                    </Box>
                   </Flex>
-                </Box>
+                  <Field.ErrorText fontSize='xs'>
+                    {errors.retentionDays}
+                  </Field.ErrorText>
+                </Flex>
+              </Field.Root>
+            </Grid>
+          </Stack>
+        )}
+      </Dialog.Body>
 
-                {/* Maximum File Size */}
-                <Box
-                  bg='#161616'
-                  p={2.5}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  height='fit-content'
-                >
-                  <Flex direction='column' gap={2}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Maximum File Size
-                    </Text>
-                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                      Maximum file size before rotation. Current:{' '}
-                      {formatFileSize(config.max_file_size)}
-                    </Text>
-                    <Flex align='center' gap={1}>
-                      <Input
-                        type='number'
-                        value={(
-                          config.max_file_size /
-                          (1024 * 1024)
-                        ).toString()}
-                        onChange={handleFileSizeChange}
-                        placeholder='10'
-                        size='xs'
-                        width='60px'
-                        height='24px'
-                        min={1}
-                        max={100}
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.15)',
-                        }}
-                        _focus={{
-                          borderColor: 'blue.400',
-                          boxShadow: 'none',
-                        }}
-                        color='white'
-                        _placeholder={{ color: 'whiteAlpha.500' }}
-                        disabled={isLoading}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                      <Text fontSize='xs' color='whiteAlpha.600'>
-                        MB
-                      </Text>
-                    </Flex>
-                  </Flex>
-                </Box>
-
-                {/* Retention Period */}
-                <Box
-                  bg='#161616'
-                  p={2.5}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  height='fit-content'
-                >
-                  <Flex direction='column' gap={2}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Retention Period
-                    </Text>
-                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                      Days to keep log files before cleanup
-                    </Text>
-                    <Flex align='center' gap={1}>
-                      <Input
-                        type='number'
-                        value={config.retention_days.toString()}
-                        onChange={handleRetentionDaysChange}
-                        placeholder='7'
-                        size='xs'
-                        width='60px'
-                        height='24px'
-                        min={1}
-                        max={365}
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.15)',
-                        }}
-                        _focus={{
-                          borderColor: 'blue.400',
-                          boxShadow: 'none',
-                        }}
-                        color='white'
-                        _placeholder={{ color: 'whiteAlpha.500' }}
-                        disabled={isLoading}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                      <Text fontSize='xs' color='whiteAlpha.600'>
-                        days
-                      </Text>
-                    </Flex>
-                  </Flex>
-                </Box>
-              </Grid>
-            </Stack>
-          )}
-        </Box>
-
-        {/* Footer */}
-        <Box
-          bg='#161616'
-          px={4}
-          py={3}
-          borderTop='1px solid rgba(255, 255, 255, 0.08)'
-          borderBottomRadius='lg'
-        >
-          <Flex justify='flex-end' gap={2}>
-            <Button
-              variant='ghost'
-              size='xs'
-              onClick={onClose}
-              disabled={isSaving}
-              _hover={{ bg: 'whiteAlpha.100' }}
-              color='whiteAlpha.700'
-              height='28px'
-              fontSize='xs'
-            >
-              Cancel
-            </Button>
-            <Button
-              size='xs'
-              onClick={handleSave}
-              loading={isSaving}
-              loadingText='Saving...'
-              disabled={isLoading}
-              bg='blue.500'
-              color='white'
-              _hover={{ bg: 'blue.600' }}
-              _active={{ bg: 'blue.700' }}
-              height='28px'
-              fontSize='xs'
-            >
-              Save Settings
-            </Button>
-          </Flex>
-        </Box>
-      </DialogContent>
-    </Dialog.Root>
+      <Dialog.Footer
+        bg='app.panel'
+        px={4}
+        py={3}
+        borderTop='1px solid'
+        borderColor='app.border'
+      >
+        <Flex justify='flex-end' gap={2} width='100%'>
+          <Button
+            variant='ghost'
+            size='xs'
+            onClick={onClose}
+            disabled={saveMutation.isPending}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            color='whiteAlpha.700'
+            height='28px'
+            fontSize='xs'
+          >
+            Cancel
+          </Button>
+          <Button
+            size='xs'
+            onClick={handleSave}
+            loading={saveMutation.isPending}
+            loadingText='Saving...'
+            disabled={!draft}
+            bg='blue.500'
+            color='white'
+            _hover={{ bg: 'blue.600' }}
+            _active={{ bg: 'blue.700' }}
+            height='28px'
+            fontSize='xs'
+          >
+            Save Settings
+          </Button>
+        </Flex>
+      </Dialog.Footer>
+    </AppDialog>
   )
 }
-
-export default HttpLogsConfigModal

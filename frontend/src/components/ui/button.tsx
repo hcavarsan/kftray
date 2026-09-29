@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import type { ReactNode, RefAttributes } from 'react'
 
 import type { ButtonProps as ChakraButtonProps } from '@chakra-ui/react'
 import {
@@ -8,35 +8,38 @@ import {
   Spinner,
 } from '@chakra-ui/react'
 
-interface ButtonLoadingProps {
+interface ButtonProps
+  extends ChakraButtonProps,
+    RefAttributes<HTMLButtonElement> {
   loading?: boolean
-  loadingText?: React.ReactNode
+  loadingText?: ReactNode
 }
 
-interface ButtonProps extends ChakraButtonProps, ButtonLoadingProps {}
-
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  (props, ref) => {
-    const { loading, disabled, loadingText, children, ...rest } = props
-
-    return (
-      <ChakraButton disabled={loading || disabled} ref={ref} {...rest}>
-        {loading && !loadingText ? (
-          <>
-            <AbsoluteCenter display='inline-flex'>
-              <Spinner size='inherit' color='inherit' />
-            </AbsoluteCenter>
-            <Span opacity={0}>{children}</Span>
-          </>
-        ) : loading && loadingText ? (
-          <>
+export function Button({
+  loading,
+  disabled,
+  loadingText,
+  children,
+  ref,
+  ...props
+}: ButtonProps) {
+  return (
+    <ChakraButton disabled={loading || disabled} ref={ref} {...props}>
+      {loading && !loadingText ? (
+        <>
+          <AbsoluteCenter display='inline-flex'>
             <Spinner size='inherit' color='inherit' />
-            {loadingText}
-          </>
-        ) : (
-          children
-        )}
-      </ChakraButton>
-    )
-  },
-)
+          </AbsoluteCenter>
+          <Span opacity={0}>{children}</Span>
+        </>
+      ) : loading ? (
+        <>
+          <Spinner size='inherit' color='inherit' />
+          {loadingText}
+        </>
+      ) : (
+        children
+      )}
+    </ChakraButton>
+  )
+}

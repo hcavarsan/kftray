@@ -1,58 +1,32 @@
-import type React from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
-import debounce from 'lodash/debounce'
 import { RepeatIcon } from 'lucide-react'
 
 import { Box, Button, Spinner, Text } from '@chakra-ui/react'
 
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
-import type { SyncConfigsButtonProps } from '@/types'
+import { errorMessage } from '@/lib/errors'
 
-const SYNC_DEBOUNCE_MS = 1000
-const MAX_RETRIES = 3
-
-const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
-  onSyncFailure,
-  onSyncComplete,
-}) => {
+function SyncConfigsButton() {
   const { credentials, syncStatus, lastSync, nextSync, syncConfigs } =
     useGitSync()
 
-  const retryCount = useRef(0)
-  const [isSyncing, setIsSyncing] = useState(false)
-
-  const handleSync = useCallback(async () => {
+  const handleClick = async () => {
     try {
       await syncConfigs()
-      retryCount.current = 0
-      onSyncComplete?.()
+      toaster.success({
+        title: 'Success',
+        description: 'Configs synced successfully',
+        duration: 1000,
+      })
     } catch (error) {
-      if (retryCount.current < MAX_RETRIES) {
-        retryCount.current++
-        await handleSync()
-      } else {
-        retryCount.current = 0
-        onSyncFailure(error instanceof Error ? error : new Error(String(error)))
-      }
+      toaster.error({
+        title: 'Sync failed',
+        description: errorMessage(error),
+        duration: 2000,
+      })
     }
-  }, [syncConfigs, onSyncComplete, onSyncFailure])
-
-  const debouncedSync = useMemo(
-    () =>
-      debounce(async () => {
-        await handleSync()
-        setIsSyncing(false)
-      }, SYNC_DEBOUNCE_MS),
-    [handleSync],
-  )
-
-  const handleClick = useCallback(() => {
-    if (!isSyncing) {
-      setIsSyncing(true)
-      debouncedSync()
-    }
-  }, [debouncedSync, isSyncing])
+  }
 
   const tooltipContent = (
     <Box fontSize='xs' lineHeight='tight'>
@@ -62,7 +36,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           <Text>Repo URL: {credentials.repoUrl}</Text>
           <Text>Config Path(s): {credentials.configPaths.join(', ')}</Text>
           <Text>Auth Method: {credentials.authMethod}</Text>
-          <Text>Polling Interval: {syncStatus.pollingInterval} minutes</Text>
+          <Text>Polling Interval: {credentials.pollingInterval} minutes</Text>
           <Text>Last Sync: {lastSync ?? ''}</Text>
           <Text>Next Sync: {nextSync ?? ''}</Text>
         </>
@@ -79,21 +53,23 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       positioning={{ placement: 'top-start' }}
     >
       <Button
+        aria-label='Sync configs from git'
         size='sm'
         variant='ghost'
         onClick={handleClick}
-        disabled={!credentials || isSyncing}
+        disabled={!credentials || syncStatus.isSyncing}
         height='32px'
         minWidth='70px'
         bg='whiteAlpha.50'
         px={2}
         borderRadius='md'
-        border='1px solid rgba(255, 255, 255, 0.08)'
+        border='1px solid'
+        borderColor='app.border'
         _hover={{ bg: 'whiteAlpha.100' }}
         _active={{ bg: 'whiteAlpha.200' }}
       >
         <Box display='flex' alignItems='center' gap={1}>
-          {isSyncing ? (
+          {syncStatus.isSyncing ? (
             <Spinner size='sm' />
           ) : (
             <Box as={RepeatIcon} width='12px' height='12px' />

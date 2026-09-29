@@ -1,12 +1,17 @@
-import type React from 'react'
 import { Server } from 'lucide-react'
 
-import { Box, Flex, Input, Text } from '@chakra-ui/react'
+import { Input } from '@chakra-ui/react'
 
 import { Checkbox } from '@/components/ui/checkbox'
 
+import {
+  compactInputProps,
+  isDigitsUpTo,
+  SettingCard,
+  SettingRow,
+} from './SettingCard'
+
 interface McpServerSettingsProps {
-  isLoading: boolean
   enabled: boolean
   port: string
   running: boolean
@@ -14,112 +19,56 @@ interface McpServerSettingsProps {
   onPortChange: (port: string) => void
 }
 
-const McpServerSettings: React.FC<McpServerSettingsProps> = ({
-  isLoading,
-  enabled: mcpServerEnabled,
-  port: mcpServerPort,
-  running: mcpServerRunning,
+export function McpServerSettings({
+  enabled,
+  port,
+  running,
   onEnabledChange,
   onPortChange,
-}) => {
-  const handlePortChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-
-    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 65535)) {
-      onPortChange(value)
-    }
-  }
-
+}: McpServerSettingsProps) {
   return (
     <>
-      {/* Left Column - MCP Server */}
-      <Box
-        bg='#161616'
-        p={2}
-        borderRadius='md'
-        border='1px solid rgba(255, 255, 255, 0.08)'
-        display='flex'
-        flexDirection='column'
-        height='100%'
+      <SettingCard
+        title='MCP Server'
+        description='Enable MCP server for AI assistants to manage port forwards via Model Context Protocol.'
+        icon={Server}
+        iconColor='purple.400'
+        statusColor={running ? 'green.400' : 'gray.500'}
+        statusTitle={running ? 'Running' : 'Stopped'}
       >
-        <Flex align='center' gap={1.5} mb={1}>
-          <Box as={Server} width='10px' height='10px' color='purple.400' />
-          <Text fontSize='sm' fontWeight='500' color='white'>
-            MCP Server
-          </Text>
-          <Box
-            width='5px'
-            height='5px'
-            borderRadius='full'
-            bg={mcpServerRunning ? 'green.400' : 'gray.500'}
-            title={mcpServerRunning ? 'Running' : 'Stopped'}
+        <SettingRow label='Enabled:'>
+          <Checkbox
+            checked={enabled}
+            onCheckedChange={e => onEnabledChange(e.checked === true)}
+            size='sm'
           />
-        </Flex>
-        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
-          Enable MCP server for AI assistants to manage port forwards via Model
-          Context Protocol.
-        </Text>
-        <Box borderTop='1px solid rgba(255, 255, 255, 0.06)' mt={3} pt={3}>
-          <Flex align='center' justify='flex-end' gap={2}>
-            <Text fontSize='xs' color='whiteAlpha.500'>
-              Enabled:
-            </Text>
-            <Checkbox
-              checked={mcpServerEnabled}
-              onCheckedChange={e => onEnabledChange(e.checked === true)}
-              disabled={isLoading}
-              size='sm'
-            />
-          </Flex>
-        </Box>
-      </Box>
+        </SettingRow>
+      </SettingCard>
 
-      {/* Right Column - MCP Server Port */}
-      <Box
-        bg='#161616'
-        p={2}
-        borderRadius='md'
-        border='1px solid rgba(255, 255, 255, 0.08)'
-        display='flex'
-        flexDirection='column'
-        height='100%'
-        opacity={mcpServerEnabled ? 1 : 0.5}
+      <SettingCard
+        title='MCP Server Port'
+        description={
+          running
+            ? `Running at http://127.0.0.1:${port}`
+            : 'Server endpoint port'
+        }
+        opacity={enabled ? 1 : 0.5}
       >
-        <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-          MCP Server Port
-        </Text>
-        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
-          {mcpServerRunning
-            ? `Running at http://127.0.0.1:${mcpServerPort}`
-            : 'Server endpoint port'}
-        </Text>
-        <Box borderTop='1px solid rgba(255, 255, 255, 0.06)' mt={3} pt={3}>
-          <Flex align='center' justify='flex-end' gap={2}>
-            <Text fontSize='xs' color='whiteAlpha.500'>
-              Port:
-            </Text>
-            <Input
-              value={mcpServerPort}
-              onChange={handlePortChange}
-              placeholder='3000'
-              size='xs'
-              width='55px'
-              height='22px'
-              bg='#111111'
-              border='1px solid rgba(255, 255, 255, 0.08)'
-              _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-              _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-              color='white'
-              _placeholder={{ color: 'whiteAlpha.500' }}
-              disabled={isLoading || !mcpServerEnabled}
-              textAlign='center'
-              fontSize='xs'
-            />
-          </Flex>
-        </Box>
-      </Box>
+        <SettingRow label='Port:'>
+          <Input
+            {...compactInputProps}
+            value={port}
+            onChange={e => {
+              if (isDigitsUpTo(e.target.value, 65535)) {
+                onPortChange(e.target.value)
+              }
+            }}
+            placeholder='3000'
+            width='55px'
+            disabled={!enabled}
+          />
+        </SettingRow>
+      </SettingCard>
     </>
   )
 }
-
-export default McpServerSettings

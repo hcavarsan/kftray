@@ -1,988 +1,433 @@
-import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Box as BoxIcon,
-  Database,
-  GitBranch,
-  RefreshCw,
-  Server,
-  Trash2,
-} from 'lucide-react'
-import { createPortal } from 'react-dom'
-import Select, { type SingleValue } from 'react-select'
+import { useMemo, useState } from 'react'
+import { RefreshCw, Trash2 } from 'lucide-react'
+import Select from 'react-select'
 
-import {
-  Badge,
-  Box,
-  Dialog,
-  Flex,
-  HStack,
-  Spinner,
-  Stack,
-  Text,
-} from '@chakra-ui/react'
+import { Box, Dialog, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
-import { DialogCloseTrigger } from '@/components/ui/dialog'
+import { AppDialog } from '@/components/ui/dialog'
+import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { NamespaceGroup, ServerResource, StringOption } from '@/types'
+import { useConfigs } from '@/hooks/useConfigs'
+import { errorMessage } from '@/lib/errors'
+
+import { CleanupDialog } from './CleanupDialog'
+import { ResourceRow } from './ResourceRow'
+import type {
+  CleanupMode,
+  ContextOption,
+  ContextTarget,
+  FlatResource,
+  NamespaceGroup,
+} from './types'
 
 interface ServerResourcesModalProps {
-  isOpen: boolean
   onClose: () => void
 }
 
-interface FlatResource extends ServerResource {
-  context: string
-  displayNamespace: string
-}
-
-interface OrphanedResource {
-  name: string
-  context: string
-  namespace: string
-  resource_type: string
-}
-
-type CleanupMode = 'orphaned' | 'all'
-
+const ALL_CONTEXTS = '__all__'
 const CONTEXT_TIMEOUT_MS = 8000
+const RESOURCES_KEY = 'server-resources'
+
+const contextSelectStyles = selectStyles<ContextOption>(28)
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+  let timer = 0
+
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout')), ms),
-    ),
-  ])
+    new Promise<T>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error('Timeout')), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
 }
 
-const CleanupConfirmDialog = ({
-  isOpen,
-  onClose,
-  onConfirm,
-  resources,
-  contextName,
-  isLoading,
-  mode,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  onConfirm: () => void
-  resources: OrphanedResource[]
-  contextName: string
-  isLoading: boolean
-  mode: CleanupMode
-}) => {
-  if (!isOpen) {
-    return null
-  }
-
-  const count = resources.length
-  const title =
-    mode === 'orphaned' ? 'Clean Orphaned Resources' : 'Delete All Resources'
-  const description =
-    mode === 'orphaned'
-      ? `Delete ${count} orphaned ${count === 1 ? 'resource' : 'resources'}`
-      : `Delete ${count} ${count === 1 ? 'resource' : 'resources'}`
-
-  return createPortal(
-    <Box
-      position='fixed'
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-      zIndex={10001}
-      display='flex'
-      alignItems='center'
-      justifyContent='center'
-      pointerEvents='auto'
-    >
-      <Box
-        position='fixed'
-        top={0}
-        left={0}
-        right={0}
-        bottom={0}
-        bg='rgba(0, 0, 0, 0.5)'
-        backdropFilter='blur(4px)'
-        onClick={onClose}
-        pointerEvents='auto'
-      />
-      <Box
-        position='relative'
-        maxWidth='420px'
-        width='90vw'
-        bg='#111111'
-        borderRadius='lg'
-        border='1px solid rgba(255, 255, 255, 0.08)'
-        zIndex={10002}
-        onClick={e => e.stopPropagation()}
-        pointerEvents='auto'
-      >
-        <Box
-          p={2}
-          bg='#161616'
-          borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-          borderTopRadius='lg'
-        >
-          <Text fontSize='sm' fontWeight='500' color='white'>
-            {title}
-          </Text>
-        </Box>
-
-        <Box p={3}>
-          <Text fontSize='xs' color='whiteAlpha.700' lineHeight='1.5' mb={3}>
-            {description}
-            {contextName === 'All Contexts'
-              ? ' across all contexts'
-              : ` in ${contextName}`}
-            ?
-            {mode === 'all' && (
-              <Text as='span' color='orange.400' fontWeight='500'>
-                {' '}
-                This will also stop active port forwards.
-              </Text>
-            )}
-          </Text>
-
-          {resources.length > 0 && (
-            <Box
-              bg='#0a0a0a'
-              borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.05)'
-              maxHeight='200px'
-              overflowY='auto'
-              css={{
-                '&::-webkit-scrollbar': {
-                  width: '4px',
-                },
-                '&::-webkit-scrollbar-track': {
-                  background: 'transparent',
-                },
-                '&::-webkit-scrollbar-thumb': {
-                  background: 'rgba(255, 255, 255, 0.15)',
-                  borderRadius: '2px',
-                },
-              }}
-            >
-              {resources.map((resource, idx) => (
-                <Box
-                  key={`${resource.context}-${resource.namespace}-${resource.resource_type}-${resource.name}`}
-                  px={2}
-                  py={1.5}
-                  borderBottom={
-                    idx < resources.length - 1
-                      ? '1px solid rgba(255, 255, 255, 0.03)'
-                      : 'none'
-                  }
-                >
-                  <Text fontSize='xs' color='whiteAlpha.800' truncate>
-                    {resource.name}
-                  </Text>
-                  <Flex gap={1} fontSize='10px' color='whiteAlpha.500' mt={0.5}>
-                    <Text>{resource.resource_type}</Text>
-                    <Text color='whiteAlpha.300'>·</Text>
-                    <Text truncate>{resource.context}</Text>
-                    <Text color='whiteAlpha.300'>/</Text>
-                    <Text truncate>{resource.namespace}</Text>
-                  </Flex>
-                </Box>
-              ))}
-            </Box>
-          )}
-        </Box>
-
-        <Box
-          p={2}
-          borderTop='1px solid rgba(255, 255, 255, 0.05)'
-          bg='#161616'
-          borderBottomRadius='lg'
-        >
-          <HStack justify='flex-end' gap={2}>
-            <Button
-              size='xs'
-              variant='ghost'
-              onClick={onClose}
-              disabled={isLoading}
-              _hover={{ bg: 'whiteAlpha.50' }}
-              height='26px'
-            >
-              Cancel
-            </Button>
-            <Button
-              size='xs'
-              colorPalette='red'
-              onClick={onConfirm}
-              loading={isLoading}
-              loadingText='Deleting...'
-              height='26px'
-            >
-              Delete {count}
-            </Button>
-          </HStack>
-        </Box>
-      </Box>
-    </Box>,
-    document.body,
-  )
+const bodyScrollbar = {
+  '&::-webkit-scrollbar': { width: '5px' },
+  '&::-webkit-scrollbar-track': { background: 'transparent' },
+  '&::-webkit-scrollbar-thumb': {
+    background: 'var(--chakra-colors-app-border-strong)',
+    borderRadius: '3px',
+  },
+  '&::-webkit-scrollbar-thumb:hover': {
+    background:
+      'color-mix(in srgb, var(--chakra-colors-white) 25%, transparent)',
+  },
 }
 
-const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
-  isOpen,
+export default function ServerResourcesModal({
   onClose,
-}) => {
-  const [contexts, setContexts] = useState<StringOption[]>([])
-  const [selectedContext, setSelectedContext] = useState<StringOption | null>(
-    null,
-  )
-  const [namespaceGroups, setNamespaceGroups] = useState<NamespaceGroup[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [loadingProgress, setLoadingProgress] = useState<{
-    loaded: number
-    total: number
-  } | null>(null)
-  const [isDeleting, setIsDeleting] = useState<string | null>(null)
-  const [isCleaningAll, setIsCleaningAll] = useState(false)
-  const [kubeconfig] = useState<string>('default')
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
-  const [cleanupMode, setCleanupMode] = useState<CleanupMode>('orphaned')
-  const abortControllerRef = useRef<AbortController | null>(null)
+}: ServerResourcesModalProps) {
+  const queryClient = useQueryClient()
+  const { data: configs } = useConfigs()
+  const [selectedValue, setSelectedValue] = useState<string | null>(null)
+  const [cleanupMode, setCleanupMode] = useState<CleanupMode | null>(null)
 
-  const selectStyles = {
-    control: (base: any) => ({
-      ...base,
-      background: '#111111',
-      borderColor: 'rgba(255, 255, 255, 0.08)',
-      minHeight: '28px',
-      height: '28px',
-      fontSize: '12px',
-      boxShadow: 'none',
-      cursor: 'pointer',
-      '&:hover': {
-        borderColor: 'rgba(255, 255, 255, 0.15)',
-      },
-    }),
-    valueContainer: (base: any) => ({
-      ...base,
-      padding: '0 8px',
-      height: '28px',
-    }),
-    menu: (base: any) => ({
-      ...base,
-      background: '#161616',
-      border: '1px solid rgba(255, 255, 255, 0.08)',
-      fontSize: '12px',
-      zIndex: 99999,
-    }),
-    menuList: (base: any) => ({
-      ...base,
-      padding: 0,
-      maxHeight: '150px',
-    }),
-    option: (base: any, state: any) => ({
-      ...base,
-      background: state.isFocused ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
-      color: 'white',
-      padding: '6px 10px',
-      cursor: 'pointer',
-      '&:active': {
-        background: 'rgba(255, 255, 255, 0.15)',
-      },
-    }),
-    singleValue: (base: any) => ({
-      ...base,
-      color: 'white',
-      fontSize: '12px',
-    }),
-    input: (base: any) => ({
-      ...base,
-      color: 'white',
-      fontSize: '12px',
-      margin: 0,
-      padding: 0,
-    }),
-    placeholder: (base: any) => ({
-      ...base,
-      color: 'rgba(255, 255, 255, 0.4)',
-      fontSize: '12px',
-    }),
-    indicatorSeparator: () => ({
-      display: 'none',
-    }),
-    dropdownIndicator: (base: any) => ({
-      ...base,
-      padding: '0 6px',
-    }),
-    menuPortal: (base: any) => ({
-      ...base,
-      zIndex: 99999,
-    }),
-  }
+  const contextOptions = useMemo<ContextOption[]>(() => {
+    const byTarget: Record<string, ContextOption> = {}
 
-  const loadContexts = useCallback(async () => {
-    try {
-      const configs = await invoke<any[]>('get_configs_cmd')
-
-      const uniqueContexts = Array.from(
-        new Set(
-          configs
-            .map(config => config.context)
-            .filter((ctx): ctx is string => ctx != null && ctx !== ''),
-        ),
-      ).sort()
-
-      const contextOptions = [
-        { value: '__all__', label: 'All Contexts' },
-        ...uniqueContexts.map(ctx => ({
-          value: ctx,
-          label: ctx,
-        })),
-      ]
-
-      setContexts(contextOptions)
-
-      return contextOptions
-    } catch (error) {
-      console.error('Error loading contexts:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to load contexts',
-        duration: 3000,
-      })
-
-      return []
-    }
-  }, [])
-
-  const loadResources = useCallback(async () => {
-    if (!selectedContext) {
-      return
-    }
-
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-    abortControllerRef.current = new AbortController()
-
-    try {
-      setIsLoading(true)
-      setLoadingProgress(null)
-
-      if (selectedContext.value === '__all__') {
-        const configs = await invoke<any[]>('get_configs_cmd')
-        const uniqueContexts = Array.from(
-          new Set(
-            configs
-              .map(config => config.context)
-              .filter((ctx): ctx is string => ctx != null && ctx !== ''),
-          ),
-        )
-
-        setLoadingProgress({ loaded: 0, total: uniqueContexts.length })
-
-        const allGroups: NamespaceGroup[] = []
-        let loadedCount = 0
-
-        await Promise.all(
-          uniqueContexts.map(async contextName => {
-            try {
-              const resources = await withTimeout(
-                invoke<NamespaceGroup[]>('list_all_kftray_resources', {
-                  contextName,
-                  kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-                }),
-                CONTEXT_TIMEOUT_MS,
-              )
-
-              if (resources.length > 0) {
-                resources.forEach(group => {
-                  allGroups.push({
-                    namespace: `${contextName} / ${group.namespace}`,
-                    resources: group.resources,
-                  })
-                })
-              }
-            } catch (error) {
-              console.warn(`Skipped context ${contextName}: ${error}`)
-            } finally {
-              loadedCount++
-              setLoadingProgress({
-                loaded: loadedCount,
-                total: uniqueContexts.length,
-              })
-              setNamespaceGroups([...allGroups])
-            }
-          }),
-        )
-
-        setNamespaceGroups(allGroups)
-      } else {
-        const resources = await invoke<NamespaceGroup[]>(
-          'list_all_kftray_resources',
-          {
-            contextName: selectedContext.value,
-            kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-          },
-        )
-
-        setNamespaceGroups(resources)
+    for (const { context, kubeconfig } of configs ?? []) {
+      if (!context) {
+        continue
       }
-    } catch (error) {
-      console.error('Error loading resources:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to load resources',
-        duration: 3000,
-      })
-    } finally {
-      setIsLoading(false)
-      setLoadingProgress(null)
-    }
-  }, [selectedContext, kubeconfig])
+      const path = kubeconfig && kubeconfig !== 'default' ? kubeconfig : null
+      const value = `${path ?? ''}\n${context}`
 
-  useEffect(() => {
-    if (isOpen) {
-      setNamespaceGroups([])
-      loadContexts().then(contextOptions => {
-        if (contextOptions.length > 1) {
-          setSelectedContext(contextOptions[1])
-        }
-      })
-    } else {
-      setSelectedContext(null)
-      setNamespaceGroups([])
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
+      byTarget[value] ??= {
+        value,
+        label: path ? `${context} (${path.split('/').pop()})` : context,
+        targets: [{ context, kubeconfig: path }],
       }
     }
-  }, [isOpen, loadContexts])
+    const options = Object.values(byTarget).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    )
 
-  useEffect(() => {
-    if (selectedContext) {
-      loadResources()
-    } else {
-      setNamespaceGroups([])
-    }
-  }, [selectedContext, loadResources])
+    return [
+      {
+        value: ALL_CONTEXTS,
+        label: 'All Contexts',
+        targets: options.flatMap(option => option.targets),
+      },
+      ...options,
+    ]
+  }, [configs])
 
-  const handleDeleteResource = async (resource: FlatResource) => {
-    const resourceKey = `${resource.context}-${resource.displayNamespace}-${resource.resource_type}-${resource.name}`
+  const selected =
+    contextOptions.find(option => option.value === selectedValue) ??
+    contextOptions[1] ??
+    null
+  const isAll = selected?.value === ALL_CONTEXTS
+  const targets = selected?.targets ?? []
 
-    try {
-      setIsDeleting(resourceKey)
+  const resourceQueries = useQueries({
+    queries: targets.map(target => ({
+      queryKey: [RESOURCES_KEY, target.context, target.kubeconfig],
+      queryFn: () => {
+        const request = invoke<NamespaceGroup[]>('list_all_kftray_resources', {
+          contextName: target.context,
+          kubeconfig: target.kubeconfig,
+        })
 
-      const contextToUse =
-        selectedContext?.value === '__all__'
-          ? resource.context
-          : selectedContext?.value
+        return isAll ? withTimeout(request, CONTEXT_TIMEOUT_MS) : request
+      },
+      retry: false,
+    })),
+  })
 
-      await invoke('delete_kftray_resource', {
-        contextName: contextToUse,
+  const isFetching = resourceQueries.some(query => query.isFetching)
+  const settledCount = resourceQueries.filter(query => !query.isPending).length
+  const singleError = !isAll ? resourceQueries[0]?.error : null
+
+  const resources: FlatResource[] = resourceQueries.flatMap((query, index) => {
+    const target = targets[index]
+
+    return (query.data ?? []).flatMap(group =>
+      group.resources.map(resource => ({
+        ...resource,
+        ...target,
+        key: `${target.kubeconfig ?? ''}/${target.context}/${resource.namespace}/${resource.resource_type}/${resource.name}`,
+      })),
+    )
+  })
+  const orphaned = resources.filter(resource => resource.is_orphaned)
+
+  const invalidateResources = () =>
+    queryClient.invalidateQueries({ queryKey: [RESOURCES_KEY] })
+
+  const deleteMutation = useMutation({
+    mutationFn: (resource: FlatResource) =>
+      invoke('delete_kftray_resource', {
+        contextName: resource.context,
         namespace: resource.namespace,
         resourceType: resource.resource_type,
         resourceName: resource.name,
         configId: resource.config_id,
-        kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-      })
-
+        kubeconfig: resource.kubeconfig,
+      }),
+    onSuccess: (_, resource) => {
       toaster.success({
         title: 'Deleted',
         description: `Removed ${resource.name}`,
         duration: 2000,
       })
-
-      await loadResources()
-    } catch (error) {
-      console.error('Error deleting resource:', error)
+    },
+    onError: error => {
       toaster.error({
-        title: 'Error',
-        description: `Failed to delete: ${error}`,
+        title: 'Failed to delete resource',
+        description: errorMessage(error),
         duration: 3000,
       })
-    } finally {
-      setIsDeleting(null)
-    }
-  }
-
-  const handleCleanup = async () => {
-    if (!selectedContext) {
-      return
-    }
-
-    const command =
-      cleanupMode === 'orphaned'
-        ? 'cleanup_orphaned_kftray_resources'
-        : 'cleanup_all_kftray_resources'
-
-    try {
-      setIsCleaningAll(true)
-
-      if (selectedContext.value === '__all__') {
-        const configs = await invoke<any[]>('get_configs_cmd')
-        const uniqueContexts = Array.from(
-          new Set(
-            configs
-              .map(config => config.context)
-              .filter((ctx): ctx is string => ctx != null && ctx !== ''),
-          ),
-        )
-
-        const results = await Promise.allSettled(
-          uniqueContexts.map(async contextName => {
-            const result = await withTimeout(
-              invoke<string>(command, {
-                contextName,
-                kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-              }),
-              CONTEXT_TIMEOUT_MS * 2,
-            )
-            const matches = result.match(/(\d+)/)
-
-            return matches ? parseInt(matches[1], 10) : 0
-          }),
-        )
-
-        const totalDeleted = results
-          .filter(
-            (result): result is PromiseFulfilledResult<number> =>
-              result.status === 'fulfilled',
-          )
-          .reduce((sum, result) => sum + result.value, 0)
-
-        toaster.success({
-          title: 'Done',
-          description: `Removed ${totalDeleted} resources`,
-          duration: 2000,
-        })
-      } else {
-        const result = await invoke<string>(command, {
-          contextName: selectedContext.value,
-          kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-        })
-
-        toaster.success({
-          title: 'Done',
-          description: result,
-          duration: 2000,
-        })
-      }
-
-      setShowConfirmDialog(false)
-      await loadResources()
-    } catch (error) {
-      console.error('Error cleaning up:', error)
-      toaster.error({
-        title: 'Error',
-        description: `Cleanup failed: ${error}`,
-        duration: 3000,
-      })
-    } finally {
-      setIsCleaningAll(false)
-    }
-  }
-
-  const getResourceIcon = (type: string) => {
-    switch (type) {
-      case 'pod':
-        return <BoxIcon size={12} />
-      case 'deployment':
-        return <Server size={12} />
-      case 'service':
-        return <GitBranch size={12} />
-      case 'ingress':
-        return <Database size={12} />
-      default:
-        return <Server size={12} />
-    }
-  }
-
-  const flatResources: FlatResource[] = namespaceGroups.flatMap(group => {
-    const parts = group.namespace.split(' / ')
-    const hasContext = parts.length === 2
-    const context = hasContext ? parts[0] : selectedContext?.value || ''
-    const displayNamespace = hasContext ? parts[1] : group.namespace
-
-    return group.resources.map(resource => ({
-      ...resource,
-      context,
-      displayNamespace,
-    }))
+    },
+    onSettled: invalidateResources,
   })
 
-  const orphanedResources: OrphanedResource[] = flatResources
-    .filter(r => r.is_orphaned)
-    .map(r => ({
-      name: r.name,
-      context: r.context,
-      namespace: r.displayNamespace,
-      resource_type: r.resource_type,
-    }))
+  const cleanupMutation = useMutation({
+    mutationFn: async ({
+      mode,
+      targets,
+    }: {
+      mode: CleanupMode
+      targets: ContextTarget[]
+    }) => {
+      const command =
+        mode === 'orphaned'
+          ? 'cleanup_orphaned_kftray_resources'
+          : 'cleanup_all_kftray_resources'
+      const run = ({ context, kubeconfig }: ContextTarget) =>
+        invoke<string>(command, { contextName: context, kubeconfig })
 
-  const allResourcesForDialog: OrphanedResource[] = flatResources.map(r => ({
-    name: r.name,
-    context: r.context,
-    namespace: r.displayNamespace,
-    resource_type: r.resource_type,
-  }))
+      if (targets.length === 1) {
+        return run(targets[0])
+      }
+      const results = await Promise.allSettled(
+        targets.map(target => withTimeout(run(target), CONTEXT_TIMEOUT_MS * 2)),
+      )
+      const removed = results.reduce((sum, result) => {
+        const count =
+          result.status === 'fulfilled' ? result.value.match(/\d+/) : null
 
-  const orphanedCount = orphanedResources.length
-  const totalCount = flatResources.length
+        return sum + (count ? Number(count[0]) : 0)
+      }, 0)
 
-  const openCleanupDialog = (mode: CleanupMode) => {
-    setCleanupMode(mode)
-    setShowConfirmDialog(true)
+      return `Removed ${removed} resources`
+    },
+    onSuccess: description => {
+      toaster.success({ title: 'Done', description, duration: 2000 })
+      setCleanupMode(null)
+    },
+    onError: error => {
+      toaster.error({
+        title: 'Cleanup failed',
+        description: errorMessage(error),
+        duration: 3000,
+      })
+    },
+    onSettled: invalidateResources,
+  })
+
+  const busy = isFetching || cleanupMutation.isPending
+  const renderBody = () => {
+    if (!selected) {
+      return (
+        <Flex align='center' justify='center' height='100%' minHeight='200px'>
+          <Text fontSize='xs' color='whiteAlpha.400'>
+            Select a context
+          </Text>
+        </Flex>
+      )
+    }
+    if (resources.length === 0 && isFetching) {
+      return (
+        <Flex
+          justify='center'
+          align='center'
+          height='100%'
+          minHeight='200px'
+          direction='column'
+          gap={2}
+        >
+          <Spinner size='sm' color='blue.400' />
+          {isAll && (
+            <Text fontSize='xs' color='whiteAlpha.500'>
+              Loading contexts...
+            </Text>
+          )}
+        </Flex>
+      )
+    }
+    if (singleError) {
+      return (
+        <Flex align='center' justify='center' height='100%' minHeight='200px'>
+          <Text fontSize='xs' color='red.300' textAlign='center'>
+            Failed to load resources: {errorMessage(singleError)}
+          </Text>
+        </Flex>
+      )
+    }
+    if (resources.length === 0) {
+      return (
+        <Flex
+          direction='column'
+          align='center'
+          justify='center'
+          height='100%'
+          minHeight='200px'
+        >
+          <Text fontSize='xs' color='whiteAlpha.500' mb={1}>
+            No resources
+          </Text>
+          <Text fontSize='xs' color='whiteAlpha.400'>
+            Server pods appear when port forwards start
+          </Text>
+        </Flex>
+      )
+    }
+
+    return (
+      <Stack gap={2}>
+        {resources.map(resource => (
+          <ResourceRow
+            key={resource.key}
+            resource={resource}
+            isDeleting={
+              deleteMutation.isPending &&
+              deleteMutation.variables?.key === resource.key
+            }
+            onDelete={deleteMutation.mutate}
+          />
+        ))}
+        {isFetching && (
+          <Flex justify='center' py={2}>
+            <Spinner size='xs' color='blue.400' />
+          </Flex>
+        )}
+      </Stack>
+    )
   }
 
   return (
     <>
-      <Dialog.Root
-        open={isOpen}
-        onOpenChange={({ open }) => !open && onClose()}
-        modal={true}
+      <AppDialog
+        title='Server Resources'
+        onClose={onClose}
+        maxWidth='500px'
+        height='92vh'
       >
-        <Dialog.Backdrop
-          bg='transparent'
-          backdropFilter='blur(4px)'
-          height='100vh'
-        />
-        <Dialog.Positioner overflow='hidden'>
-          <Dialog.Content
-            onClick={e => e.stopPropagation()}
-            maxWidth='500px'
-            width='90vw'
-            height='92vh'
-            bg='#111111'
-            border='1px solid rgba(255, 255, 255, 0.08)'
-            borderRadius='lg'
-            overflow='hidden'
-            position='absolute'
-            my={2}
-          >
-            <DialogCloseTrigger
-              style={{
-                marginTop: '-4px',
-              }}
-            />
-
-            <Dialog.Header
-              p={3}
-              bg='#161616'
-              borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-            >
-              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-                Server Resources
+        <Box
+          px={3}
+          py={2}
+          borderBottom='1px solid'
+          borderColor='app.hover'
+          bg='app.bg'
+        >
+          <Flex align='center' gap={3}>
+            <Box flex='1'>
+              <Select<ContextOption>
+                aria-label='Context'
+                value={selected}
+                onChange={option => setSelectedValue(option?.value ?? null)}
+                options={contextOptions}
+                styles={contextSelectStyles}
+                placeholder='Select context...'
+                menuPlacement='auto'
+              />
+            </Box>
+            {isAll && isFetching && (
+              <Text fontSize='10px' color='whiteAlpha.500' flexShrink={0}>
+                {settledCount}/{targets.length}
               </Text>
-            </Dialog.Header>
-
-            <Box
-              px={3}
-              py={2}
-              borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-              bg='#111111'
-            >
-              <Flex align='center' gap={3}>
-                <Box flex='1'>
-                  <Select
-                    value={selectedContext}
-                    onChange={(option: SingleValue<StringOption>) => {
-                      setSelectedContext(option)
-                    }}
-                    options={contexts}
-                    styles={selectStyles}
-                    placeholder='Select context...'
-                    isSearchable={true}
-                    menuPlacement='auto'
-                  />
-                </Box>
-                {loadingProgress && (
-                  <Text fontSize='10px' color='whiteAlpha.500' flexShrink={0}>
-                    {loadingProgress.loaded}/{loadingProgress.total}
-                  </Text>
-                )}
-                {!isLoading && totalCount > 0 && (
-                  <Flex align='center' gap={2} flexShrink={0}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      {totalCount}
+            )}
+            {!isFetching && resources.length > 0 && (
+              <Flex align='center' gap={2} flexShrink={0}>
+                <Text fontSize='xs' color='whiteAlpha.500'>
+                  {resources.length}
+                </Text>
+                {orphaned.length > 0 && (
+                  <Flex align='center' gap={1}>
+                    <Box
+                      width='5px'
+                      height='5px'
+                      borderRadius='full'
+                      bg='red.400'
+                    />
+                    <Text fontSize='xs' color='red.400'>
+                      {orphaned.length}
                     </Text>
-                    {orphanedCount > 0 && (
-                      <Flex align='center' gap={1}>
-                        <Box
-                          width='5px'
-                          height='5px'
-                          borderRadius='full'
-                          bg='red.400'
-                        />
-                        <Text fontSize='xs' color='red.400'>
-                          {orphanedCount}
-                        </Text>
-                      </Flex>
-                    )}
                   </Flex>
                 )}
               </Flex>
-            </Box>
+            )}
+          </Flex>
+        </Box>
 
-            <Dialog.Body
-              p={3}
-              flex='1'
-              overflowY='auto'
-              css={{
-                '&::-webkit-scrollbar': {
-                  width: '5px',
-                },
-                '&::-webkit-scrollbar-track': {
-                  background: 'transparent',
-                },
-                '&::-webkit-scrollbar-thumb': {
-                  background: 'rgba(255, 255, 255, 0.15)',
-                  borderRadius: '3px',
-                },
-                '&::-webkit-scrollbar-thumb:hover': {
-                  background: 'rgba(255, 255, 255, 0.25)',
-                },
-              }}
-            >
-              {isLoading && flatResources.length === 0 ? (
-                <Flex
-                  justify='center'
-                  align='center'
-                  height='100%'
-                  minHeight='200px'
-                  direction='column'
-                  gap={2}
-                >
-                  <Spinner size='sm' color='blue.400' />
-                  {loadingProgress && (
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Loading contexts...
-                    </Text>
-                  )}
-                </Flex>
-              ) : !selectedContext ? (
-                <Flex
-                  direction='column'
-                  align='center'
-                  justify='center'
-                  height='100%'
-                  minHeight='200px'
-                >
-                  <Text fontSize='xs' color='whiteAlpha.400'>
-                    Select a context
-                  </Text>
-                </Flex>
-              ) : flatResources.length === 0 && !isLoading ? (
-                <Flex
-                  direction='column'
-                  align='center'
-                  justify='center'
-                  height='100%'
-                  minHeight='200px'
-                >
-                  <Text fontSize='xs' color='whiteAlpha.500' mb={1}>
-                    No resources
-                  </Text>
-                  <Text fontSize='xs' color='whiteAlpha.400'>
-                    Server pods appear when port forwards start
-                  </Text>
-                </Flex>
-              ) : (
-                <Stack gap={2}>
-                  {flatResources.map(resource => {
-                    const resourceKey = `${resource.context}-${resource.displayNamespace}-${resource.resource_type}-${resource.name}`
-                    const isDeletingThis = isDeleting === resourceKey
+        <Dialog.Body p={3} flex='1' overflowY='auto' css={bodyScrollbar}>
+          {renderBody()}
+        </Dialog.Body>
 
-                    return (
-                      <Box
-                        key={resourceKey}
-                        bg='#161616'
-                        p={2}
-                        borderRadius='md'
-                        border='1px solid rgba(255, 255, 255, 0.04)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.08)',
-                        }}
-                      >
-                        <Flex align='center' gap={2} mb={1.5}>
-                          <Box color='whiteAlpha.500' flexShrink={0}>
-                            {getResourceIcon(resource.resource_type)}
-                          </Box>
-
-                          <Tooltip
-                            content={resource.name}
-                            portalled
-                            positioning={{ placement: 'top' }}
-                          >
-                            <Text
-                              fontSize='xs'
-                              fontWeight='500'
-                              color='white'
-                              flex='1'
-                              truncate
-                              cursor='default'
-                            >
-                              {resource.name}
-                            </Text>
-                          </Tooltip>
-
-                          <Badge
-                            size='xs'
-                            colorPalette={resource.is_orphaned ? 'red' : 'gray'}
-                            variant='subtle'
-                            flexShrink={0}
-                          >
-                            {resource.is_orphaned ? 'orphaned' : 'active'}
-                          </Badge>
-
-                          <Button
-                            size='2xs'
-                            variant='ghost'
-                            onClick={() => handleDeleteResource(resource)}
-                            disabled={isDeletingThis}
-                            flexShrink={0}
-                            px={1}
-                            opacity={0.5}
-                            _hover={{ opacity: 1, color: 'red.400' }}
-                          >
-                            {isDeletingThis ? (
-                              <Spinner size='xs' />
-                            ) : (
-                              <Trash2 size={11} />
-                            )}
-                          </Button>
-                        </Flex>
-
-                        <Flex
-                          align='center'
-                          gap={1.5}
-                          fontSize='xs'
-                          color='whiteAlpha.500'
-                        >
-                          <Tooltip
-                            content={resource.context}
-                            portalled
-                            positioning={{ placement: 'top' }}
-                          >
-                            <Text truncate maxWidth='120px' cursor='default'>
-                              {resource.context}
-                            </Text>
-                          </Tooltip>
-
-                          <Text color='whiteAlpha.300'>/</Text>
-
-                          <Tooltip
-                            content={resource.displayNamespace}
-                            portalled
-                            positioning={{ placement: 'top' }}
-                          >
-                            <Text truncate maxWidth='100px' cursor='default'>
-                              {resource.displayNamespace}
-                            </Text>
-                          </Tooltip>
-
-                          <Text color='whiteAlpha.300' flexShrink={0}>
-                            ·
-                          </Text>
-
-                          <Text flexShrink={0}>{resource.resource_type}</Text>
-
-                          <Text color='whiteAlpha.300' flexShrink={0}>
-                            ·
-                          </Text>
-
-                          <Text flexShrink={0}>{resource.age}</Text>
-                        </Flex>
-                      </Box>
-                    )
-                  })}
-                  {isLoading && flatResources.length > 0 && (
-                    <Flex justify='center' py={2}>
-                      <Spinner size='xs' color='blue.400' />
-                    </Flex>
-                  )}
-                </Stack>
+        <Dialog.Footer
+          px={3}
+          py={2}
+          bg='app.panel'
+          borderTop='1px solid'
+          borderColor='app.hover'
+        >
+          <Flex justify='space-between' align='center' width='100%'>
+            <Flex gap={1}>
+              {resources.length > 0 && (
+                <Tooltip content='Delete all resources' portalled>
+                  <Button
+                    aria-label='Delete all resources'
+                    size='xs'
+                    variant='ghost'
+                    onClick={() => setCleanupMode('all')}
+                    disabled={busy}
+                    height='26px'
+                    px={2}
+                    color='whiteAlpha.600'
+                    _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </Tooltip>
               )}
-            </Dialog.Body>
+            </Flex>
 
-            <Dialog.Footer
-              px={3}
-              py={2}
-              bg='#161616'
-              borderTop='1px solid rgba(255, 255, 255, 0.05)'
-            >
-              <Flex justify='space-between' align='center' width='100%'>
-                <Flex gap={1}>
-                  {totalCount > 0 && (
-                    <Tooltip content='Delete all resources' portalled>
-                      <Button
-                        size='xs'
-                        variant='ghost'
-                        onClick={() => openCleanupDialog('all')}
-                        disabled={isLoading || isCleaningAll}
-                        height='26px'
-                        px={2}
-                        color='whiteAlpha.600'
-                        _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
-                      >
-                        <Trash2 size={12} />
-                      </Button>
-                    </Tooltip>
-                  )}
-                </Flex>
+            <Flex gap={2}>
+              <Tooltip content='Refresh' portalled>
+                <Button
+                  aria-label='Refresh'
+                  size='xs'
+                  variant='ghost'
+                  onClick={invalidateResources}
+                  disabled={isFetching || !selected}
+                  height='26px'
+                  px={2}
+                  _hover={{ bg: 'whiteAlpha.50' }}
+                >
+                  <Box
+                    as={RefreshCw}
+                    width='12px'
+                    height='12px'
+                    animation={
+                      isFetching ? 'spin 1s linear infinite' : undefined
+                    }
+                  />
+                </Button>
+              </Tooltip>
 
-                <Flex gap={2}>
-                  <Tooltip content='Refresh' portalled>
-                    <Button
-                      size='xs'
-                      variant='ghost'
-                      onClick={loadResources}
-                      disabled={isLoading || !selectedContext}
-                      height='26px'
-                      px={2}
-                      _hover={{ bg: 'whiteAlpha.50' }}
-                    >
-                      <RefreshCw
-                        size={12}
-                        className={isLoading ? 'animate-spin' : ''}
-                      />
-                    </Button>
-                  </Tooltip>
+              {orphaned.length > 0 && (
+                <Button
+                  size='xs'
+                  colorPalette='red'
+                  variant='surface'
+                  onClick={() => setCleanupMode('orphaned')}
+                  disabled={busy}
+                  height='26px'
+                >
+                  Clean {orphaned.length} Orphaned
+                </Button>
+              )}
+            </Flex>
+          </Flex>
+        </Dialog.Footer>
+      </AppDialog>
 
-                  {orphanedCount > 0 && (
-                    <Button
-                      size='xs'
-                      colorPalette='red'
-                      variant='surface'
-                      onClick={() => openCleanupDialog('orphaned')}
-                      disabled={isLoading || isCleaningAll}
-                      height='26px'
-                    >
-                      Clean {orphanedCount} Orphaned
-                    </Button>
-                  )}
-                </Flex>
-              </Flex>
-            </Dialog.Footer>
-          </Dialog.Content>
-        </Dialog.Positioner>
-      </Dialog.Root>
-
-      <CleanupConfirmDialog
-        isOpen={showConfirmDialog}
-        onClose={() => setShowConfirmDialog(false)}
-        onConfirm={handleCleanup}
-        resources={
-          cleanupMode === 'orphaned' ? orphanedResources : allResourcesForDialog
-        }
-        contextName={selectedContext?.label || 'All Contexts'}
-        isLoading={isCleaningAll}
-        mode={cleanupMode}
-      />
+      {cleanupMode && (
+        <CleanupDialog
+          mode={cleanupMode}
+          resources={cleanupMode === 'orphaned' ? orphaned : resources}
+          scope={isAll ? 'across all contexts' : `in ${selected?.label}`}
+          isPending={cleanupMutation.isPending}
+          onClose={() => setCleanupMode(null)}
+          onConfirm={() =>
+            cleanupMutation.mutate({ mode: cleanupMode, targets })
+          }
+        />
+      )}
     </>
   )
 }
-
-export default ServerResourcesModal

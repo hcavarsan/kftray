@@ -1,6 +1,6 @@
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--chakra-colors-app-divider) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -13,10 +13,10 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--chakra-colors-app-divider);
   border-radius: 2px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: color-mix(in srgb, var(--chakra-colors-white) 30%, transparent);
 }

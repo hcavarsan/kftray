@@ -1,122 +1,23 @@
-import type React from 'react'
 import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { createPortal } from 'react-dom'
 
-import { Box, Button, HStack, Text } from '@chakra-ui/react'
+import { Box, Button } from '@chakra-ui/react'
 
+import { ConfirmDialog } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { BulkDeleteButtonProps } from '@/types'
+import { errorMessage } from '@/lib/errors'
+import type { Config } from '@/types'
 
-const DeleteDialog = ({
-  isOpen,
-  onClose,
-  onConfirm,
-  isDeleting,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  onConfirm: () => void | Promise<void>
-  isDeleting: boolean
-}) => {
-  if (!isOpen) {
-    return null
-  }
-
-  return createPortal(
-    <Box
-      position='fixed'
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-      zIndex={30}
-      display='flex'
-      alignItems='center'
-      justifyContent='center'
-    >
-      <Box
-        position='fixed'
-        top={0}
-        left={0}
-        right={0}
-        bottom={0}
-        bg='rgba(0, 0, 0, 0.4)'
-        backdropFilter='blur(4px)'
-        onClick={onClose}
-      />
-      <Box
-        position='relative'
-        maxWidth='400px'
-        width='90vw'
-        bg='#111111'
-        borderRadius='lg'
-        border='1px solid rgba(255, 255, 255, 0.08)'
-        zIndex={31}
-      >
-        <Box
-          p={1.5}
-          bg='#161616'
-          borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-        >
-          <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-            Delete Config(s)
-          </Text>
-        </Box>
-
-        <Box p={3}>
-          <Text fontSize='xs' color='gray.400'>
-            Are you sure you want to delete the selected config(s)? This action
-            cannot be undone.
-          </Text>
-        </Box>
-
-        <Box p={3} borderTop='1px solid rgba(255, 255, 255, 0.05)' bg='#111111'>
-          <HStack justify='flex-end' gap={2}>
-            <Button
-              size='xs'
-              variant='ghost'
-              onClick={onClose}
-              _hover={{ bg: 'whiteAlpha.50' }}
-              height='28px'
-            >
-              Cancel
-            </Button>
-            <Button
-              size='xs'
-              bg='blue.500'
-              _hover={{ bg: 'blue.600' }}
-              disabled={isDeleting}
-              onClick={() => {
-                try {
-                  const result = onConfirm()
-
-                  if (result instanceof Promise) {
-                    result.catch(error => {
-                      console.error('Failed to delete configs:', error)
-                    })
-                  }
-                } catch (error) {
-                  console.error('Failed to delete configs:', error)
-                }
-              }}
-              height='28px'
-            >
-              Delete
-            </Button>
-          </HStack>
-        </Box>
-      </Box>
-    </Box>,
-    document.body,
-  )
+interface BulkDeleteButtonProps {
+  selectedConfigs: Config[]
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
-const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
+function BulkDeleteButton({
   selectedConfigs,
   deleteConfigs,
-}) => {
+}: BulkDeleteButtonProps) {
   const [state, setState] = useState({
     configsToDelete: [] as number[],
     isDialogOpen: false,
@@ -136,29 +37,23 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   }
 
   const handleConfirmDelete = async () => {
-    if (state.isDeleting) {
-      return
-    }
-    if (!state.configsToDelete.length) {
-      toaster.error({
-        title: 'Error',
-        description: 'No configurations selected for deletion.',
-        duration: 1000,
-      })
-
+    if (state.isDeleting || !state.configsToDelete.length) {
       return
     }
 
     setState(prev => ({ ...prev, isDeleting: true }))
     try {
-      // Reservation, deletion and refresh happen together in Main: deleting
-      // only removes the database row, so a queued start could otherwise
-      // still reach the cluster with a configuration that no longer exists.
       const deleted = await deleteConfigs(state.configsToDelete)
 
       if (deleted) {
         setState(prev => ({ ...prev, isDialogOpen: false }))
       }
+    } catch (error) {
+      toaster.error({
+        title: 'Error deleting configs',
+        description: errorMessage(error),
+        duration: 2000,
+      })
     } finally {
       setState(prev => ({ ...prev, isDeleting: false }))
     }
@@ -180,6 +75,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
         }}
       >
         <Button
+          aria-label='Delete selected configs'
           size='sm'
           variant='ghost'
           onClick={() =>
@@ -190,19 +86,23 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
           bg='red.500'
           px={1.5}
           borderRadius='md'
-          border='1px solid rgba(255, 255, 255, 0.08)'
+          border='1px solid'
+          borderColor='app.border'
           _hover={{ bg: 'red.600' }}
         >
           <Box as={Trash2} width='12px' height='12px' />
         </Button>
       </Tooltip>
 
-      <DeleteDialog
-        isOpen={state.isDialogOpen}
-        onClose={handleClose}
-        onConfirm={handleConfirmDelete}
-        isDeleting={state.isDeleting}
-      />
+      {state.isDialogOpen && (
+        <ConfirmDialog
+          title='Delete Config(s)'
+          description='Are you sure you want to delete the selected config(s)? This action cannot be undone.'
+          isPending={state.isDeleting}
+          onConfirm={() => void handleConfirmDelete()}
+          onClose={handleClose}
+        />
+      )}
     </Box>
   )
 }

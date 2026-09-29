@@ -1,3 +1,11 @@
+type WorkloadType = 'service' | 'pod' | 'proxy' | 'expose'
+
+export type Protocol = 'tcp' | 'udp'
+
+type ExposureType = 'cluster' | 'public'
+
+type CertIssuerKind = 'ClusterIssuer' | 'Issuer'
+
 export interface Config {
   id: number
   service: string
@@ -10,16 +18,16 @@ export interface Config {
   context: string
   alias: string
   remote_address: string
-  workload_type: string
+  workload_type: WorkloadType
   target: string
-  protocol: string
+  protocol: Protocol
   kubeconfig: string
   is_running: boolean
   http_logs_enabled?: boolean
-  exposure_type?: string
+  exposure_type?: ExposureType
   cert_manager_enabled?: boolean
   cert_issuer?: string
-  cert_issuer_kind?: string
+  cert_issuer_kind?: CertIssuerKind
   ingress_class?: string
   ingress_annotations?: string
   tags?: Record<string, string>
@@ -35,13 +43,13 @@ export interface ConfigView {
   filters: ViewCondition[]
 }
 
-export interface ConfigGroup {
+interface ConfigGroup {
   key: string | null
   label: string
   config_ids: number[]
 }
 
-export interface FacetValue {
+interface FacetValue {
   value: string
   count: number
 }
@@ -87,104 +95,7 @@ export interface PortForwardResponse {
   protocol: string
 }
 
-type AuthMethod = 'none' | 'system' | 'token'
-
-export interface GitConfig {
-  repoUrl: string
-  configPaths: string[]
-  authMethod: AuthMethod
-  token?: string
-  isPrivate?: boolean
-  pollingInterval: number
-  flush?: boolean
-}
-
-export interface GitSyncModalProps {
-  isGitSyncModalOpen: boolean
-  closeGitSyncModal: () => void
-  credentialsSaved: boolean
-  setCredentialsSaved: (value: boolean) => void
-  setPollingInterval: (value: number) => void
-  pollingInterval: number
-  onSuccessfulSave?: () => void
-}
-
-export interface TableProps {
-  configs: Config[]
-  isInitiating: boolean
-  isStopping: boolean
-  pendingConfigActions: Map<number, PendingConfigAction>
-  toggleConfigForward: (
-    config: Config,
-    action: PortForwardToggleAction,
-  ) => Promise<void>
-  initiatePortForwarding: (configs: Config[]) => Promise<void>
-  startSelectedPortForwarding: () => Promise<void>
-  stopSelectedPortForwarding: () => Promise<void>
-  stopAllPortForwarding: () => Promise<void>
-  abortStartOperation: () => void
-  abortStopOperation: () => void
-  deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => Promise<void>
-  handleDuplicateConfig: (id: number) => Promise<void>
-  selectedConfigs: Config[]
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-}
-
-export interface PortForwardRowProps {
-  config: Config
-  deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => Promise<void>
-  handleDuplicateConfig: (id: number) => Promise<void>
-  showContext?: boolean
-  onSelectionChange: (id: number, isSelected: boolean) => void
-  selected: boolean
-  pendingAction: PendingConfigAction | null
-  toggleConfigForward: (
-    config: Config,
-    action: PortForwardToggleAction,
-  ) => Promise<void>
-}
-
-export interface SyncStatus {
-  lastSyncTime: number | null
-  pollingInterval: number
-  isSuccessful: boolean
-  isSyncing: boolean
-}
-
-export interface FooterProps {
-  openModal: () => void
-  openGitSyncModal: () => void
-  handleExportConfigs: () => void
-  handleImportConfigs: () => void
-  credentialsSaved: boolean
-  setCredentialsSaved: (value: boolean) => void
-  isGitSyncModalOpen: boolean
-  selectedConfigs: Config[]
-  setPollingInterval: (value: number) => void
-  pollingInterval: number
-  syncStatus: SyncStatus
-  onSyncComplete: () => void
-  openShortcutModal: () => void
-  setIsAutoImportModalOpen: (open: boolean) => void
-  deleteConfigs: (ids: number[]) => Promise<boolean>
-  openSettingsModal: () => void
-  openServerResourcesModal: () => void
-}
-
-export interface SyncConfigsButtonProps {
-  serviceName: string
-  accountName: string
-  onSyncFailure: (error: Error) => void
-  credentialsSaved: boolean
-  setCredentialsSaved: (value: boolean) => void
-  isGitSyncModalOpen: boolean
-  setPollingInterval: (value: number) => void
-  pollingInterval: number
-  syncStatus: SyncStatus
-  onSyncComplete?: () => void
-}
+export type AuthMethod = 'none' | 'system' | 'token'
 
 export interface KubeContext {
   name: string
@@ -192,96 +103,7 @@ export interface KubeContext {
   user?: string
 }
 
-export interface CustomConfigProps {
-  isModalOpen: boolean
-  closeModal: () => void
-  newConfig: Config
-  handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  handleSaveConfig: (config: Config) => Promise<boolean>
-  handleEditSubmit: (e: React.FormEvent) => Promise<void>
-  isEdit: boolean
-  cancelRef: React.RefObject<HTMLElement>
-  setNewConfig: React.Dispatch<React.SetStateAction<Config>>
-}
-
-export interface HeaderProps {
-  search: string
-  setSearch: React.Dispatch<React.SetStateAction<string>>
-}
-
-export interface HeaderMenuProps {
-  isSelectAllChecked: boolean
-  setIsSelectAllChecked: React.Dispatch<React.SetStateAction<boolean>>
-  configs: Config[]
-  selectedConfigs: Config[]
-  initiatePortForwarding: (configs: Config[]) => void
-  startSelectedPortForwarding: () => void
-  stopSelectedPortForwarding: () => void
-  stopAllPortForwarding: () => void
-  abortStartOperation: () => void
-  abortStopOperation: () => void
-  isInitiating: boolean
-  isStopping: boolean
-  toggleExpandAll: () => void
-  expandedIndices: string[]
-  groupCount: number
-  view: ConfigView | null
-  facets: Facet[]
-  setView: (view: ConfigView) => void
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-}
-
-export interface BulkDeleteButtonProps {
-  selectedConfigs: Config[]
-  deleteConfigs: (ids: number[]) => Promise<boolean>
-}
-
-export interface GroupAccordionProps {
-  group: ResolvedGroup
-  selectedConfigs: Config[]
-  deleteConfigs: (ids: number[]) => Promise<boolean>
-  handleEditConfig: (id: number) => Promise<void>
-  handleDuplicateConfig: (id: number) => Promise<void>
-  handleSelectionChange: (id: number, isSelected: boolean) => void
-  handleCheckboxChange: (group: ResolvedGroup, isChecked: boolean) => void
-  pendingConfigActions: Map<number, PendingConfigAction>
-  toggleConfigForward: (
-    config: Config,
-    action: PortForwardToggleAction,
-  ) => Promise<void>
-}
-
-export interface AutoImportModalProps {
-  isOpen: boolean
-  onClose: () => void
-}
-
-export interface ServiceData {
-  name: string
-  port?: number
-}
-
 export interface StringOption {
   label: string
   value: string
-}
-
-export interface PortOption {
-  label: string
-  value: number
-}
-
-export interface ServerResource {
-  resource_type: string
-  name: string
-  namespace: string
-  config_id: string | null
-  is_orphaned: boolean
-  age: string
-  status: string
-}
-
-export interface NamespaceGroup {
-  namespace: string
-  resources: ServerResource[]
 }

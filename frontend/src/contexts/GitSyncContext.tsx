@@ -1,4 +1,4 @@
-import type React from 'react'
+import type { ReactNode } from 'react'
 import {
   createContext,
   useCallback,
@@ -8,168 +8,142 @@ import {
   useState,
 } from 'react'
 
-import { invoke } from '@tauri-apps/api/core'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { toaster } from '@/components/ui/toaster'
-import type { GitConfig, SyncStatus } from '@/types'
+import { configsQuery } from '@/hooks/useConfigs'
+import type { GitConfig } from '@/services/gitService'
+import { gitService } from '@/services/gitService'
 
-interface GitSyncContextType {
+interface SyncStatus {
+  lastSyncTime: number | null
+  isSyncing: boolean
+}
+
+interface GitSyncContextValue {
   credentials: GitConfig | null
-  isLoading: boolean
+  isLoadingCredentials: boolean
+  isSaving: boolean
   syncStatus: SyncStatus
   lastSync: string | null
   nextSync: string | null
-  saveCredentials: (creds: GitConfig) => Promise<void>
+  saveCredentials: (credentials: GitConfig) => Promise<void>
   deleteCredentials: () => Promise<void>
   syncConfigs: () => Promise<void>
-  updatePollingInterval: (interval: number) => void
 }
 
-const GitSyncContext = createContext<GitSyncContextType | null>(null)
+const GitSyncContext = createContext<GitSyncContextValue | null>(null)
 
-const CREDENTIALS_CACHE_KEY = 'git-sync-credentials'
-const SERVICE_NAME = 'kftray'
-const ACCOUNT_NAME = 'github_config'
+const credentialsQueryKey = ['git-sync-credentials']
 
-interface LegacyGitConfig extends Omit<GitConfig, 'configPaths'> {
-  configPath?: string
-  configPaths?: string[]
-}
+export function GitSyncProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
+  const [lastSyncTime, setLastSyncTime] = useState<number | null>(null)
 
-const normalizeCredentials = (raw: LegacyGitConfig): GitConfig => ({
-  ...raw,
-  configPaths: raw.configPaths ?? (raw.configPath ? [raw.configPath] : []),
-})
+  const { data: credentials = null, isLoading: isLoadingCredentials } =
+    useQuery({
+      queryKey: credentialsQueryKey,
+      queryFn: () => gitService.getCredentials(),
+      staleTime: Number.POSITIVE_INFINITY,
+    })
 
-export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
-  const [credentials, setCredentials] = useState<GitConfig | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
-    lastSyncTime: null,
-    isSuccessful: false,
-    pollingInterval: 60,
-    isSyncing: false,
+  const syncMutation = useMutation({
+    mutationFn: (creds: GitConfig) => gitService.importConfigs(creds),
+    onSuccess: () => {
+      setLastSyncTime(Date.now())
+      queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+    },
+    retry: 2,
+    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
   })
 
-  const cachedCredentials = useMemo(() => credentials, [credentials])
+  const saveMutation = useMutation({
+    mutationFn: async (creds: GitConfig) => {
+      await gitService.importConfigs(creds)
+      await gitService.saveCredentials(creds)
 
-  useEffect(() => {
-    const loadCredentials = async () => {
-      try {
-        const cached = sessionStorage.getItem(CREDENTIALS_CACHE_KEY)
+      return creds
+    },
+    onSuccess: creds => {
+      queryClient.setQueryData(credentialsQueryKey, creds)
+      queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      setLastSyncTime(Date.now())
+    },
+  })
 
-        if (cached) {
-          setCredentials(normalizeCredentials(JSON.parse(cached)))
-
-          return
-        }
-
-        const credentialsString = await invoke<string>('get_key', {
-          service: SERVICE_NAME,
-          name: ACCOUNT_NAME,
-        })
-
-        if (credentialsString) {
-          const creds = normalizeCredentials(JSON.parse(credentialsString))
-
-          setCredentials(creds)
-          sessionStorage.setItem(CREDENTIALS_CACHE_KEY, JSON.stringify(creds))
-        }
-      } catch (error) {
-        console.error('Failed to fetch credentials:', error)
-      }
-    }
-
-    loadCredentials()
-  }, [])
-
-  const saveCredentials = useCallback(async (newCredentials: GitConfig) => {
-    setIsLoading(true)
-    try {
-      await invoke('store_key', {
-        service: SERVICE_NAME,
-        name: ACCOUNT_NAME,
-        password: JSON.stringify(newCredentials),
-      })
-      setCredentials(newCredentials)
-      sessionStorage.setItem(
-        CREDENTIALS_CACHE_KEY,
-        JSON.stringify(newCredentials),
-      )
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
+  const deleteMutation = useMutation({
+    mutationFn: () => gitService.deleteCredentials(),
+    onSuccess: () => {
+      queryClient.setQueryData(credentialsQueryKey, null)
+    },
+  })
 
   const syncConfigs = useCallback(async () => {
-    if (!credentials || syncStatus.isSyncing) {
+    if (!credentials) {
+      throw new Error('No git credentials found')
+    }
+
+    await syncMutation.mutateAsync(credentials)
+  }, [credentials, syncMutation])
+
+  useEffect(() => {
+    const interval = credentials?.pollingInterval ?? 0
+
+    if (!credentials || interval <= 0) {
       return
     }
 
-    setSyncStatus(prev => ({ ...prev, isSyncing: true }))
-    try {
-      await invoke('import_configs_from_github', {
-        repoUrl: credentials.repoUrl,
-        configPaths: credentials.configPaths,
-        useSystemCredentials: credentials.authMethod === 'system',
-        flush: credentials.flush ?? false,
-        githubToken:
-          credentials.authMethod === 'token' ? credentials.token : null,
-      })
+    const intervalId = setInterval(() => {
+      syncMutation.mutate(credentials)
+    }, interval * 60000)
 
-      const now = new Date()
+    return () => clearInterval(intervalId)
+  }, [credentials, syncMutation])
 
-      setSyncStatus(prev => ({
-        ...prev,
-        lastSyncTime: now.getTime(),
-        isSuccessful: true,
-        isSyncing: false,
-      }))
+  const saveCredentials = useCallback(
+    async (creds: GitConfig) => {
+      await saveMutation.mutateAsync(creds)
+    },
+    [saveMutation],
+  )
 
-      toaster.success({
-        title: 'Success',
-        description: 'Configs synced successfully',
-        duration: 1000,
-      })
-    } catch (error) {
-      setSyncStatus(prev => ({
-        ...prev,
-        isSuccessful: false,
-        isSyncing: false,
-      }))
-      throw error
-    }
-  }, [credentials, syncStatus.isSyncing])
+  const deleteCredentials = useCallback(
+    () => deleteMutation.mutateAsync(),
+    [deleteMutation],
+  )
 
-  const value = useMemo(
+  const value = useMemo<GitSyncContextValue>(
     () => ({
-      credentials: cachedCredentials,
-      isLoading,
-      syncStatus,
-      lastSync: syncStatus.lastSyncTime
-        ? new Date(syncStatus.lastSyncTime).toLocaleTimeString()
-        : null,
-      nextSync: syncStatus.lastSyncTime
-        ? new Date(
-            syncStatus.lastSyncTime + syncStatus.pollingInterval * 60000,
-          ).toLocaleTimeString()
-        : null,
-      saveCredentials,
-      deleteCredentials: async () => {
-        await invoke('delete_key', {
-          service: SERVICE_NAME,
-          name: ACCOUNT_NAME,
-        })
-        setCredentials(null)
-        sessionStorage.removeItem(CREDENTIALS_CACHE_KEY)
+      credentials,
+      isLoadingCredentials,
+      isSaving: saveMutation.isPending || deleteMutation.isPending,
+      syncStatus: {
+        lastSyncTime,
+        isSyncing: syncMutation.isPending,
       },
+      lastSync: lastSyncTime
+        ? new Date(lastSyncTime).toLocaleTimeString()
+        : null,
+      nextSync:
+        lastSyncTime && credentials && credentials.pollingInterval > 0
+          ? new Date(
+              lastSyncTime + credentials.pollingInterval * 60000,
+            ).toLocaleTimeString()
+          : null,
+      saveCredentials,
+      deleteCredentials,
       syncConfigs,
-      updatePollingInterval: (interval: number) =>
-        setSyncStatus(prev => ({ ...prev, pollingInterval: interval })),
     }),
-    [cachedCredentials, isLoading, syncStatus, saveCredentials, syncConfigs],
+    [
+      credentials,
+      isLoadingCredentials,
+      saveMutation.isPending,
+      deleteMutation.isPending,
+      syncMutation.isPending,
+      lastSyncTime,
+      saveCredentials,
+      deleteCredentials,
+      syncConfigs,
+    ],
   )
 
   return (

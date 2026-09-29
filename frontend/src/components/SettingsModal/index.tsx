@@ -1,1166 +1,373 @@
-import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
-import { Download, FileText, RefreshCw, Shield, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 
-import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
+import { Box, Dialog, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
-import McpServerSettings from '@/components/SettingsModal/McpServerSettings'
-import WindowSettings from '@/components/SettingsModal/WindowSettings'
+import type { LogSettings as LogSettingsData } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { DialogCloseTrigger } from '@/components/ui/dialog'
+import { AppDialog } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
+import { errorMessage } from '@/lib/errors'
 
-interface SettingsModalProps {
-  isOpen: boolean
+import { McpServerSettings } from './McpServerSettings'
+import {
+  appModeQuery,
+  logSettingsQuery,
+  mcpStatusQuery,
+  settingsQuery,
+  sslSettingsQuery,
+} from './queries'
+import { LogSettings } from './sections/LogSettings'
+import { NetworkSettings } from './sections/NetworkSettings'
+import { SslSettings } from './sections/SslSettings'
+import { UpdateSettings } from './sections/UpdateSettings'
+import {
+  type AppMode,
+  buildSettingsDraft,
+  type McpStatus,
+  type SettingsDraft,
+  type SslSettingsData,
+} from './types'
+import { WindowSettings } from './WindowSettings'
+
+const SETTINGS_QUERIES = [
+  settingsQuery,
+  sslSettingsQuery,
+  logSettingsQuery,
+  appModeQuery,
+  mcpStatusQuery,
+] as const
+
+const inRange = (value: string, min: number, max: number) => {
+  const parsed = parseInt(value, 10)
+
+  return !Number.isNaN(parsed) && parsed >= min && parsed <= max
+}
+
+function validationError(draft: SettingsDraft): string | null {
+  if (!inRange(draft.disconnectTimeout, 0, Number.MAX_SAFE_INTEGER)) {
+    return 'Please enter a valid number (0 or greater) for timeout'
+  }
+  if (!inRange(draft.sslCertValidityDays, 1, 3650)) {
+    return 'Certificate validity must be between 1 and 3650 days'
+  }
+  if (!inRange(draft.logRetentionCount, 1, 100)) {
+    return 'Log retention count must be between 1 and 100'
+  }
+  if (!inRange(draft.logRetentionDays, 1, 365)) {
+    return 'Log retention days must be between 1 and 365'
+  }
+  if (draft.mcpEnabled && !inRange(draft.mcpPort, 1, 65535)) {
+    return 'MCP server port must be between 1 and 65535'
+  }
+
+  return null
+}
+
+interface SettingsFooterProps {
+  onClose: () => void
+  onSave?: () => void
+  isSaving?: boolean
+}
+
+function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
+  return (
+    <Dialog.Footer
+      px={3}
+      py={2}
+      bg='app.panel'
+      borderTop='1px solid'
+      borderColor='app.hover'
+    >
+      <Flex justify='flex-end' gap={2} width='100%'>
+        <Button
+          variant='ghost'
+          size='xs'
+          onClick={onClose}
+          disabled={isSaving}
+          _hover={{ bg: 'whiteAlpha.50' }}
+          color='gray.400'
+          height='28px'
+          fontSize='xs'
+        >
+          Cancel
+        </Button>
+        <Button
+          size='xs'
+          onClick={onSave}
+          loading={isSaving}
+          loadingText='Saving...'
+          disabled={!onSave}
+          bg='blue.500'
+          color='white'
+          _hover={{ bg: 'blue.600' }}
+          _active={{ bg: 'blue.700' }}
+          height='28px'
+          fontSize='xs'
+        >
+          Save Settings
+        </Button>
+      </Flex>
+    </Dialog.Footer>
+  )
+}
+
+interface SettingsFormProps {
+  settings: Record<string, string>
+  ssl: SslSettingsData
+  log: LogSettingsData
+  appMode: AppMode
+  mcp: McpStatus
   onClose: () => void
 }
 
-interface McpStatus {
-  enabled: string
-  port: string
-  running: string
-}
-
-const DEFAULT_SAVED = {
-  appMode: 'tray',
-  mcpEnabled: false,
-  mcpPort: '3000',
-}
-
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const [disconnectTimeout, setDisconnectTimeout] = useState<string>('0')
-  const [networkMonitor, setNetworkMonitor] = useState<boolean>(true)
-  const [networkMonitorStatus, setNetworkMonitorStatus] =
-    useState<boolean>(false)
-  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(true)
-  const [lastUpdateCheckDisplay, setLastUpdateCheckDisplay] =
-    useState<string>('Never')
-  const [currentVersion, setCurrentVersion] = useState<string>('')
-  const [latestVersion, setLatestVersion] = useState<string>('')
-  const [updateStatus, setUpdateStatus] = useState<
-    'idle' | 'checking' | 'available' | 'up-to-date' | 'error'
-  >('idle')
-  const [isLoading, setIsLoading] = useState(false)
+function SettingsForm({
+  settings,
+  ssl,
+  log,
+  appMode,
+  mcp,
+  onClose,
+}: SettingsFormProps) {
+  const queryClient = useQueryClient()
+  const [initial] = useState(() =>
+    buildSettingsDraft({ settings, ssl, log, appMode, mcp }),
+  )
+  const [draft, setDraft] = useState(initial)
   const [isSaving, setIsSaving] = useState(false)
-  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false)
-  const [isUpdating, setIsUpdating] = useState(false)
 
-  const [sslEnabled, setSslEnabled] = useState<boolean>(false)
-  const [sslCertValidityDays, setSslCertValidityDays] = useState<string>('365')
-
-  const [logRetentionCount, setLogRetentionCount] = useState<string>('10')
-  const [logRetentionDays, setLogRetentionDays] = useState<string>('7')
-  const [logFileCount, setLogFileCount] = useState<number>(0)
-  const [logTotalSize, setLogTotalSize] = useState<number>(0)
-  const [isCleaningLogs, setIsCleaningLogs] = useState(false)
-
-  const [saved, setSaved] = useState<typeof DEFAULT_SAVED | null>(null)
-  const [appMode, setAppMode] = useState(DEFAULT_SAVED.appMode)
-  const [mcpEnabled, setMcpEnabled] = useState(DEFAULT_SAVED.mcpEnabled)
-  const [mcpPort, setMcpPort] = useState(DEFAULT_SAVED.mcpPort)
-  const [mcpRunning, setMcpRunning] = useState(false)
-
-  const loadSettings = useCallback(async () => {
-    try {
-      setIsLoading(true)
-      const settings = await invoke<Record<string, string>>('get_settings')
-
-      setDisconnectTimeout(settings.disconnect_timeout_minutes || '0')
-      setNetworkMonitor(settings.network_monitor === 'true')
-      setNetworkMonitorStatus(settings.network_monitor_status === 'true')
-      setAutoUpdateEnabled(settings.auto_update_enabled === 'true')
-
-      const lastCheck = parseInt(settings.last_update_check || '0', 10)
-
-      if (lastCheck > 0) {
-        const date = new Date(lastCheck * 1000)
-
-        setLastUpdateCheckDisplay(
-          `${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`,
-        )
-      } else {
-        setLastUpdateCheckDisplay('Never')
-      }
-
-      try {
-        const sslSettings = await invoke<{
-          ssl_enabled: boolean
-          ssl_cert_validity_days: number
-        }>('get_ssl_settings')
-
-        setSslEnabled(sslSettings.ssl_enabled || false)
-        setSslCertValidityDays(
-          String(sslSettings.ssl_cert_validity_days || 365),
-        )
-      } catch (sslError) {
-        console.error('Error loading SSL settings:', sslError)
-        setSslEnabled(false)
-        setSslCertValidityDays('365')
-      }
-
-      try {
-        const logSettings = await invoke<LogSettings>('get_log_settings')
-
-        setLogRetentionCount(String(logSettings.retention_count))
-        setLogRetentionDays(String(logSettings.retention_days))
-      } catch (logError) {
-        console.error('Error loading log settings:', logError)
-        setLogRetentionCount('10')
-        setLogRetentionDays('7')
-      }
-
-      try {
-        const [mode, mcp] = await Promise.all([
-          invoke<string>('get_app_mode_cmd'),
-          invoke<McpStatus>('get_mcp_server_status'),
-        ])
-        const loaded = {
-          appMode: mode,
-          mcpEnabled: mcp.enabled === 'true',
-          mcpPort: mcp.port || '3000',
-        }
-
-        setSaved(loaded)
-        setAppMode(loaded.appMode)
-        setMcpEnabled(loaded.mcpEnabled)
-        setMcpPort(loaded.mcpPort)
-        setMcpRunning(mcp.running === 'true')
-      } catch (windowError) {
-        console.error('Error loading window and MCP settings:', windowError)
-        setSaved(null)
-        toaster.error({
-          title: 'Error',
-          description: 'Failed to load window and MCP settings',
-          duration: 3000,
-        })
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to load settings',
-        duration: 3000,
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  const loadVersionInfo = useCallback(async () => {
-    try {
-      const version = await app.getVersion()
-
-      setCurrentVersion(version)
-      setLatestVersion(version)
-      setUpdateStatus('idle')
-    } catch (error) {
-      console.error('Error loading version info:', error)
-      setUpdateStatus('error')
-    }
-  }, [])
-
-  const loadLogInfo = useCallback(async () => {
-    try {
-      const files = await invoke<LogFileInfo[]>('list_log_files')
-
-      setLogFileCount(files.length)
-      setLogTotalSize(files.reduce((acc, f) => acc + f.size, 0))
-    } catch (error) {
-      console.error('Error loading log info:', error)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (isOpen) {
-      loadSettings()
-      loadVersionInfo()
-      loadLogInfo()
-    }
-  }, [isOpen, loadVersionInfo, loadSettings, loadLogInfo])
-
-  const checkForUpdates = async () => {
-    try {
-      setIsCheckingUpdates(true)
-      setUpdateStatus('checking')
-
-      const versionInfo =
-        await invoke<Record<string, string>>('get_version_info')
-
-      setLatestVersion(versionInfo.latest_version || currentVersion)
-
-      const isUpdateAvailable = versionInfo.update_available === 'true'
-
-      if (versionInfo.update_available === 'error') {
-        setUpdateStatus('error')
-        toaster.error({
-          title: 'Update Check Failed',
-          description: 'Failed to check for updates. Please try again later.',
-          duration: 4000,
-        })
-      } else if (isUpdateAvailable) {
-        setUpdateStatus('available')
-        toaster.success({
-          title: 'Update Available',
-          description: `Version ${versionInfo.latest_version} is now available!`,
-          duration: 4000,
-        })
-      } else {
-        setUpdateStatus('up-to-date')
-        toaster.success({
-          title: 'Up to Date',
-          description: 'You are running the latest version.',
-          duration: 3000,
-        })
-      }
-
-      await loadSettings()
-    } catch (error) {
-      console.error('Error checking for updates:', error)
-      setUpdateStatus('error')
-      toaster.error({
-        title: 'Update Check Failed',
-        description: 'Failed to check for updates. Please try again later.',
-        duration: 4000,
-      })
-    } finally {
-      setIsCheckingUpdates(false)
-      await loadSettings()
-    }
-  }
-
-  const installUpdate = async () => {
-    try {
-      setIsUpdating(true)
-
-      toaster.create({
-        title: 'Installing Update',
-        description:
-          'The update is being downloaded and installed. App will restart automatically.',
-        duration: 5000,
-      })
-
-      await invoke('install_update_silent')
-    } catch (error) {
-      console.error('Error installing update:', error)
-      toaster.error({
-        title: 'Update Failed',
-        description: 'Failed to install the update. Please try again later.',
-        duration: 4000,
-      })
-      setIsUpdating(false)
-    }
-  }
-
-  const cleanupLogs = async () => {
-    try {
-      setIsCleaningLogs(true)
-      const deleted = await invoke<number>('cleanup_old_logs')
-
-      await loadLogInfo()
-
-      if (deleted > 0) {
-        toaster.success({
-          title: 'Logs Cleaned',
-          description: `Deleted ${deleted} old log file${deleted === 1 ? '' : 's'}`,
-          duration: 3000,
-        })
-      } else {
-        toaster.create({
-          title: 'No Cleanup Needed',
-          description: 'No log files met the cleanup criteria',
-          duration: 3000,
-        })
-      }
-    } catch (error) {
-      console.error('Error cleaning logs:', error)
-      toaster.error({
-        title: 'Cleanup Failed',
-        description: String(error),
-        duration: 4000,
-      })
-    } finally {
-      setIsCleaningLogs(false)
-    }
-  }
-
-  const openLogsWindow = async () => {
-    try {
-      await invoke('open_log_viewer_window_cmd')
-    } catch (error) {
-      console.error('Error opening logs:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to open log viewer',
-        duration: 3000,
-      })
-    }
-  }
-
-  const saveWindowSettings = async () => {
-    if (!saved) {
-      return false
-    }
-    try {
-      if (appMode !== saved.appMode) {
-        await invoke('set_app_mode_cmd', { mode: appMode })
-      }
-
-      return true
-    } catch (error) {
-      console.error('Error saving window settings:', error)
-      toaster.error({
-        title: 'Window Settings Error',
-        description: `Failed to apply window settings: ${error}`,
-        duration: 4000,
-      })
-
-      return false
-    }
-  }
-
-  const saveMcpSettings = async (port: number) => {
-    if (!saved) {
-      return false
-    }
-    try {
-      if (!Number.isNaN(port) && String(port) !== saved.mcpPort) {
-        await invoke('update_mcp_server_port', { port })
-      }
-      if (mcpEnabled !== saved.mcpEnabled) {
-        await invoke('update_mcp_server_enabled', { enabled: mcpEnabled })
-      }
-
-      return true
-    } catch (error) {
-      console.error('Error saving MCP settings:', error)
-      toaster.error({
-        title: 'MCP Server Error',
-        description: `Failed to apply MCP server settings: ${error}`,
-        duration: 4000,
-      })
-
-      return false
-    }
-  }
+  const update = <K extends keyof SettingsDraft>(
+    key: K,
+    value: SettingsDraft[K],
+  ) => setDraft(prev => ({ ...prev, [key]: value }))
 
   const saveSettings = async () => {
-    try {
-      setIsSaving(true)
-      const timeoutValue = parseInt(disconnectTimeout, 10)
-      const certValidityValue = parseInt(sslCertValidityDays, 10)
-      const logCountValue = parseInt(logRetentionCount, 10)
-      const logDaysValue = parseInt(logRetentionDays, 10)
+    const invalid = validationError(draft)
 
-      if (Number.isNaN(timeoutValue) || timeoutValue < 0) {
-        toaster.error({
-          title: 'Invalid Input',
-          description: 'Please enter a valid number (0 or greater) for timeout',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      if (
-        Number.isNaN(certValidityValue) ||
-        certValidityValue < 1 ||
-        certValidityValue > 3650
-      ) {
-        toaster.error({
-          title: 'Invalid Input',
-          description: 'Certificate validity must be between 1 and 3650 days',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      if (
-        Number.isNaN(logCountValue) ||
-        logCountValue < 1 ||
-        logCountValue > 100
-      ) {
-        toaster.error({
-          title: 'Invalid Input',
-          description: 'Log retention count must be between 1 and 100',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      if (
-        Number.isNaN(logDaysValue) ||
-        logDaysValue < 1 ||
-        logDaysValue > 365
-      ) {
-        toaster.error({
-          title: 'Invalid Input',
-          description: 'Log retention days must be between 1 and 365',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      const mcpPortValue = parseInt(mcpPort, 10)
-
-      if (
-        mcpEnabled &&
-        (Number.isNaN(mcpPortValue) || mcpPortValue < 1 || mcpPortValue > 65535)
-      ) {
-        toaster.error({
-          title: 'Invalid Port',
-          description: 'MCP server port must be between 1 and 65535',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      await invoke('update_disconnect_timeout', { minutes: timeoutValue })
-      await invoke('update_network_monitor', { enabled: networkMonitor })
-      await invoke('update_auto_update_enabled', {
-        enabled: autoUpdateEnabled,
+    if (invalid) {
+      toaster.error({
+        title: 'Invalid Input',
+        description: invalid,
+        duration: 3000,
       })
 
-      const currentSslSettings = await invoke<{
-        ssl_enabled: boolean
-      }>('get_ssl_settings')
-      const wasDisabled = !currentSslSettings.ssl_enabled
-      const willBeEnabled = sslEnabled
+      return
+    }
 
+    const mcpPort = parseInt(draft.mcpPort, 10)
+    const writes: [string, () => Promise<void>][] = [
+      [
+        'General',
+        async () => {
+          await invoke('update_disconnect_timeout', {
+            minutes: parseInt(draft.disconnectTimeout, 10),
+          })
+          await invoke('update_network_monitor', {
+            enabled: draft.networkMonitor,
+          })
+          await invoke('update_auto_update_enabled', {
+            enabled: draft.autoUpdateEnabled,
+          })
+        },
+      ],
+      [
+        'SSL',
+        () =>
+          invoke('set_ssl_settings', {
+            sslEnabled: draft.sslEnabled,
+            sslCertValidityDays: parseInt(draft.sslCertValidityDays, 10),
+            sslAutoRegenerate: true,
+            sslCaAutoInstall: true,
+          }),
+      ],
+      [
+        'Logs',
+        () =>
+          invoke('set_log_settings', {
+            settings: {
+              retention_count: parseInt(draft.logRetentionCount, 10),
+              retention_days: parseInt(draft.logRetentionDays, 10),
+            },
+          }),
+      ],
+      [
+        'Window',
+        async () => {
+          if (draft.appMode !== initial.appMode) {
+            await invoke('set_app_mode_cmd', { mode: draft.appMode })
+          }
+        },
+      ],
+      [
+        'MCP Server',
+        async () => {
+          if (!Number.isNaN(mcpPort) && draft.mcpPort !== initial.mcpPort) {
+            await invoke('update_mcp_server_port', { port: mcpPort })
+          }
+          if (draft.mcpEnabled !== initial.mcpEnabled) {
+            await invoke('update_mcp_server_enabled', {
+              enabled: draft.mcpEnabled,
+            })
+          }
+        },
+      ],
+    ]
+
+    setIsSaving(true)
+    const failures: string[] = []
+
+    for (const [section, write] of writes) {
       try {
-        await invoke('set_ssl_settings', {
-          sslEnabled,
-          sslCertValidityDays: certValidityValue,
-          sslAutoRegenerate: true,
-          sslCaAutoInstall: true,
-        })
+        await write()
+      } catch (error) {
+        failures.push(`${section}: ${errorMessage(error)}`)
+      }
+    }
 
-        if (wasDisabled && willBeEnabled) {
-          toaster.success({
+    for (const query of SETTINGS_QUERIES) {
+      queryClient.invalidateQueries({ queryKey: query.queryKey })
+    }
+    setIsSaving(false)
+
+    if (failures.length > 0) {
+      toaster.error({
+        title: 'Some settings were not saved',
+        description: failures.join('\n'),
+        duration: 6000,
+      })
+
+      return
+    }
+
+    const sslJustEnabled = !initial.sslEnabled && draft.sslEnabled
+
+    toaster.success(
+      sslJustEnabled
+        ? {
             title: 'SSL/HTTPS Enabled Successfully',
             description:
               'SSL certificates have been generated and installed. You may need to restart your browser for SSL connections to work properly.',
             duration: 8000,
-          })
-        }
-      } catch (sslError) {
-        console.error('Error saving SSL settings:', sslError)
-        toaster.error({
-          title: 'SSL Settings Error',
-          description:
-            'Failed to save SSL settings, but other settings were saved',
-          duration: 4000,
-        })
-      }
-
-      try {
-        await invoke('set_log_settings', {
-          settings: {
-            retention_count: logCountValue,
-            retention_days: logDaysValue,
+          }
+        : {
+            title: 'Settings Saved',
+            description: 'All settings have been saved successfully',
+            duration: 3000,
           },
-        })
-      } catch (logError) {
-        console.error('Error saving log settings:', logError)
-        toaster.error({
-          title: 'Log Settings Error',
-          description:
-            'Failed to save log settings, but other settings were saved',
-          duration: 4000,
-        })
-      }
-
-      const appliedWindow = await saveWindowSettings()
-      const appliedMcp = await saveMcpSettings(mcpPortValue)
-
-      await loadSettings()
-
-      if (!appliedWindow || !appliedMcp) {
-        return
-      }
-
-      if (!(wasDisabled && willBeEnabled)) {
-        toaster.success({
-          title: 'Settings Saved',
-          description: 'All settings have been saved successfully',
-          duration: 3000,
-        })
-      }
-
-      onClose()
-    } catch (error) {
-      console.error('Error saving settings:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to save settings',
-        duration: 3000,
-      })
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleTimeoutChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-
-    if (value === '' || /^\d+$/.test(value)) {
-      setDisconnectTimeout(value)
-    }
-  }
-
-  const handleCertValidityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-
-    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 3650)) {
-      setSslCertValidityDays(value)
-    }
-  }
-
-  const handleLogRetentionCountChange = (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const value = e.target.value
-
-    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 100)) {
-      setLogRetentionCount(value)
-    }
-  }
-
-  const handleLogRetentionDaysChange = (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const value = e.target.value
-
-    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 365)) {
-      setLogRetentionDays(value)
-    }
-  }
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) {
-      return `${bytes} B`
-    }
-    if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`
-    }
-
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    )
+    onClose()
   }
 
   return (
-    <Dialog.Root
-      open={isOpen}
-      onOpenChange={({ open }) => !open && onClose()}
-      modal={true}
-    >
-      <Dialog.Backdrop
-        bg='transparent'
-        backdropFilter='blur(4px)'
-        height='100vh'
-      />
-      <Dialog.Positioner overflow='hidden'>
-        <Dialog.Content
-          onClick={e => e.stopPropagation()}
-          maxWidth='600px'
-          width='90vw'
-          height='92vh'
-          bg='#111111'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-          borderRadius='lg'
-          overflow='hidden'
-          position='absolute'
-          my={2}
-        >
-          <DialogCloseTrigger
-            style={{
-              marginTop: '-4px',
-            }}
+    <>
+      <Dialog.Body
+        p={3}
+        overflowY='auto'
+        css={{
+          '&::-webkit-scrollbar': { width: '6px' },
+          '&::-webkit-scrollbar-track': { background: 'transparent' },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'var(--chakra-colors-app-divider)',
+            borderRadius: '3px',
+          },
+        }}
+      >
+        <Box display='grid' gridTemplateColumns='1fr 1fr' gap={2.5}>
+          <NetworkSettings
+            disconnectTimeout={draft.disconnectTimeout}
+            onDisconnectTimeoutChange={value =>
+              update('disconnectTimeout', value)
+            }
+            networkMonitorEnabled={draft.networkMonitor}
+            onNetworkMonitorEnabledChange={value =>
+              update('networkMonitor', value)
+            }
+            networkMonitorRunning={settings.network_monitor_status === 'true'}
           />
-
-          <Dialog.Header
-            p={3}
-            bg='#161616'
-            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-          >
-            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-              Settings
-            </Text>
-          </Dialog.Header>
-
-          <Dialog.Body
-            p={3}
-            overflowY='auto'
-            css={{
-              '&::-webkit-scrollbar': {
-                width: '6px',
-              },
-              '&::-webkit-scrollbar-track': {
-                background: 'transparent',
-              },
-              '&::-webkit-scrollbar-thumb': {
-                background: 'rgba(255, 255, 255, 0.2)',
-                borderRadius: '3px',
-              },
-              '&::-webkit-scrollbar-thumb:hover': {
-                background: 'rgba(255, 255, 255, 0.3)',
-              },
-            }}
-          >
-            <Stack gap={2.5}>
-              {/* Two Column Grid Layout */}
-              <Box display='grid' gridTemplateColumns='1fr 1fr' gap={2.5}>
-                {/* Left Column - Auto-disconnect Timeout */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Auto-disconnect Timeout
-                  </Text>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Disconnect port forwards after specified time (min). Set to
-                    0 to disable.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Minutes:
-                      </Text>
-                      <Input
-                        value={disconnectTimeout}
-                        onChange={handleTimeoutChange}
-                        placeholder='0'
-                        size='xs'
-                        width='45px'
-                        height='22px'
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                        color='white'
-                        _placeholder={{ color: 'whiteAlpha.500' }}
-                        disabled={isLoading}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Right Column - Network Monitor */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Flex align='center' gap={1.5} mb={1}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Network Monitor
-                    </Text>
-                    <Box
-                      width='5px'
-                      height='5px'
-                      borderRadius='full'
-                      bg={networkMonitorStatus ? 'green.400' : 'gray.500'}
-                      title={networkMonitorStatus ? 'Running' : 'Stopped'}
-                    />
-                  </Flex>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Monitor connectivity and reconnect port forwards when
-                    network is restored.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Enabled:
-                      </Text>
-                      <Checkbox
-                        checked={networkMonitor}
-                        onCheckedChange={e =>
-                          setNetworkMonitor(e.checked === true)
-                        }
-                        disabled={isLoading}
-                        size='sm'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Left Column - SSL Configuration */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Flex align='center' gap={1.5} mb={1}>
-                    <Box
-                      as={Shield}
-                      width='10px'
-                      height='10px'
-                      color='blue.400'
-                    />
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      SSL/HTTPS
-                    </Text>
-                    <Box
-                      width='5px'
-                      height='5px'
-                      borderRadius='full'
-                      bg={sslEnabled ? 'green.400' : 'gray.500'}
-                      title={sslEnabled ? 'Enabled' : 'Disabled'}
-                    />
-                  </Flex>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Enable HTTPS for port forwards with domain aliases. Creates
-                    SSL certificates automatically.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Enabled:
-                      </Text>
-                      <Checkbox
-                        checked={sslEnabled}
-                        onCheckedChange={e => setSslEnabled(e.checked === true)}
-                        disabled={isLoading}
-                        size='sm'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Right Column - SSL Certificate Settings */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                  opacity={sslEnabled ? 1 : 0.5}
-                >
-                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Certificate Validity
-                  </Text>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Configure SSL certificate validity period. Certificates will
-                    auto-regenerate and CA will be auto-installed.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Validity (days):
-                      </Text>
-                      <Input
-                        value={sslCertValidityDays}
-                        onChange={handleCertValidityChange}
-                        placeholder='365'
-                        size='xs'
-                        width='55px'
-                        height='22px'
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                        color='white'
-                        _placeholder={{ color: 'whiteAlpha.500' }}
-                        disabled={isLoading || !sslEnabled}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Left Column - Auto Update */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Auto Update on Startup
-                  </Text>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Check for updates when app starts and prompt to install if
-                    available.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Enabled:
-                      </Text>
-                      <Checkbox
-                        checked={autoUpdateEnabled}
-                        onCheckedChange={e =>
-                          setAutoUpdateEnabled(e.checked === true)
-                        }
-                        disabled={isLoading}
-                        size='sm'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Right Column - Version Information with Status */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Flex align='center' justify='space-between' mb={1}>
-                    <Text fontSize='sm' fontWeight='500' color='white'>
-                      Version Information
-                    </Text>
-                    <Button
-                      size='2xs'
-                      variant='outline'
-                      onClick={
-                        updateStatus === 'available'
-                          ? installUpdate
-                          : checkForUpdates
-                      }
-                      loading={isCheckingUpdates || isUpdating}
-                      loadingText={isUpdating ? '...' : '...'}
-                      disabled={isLoading}
-                      height='18px'
-                      fontSize='10px'
-                      color='whiteAlpha.600'
-                      borderColor='rgba(255, 255, 255, 0.1)'
-                      _hover={{
-                        borderColor: 'rgba(255, 255, 255, 0.2)',
-                        bg: 'whiteAlpha.50',
-                      }}
-                      px={1.5}
-                    >
-                      <Box
-                        as={updateStatus === 'available' ? Download : RefreshCw}
-                        width='8px'
-                        height='8px'
-                        mr={0.5}
-                      />
-                      {updateStatus === 'available' ? 'Install' : 'Check'}
-                    </Button>
-                  </Flex>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Current: {currentVersion || '...'}
-                    {updateStatus === 'available' ? ` → ${latestVersion}` : ''}
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' gap={1.5}>
-                      <Box
-                        width='5px'
-                        height='5px'
-                        borderRadius='full'
-                        bg={
-                          updateStatus === 'checking'
-                            ? 'blue.400'
-                            : updateStatus === 'available'
-                              ? 'green.400'
-                              : updateStatus === 'up-to-date'
-                                ? 'gray.400'
-                                : updateStatus === 'error'
-                                  ? 'red.400'
-                                  : 'gray.500'
-                        }
-                      />
-                      <Text fontSize='10px' color='whiteAlpha.500'>
-                        {updateStatus === 'checking'
-                          ? 'Checking...'
-                          : updateStatus === 'available'
-                            ? 'Update available'
-                            : updateStatus === 'up-to-date'
-                              ? 'Up to date'
-                              : updateStatus === 'error'
-                                ? 'Check failed'
-                                : `Last: ${lastUpdateCheckDisplay}`}
-                      </Text>
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Left Column - Log Retention */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Log Retention
-                  </Text>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    Auto-cleanup when both limits exceeded.
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' gap={2} mb={1}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Max files:
-                      </Text>
-                      <Input
-                        value={logRetentionCount}
-                        onChange={handleLogRetentionCountChange}
-                        size='xs'
-                        width='45px'
-                        height='22px'
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                        color='white'
-                        disabled={isLoading}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                    </Flex>
-                    <Flex align='center' justify='flex-end' gap={2}>
-                      <Text fontSize='xs' color='whiteAlpha.500'>
-                        Max days:
-                      </Text>
-                      <Input
-                        value={logRetentionDays}
-                        onChange={handleLogRetentionDaysChange}
-                        size='xs'
-                        width='45px'
-                        height='22px'
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                        color='white'
-                        disabled={isLoading}
-                        textAlign='center'
-                        fontSize='xs'
-                      />
-                    </Flex>
-                  </Box>
-                </Box>
-
-                {/* Right Column - Log Files */}
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  display='flex'
-                  flexDirection='column'
-                  height='100%'
-                >
-                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Log Files
-                  </Text>
-                  <Text
-                    fontSize='xs'
-                    color='whiteAlpha.600'
-                    lineHeight='1.3'
-                    flex='1'
-                  >
-                    {logFileCount} files • {formatFileSize(logTotalSize)} total
-                  </Text>
-                  <Box
-                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
-                    mt={3}
-                    pt={3}
-                  >
-                    <Flex align='center' justify='flex-end' mb={1}>
-                      <Button
-                        size='2xs'
-                        variant='outline'
-                        onClick={openLogsWindow}
-                        disabled={isLoading}
-                        height='18px'
-                        fontSize='10px'
-                        color='whiteAlpha.600'
-                        borderColor='rgba(255, 255, 255, 0.1)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.2)',
-                          bg: 'whiteAlpha.50',
-                        }}
-                        px={1.5}
-                      >
-                        <Box as={FileText} width='8px' height='8px' mr={0.5} />
-                        View Logs
-                      </Button>
-                    </Flex>
-                    <Flex align='center' justify='flex-end'>
-                      <Button
-                        size='2xs'
-                        variant='outline'
-                        onClick={cleanupLogs}
-                        loading={isCleaningLogs}
-                        loadingText='...'
-                        disabled={isLoading}
-                        height='18px'
-                        fontSize='10px'
-                        color='whiteAlpha.600'
-                        borderColor='rgba(255, 255, 255, 0.1)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.2)',
-                          bg: 'whiteAlpha.50',
-                        }}
-                        px={1.5}
-                      >
-                        <Box as={Trash2} width='8px' height='8px' mr={0.5} />
-                        Purge Now
-                      </Button>
-                    </Flex>
-                  </Box>
-                </Box>
-
-                <WindowSettings
-                  isLoading={isLoading}
-                  appMode={appMode}
-                  onAppModeChange={setAppMode}
-                />
-
-                {/* MCP Server Settings */}
-                <McpServerSettings
-                  isLoading={isLoading}
-                  enabled={mcpEnabled}
-                  port={mcpPort}
-                  running={mcpRunning}
-                  onEnabledChange={setMcpEnabled}
-                  onPortChange={setMcpPort}
-                />
-              </Box>
-            </Stack>
-          </Dialog.Body>
-
-          <Dialog.Footer
-            px={3}
-            py={2}
-            bg='#161616'
-            borderTop='1px solid rgba(255, 255, 255, 0.05)'
-          >
-            <Flex justify='flex-end' gap={2} width='100%'>
-              <Button
-                variant='ghost'
-                size='xs'
-                onClick={onClose}
-                disabled={isSaving}
-                _hover={{ bg: 'whiteAlpha.50' }}
-                color='gray.400'
-                height='28px'
-                fontSize='xs'
-              >
-                Cancel
-              </Button>
-              <Button
-                size='xs'
-                onClick={saveSettings}
-                loading={isSaving}
-                loadingText='Saving...'
-                disabled={isLoading}
-                bg='blue.500'
-                color='white'
-                _hover={{ bg: 'blue.600' }}
-                _active={{ bg: 'blue.700' }}
-                height='28px'
-                fontSize='xs'
-              >
-                Save Settings
-              </Button>
-            </Flex>
-          </Dialog.Footer>
-        </Dialog.Content>
-      </Dialog.Positioner>
-    </Dialog.Root>
+          <SslSettings
+            sslEnabled={draft.sslEnabled}
+            onSslEnabledChange={value => update('sslEnabled', value)}
+            sslCertValidityDays={draft.sslCertValidityDays}
+            onSslCertValidityDaysChange={value =>
+              update('sslCertValidityDays', value)
+            }
+          />
+          <UpdateSettings
+            autoUpdateEnabled={draft.autoUpdateEnabled}
+            onAutoUpdateEnabledChange={value =>
+              update('autoUpdateEnabled', value)
+            }
+            lastUpdateCheck={settings.last_update_check}
+          />
+          <LogSettings
+            retentionCount={draft.logRetentionCount}
+            onRetentionCountChange={value => update('logRetentionCount', value)}
+            retentionDays={draft.logRetentionDays}
+            onRetentionDaysChange={value => update('logRetentionDays', value)}
+          />
+          <WindowSettings
+            appMode={draft.appMode}
+            onAppModeChange={value => update('appMode', value)}
+          />
+          <McpServerSettings
+            enabled={draft.mcpEnabled}
+            port={draft.mcpPort}
+            running={mcp.running === 'true'}
+            onEnabledChange={value => update('mcpEnabled', value)}
+            onPortChange={value => update('mcpPort', value)}
+          />
+        </Box>
+      </Dialog.Body>
+      <SettingsFooter
+        onClose={onClose}
+        onSave={saveSettings}
+        isSaving={isSaving}
+      />
+    </>
   )
 }
 
-export default SettingsModal
+export default function SettingsModal({ onClose }: { onClose: () => void }) {
+  const [settings, ssl, log, appMode, mcp] = useQueries({
+    queries: SETTINGS_QUERIES,
+  })
+  const loadError = [settings, ssl, log, appMode, mcp].find(
+    query => query.error,
+  )?.error
+
+  return (
+    <AppDialog
+      title='Settings'
+      onClose={onClose}
+      maxWidth='600px'
+      height='92vh'
+    >
+      {settings.data && ssl.data && log.data && appMode.data && mcp.data ? (
+        <SettingsForm
+          settings={settings.data}
+          ssl={ssl.data}
+          log={log.data}
+          appMode={appMode.data}
+          mcp={mcp.data}
+          onClose={onClose}
+        />
+      ) : (
+        <>
+          <Dialog.Body p={3}>
+            <Stack align='center' justify='center' height='100%'>
+              {loadError ? (
+                <Text fontSize='xs' color='red.300'>
+                  Failed to load settings: {errorMessage(loadError)}
+                </Text>
+              ) : (
+                <Spinner size='sm' color='whiteAlpha.600' />
+              )}
+            </Stack>
+          </Dialog.Body>
+          <SettingsFooter onClose={onClose} />
+        </>
+      )}
+    </AppDialog>
+  )
+}

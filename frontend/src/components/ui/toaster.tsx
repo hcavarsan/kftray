@@ -1,12 +1,8 @@
-'use client'
-
-import { type ReactNode, useEffect, useMemo, useRef } from 'react'
-import debounce from 'lodash/debounce'
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 
 import {
   Toaster as ChakraToaster,
-  type CreateToasterReturn,
   createToaster,
   Portal,
   Spinner,
@@ -14,128 +10,43 @@ import {
   Toast,
 } from '@chakra-ui/react'
 
-interface StatusChangeDetails {
-  status: 'visible' | 'dismissing' | 'unmounted'
-  src?: string
-}
-
-interface ToastOptions {
-  title?: string
-  description?: string
-  duration?: number
-  action?: {
-    label: string
-    onClick: () => void
-  }
-  onStatusChange?: (details: StatusChangeDetails) => void
-}
-
-interface Options<T = any> {
-  title?: T
-  description?: T
-  duration?: number
-  removeDelay?: number
-  id?: string
-  type?: 'success' | 'error' | 'loading' | 'info' | (string & {})
-  onStatusChange?: (details: StatusChangeDetails) => void
-  action?: {
-    label: string
-    onClick: () => void
-  }
-  closable?: boolean
-  meta?: Record<string, any>
-}
-
-type ChakraToastFunction = (data: Options<any>) => string
-type CustomToastFunction = (options: ToastOptions) => string
-type WrappedToaster = Omit<
-  CreateToasterReturn<ReactNode>,
-  'success' | 'error' | 'loading' | 'create'
-> &
-  Record<'success' | 'error' | 'loading' | 'create', CustomToastFunction>
-
-const chakraToaster = createToaster({
+export const toaster = createToaster({
   placement: 'top-end',
   duration: 1000,
   overlap: true,
-  offsets: {
-    top: '5px',
-    right: '5px',
-    bottom: '5px',
-    left: '5px',
-  },
+  offsets: { top: '5px', right: '5px', bottom: '5px', left: '5px' },
 })
-
-const createToastWrapper = (
-  originalToaster: CreateToasterReturn<ReactNode>,
-): WrappedToaster => {
-  const wrapToastFunction =
-    (fn: ChakraToastFunction): CustomToastFunction =>
-    (options: ToastOptions) => {
-      const id = fn({
-        ...options,
-        duration: options.duration ?? 1000,
-        onStatusChange: (details: StatusChangeDetails) => {
-          options.onStatusChange?.(details)
-        },
-      })
-
-      return id
-    }
-
-  return {
-    ...originalToaster,
-    success: wrapToastFunction(
-      originalToaster.success as unknown as ChakraToastFunction,
-    ),
-    error: wrapToastFunction(
-      originalToaster.error as unknown as ChakraToastFunction,
-    ),
-    loading: wrapToastFunction(
-      originalToaster.loading as unknown as ChakraToastFunction,
-    ),
-    create: wrapToastFunction(originalToaster.create),
-  }
-}
-
-export const toaster: WrappedToaster = createToastWrapper(chakraToaster)
-
-export const Toaster = () => {
+export function Toaster() {
   const toastRef = useRef<HTMLDivElement>(null)
-
-  const debouncedDismiss = useMemo(
-    () =>
-      debounce((event: MouseEvent) => {
-        const target = event.target as HTMLElement
-        const toastElement = toastRef.current
-
-        if (toastElement && !toastElement.contains(target)) {
-          toaster.dismiss()
-        }
-      }, 200),
-    [],
-  )
+  const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
-    const handleClick = (event: MouseEvent) => {
+    const handleMouseDown = (event: MouseEvent) => {
       if (!toastRef.current) {
         return
       }
-      debouncedDismiss(event)
+      clearTimeout(dismissTimeoutRef.current)
+      dismissTimeoutRef.current = setTimeout(() => {
+        if (
+          toastRef.current &&
+          event.target instanceof Node &&
+          !toastRef.current.contains(event.target)
+        ) {
+          toaster.dismiss()
+        }
+      }, 200)
     }
-
-    document.addEventListener('mousedown', handleClick)
-
+    document.addEventListener('mousedown', handleMouseDown)
     return () => {
-      debouncedDismiss.cancel()
-      document.removeEventListener('mousedown', handleClick)
+      clearTimeout(dismissTimeoutRef.current)
+      document.removeEventListener('mousedown', handleMouseDown)
     }
-  }, [debouncedDismiss])
+  }, [])
 
   return (
     <Portal>
       <ChakraToaster
-        toaster={chakraToaster}
+        toaster={toaster}
         insetInline={{ mdDown: '2' }}
         insetBlock={{ mdDown: '2' }}
         css={{ pointerEvents: 'none' }}
@@ -152,7 +63,6 @@ export const Toaster = () => {
             boxShadow='dark-lg'
             border='1px solid'
             borderColor='gray.800'
-            onClick={e => e.stopPropagation()}
             css={{ pointerEvents: 'auto' }}
           >
             {toast.type === 'loading' ? (

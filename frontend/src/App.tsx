@@ -1,9 +1,7 @@
-import type React from 'react'
-
 import Main from '@/components/Main'
 import { GitSyncProvider } from '@/contexts/GitSyncContext'
 
-const App: React.FC = () => {
+function App() {
   return (
     <GitSyncProvider>
       <Main />

@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
+import { toaster } from '@/components/ui/toaster'
+import { errorMessage } from '@/lib/errors'
 import type {
   Config,
   ConfigView,
@@ -31,54 +34,63 @@ const viewSignature = (configs: Config[]) =>
   )
 
 export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
-  const [result, setResult] = useState<ConfigViewResult | null>(null)
-  const requestRef = useRef(0)
   const viewRef = useRef<ConfigView | null>(null)
   const signature = useMemo(() => viewSignature(configs), [configs])
+  const queryKey = useMemo(
+    () => ['config-view', signature] as const,
+    [signature],
+  )
+  const queryClient = useQueryClient()
 
-  const query = useCallback(async (view: ConfigView | null) => {
-    const request = ++requestRef.current
+  const { data } = useQuery({
+    queryKey,
+    queryFn: async () => {
+      try {
+        const result = await invoke<ConfigViewResult>('query_config_view_cmd', {
+          view: viewRef.current,
+        })
 
-    try {
-      const next = await invoke<ConfigViewResult>('query_config_view_cmd', {
-        view,
-      })
+        viewRef.current = result.view
 
-      if (request === requestRef.current) {
-        viewRef.current = next.view
-        setResult(next)
+        return result
+      } catch (error) {
+        toaster.error({
+          title: 'Failed to load view',
+          description: errorMessage(error),
+        })
+        throw error
       }
-    } catch (error) {
-      console.error('Failed to query config view:', error)
-    }
-  }, [])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when grouping-relevant config fields change
-  useEffect(() => {
-    void query(viewRef.current)
-  }, [signature, query])
+    },
+  })
 
   const setView = useCallback(
     (view: ConfigView) => {
       viewRef.current = view
-      setResult(prev => (prev ? { ...prev, view } : prev))
-      void query(view)
+      queryClient.setQueryData(
+        queryKey,
+        (prev: ConfigViewResult | undefined) =>
+          prev ? { ...prev, view } : prev,
+      )
+      void queryClient.invalidateQueries({ queryKey })
       invoke('set_config_view_cmd', { view }).catch(error =>
-        console.error('Failed to save config view:', error),
+        toaster.error({
+          title: 'Failed to save view',
+          description: errorMessage(error),
+        }),
       )
     },
-    [query],
+    [queryClient, queryKey],
   )
 
   const groups = useMemo((): ResolvedGroup[] => {
-    if (!result) {
+    if (!data) {
       return visibleConfigs.length
         ? [{ id: ALL_GROUP_ID, label: 'All', configs: visibleConfigs }]
         : []
     }
     const byId = new Map(visibleConfigs.map(c => [c.id, c]))
 
-    return result.groups
+    return data.groups
       .map(group => ({
         id: groupId(group.key),
         label: group.label,
@@ -87,11 +99,11 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
           .filter((c): c is Config => c !== undefined),
       }))
       .filter(group => group.configs.length > 0)
-  }, [result, visibleConfigs])
+  }, [data, visibleConfigs])
 
   return {
-    view: result?.view ?? null,
-    facets: result?.facets ?? NO_FACETS,
+    view: data?.view ?? null,
+    facets: data?.facets ?? NO_FACETS,
     groups,
     setView,
   }

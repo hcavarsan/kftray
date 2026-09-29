@@ -11,7 +11,7 @@ import {
   Text,
 } from '@chakra-ui/react'
 
-import { ALL_LEVELS, COLORS, LEVEL_COLORS } from './constants'
+import { ALL_LEVELS, LEVEL_COLORS } from './constants'
 import type { LevelFilterDropdownProps, LogLevel } from './types'
 
 function LevelFilterDropdownComponent({
@@ -50,17 +50,13 @@ function LevelFilterDropdownComponent({
           w='24px'
           minW='24px'
           position='relative'
-          bg={hasSelection ? 'rgba(59, 130, 246, 0.1)' : 'transparent'}
-          color={hasSelection ? COLORS.accentBlue : 'whiteAlpha.600'}
+          bg={hasSelection ? 'blue.500/10' : 'transparent'}
+          color={hasSelection ? 'blue.500' : 'whiteAlpha.600'}
           border='1px solid'
-          borderColor={
-            hasSelection ? 'rgba(59, 130, 246, 0.3)' : COLORS.borderDefault
-          }
+          borderColor={hasSelection ? 'app.accentMuted' : 'app.border'}
           _hover={{
-            bg: hasSelection ? 'rgba(59, 130, 246, 0.15)' : 'whiteAlpha.50',
-            borderColor: hasSelection
-              ? 'rgba(59, 130, 246, 0.4)'
-              : COLORS.borderHover,
+            bg: hasSelection ? 'app.accentSubtle' : 'whiteAlpha.50',
+            borderColor: hasSelection ? 'blue.500/40' : 'app.borderStrong',
           }}
         >
           <Filter size={12} />
@@ -69,7 +65,7 @@ function LevelFilterDropdownComponent({
               position='absolute'
               top='-3px'
               right='-3px'
-              bg={COLORS.accentBlue}
+              bg='blue.500'
               color='white'
               fontSize='8px'
               fontWeight='bold'
@@ -88,9 +84,9 @@ function LevelFilterDropdownComponent({
       <Portal>
         <Menu.Positioner>
           <Menu.Content
-            bg={COLORS.bgSecondary}
+            bg='app.panel'
             border='1px solid'
-            borderColor={COLORS.borderDefault}
+            borderColor='app.border'
             minW='120px'
             py={0.5}
           >
@@ -98,7 +94,7 @@ function LevelFilterDropdownComponent({
               px={2}
               py={1}
               borderBottom='1px solid'
-              borderBottomColor={COLORS.borderSubtle}
+              borderBottomColor='app.hover'
             >
               <Flex justify='space-between' align='center'>
                 <Text
@@ -111,7 +107,7 @@ function LevelFilterDropdownComponent({
                 <Flex gap={1}>
                   <Text
                     fontSize='9px'
-                    color={COLORS.accentBlue}
+                    color='blue.500'
                     cursor='pointer'
                     onClick={handleSelectAll}
                     _hover={{ textDecoration: 'underline' }}
@@ -123,7 +119,7 @@ function LevelFilterDropdownComponent({
                   </Text>
                   <Text
                     fontSize='9px'
-                    color={COLORS.accentBlue}
+                    color='blue.500'
                     cursor='pointer'
                     onClick={handleClearAll}
                     _hover={{ textDecoration: 'underline' }}
@@ -151,10 +147,10 @@ function LevelFilterDropdownComponent({
                     <Checkbox.Root checked={isSelected} size='sm'>
                       <Checkbox.HiddenInput />
                       <Checkbox.Control
-                        borderColor={COLORS.borderDefault}
+                        borderColor='app.border'
                         _checked={{
-                          bg: COLORS.accentBlue,
-                          borderColor: COLORS.accentBlue,
+                          bg: 'blue.500',
+                          borderColor: 'blue.500',
                         }}
                       >
                         <Checkbox.Indicator />

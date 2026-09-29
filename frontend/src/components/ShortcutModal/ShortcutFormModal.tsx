@@ -1,5 +1,4 @@
-import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import {
   Box,
@@ -10,120 +9,121 @@ import {
   Wrap,
   WrapItem,
 } from '@chakra-ui/react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import ShortcutCapture from '@/components/ShortcutCapture'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DialogCloseTrigger } from '@/components/ui/dialog'
+import { AppDialog } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
-import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
+import { type Shortcut, shortcutsQuery } from '@/hooks/useGlobalShortcuts'
+import { errorMessage } from '@/lib/errors'
 import type { Config } from '@/types'
 
+import {
+  findShortcutAction,
+  SHORTCUT_ACTIONS,
+  type ShortcutActionType,
+  shortcutConfigIds,
+} from './actions'
+
 interface ShortcutFormModalProps {
-  isOpen: boolean
-  onClose: () => void
-  editingShortcut?: Shortcut | null
+  shortcut: Shortcut | null
   configs: Config[]
-  onSaved: () => void
+  onClose: () => void
 }
 
-interface ShortcutAction {
-  id: string
-  name: string
-  actionType: string
-  requiresConfig: boolean
+interface ShortcutDraft {
+  shortcutKey: string
+  actionType: ShortcutActionType | null
+  configIds: number[]
 }
 
-const SHORTCUT_ACTIONS: ShortcutAction[] = [
-  {
-    id: 'toggle_window',
-    name: 'Toggle Window',
-    actionType: 'toggle_window',
-    requiresConfig: false,
-  },
-  {
-    id: 'start_all',
-    name: 'Start All Port Forward',
-    actionType: 'start_all_port_forward',
-    requiresConfig: false,
-  },
-  {
-    id: 'stop_all',
-    name: 'Stop All Port Forward',
-    actionType: 'stop_all_port_forward',
-    requiresConfig: false,
-  },
-  {
-    id: 'start_port_forward',
-    name: 'Start Port Forward',
-    actionType: 'start_port_forward',
-    requiresConfig: true,
-  },
-  {
-    id: 'stop_port_forward',
-    name: 'Stop Port Forward',
-    actionType: 'stop_port_forward',
-    requiresConfig: true,
-  },
-  {
-    id: 'toggle_port_forward',
-    name: 'Toggle Port Forward',
-    actionType: 'toggle_port_forward',
-    requiresConfig: true,
-  },
-]
+class ShortcutInputError extends Error {}
 
-const ShortcutFormModal: React.FC<ShortcutFormModalProps> = ({
-  isOpen,
-  onClose,
-  editingShortcut,
+export default function ShortcutFormModal({
+  shortcut,
   configs,
-  onSaved,
-}) => {
-  const [formData, setFormData] = useState({
-    shortcutKey: '',
-    actionType: '',
-    configIds: [] as number[],
-  })
-  const [isLoading, setIsLoading] = useState(false)
+  onClose,
+}: ShortcutFormModalProps) {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<ShortcutDraft>(() => ({
+    shortcutKey: shortcut?.shortcut_key ?? '',
+    actionType:
+      findShortcutAction(shortcut?.action_type ?? '')?.actionType ?? null,
+    configIds: shortcutConfigIds(shortcut?.action_data),
+  }))
+  const selectedAction = draft.actionType
+    ? findShortcutAction(draft.actionType)
+    : undefined
 
-  const { validateShortcut, normalizeShortcut } = useGlobalShortcuts()
-
-  useEffect(() => {
-    if (isOpen) {
-      if (editingShortcut) {
-        setFormData({
-          shortcutKey: editingShortcut.shortcut_key,
-          actionType: editingShortcut.action_type,
-          configIds: editingShortcut.action_data
-            ? (() => {
-                try {
-                  const data = JSON.parse(editingShortcut.action_data)
-
-                  return data.config_ids || []
-                } catch {
-                  return []
-                }
-              })()
-            : [],
-        })
-      } else {
-        setFormData({
-          shortcutKey: '',
-          actionType: '',
-          configIds: [],
-        })
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!selectedAction) {
+        throw new ShortcutInputError(
+          'Please set a shortcut key and select an action',
+        )
       }
-    }
-  }, [isOpen, editingShortcut])
+      const normalized = await invoke<string>('normalize_shortcut_key', {
+        shortcutStr: draft.shortcutKey,
+      }).catch(() => {
+        throw new ShortcutInputError('Please enter a valid shortcut format')
+      })
+      const isValid = await invoke<boolean>('validate_shortcut_key', {
+        shortcutKey: normalized,
+      })
 
-  const selectedAction = SHORTCUT_ACTIONS.find(
-    a => a.actionType === formData.actionType,
-  )
+      if (!isValid) {
+        throw new ShortcutInputError('The shortcut format is not valid')
+      }
 
-  const handleSave = async () => {
-    if (!formData.shortcutKey || !formData.actionType) {
+      const request = {
+        name: `${selectedAction.name} (${normalized})`,
+        shortcut_key: normalized,
+        action_type: selectedAction.actionType,
+        action_data: selectedAction.requiresConfig
+          ? JSON.stringify({ config_ids: draft.configIds })
+          : undefined,
+        enabled: true,
+      }
+
+      if (shortcut) {
+        await invoke('update_shortcut', { id: shortcut.id, request })
+      } else {
+        const id = await invoke<number>('create_shortcut', { request })
+
+        if (!id) {
+          throw new Error(
+            'Failed to create shortcut. It may conflict with another shortcut.',
+          )
+        }
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: shortcutsQuery.queryKey })
+      toaster.success({
+        title: 'Success',
+        description: shortcut
+          ? 'Shortcut updated successfully'
+          : 'Shortcut created successfully',
+        duration: 3000,
+      })
+      onClose()
+    },
+    onError: error =>
+      toaster.error({
+        title:
+          error instanceof ShortcutInputError
+            ? 'Invalid Shortcut'
+            : 'Failed to save shortcut',
+        description: errorMessage(error),
+        duration: 3000,
+      }),
+  })
+
+  const handleSave = () => {
+    if (!draft.shortcutKey || !selectedAction) {
       toaster.error({
         title: 'Invalid Input',
         description: 'Please set a shortcut key and select an action',
@@ -132,16 +132,7 @@ const ShortcutFormModal: React.FC<ShortcutFormModalProps> = ({
 
       return
     }
-
-    const action = SHORTCUT_ACTIONS.find(
-      a => a.actionType === formData.actionType,
-    )
-
-    if (!action) {
-      return
-    }
-
-    if (action.requiresConfig && formData.configIds.length === 0) {
+    if (selectedAction.requiresConfig && draft.configIds.length === 0) {
       toaster.error({
         title: 'Invalid Input',
         description: 'Please select at least one configuration for this action',
@@ -150,363 +141,222 @@ const ShortcutFormModal: React.FC<ShortcutFormModalProps> = ({
 
       return
     }
-
-    try {
-      setIsLoading(true)
-
-      const normalizedShortcut = await normalizeShortcut(formData.shortcutKey)
-
-      if (!normalizedShortcut) {
-        toaster.error({
-          title: 'Invalid Shortcut',
-          description: 'Please enter a valid shortcut format',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      const isValid = await validateShortcut(normalizedShortcut)
-
-      if (!isValid) {
-        toaster.error({
-          title: 'Invalid Shortcut',
-          description: 'The shortcut format is not valid',
-          duration: 3000,
-        })
-
-        return
-      }
-
-      const actionData = action.requiresConfig
-        ? JSON.stringify({ config_ids: formData.configIds })
-        : undefined
-
-      // Generate unique name by combining action name with shortcut key
-      const uniqueName = `${action.name} (${normalizedShortcut})`
-
-      if (editingShortcut) {
-        await invoke('update_shortcut', {
-          id: editingShortcut.id,
-          request: {
-            name: uniqueName,
-            shortcut_key: normalizedShortcut,
-            action_type: action.actionType,
-            action_data: actionData,
-            enabled: true,
-          },
-        })
-      } else {
-        const id = await invoke<number>('create_shortcut', {
-          request: {
-            name: uniqueName,
-            shortcut_key: normalizedShortcut,
-            action_type: action.actionType,
-            action_data: actionData,
-            enabled: true,
-          },
-        })
-
-        if (!id) {
-          toaster.error({
-            title: 'Creation Failed',
-            description:
-              'Failed to create shortcut. It may conflict with another shortcut.',
-            duration: 3000,
-          })
-
-          return
-        }
-      }
-
-      toaster.success({
-        title: 'Success',
-        description: editingShortcut
-          ? 'Shortcut updated successfully'
-          : 'Shortcut created successfully',
-        duration: 3000,
-      })
-
-      onSaved()
-    } catch (error) {
-      console.error('Error saving shortcut:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to save shortcut',
-        duration: 3000,
-      })
-    } finally {
-      setIsLoading(false)
-    }
+    save.mutate()
   }
 
-  const handleConfigToggle = (configId: number, checked: boolean) => {
-    setFormData(prev => ({
+  const toggleConfig = (configId: number, checked: boolean) =>
+    setDraft(prev => ({
       ...prev,
       configIds: checked
         ? [...prev.configIds, configId]
         : prev.configIds.filter(id => id !== configId),
     }))
-  }
 
-  const handleActionSelect = (actionType: string) => {
-    const action = SHORTCUT_ACTIONS.find(a => a.actionType === actionType)
-
-    setFormData(prev => ({
+  const selectAction = (actionType: ShortcutActionType) =>
+    setDraft(prev => ({
       ...prev,
       actionType,
-      configIds: action?.requiresConfig ? prev.configIds : [],
+      configIds: findShortcutAction(actionType)?.requiresConfig
+        ? prev.configIds
+        : [],
     }))
-  }
 
   return (
-    <Dialog.Root
-      open={isOpen}
-      onOpenChange={({ open }) => !open && onClose()}
-      modal={true}
-      closeOnEscape={true}
+    <AppDialog
+      title={shortcut ? 'Edit Shortcut' : 'Add New Shortcut'}
+      onClose={onClose}
+      maxWidth='600px'
+      height='96vh'
     >
-      <Dialog.Backdrop
-        bg='transparent'
-        backdropFilter='blur(4px)'
-        height='100vh'
-      />
-      <Dialog.Positioner overflow='hidden'>
-        <Dialog.Content
-          onClick={e => e.stopPropagation()}
-          maxWidth='600px'
-          width='90vw'
-          height='96vh'
-          bg='#111111'
-          borderRadius='lg'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-          overflow='hidden'
-          position='absolute'
-          my={2}
-          display='flex'
-          flexDirection='column'
-        >
-          <DialogCloseTrigger style={{ marginTop: '-4px' }} />
-
-          <Dialog.Header
-            p={3}
-            bg='#161616'
-            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
+      <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
+        <Stack gap={2.5}>
+          <Box
+            bg='app.panel'
+            p={2}
+            borderRadius='md'
+            border='1px solid'
+            borderColor='app.border'
           >
-            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-              {editingShortcut ? 'Edit Shortcut' : 'Add New Shortcut'}
+            <Text fontSize='xs' color='gray.400' mb={1}>
+              Action Type
             </Text>
-          </Dialog.Header>
+            <Wrap gap={1.5}>
+              {SHORTCUT_ACTIONS.map(action => {
+                const selected = draft.actionType === action.actionType
 
-          <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
-            <Stack gap={2.5}>
-              <Box
-                bg='#161616'
-                p={2}
-                borderRadius='md'
-                border='1px solid rgba(255, 255, 255, 0.08)'
-              >
-                <Text fontSize='xs' color='gray.400' mb={1}>
-                  Action Type
-                </Text>
-                <Wrap gap={1.5}>
-                  {SHORTCUT_ACTIONS.map(action => (
-                    <WrapItem key={action.id}>
-                      <Button
-                        size='2xs'
-                        variant={
-                          formData.actionType === action.actionType
-                            ? 'solid'
-                            : 'outline'
-                        }
-                        onClick={() => handleActionSelect(action.actionType)}
-                        bg={
-                          formData.actionType === action.actionType
-                            ? 'blue.500'
-                            : 'transparent'
-                        }
-                        color={
-                          formData.actionType === action.actionType
-                            ? 'white'
-                            : 'whiteAlpha.700'
-                        }
-                        borderColor='rgba(255, 255, 255, 0.15)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.3)',
-                          bg:
-                            formData.actionType === action.actionType
-                              ? 'blue.600'
-                              : 'whiteAlpha.100',
-                        }}
-                        height='20px'
-                        fontSize='xs'
-                        px={2}
-                      >
-                        {action.name}
-                      </Button>
-                    </WrapItem>
-                  ))}
-                </Wrap>
-              </Box>
-
-              <Box
-                bg='#161616'
-                p={2}
-                borderRadius='md'
-                border='1px solid rgba(255, 255, 255, 0.08)'
-              >
-                <Text fontSize='xs' color='gray.400' mb={1}>
-                  Keyboard Shortcut
-                </Text>
-                <ShortcutCapture
-                  value={formData.shortcutKey}
-                  onChange={key =>
-                    setFormData(prev => ({ ...prev, shortcutKey: key }))
-                  }
-                  disabled={isLoading}
-                />
-              </Box>
-
-              {selectedAction?.requiresConfig && (
-                <Box
-                  bg='#161616'
-                  p={2}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                >
-                  <Text fontSize='xs' color='gray.400' mb={1}>
-                    Select Configurations
-                  </Text>
-                  <Box
-                    maxHeight='140px'
-                    overflowY='auto'
-                    overflowX='hidden'
-                    bg='#111111'
-                    border='1px solid rgba(255, 255, 255, 0.08)'
-                    borderRadius='md'
-                    p={2}
-                    css={{
-                      '&::-webkit-scrollbar': { width: '4px' },
-                      '&::-webkit-scrollbar-track': {
-                        background: 'transparent',
-                      },
-                      '&::-webkit-scrollbar-thumb': {
-                        background: 'rgba(255, 255, 255, 0.2)',
-                        borderRadius: '2px',
-                      },
-                      '&::-webkit-scrollbar-thumb:hover': {
-                        background: 'rgba(255, 255, 255, 0.3)',
-                      },
-                    }}
-                  >
-                    {configs.length === 0 ? (
-                      <Text
-                        fontSize='xs'
-                        color='gray.400'
-                        textAlign='center'
-                        lineHeight='1.3'
-                      >
-                        No configurations available
-                      </Text>
-                    ) : (
-                      <Stack gap={1}>
-                        {configs.map(config => (
-                          <Box
-                            key={config.id}
-                            bg='rgba(255, 255, 255, 0.03)'
-                            border='1px solid rgba(255, 255, 255, 0.05)'
-                            borderRadius='sm'
-                            p={2}
-                            _hover={{ bg: 'rgba(255, 255, 255, 0.05)' }}
-                          >
-                            <Flex align='center' gap={2}>
-                              <Checkbox
-                                checked={formData.configIds.includes(config.id)}
-                                onCheckedChange={e =>
-                                  handleConfigToggle(
-                                    config.id,
-                                    Boolean(e.checked),
-                                  )
-                                }
-                                size='sm'
-                              />
-                              <Box flex={1}>
-                                <Text
-                                  fontSize='xs'
-                                  color='gray.100'
-                                  fontWeight='medium'
-                                >
-                                  {config.alias}
-                                </Text>
-                                <Text
-                                  fontSize='xs'
-                                  color='gray.400'
-                                  lineHeight='1.3'
-                                >
-                                  {config.context} / {config.namespace}
-                                </Text>
-                              </Box>
-                            </Flex>
-                          </Box>
-                        ))}
-                      </Stack>
-                    )}
-                  </Box>
-                  {formData.configIds.length > 0 && (
-                    <Text
+                return (
+                  <WrapItem key={action.actionType}>
+                    <Button
+                      size='2xs'
+                      variant={selected ? 'solid' : 'outline'}
+                      onClick={() => selectAction(action.actionType)}
+                      bg={selected ? 'blue.500' : 'transparent'}
+                      color={selected ? 'white' : 'whiteAlpha.700'}
+                      borderColor='app.borderStrong'
+                      _hover={{
+                        borderColor: 'white/30',
+                        bg: selected ? 'blue.600' : 'whiteAlpha.100',
+                      }}
+                      height='20px'
                       fontSize='xs'
-                      color='gray.400'
-                      mt={1}
-                      lineHeight='1.3'
+                      px={2}
                     >
-                      {formData.configIds.length} configuration
-                      {formData.configIds.length !== 1 ? 's' : ''} selected
-                    </Text>
-                  )}
-                </Box>
-              )}
-            </Stack>
-          </Dialog.Body>
+                      {action.name}
+                    </Button>
+                  </WrapItem>
+                )
+              })}
+            </Wrap>
+          </Box>
 
-          <Dialog.Footer
-            px={3}
-            py={2}
-            bg='#161616'
-            borderTop='1px solid rgba(255, 255, 255, 0.05)'
-            flexShrink={0}
+          <Box
+            bg='app.panel'
+            p={2}
+            borderRadius='md'
+            border='1px solid'
+            borderColor='app.border'
           >
-            <Flex justify='flex-end' gap={2} width='100%'>
-              <Button
-                variant='ghost'
-                size='xs'
-                onClick={onClose}
-                _hover={{ bg: 'whiteAlpha.50' }}
-                color='gray.400'
-                height='28px'
-                fontSize='xs'
+            <Text fontSize='xs' color='gray.400' mb={1}>
+              Keyboard Shortcut
+            </Text>
+            <ShortcutCapture
+              value={draft.shortcutKey}
+              onChange={shortcutKey =>
+                setDraft(prev => ({ ...prev, shortcutKey }))
+              }
+              disabled={save.isPending}
+            />
+          </Box>
+
+          {selectedAction?.requiresConfig && (
+            <Box
+              bg='app.panel'
+              p={2}
+              borderRadius='md'
+              border='1px solid'
+              borderColor='app.border'
+            >
+              <Text fontSize='xs' color='gray.400' mb={1}>
+                Select Configurations
+              </Text>
+              <Box
+                maxHeight='140px'
+                overflowY='auto'
+                overflowX='hidden'
+                bg='app.bg'
+                border='1px solid'
+                borderColor='app.border'
+                borderRadius='md'
+                p={2}
+                css={{
+                  '&::-webkit-scrollbar': { width: '4px' },
+                  '&::-webkit-scrollbar-track': {
+                    background: 'transparent',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    background: 'var(--chakra-colors-app-divider)',
+                    borderRadius: '2px',
+                  },
+                }}
               >
-                Cancel
-              </Button>
-              <Button
-                size='xs'
-                onClick={handleSave}
-                loading={isLoading}
-                loadingText={editingShortcut ? 'Updating...' : 'Creating...'}
-                bg='blue.500'
-                color='white'
-                _hover={{ bg: 'blue.600' }}
-                _active={{ bg: 'blue.700' }}
-                height='28px'
-                fontSize='xs'
-              >
-                {editingShortcut ? 'Save Changes' : 'Add Shortcut'}
-              </Button>
-            </Flex>
-          </Dialog.Footer>
-        </Dialog.Content>
-      </Dialog.Positioner>
-    </Dialog.Root>
+                {configs.length === 0 ? (
+                  <Text
+                    fontSize='xs'
+                    color='gray.400'
+                    textAlign='center'
+                    lineHeight='1.3'
+                  >
+                    No configurations available
+                  </Text>
+                ) : (
+                  <Stack gap={1}>
+                    {configs.map(config => (
+                      <Box
+                        key={config.id}
+                        bg='app.faint'
+                        border='1px solid'
+                        borderColor='app.hover'
+                        borderRadius='sm'
+                        p={2}
+                        _hover={{ bg: 'app.hover' }}
+                      >
+                        <Flex align='center' gap={2}>
+                          <Checkbox
+                            checked={draft.configIds.includes(config.id)}
+                            onCheckedChange={e =>
+                              toggleConfig(config.id, e.checked === true)
+                            }
+                            size='sm'
+                          />
+                          <Box flex={1}>
+                            <Text
+                              fontSize='xs'
+                              color='gray.100'
+                              fontWeight='medium'
+                            >
+                              {config.alias}
+                            </Text>
+                            <Text
+                              fontSize='xs'
+                              color='gray.400'
+                              lineHeight='1.3'
+                            >
+                              {config.context} / {config.namespace}
+                            </Text>
+                          </Box>
+                        </Flex>
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+              {draft.configIds.length > 0 && (
+                <Text fontSize='xs' color='gray.400' mt={1} lineHeight='1.3'>
+                  {draft.configIds.length} configuration
+                  {draft.configIds.length !== 1 ? 's' : ''} selected
+                </Text>
+              )}
+            </Box>
+          )}
+        </Stack>
+      </Dialog.Body>
+
+      <Dialog.Footer
+        px={3}
+        py={2}
+        bg='app.panel'
+        borderTop='1px solid'
+        borderColor='app.hover'
+        flexShrink={0}
+      >
+        <Flex justify='flex-end' gap={2} width='100%'>
+          <Button
+            variant='ghost'
+            size='xs'
+            onClick={onClose}
+            _hover={{ bg: 'whiteAlpha.50' }}
+            color='gray.400'
+            height='28px'
+            fontSize='xs'
+          >
+            Cancel
+          </Button>
+          <Button
+            size='xs'
+            onClick={handleSave}
+            loading={save.isPending}
+            loadingText={shortcut ? 'Updating...' : 'Creating...'}
+            bg='blue.500'
+            color='white'
+            _hover={{ bg: 'blue.600' }}
+            _active={{ bg: 'blue.700' }}
+            height='28px'
+            fontSize='xs'
+          >
+            {shortcut ? 'Save Changes' : 'Add Shortcut'}
+          </Button>
+        </Flex>
+      </Dialog.Footer>
+    </AppDialog>
   )
 }
-
-export default ShortcutFormModal
