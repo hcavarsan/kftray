@@ -4,10 +4,11 @@ import { Box, Flex, Input, Stack } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
+import { logFilesQuery } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import { toaster } from '@/components/ui/toaster'
+import { formatBytes } from '@/lib/format'
 
-import { logFilesQuery } from '../queries'
 import {
   compactActionButtonProps,
   compactInputProps,
@@ -36,12 +37,6 @@ export function LogSettings({
   const { data: logFiles = [] } = useQuery(logFilesQuery)
 
   const totalSize = logFiles.reduce((acc, f) => acc + f.size, 0)
-  const totalSizeLabel =
-    totalSize < 1024
-      ? `${totalSize} B`
-      : totalSize < 1024 * 1024
-        ? `${(totalSize / 1024).toFixed(1)} KB`
-        : `${(totalSize / (1024 * 1024)).toFixed(1)} MB`
 
   const cleanupMutation = useMutation({
     mutationFn: () => invoke<number>('cleanup_old_logs'),
@@ -116,7 +111,7 @@ export function LogSettings({
 
       <SettingCard
         title='Log Files'
-        description={`${logFiles.length} files • ${totalSizeLabel} total`}
+        description={`${logFiles.length} files • ${formatBytes(totalSize)} total`}
       >
         <Flex direction='column' align='flex-end' gap={1}>
           <Button

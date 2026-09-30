@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
+import { formatBytes } from '@/lib/format'
 
 import { NumberField } from './NumberField'
 import { SwitchCard } from './SwitchCard'
@@ -58,17 +59,6 @@ const parseInRange = (value: string, min: number, max: number) => {
   return trimmed !== '' && Number.isInteger(n) && n >= min && n <= max
     ? n
     : null
-}
-
-const formatFileSize = (bytes: number) => {
-  if (bytes >= MB) {
-    return `${(bytes / MB).toFixed(1)} MB`
-  }
-  if (bytes >= 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-
-  return `${bytes} bytes`
 }
 
 export function HttpLogsConfigModal({
@@ -213,7 +203,7 @@ export function HttpLogsConfigModal({
               />
               <NumberField
                 label='Maximum File Size'
-                description={`Maximum file size before rotation. Current: ${formatFileSize(
+                description={`Maximum file size before rotation. Current: ${formatBytes(
                   fileSizeMb
                     ? fileSizeMb * MB
                     : (configQuery.data?.max_file_size ?? 0),

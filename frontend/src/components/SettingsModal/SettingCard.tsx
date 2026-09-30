@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react'
 
-import { Box, Flex, Text } from '@chakra-ui/react'
+import { Box, Field, Flex, Text } from '@chakra-ui/react'
 
 interface SettingCardProps {
   title: string
@@ -29,6 +29,8 @@ export function SettingCard({
 }: SettingCardProps) {
   return (
     <Box
+      role='group'
+      aria-label={title}
       layerStyle='card'
       p={2}
       display='flex'
@@ -84,12 +86,23 @@ export function SettingRow({
   children: ReactNode
 }) {
   return (
-    <Flex align='center' justify='flex-end' gap={2}>
-      <Text fontSize='xs' color='fg.subtle'>
+    <Field.Root
+      orientation='horizontal'
+      justifyContent='flex-end'
+      alignItems='center'
+      gap={2}
+    >
+      <Field.Label
+        flex='none'
+        fontSize='xs'
+        fontWeight='normal'
+        color='fg.subtle'
+        m={0}
+      >
         {label}
-      </Text>
+      </Field.Label>
       {children}
-    </Flex>
+    </Field.Root>
   )
 }
 

@@ -64,23 +64,23 @@ export function UpdateSettings({
     onSuccess: versionInfo => {
       setLatestVersion(versionInfo.latest_version || currentVersion || '')
 
-      if (versionInfo.update_available === 'error') {
-        setCheckResult('error')
-        toaster.error(CHECK_FAILED_TOAST)
-      } else if (versionInfo.update_available === 'true') {
+      if (versionInfo.update_available === 'true') {
         setCheckResult('available')
         toaster.success({
           title: 'Update Available',
           description: `Version ${versionInfo.latest_version} is now available!`,
           duration: 4000,
         })
-      } else {
+      } else if (versionInfo.update_available === 'false') {
         setCheckResult('up-to-date')
         toaster.success({
           title: 'Up to Date',
           description: 'You are running the latest version.',
           duration: 3000,
         })
+      } else {
+        setCheckResult('error')
+        toaster.error(CHECK_FAILED_TOAST)
       }
     },
     onError: () => setCheckResult('error'),
