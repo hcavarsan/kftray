@@ -136,6 +136,7 @@ export function HeaderMenu({
           size='sm'
           checked={isSelectAllChecked}
           onCheckedChange={handleCheckboxChange}
+          inputProps={{ 'aria-label': 'Select all visible configurations' }}
           css={{
             '& input': {
               width: '10px',

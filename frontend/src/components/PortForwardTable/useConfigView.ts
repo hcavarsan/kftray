@@ -1,6 +1,11 @@
 import { useCallback, useMemo, useRef } from 'react'
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import type {
@@ -8,6 +13,7 @@ import type {
   ConfigView,
   ConfigViewResult,
   Facet,
+  PendingConfigAction,
   ResolvedGroup,
 } from '@/types'
 
@@ -58,6 +64,7 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
 
       return result
     },
+    placeholderData: keepPreviousData,
     meta: { errorToast: { title: 'Failed to load view' } },
   })
 
@@ -106,4 +113,43 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
     groups,
     setView,
   }
+}
+
+type Pending = Map<number, PendingConfigAction>
+
+export const NO_PENDING: Pending = new Map()
+
+const samePending = (a: Pending, b: Pending) =>
+  a.size === b.size && [...a].every(([id, action]) => b.get(id) === action)
+
+export function useGroupPendingActions(
+  groups: ResolvedGroup[],
+  pendingConfigActions: Pending,
+) {
+  const previous = useRef(new Map<string, Pending>())
+
+  return useMemo(() => {
+    const next = new Map<string, Pending>()
+
+    for (const group of groups) {
+      const pending: Pending = new Map()
+
+      for (const config of group.configs) {
+        const action = pendingConfigActions.get(config.id)
+
+        if (action) {
+          pending.set(config.id, action)
+        }
+      }
+      const earlier = previous.current.get(group.id)
+
+      next.set(
+        group.id,
+        earlier && samePending(earlier, pending) ? earlier : pending,
+      )
+    }
+    previous.current = next
+
+    return next
+  }, [groups, pendingConfigActions])
 }

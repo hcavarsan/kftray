@@ -13,7 +13,9 @@ import {
 } from '@/components/PortForwardTable/useActivePods'
 import {
   ALL_GROUP_ID,
+  NO_PENDING,
   useConfigView,
+  useGroupPendingActions,
 } from '@/components/PortForwardTable/useConfigView'
 import {
   AccordionRoot,
@@ -103,6 +105,7 @@ export function PortForwardTable({
     filteredConfigs,
   )
   const groupPods = useGroupActivePods(groups, activePods)
+  const groupPending = useGroupPendingActions(groups, pendingConfigActions)
   const groupBy = view?.group_by
   const visibleConfigs = useMemo(
     () => groups.flatMap(group => group.configs),
@@ -279,7 +282,7 @@ export function PortForwardTable({
               handleDuplicateConfig={handleDuplicateConfig}
               handleSelectionChange={handleSelectionChange}
               handleCheckboxChange={handleCheckboxChange}
-              pendingConfigActions={pendingConfigActions}
+              pendingConfigActions={groupPending.get(group.id) ?? NO_PENDING}
               toggleConfigForward={toggleConfigForward}
             />
           ))}

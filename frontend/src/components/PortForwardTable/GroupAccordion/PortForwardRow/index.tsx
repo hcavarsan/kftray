@@ -22,8 +22,8 @@ import {
 } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import type {
   Config,
   PendingConfigAction,
@@ -102,38 +102,14 @@ function PortForwardRowComponent({
     meta: { errorToast: { title: 'Failed to open URL' } },
   })
 
-  const copyPodName = useMutation({
-    mutationFn: (podName: string) => navigator.clipboard.writeText(podName),
-    onSuccess: (_data, podName) =>
-      toaster.success({
-        title: 'Pod name copied',
-        description: `${podName} copied to clipboard`,
-        duration: 1000,
-      }),
-    meta: {
-      errorToast: {
-        title: 'Copy failed',
-        description: 'Failed to copy pod name to clipboard',
-        duration: 1000,
-      },
-    },
+  const copyPodName = useCopyToClipboard({
+    title: 'Pod name copied',
+    description: podName => `${podName} copied to clipboard`,
   })
 
-  const copyConfigDetails = useMutation({
-    mutationFn: (details: string) => navigator.clipboard.writeText(details),
-    onSuccess: () =>
-      toaster.success({
-        title: 'Config details copied',
-        description: 'All configuration details copied to clipboard',
-        duration: 1000,
-      }),
-    meta: {
-      errorToast: {
-        title: 'Copy failed',
-        description: 'Failed to copy config details to clipboard',
-        duration: 1000,
-      },
-    },
+  const copyConfigDetails = useCopyToClipboard({
+    title: 'Config details copied',
+    description: () => 'All configuration details copied to clipboard',
   })
 
   const handleOpenUrl = (url: string) => {
@@ -172,12 +148,13 @@ function PortForwardRowComponent({
                     onSelectionChange(config, e.checked === true)
                   }
                   className='checkbox'
+                  inputProps={{ 'aria-label': `Select ${config.alias}` }}
                 />
 
                 <IconButton
                   size='xs'
                   variant='ghost'
-                  aria-label='Info'
+                  aria-label='Copy configuration details'
                   onClick={() =>
                     copyConfigDetails.mutate(
                       formatConfigDetails(status, configDetails),
@@ -213,6 +190,7 @@ function PortForwardRowComponent({
               data-loading={isPending ? '' : undefined}
               unstyled={true}
               className='switch'
+              inputProps={{ 'aria-label': `Port forward ${config.alias}` }}
             />
 
             <Flex
