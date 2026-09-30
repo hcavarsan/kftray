@@ -241,7 +241,9 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
                 ? deleteMutation.variables?.key
                 : undefined
             }
-            deleteDisabled={cleanupMutation.isPending}
+            deleteDisabled={
+              cleanupMutation.isPending || deleteMutation.isPending
+            }
             onDelete={deleteMutation.mutate}
           />
         </AppDialogBody>
