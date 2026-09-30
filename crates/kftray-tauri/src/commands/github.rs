@@ -1,7 +1,14 @@
+use std::path::{
+    Component,
+    Path,
+    PathBuf,
+};
+
 use keyring_core::{
     Entry,
     Error as KeyringError,
 };
+use kftray_commons::utils::config_dir::get_config_dir;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::github::{
     GitHubConfig,
@@ -39,16 +46,45 @@ impl From<CustomError> for InvokeError {
     }
 }
 
-fn scoped_account(name: &str, config_override: Option<&str>) -> String {
-    match config_override {
-        Some(dir) => format!("{name}@{dir}"),
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normalized.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => normalized.push(component),
+            },
+            _ => normalized.push(component),
+        }
+    }
+
+    normalized
+}
+
+fn scoped_account(name: &str, config_dir: Option<&Path>) -> String {
+    match config_dir {
+        Some(dir) => {
+            let normalized = dir
+                .canonicalize()
+                .unwrap_or_else(|_| lexically_normalized(dir));
+
+            format!("{name}@{}", normalized.display())
+        }
         None => name.to_owned(),
     }
 }
 
 fn scoped_entry(service: &str, name: &str) -> Result<Entry, CustomError> {
-    let config_override = std::env::var("KFTRAY_CONFIG").ok();
-    let account = scoped_account(name, config_override.as_deref());
+    let config_dir = std::env::var("KFTRAY_CONFIG")
+        .is_ok()
+        .then(get_config_dir)
+        .and_then(Result::ok);
+    let account = scoped_account(name, config_dir.as_deref());
 
     Entry::new(service, &account).map_err(CustomError::from)
 }
@@ -143,15 +179,57 @@ mod tests {
 
     #[test]
     fn keychain_account_is_scoped_only_for_custom_config_dirs() {
+        let account = |dir: &str| scoped_account("github_config", Some(Path::new(dir)));
+
         assert_eq!(scoped_account("github_config", None), "github_config");
         assert_eq!(
-            scoped_account("github_config", Some("/tmp/kftray-a")),
-            "github_config@/tmp/kftray-a"
+            account("/nonexistent/kftray-a"),
+            "github_config@/nonexistent/kftray-a"
         );
         assert_ne!(
-            scoped_account("github_config", Some("/tmp/kftray-a")),
-            scoped_account("github_config", Some("/tmp/kftray-b"))
+            account("/nonexistent/kftray-a"),
+            account("/nonexistent/kftray-b")
         );
+    }
+
+    #[test]
+    fn keychain_account_is_equal_for_equivalent_missing_config_dir_spellings() {
+        let expected = scoped_account("github_config", Some(Path::new("/nonexistent/x/kftray")));
+
+        for spelling in [
+            "/nonexistent/x/kftray/",
+            "/nonexistent/x/kftray//",
+            "/nonexistent/x/./kftray",
+            "/nonexistent/../nonexistent/x/kftray",
+            "/nonexistent/x/../x/kftray",
+        ] {
+            assert_eq!(
+                scoped_account("github_config", Some(Path::new(spelling))),
+                expected,
+                "{spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn keychain_account_is_equal_for_equivalent_existing_config_dir_spellings() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("kftray");
+        std::fs::create_dir(&dir).unwrap();
+        let other = temp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+
+        let expected = scoped_account("github_config", Some(&dir));
+
+        assert_eq!(
+            scoped_account("github_config", Some(&dir.join(""))),
+            expected
+        );
+        assert_eq!(
+            scoped_account("github_config", Some(&other.join("..").join("kftray"))),
+            expected
+        );
+        assert_ne!(scoped_account("github_config", Some(&other)), expected);
     }
 
     #[test]
