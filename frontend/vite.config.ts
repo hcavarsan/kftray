@@ -16,10 +16,11 @@ export default defineConfig({
   plugins: [
     react(),
     codecovVitePlugin({
-      enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
+      enableBundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === 'true',
       bundleName: 'kftray',
-      uploadToken: process.env.CODECOV_TOKEN,
       gitService: 'github',
+      oidc: { useGitHubOIDC: process.env.CODECOV_OIDC === 'true' },
+      telemetry: false,
     }),
     !!process.env.ANALYZE &&
       visualizer({

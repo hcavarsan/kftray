@@ -20,6 +20,14 @@
 			"depNameTemplate": "anchore/grype",
 			"datasourceTemplate": "github-releases",
 			"versioningTemplate": "semver"
+		},
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^\\.github/workflows/obs-publishing\\.yml$/"],
+			"matchStrings": [
+				"image:\\s*(?<depName>[a-z0-9./-]+):(?<currentValue>[a-z0-9.-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+			],
+			"datasourceTemplate": "docker"
 		}
 	],
 	"extends": [

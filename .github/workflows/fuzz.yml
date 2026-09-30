@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -29,14 +33,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
-        with:
-          toolchain: nightly
+        run: rustup toolchain install nightly --profile minimal --no-self-update
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-fuzz@0.13.1
 
@@ -53,6 +57,7 @@ jobs:
             ${{ runner.os }}-cargo-fuzz-
 
       - name: Run fuzzer
-        run: |
-          cd fuzz
-          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=60
+        working-directory: fuzz
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- -max_total_time=60
