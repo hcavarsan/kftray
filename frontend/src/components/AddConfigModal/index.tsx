@@ -1,21 +1,16 @@
 import { useMemo, useState } from 'react'
-import { Info } from 'lucide-react'
-import Select from 'react-select'
-import CreatableSelect from 'react-select/creatable'
 
-import { Button, Dialog, Grid, HStack, Stack, Text } from '@chakra-ui/react'
+import { Stack } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@/components/ui/button'
 import {
   AppDialog,
+  AppDialogBody,
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { selectStyles } from '@/components/ui/select-styles'
-import { toaster } from '@/components/ui/toaster'
-import { Tooltip } from '@/components/ui/tooltip'
 import {
   useKubeContexts,
   useKubeNamespaces,
@@ -23,36 +18,24 @@ import {
   useKubePorts,
   useKubeServices,
 } from '@/hooks/useKube'
-import { errorMessage } from '@/lib/errors'
-import { selectFile } from '@/lib/nativeDialog'
+import { DEFAULT_KUBECONFIG } from '@/hooks/useKubeconfigPicker'
 import type { ConfigViewResult, StoredConfig } from '@/types'
 
+import { CommonFields } from './CommonFields'
 import { ExposeFields } from './ExposeFields'
-import { Field, TextField } from './Field'
+import { KubeconfigControl } from './KubeconfigControl'
 import { KubeTargetFields } from './KubeTargetFields'
 import { ProxyFields } from './ProxyFields'
 import { TagsField } from './TagsField'
-import type {
-  AddConfigModalProps,
-  ConfigDraft,
-  PortOption,
-  StringOption,
-} from './types'
+import type { AddConfigModalProps, ConfigDraft, PortOption } from './types'
 import { tagSuggestions, trimConfigValues, validateDraft } from './utils'
-
-const workloadTypeOptions: StringOption[] = [
-  { value: 'service', label: 'Service' },
-  { value: 'pod', label: 'Pod' },
-  { value: 'proxy', label: 'Proxy' },
-  { value: 'expose', label: 'Expose' },
-]
 
 const emptyDraft: ConfigDraft = {
   alias: '',
   auto_loopback_address: false,
   context: '',
   domain_enabled: false,
-  kubeconfig: 'default',
+  kubeconfig: DEFAULT_KUBECONFIG,
   local_address: '127.0.0.1',
   local_port: '',
   namespace: '',
@@ -87,45 +70,53 @@ function toConfig(
     http_logs_max_file_size: initialConfig?.http_logs_max_file_size,
     http_logs_retention_days: initialConfig?.http_logs_retention_days,
     id: initialConfig?.id ?? 0,
-    kubeconfig: draft.kubeconfig ?? 'default',
+    kubeconfig: draft.kubeconfig ?? DEFAULT_KUBECONFIG,
     local_address: draft.local_address ?? '127.0.0.1',
     local_port: Number(draft.local_port),
     namespace: draft.namespace ?? '',
     protocol: draft.protocol ?? 'tcp',
-    remote_address: draft.remote_address ?? '',
-    service: draft.service ?? '',
     tags: draft.tags,
-    target: draft.target ?? '',
   }
   const remote_port = draft.remote_port ? Number(draft.remote_port) : undefined
 
   switch (draft.workload_type ?? 'service') {
     case 'pod':
-      return { ...base, remote_port, workload_type: 'pod' }
+      return {
+        ...base,
+        remote_port,
+        service: '',
+        target: draft.target ?? '',
+        workload_type: 'pod',
+      }
     case 'proxy':
-      return { ...base, remote_port, workload_type: 'proxy' }
+      return {
+        ...base,
+        remote_address: draft.remote_address ?? '',
+        remote_port,
+        service: '',
+        workload_type: 'proxy',
+      }
     case 'expose':
       return {
         ...base,
-        cert_issuer: draft.cert_issuer,
-        cert_issuer_kind: draft.cert_issuer_kind,
-        cert_manager_enabled: draft.cert_manager_enabled,
+        ...(draft.exposure_type === 'public' && {
+          cert_issuer: draft.cert_issuer,
+          cert_issuer_kind: draft.cert_issuer_kind,
+          cert_manager_enabled: draft.cert_manager_enabled,
+          ingress_annotations: draft.ingress_annotations,
+          ingress_class: draft.ingress_class,
+        }),
         exposure_type: draft.exposure_type,
-        ingress_annotations: draft.ingress_annotations,
-        ingress_class: draft.ingress_class,
         workload_type: 'expose',
       }
     case 'service':
-      return { ...base, remote_port, workload_type: 'service' }
+      return {
+        ...base,
+        remote_port,
+        service: draft.service ?? '',
+        workload_type: 'service',
+      }
   }
-}
-
-function ErrorText({ error, label }: { error: unknown; label: string }) {
-  return error ? (
-    <Text color='red.300' fontSize='xs'>
-      {label}
-    </Text>
-  ) : null
 }
 
 function AddConfigModal({
@@ -146,7 +137,7 @@ function AddConfigModal({
       draft[field as keyof ConfigDraft]?.toString().trim(),
     ),
   )
-  const kubeconfig = draft.kubeconfig ?? 'default'
+  const kubeconfig = draft.kubeconfig ?? DEFAULT_KUBECONFIG
   const update = (next: Partial<ConfigDraft>) =>
     setDraft(current => ({ ...current, ...next }))
   const scope = {
@@ -156,7 +147,7 @@ function AddConfigModal({
   }
   const contextQuery = useKubeContexts(
     kubeconfig,
-    contextFocused || kubeconfig !== 'default',
+    contextFocused || kubeconfig !== DEFAULT_KUBECONFIG,
   )
   const namespaceQuery = useKubeNamespaces(scope)
   const servicesQuery = useKubeServices(
@@ -220,189 +211,22 @@ function AddConfigModal({
       maxWidth='600px'
       height='96vh'
       headerExtra={
-        <HStack gap={2}>
-          <Text color='gray.400' fontSize='2xs'>
-            Kubeconfig:
-          </Text>
-          <Tooltip content={kubeconfig}>
-            <Button
-              bg='app.hover'
-              height='20px'
-              onClick={async () => {
-                try {
-                  const selected = await selectFile()
-                  if (selected) {
-                    update({ kubeconfig: selected })
-                  }
-                } catch (error) {
-                  toaster.error({
-                    description: errorMessage(error),
-                    title: 'Error selecting kubeconfig',
-                  })
-                }
-              }}
-              px={2}
-              size='xs'
-              variant='ghost'
-              _hover={{ bg: 'app.active' }}
-            >
-              <Text fontSize='2xs' maxW='120px' truncate>
-                {kubeconfig}
-              </Text>
-            </Button>
-          </Tooltip>
-        </HStack>
+        <KubeconfigControl
+          kubeconfig={kubeconfig}
+          onChange={selected => update({ kubeconfig: selected })}
+        />
       }
     >
-      <Dialog.Body overflowY='auto' p={3}>
+      <AppDialogBody>
         <Stack gap={2}>
-          <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-            <Stack gap={1.5}>
-              <TextField
-                error={
-                  workloadType === 'expose' ? shownErrors.alias : undefined
-                }
-                hint={
-                  workloadType === 'expose' ? (
-                    <Tooltip
-                      content={
-                        draft.exposure_type === 'public'
-                          ? 'Full domain for public access (e.g., myapp.example.com). The Kubernetes service will be named using the first part before the dot (e.g., "myapp").'
-                          : `Service name in cluster (accessible as ${draft.alias || 'name'}.${draft.namespace || 'namespace'}.svc.cluster.local)`
-                      }
-                    >
-                      <span
-                        style={{ display: 'inline-flex', alignItems: 'center' }}
-                      >
-                        <Info
-                          size={10}
-                          color='var(--chakra-colors-app-muted)'
-                        />
-                      </span>
-                    </Tooltip>
-                  ) : undefined
-                }
-                label={workloadType === 'expose' ? 'Domain *' : 'Alias'}
-                name='alias'
-                onChange={alias => update({ alias })}
-                placeholder={
-                  workloadType === 'expose'
-                    ? draft.exposure_type === 'public'
-                      ? 'myapp.example.com'
-                      : 'my-service'
-                    : ''
-                }
-                value={draft.alias ?? ''}
-              />
-              {workloadType !== 'expose' && (
-                <Checkbox
-                  checked={draft.domain_enabled ?? false}
-                  onCheckedChange={event =>
-                    update({ domain_enabled: event.checked === true })
-                  }
-                  size='xs'
-                >
-                  <Text color='gray.400' fontSize='xs'>
-                    Enable alias as domain
-                  </Text>
-                </Checkbox>
-              )}
-            </Stack>
-            <Field error={shownErrors.context} label='Context *'>
-              <Select<StringOption>
-                isLoading={contextQuery.isLoading}
-                onBlur={() => setContextFocused(false)}
-                onChange={option =>
-                  update({
-                    context: option?.value ?? '',
-                    namespace: '',
-                    service: '',
-                    target: '',
-                  })
-                }
-                onFocus={() => setContextFocused(true)}
-                options={(contextQuery.data ?? []).map(({ name }) => ({
-                  label: name,
-                  value: name,
-                }))}
-                styles={selectStyles<StringOption>()}
-                value={
-                  draft.context
-                    ? { label: draft.context, value: draft.context }
-                    : null
-                }
-              />
-              <ErrorText
-                error={contextQuery.error}
-                label='Error fetching contexts'
-              />
-            </Field>
-          </Grid>
-          <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-            <Field error={shownErrors.workload_type} label='Workload Type'>
-              <Select<StringOption>
-                onChange={option =>
-                  update({
-                    exposure_type:
-                      option?.value === 'expose'
-                        ? (draft.exposure_type ?? 'cluster')
-                        : draft.exposure_type,
-                    protocol:
-                      option?.value === 'expose' ? 'tcp' : draft.protocol,
-                    workload_type:
-                      option?.value === 'pod'
-                        ? 'pod'
-                        : option?.value === 'proxy'
-                          ? 'proxy'
-                          : option?.value === 'expose'
-                            ? 'expose'
-                            : option?.value === 'service'
-                              ? 'service'
-                              : undefined,
-                  })
-                }
-                options={workloadTypeOptions}
-                styles={selectStyles<StringOption>()}
-                value={
-                  workloadTypeOptions.find(
-                    option => option.value === workloadType,
-                  ) ?? null
-                }
-              />
-            </Field>
-            <Field error={shownErrors.namespace} label='Namespace *'>
-              <CreatableSelect<StringOption>
-                formatCreateLabel={value => `Use "${value}"`}
-                isLoading={namespaceQuery.isLoading}
-                noOptionsMessage={() =>
-                  namespaceQuery.error
-                    ? 'Type namespace name manually'
-                    : 'No namespaces found'
-                }
-                onChange={option =>
-                  update({
-                    namespace: option?.value ?? '',
-                    service: '',
-                    target: '',
-                  })
-                }
-                options={(namespaceQuery.data ?? []).map(({ name }) => ({
-                  label: name,
-                  value: name,
-                }))}
-                styles={selectStyles<StringOption>()}
-                value={
-                  draft.namespace
-                    ? { label: draft.namespace, value: draft.namespace }
-                    : null
-                }
-              />
-              <ErrorText
-                error={namespaceQuery.error}
-                label='Error fetching namespaces'
-              />
-            </Field>
-          </Grid>
+          <CommonFields
+            contextQuery={contextQuery}
+            draft={draft}
+            errors={shownErrors}
+            namespaceQuery={namespaceQuery}
+            onContextFocusChange={setContextFocused}
+            onUpdate={update}
+          />
           <TagsField
             error={duplicateTagError ?? shownErrors.tags}
             onChange={tags => update({ tags })}
@@ -449,22 +273,22 @@ function AddConfigModal({
             />
           )}
         </Stack>
-      </Dialog.Body>
+      </AppDialogBody>
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />
         <Button
           bg='blue.500'
           disabled={
-            isSaving ||
-            Boolean(duplicateTagError) ||
-            Object.keys(errors).length > 0
+            Boolean(duplicateTagError) || Object.keys(errors).length > 0
           }
           height='28px'
+          loading={isSaving}
+          loadingText='Saving...'
           onClick={handleSave}
           size='xs'
           _hover={{ bg: 'blue.600' }}
         >
-          {isSaving ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Config'}
+          {isEdit ? 'Save Changes' : 'Add Config'}
         </Button>
       </AppDialogFooter>
     </AppDialog>
