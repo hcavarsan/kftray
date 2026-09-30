@@ -1,14 +1,6 @@
 import { useState } from 'react'
 
-import {
-  Box,
-  Dialog,
-  Flex,
-  Stack,
-  Text,
-  Wrap,
-  WrapItem,
-} from '@chakra-ui/react'
+import { Box, Flex, Stack, Text, Wrap, WrapItem } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -17,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   AppDialog,
+  AppDialogBody,
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
@@ -187,7 +180,7 @@ export default function ShortcutFormModal({
       maxWidth='600px'
       height='96vh'
     >
-      <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
+      <AppDialogBody overflowX='hidden'>
         <Stack gap={2.5}>
           <Box
             bg='app.panel'
@@ -328,7 +321,7 @@ export default function ShortcutFormModal({
             </Box>
           )}
         </Stack>
-      </Dialog.Body>
+      </AppDialogBody>
 
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />

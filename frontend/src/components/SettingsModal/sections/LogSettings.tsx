@@ -14,6 +14,7 @@ import {
   compactActionButtonProps,
   compactInputProps,
   isDigitsUpTo,
+  LOAD_FAILED_NOTE,
   SettingCard,
   SettingRow,
 } from '../SettingCard'
@@ -23,6 +24,7 @@ interface LogSettingsProps {
   onRetentionCountChange: (value: string) => void
   retentionDays: string
   onRetentionDaysChange: (value: string) => void
+  disabled: boolean
 }
 
 export function LogSettings({
@@ -30,6 +32,7 @@ export function LogSettings({
   onRetentionCountChange,
   retentionDays,
   onRetentionDaysChange,
+  disabled,
 }: LogSettingsProps) {
   const queryClient = useQueryClient()
   const { data: logFiles = [] } = useQuery(logFilesQuery)
@@ -91,6 +94,8 @@ export function LogSettings({
       <SettingCard
         title='Log Retention'
         description='Auto-cleanup when both limits exceeded.'
+        opacity={disabled ? 0.5 : undefined}
+        note={disabled ? LOAD_FAILED_NOTE : undefined}
       >
         <Stack gap={1}>
           <SettingRow label='Max files:'>
@@ -103,6 +108,7 @@ export function LogSettings({
                 }
               }}
               width='45px'
+              disabled={disabled}
             />
           </SettingRow>
           <SettingRow label='Max days:'>
@@ -115,6 +121,7 @@ export function LogSettings({
                 }
               }}
               width='45px'
+              disabled={disabled}
             />
           </SettingRow>
         </Stack>

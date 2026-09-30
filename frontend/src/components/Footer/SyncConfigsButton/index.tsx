@@ -1,7 +1,8 @@
 import { RepeatIcon } from 'lucide-react'
 
-import { Box, Button, Spinner, Text } from '@chakra-ui/react'
+import { Box, Spinner, Text } from '@chakra-ui/react'
 
+import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
@@ -41,20 +42,12 @@ function SyncConfigsButton() {
 
   return (
     <Tooltip content={tooltipContent} positioning={{ placement: 'top-start' }}>
-      <Button
+      <FooterActionButton
         aria-label='Sync configs from git'
-        size='sm'
-        variant='ghost'
         onClick={handleClick}
         disabled={!credentials || syncStatus.isSyncing}
-        height='32px'
         minWidth='70px'
-        bg='whiteAlpha.50'
         px={2}
-        borderRadius='md'
-        border='1px solid'
-        borderColor='app.border'
-        _hover={{ bg: 'whiteAlpha.100' }}
         _active={{ bg: 'whiteAlpha.200' }}
       >
         <Box display='flex' alignItems='center' gap={1}>
@@ -65,7 +58,7 @@ function SyncConfigsButton() {
           )}
           <Box fontSize='11px'>Sync</Box>
         </Box>
-      </Button>
+      </FooterActionButton>
     </Tooltip>
   )
 }

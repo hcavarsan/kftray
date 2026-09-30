@@ -4,7 +4,7 @@ import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { useTauriEvent } from '@/hooks/useTauriEvent'
-import type { Config } from '@/types'
+import type { Config, ResolvedGroup } from '@/types'
 
 interface ActivePodChangedPayload {
   configId: string
@@ -57,4 +57,34 @@ export function useActivePods(configs: Config[]) {
     })),
     combine,
   })
+}
+
+type Pods = Map<number, string | null>
+
+export const NO_PODS: Pods = new Map()
+
+const samePods = (a: Pods, b: Pods) =>
+  a.size === b.size && [...a].every(([id, pod]) => b.get(id) === pod)
+
+export function useGroupActivePods(groups: ResolvedGroup[], activePods: Pods) {
+  const previous = useRef(new Map<string, Pods>())
+
+  return useMemo(() => {
+    const next = new Map<string, Pods>()
+
+    for (const group of groups) {
+      const pods: Pods = new Map(
+        group.configs.map(config => [
+          config.id,
+          activePods.get(config.id) ?? null,
+        ]),
+      )
+      const earlier = previous.current.get(group.id)
+
+      next.set(group.id, earlier && samePods(earlier, pods) ? earlier : pods)
+    }
+    previous.current = next
+
+    return next
+  }, [groups, activePods])
 }

@@ -28,8 +28,8 @@ export interface SettingsDraft {
 
 export function buildSettingsDraft(data: {
   settings: Record<string, string>
-  ssl: SslSettingsData
-  log: LogSettings
+  ssl?: SslSettingsData
+  log?: LogSettings
   appMode: AppMode
   mcp: McpStatus
 }): SettingsDraft {
@@ -37,10 +37,10 @@ export function buildSettingsDraft(data: {
     disconnectTimeout: data.settings.disconnect_timeout_minutes || '0',
     networkMonitor: data.settings.network_monitor === 'true',
     autoUpdateEnabled: data.settings.auto_update_enabled === 'true',
-    sslEnabled: data.ssl.ssl_enabled ?? false,
-    sslCertValidityDays: String(data.ssl.ssl_cert_validity_days ?? 365),
-    logRetentionCount: String(data.log.retention_count),
-    logRetentionDays: String(data.log.retention_days),
+    sslEnabled: data.ssl?.ssl_enabled ?? false,
+    sslCertValidityDays: String(data.ssl?.ssl_cert_validity_days ?? 365),
+    logRetentionCount: String(data.log?.retention_count ?? 10),
+    logRetentionDays: String(data.log?.retention_days ?? 7),
     appMode: data.appMode,
     mcpEnabled: data.mcp.enabled === 'true',
     mcpPort: data.mcp.port || '3000',

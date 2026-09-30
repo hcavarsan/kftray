@@ -67,6 +67,41 @@ export interface ModuleFilterDropdownProps {
   onModuleChange: (modules: string[]) => void
 }
 
+export interface LogFilterAccent {
+  activeBg: string
+  activeColor: string
+  activeBorder: string
+  hoverBg: string
+  hoverBorder: string
+  badgeBg: string
+  badgeColor: string
+  checkedBg: string
+}
+
+export interface LogFilterDropdownProps<T extends string> {
+  ariaLabel: string
+  title: string
+  icon: React.ReactNode
+  accent: LogFilterAccent
+  items: readonly T[]
+  selected: T[]
+  onChange: (selected: T[]) => void
+  renderItem: (item: T) => React.ReactNode
+  headerActions?: React.ReactNode
+  searchable?: boolean
+  emptyLabel?: string
+  minW?: string
+  maxH?: string
+}
+
+export interface LogFileSelectorProps {
+  logFiles: LogFileInfo[]
+  selectedFile: string | null
+  onFileSelect: (filename: string | null) => void
+  onDeleteFile?: (filename: string) => void
+  isLoading?: boolean
+}
+
 export interface FilterChipsProps {
   selectedLevels: LogLevel[]
   selectedModules: string[]

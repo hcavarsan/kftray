@@ -35,6 +35,7 @@ const viewSignature = (configs: Config[]) =>
 
 export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
   const viewRef = useRef<ConfigView | null>(null)
+  const viewVersionRef = useRef(0)
   const signature = useMemo(() => viewSignature(configs), [configs])
   const queryKey = useMemo(
     () => ['config-view', signature] as const,
@@ -46,9 +47,15 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
     queryKey,
     queryFn: async () => {
       try {
-        const result = await invoke<ConfigViewResult>('query_config_view_cmd', {
-          view: viewRef.current,
-        })
+        let version: number
+        let result: ConfigViewResult
+
+        do {
+          version = viewVersionRef.current
+          result = await invoke<ConfigViewResult>('query_config_view_cmd', {
+            view: viewRef.current,
+          })
+        } while (version !== viewVersionRef.current)
 
         viewRef.current = result.view
 
@@ -66,6 +73,7 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
   const setView = useCallback(
     (view: ConfigView) => {
       viewRef.current = view
+      viewVersionRef.current += 1
       queryClient.setQueryData(
         queryKey,
         (prev: ConfigViewResult | undefined) =>

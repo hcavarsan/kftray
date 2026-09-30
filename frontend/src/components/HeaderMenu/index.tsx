@@ -10,10 +10,11 @@ import {
 
 import { Box, chakra, Group } from '@chakra-ui/react'
 
-import ViewControls, {
+import {
   ToolbarIconButton,
   WithTooltip,
-} from '@/components/HeaderMenu/ViewControls'
+} from '@/components/HeaderMenu/ToolbarParts'
+import ViewControls from '@/components/HeaderMenu/ViewControls'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'

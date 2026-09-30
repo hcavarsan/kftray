@@ -1,18 +1,11 @@
 import { useState } from 'react'
 import ReactSelect from 'react-select'
 
-import {
-  Button,
-  Dialog,
-  Flex,
-  Spinner,
-  Stack,
-  Text,
-  VStack,
-} from '@chakra-ui/react'
+import { Dialog, Flex, Spinner, Stack, Text, VStack } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   AppDialog,
@@ -23,14 +16,15 @@ import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
 import { useKubeContexts } from '@/hooks/useKube'
-import { selectFile } from '@/lib/nativeDialog'
+import {
+  DEFAULT_KUBECONFIG,
+  useKubeconfigPicker,
+} from '@/hooks/useKubeconfigPicker'
 import type { StoredConfig, StringOption } from '@/types'
 
 interface AutoImportModalProps {
   onClose: () => void
 }
-
-const DEFAULT_KUBECONFIG = 'default'
 
 const contextSelectStyles = selectStyles<StringOption>(35)
 
@@ -50,29 +44,28 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
     label: context.name,
     value: context.name,
   }))
-  const isDefaultKubeconfig = kubeConfig === DEFAULT_KUBECONFIG
 
   const changeKubeconfig = (path: string) => {
     setKubeConfig(path)
     setSelectedContext(null)
   }
 
-  const handleSetKubeConfig = async () => {
-    try {
-      const path = await selectFile()
-
-      if (path) {
-        changeKubeconfig(path)
-      }
-    } catch {
+  const {
+    browse: handleSetKubeConfig,
+    isDefault: isDefaultKubeconfig,
+    resetToDefault,
+  } = useKubeconfigPicker({
+    value: kubeConfig,
+    onChange: changeKubeconfig,
+    onError: () => {
       changeKubeconfig(DEFAULT_KUBECONFIG)
       toaster.error({
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
         duration: 1000,
       })
-    }
-  }
+    },
+  })
 
   const importMutation = useMutation({
     mutationFn: async (contextName: string) => {
@@ -146,7 +139,7 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
               <Flex gap={2}>
                 <Button
                   {...kubeconfigButtonProps(isDefaultKubeconfig)}
-                  onClick={() => changeKubeconfig(DEFAULT_KUBECONFIG)}
+                  onClick={resetToDefault}
                 >
                   <Text fontSize='xs'>Default</Text>
                 </Button>

@@ -29,3 +29,14 @@ export interface FlatResource extends ServerResource, ContextTarget {
 }
 
 export type CleanupMode = 'orphaned' | 'all'
+
+export interface CleanupResult {
+  deleted: number
+  errors: number
+}
+
+export interface CleanupSummary {
+  removed: number
+  errors: number
+  failed: string[]
+}

@@ -2,40 +2,41 @@ import { useMemo, useState } from 'react'
 import { RefreshCw, Trash2 } from 'lucide-react'
 import Select from 'react-select'
 
-import { Box, Dialog, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
-import {
-  useMutation,
-  useQueries,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { Box, Flex, Text } from '@chakra-ui/react'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
-import { AppDialog, AppDialogFooter } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogBody,
+  AppDialogFooter,
+} from '@/components/ui/dialog'
 import { selectStyles } from '@/components/ui/select-styles'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { fetchConfigsWithState } from '@/hooks/useConfigs'
-import { errorMessage } from '@/lib/errors'
+import { configsQuery } from '@/hooks/useConfigs'
 
 import { CleanupDialog } from './CleanupDialog'
-import { ResourceRow } from './ResourceRow'
+import { ResourceList } from './ResourceList'
 import type {
   CleanupMode,
   ContextOption,
-  ContextTarget,
   FlatResource,
   NamespaceGroup,
 } from './types'
+import { useResourceMutations } from './useResourceMutations'
+import {
+  CONTEXT_TIMEOUT_MS,
+  RESOURCES_KEY,
+  targetLabel,
+  withTimeout,
+} from './utils'
 
 interface ServerResourcesModalProps {
   onClose: () => void
 }
 
 const ALL_CONTEXTS = '__all__'
-const CONTEXT_TIMEOUT_MS = 8000
-const RESOURCES_KEY = 'server-resources'
 
 const baseContextStyles = selectStyles<ContextOption>(28)
 
@@ -61,24 +62,11 @@ const contextSelectStyles: typeof baseContextStyles = {
   dropdownIndicator: base => ({ ...base, padding: '0 6px' }),
 }
 
-const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
-  let timer = 0
-
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      timer = window.setTimeout(() => reject(new Error('Timeout')), ms)
-    }),
-  ]).finally(() => clearTimeout(timer))
-}
-
 export default function ServerResourcesModal({
   onClose,
 }: ServerResourcesModalProps) {
-  const queryClient = useQueryClient()
   const { data: configs } = useQuery({
-    queryKey: ['configs', 'server-resources'],
-    queryFn: fetchConfigsWithState,
+    ...configsQuery,
     meta: {
       errorToast: {
         title: 'Error',
@@ -99,11 +87,12 @@ export default function ServerResourcesModal({
       }
       const path = kubeconfig && kubeconfig !== 'default' ? kubeconfig : null
       const value = `${path ?? ''}\n${context}`
+      const target = { context, kubeconfig: path }
 
       byTarget[value] ??= {
         value,
-        label: path ? `${context} (${path.split('/').pop()})` : context,
-        targets: [{ context, kubeconfig: path }],
+        label: targetLabel(target),
+        targets: [target],
       }
     }
     const options = Object.values(byTarget).sort((a, b) =>
@@ -172,159 +161,10 @@ export default function ServerResourcesModal({
   })
   const orphaned = resources.filter(resource => resource.is_orphaned)
 
-  const invalidateResources = () =>
-    queryClient.invalidateQueries({ queryKey: [RESOURCES_KEY] })
-
-  const deleteMutation = useMutation({
-    mutationFn: (resource: FlatResource) =>
-      invoke('delete_kftray_resource', {
-        contextName: resource.context,
-        namespace: resource.namespace,
-        resourceType: resource.resource_type,
-        resourceName: resource.name,
-        configId: resource.config_id,
-        kubeconfig: resource.kubeconfig,
-      }),
-    onSuccess: (_, resource) => {
-      toaster.success({
-        title: 'Deleted',
-        description: `Removed ${resource.name}`,
-        duration: 2000,
-      })
-    },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: `Failed to delete: ${errorMessage(error)}`,
-        duration: 3000,
-      })
-    },
-    onSettled: invalidateResources,
-  })
-
-  const cleanupMutation = useMutation({
-    mutationFn: async ({
-      mode,
-      targets,
-    }: {
-      mode: CleanupMode
-      targets: ContextTarget[]
-    }) => {
-      const command =
-        mode === 'orphaned'
-          ? 'cleanup_orphaned_kftray_resources'
-          : 'cleanup_all_kftray_resources'
-      const run = ({ context, kubeconfig }: ContextTarget) =>
-        invoke<string>(command, { contextName: context, kubeconfig })
-
-      if (targets.length === 1) {
-        return run(targets[0])
-      }
-      const results = await Promise.allSettled(
-        targets.map(target => withTimeout(run(target), CONTEXT_TIMEOUT_MS * 2)),
-      )
-      const removed = results.reduce((sum, result) => {
-        const count =
-          result.status === 'fulfilled' ? result.value.match(/\d+/) : null
-
-        return sum + (count ? Number(count[0]) : 0)
-      }, 0)
-
-      return `Removed ${removed} resources`
-    },
-    onSuccess: description => {
-      toaster.success({ title: 'Done', description, duration: 2000 })
-      setCleanupMode(null)
-    },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: `Cleanup failed: ${errorMessage(error)}`,
-        duration: 3000,
-      })
-    },
-    onSettled: invalidateResources,
-  })
+  const { deleteMutation, cleanupMutation, invalidateResources } =
+    useResourceMutations(() => setCleanupMode(null))
 
   const busy = isFetching || cleanupMutation.isPending
-  const renderBody = () => {
-    if (!selected) {
-      return (
-        <Flex align='center' justify='center' height='100%' minHeight='200px'>
-          <Text fontSize='xs' color='whiteAlpha.400'>
-            Select a context
-          </Text>
-        </Flex>
-      )
-    }
-    if (resources.length === 0 && isFetching) {
-      return (
-        <Flex
-          justify='center'
-          align='center'
-          height='100%'
-          minHeight='200px'
-          direction='column'
-          gap={2}
-        >
-          <Spinner size='sm' color='blue.400' />
-          {isAll && (
-            <Text fontSize='xs' color='whiteAlpha.500'>
-              Loading contexts...
-            </Text>
-          )}
-        </Flex>
-      )
-    }
-    if (singleError) {
-      return (
-        <Flex align='center' justify='center' height='100%' minHeight='200px'>
-          <Text fontSize='xs' color='red.300' textAlign='center'>
-            Failed to load resources: {errorMessage(singleError)}
-          </Text>
-        </Flex>
-      )
-    }
-    if (resources.length === 0) {
-      return (
-        <Flex
-          direction='column'
-          align='center'
-          justify='center'
-          height='100%'
-          minHeight='200px'
-        >
-          <Text fontSize='xs' color='whiteAlpha.500' mb={1}>
-            No resources
-          </Text>
-          <Text fontSize='xs' color='whiteAlpha.400'>
-            Server pods appear when port forwards start
-          </Text>
-        </Flex>
-      )
-    }
-
-    return (
-      <Stack gap={2}>
-        {resources.map(resource => (
-          <ResourceRow
-            key={resource.key}
-            resource={resource}
-            isDeleting={
-              deleteMutation.isPending &&
-              deleteMutation.variables?.key === resource.key
-            }
-            onDelete={deleteMutation.mutate}
-          />
-        ))}
-        {isFetching && (
-          <Flex justify='center' py={2}>
-            <Spinner size='xs' color='blue.400' />
-          </Flex>
-        )}
-      </Stack>
-    )
-  }
 
   return (
     <>
@@ -381,9 +221,21 @@ export default function ServerResourcesModal({
           </Flex>
         </Box>
 
-        <Dialog.Body p={3} flex='1' overflowY='auto'>
-          {renderBody()}
-        </Dialog.Body>
+        <AppDialogBody>
+          <ResourceList
+            hasSelection={selected !== null}
+            isAll={isAll}
+            isFetching={isFetching}
+            error={singleError}
+            resources={resources}
+            deletingKey={
+              deleteMutation.isPending
+                ? deleteMutation.variables?.key
+                : undefined
+            }
+            onDelete={deleteMutation.mutate}
+          />
+        </AppDialogBody>
 
         <AppDialogFooter justify='space-between'>
           <Flex gap={1}>

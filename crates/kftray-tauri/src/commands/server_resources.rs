@@ -7,6 +7,7 @@ use k8s_openapi::api::{
     networking::v1::Ingress,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::client::create_client_with_specific_context;
 use kube::api::{
@@ -50,6 +51,21 @@ pub struct NamespaceGroup {
     pub resources: Vec<ServerResource>,
 }
 
+#[derive(Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CleanupResult {
+    pub deleted: usize,
+    pub errors: usize,
+}
+
+fn normalized_kubeconfig(kubeconfig: Option<&str>) -> Option<&str> {
+    kubeconfig.filter(|path| !path.is_empty() && *path != "default")
+}
+
+fn config_targets(config: &Config, context_name: &str, kubeconfig: Option<&str>) -> bool {
+    config.context.as_deref() == Some(context_name)
+        && normalized_kubeconfig(config.kubeconfig.as_deref()) == normalized_kubeconfig(kubeconfig)
+}
+
 #[tauri::command]
 pub async fn list_all_kftray_resources(
     context_name: &str, kubeconfig: Option<String>,
@@ -59,7 +75,7 @@ pub async fn list_all_kftray_resources(
         context_name
     );
 
-    let connection = create_client_with_specific_context(kubeconfig, context_name)
+    let connection = create_client_with_specific_context(kubeconfig.clone(), context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
@@ -72,12 +88,7 @@ pub async fn list_all_kftray_resources(
 
     let context_configs: Vec<_> = configs
         .iter()
-        .filter(|c| {
-            c.context
-                .as_ref()
-                .map(|ctx| ctx == context_name)
-                .unwrap_or(false)
-        })
+        .filter(|c| config_targets(c, context_name, kubeconfig.as_deref()))
         .collect();
 
     let config_ids: Vec<String> = context_configs
@@ -540,19 +551,20 @@ fn calculate_age(creation_timestamp: &Time) -> String {
     }
 }
 
-/// Every namespace a config in `context_name` currently uses, deduplicated.
+/// Every namespace a config in `context_name` and `kubeconfig` currently
+/// uses, deduplicated.
 ///
 /// A config's cluster resources normally live in its own namespace; if the
 /// config was later edited to point at a different one, its old resources
 /// are left behind there. Checking every namespace the context's configs
 /// use, not just the namespace a particular resource happens to be in, is
 /// what finds those leftovers.
-async fn namespaces_for_context(context_name: &str) -> Vec<String> {
+async fn namespaces_for_context(context_name: &str, kubeconfig: Option<&str>) -> Vec<String> {
     kftray_commons::config::get_configs()
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|c| c.context.as_deref() == Some(context_name))
+        .filter(|c| config_targets(c, context_name, kubeconfig))
         .map(|c| c.namespace)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -569,6 +581,7 @@ pub async fn delete_kftray_resource(
         resource_type, resource_name, namespace, config_id
     );
 
+    let scope_kubeconfig = kubeconfig.clone();
     let connection = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
@@ -594,6 +607,7 @@ pub async fn delete_kftray_resource(
         installation_id: &'a str,
         namespace: &'a str,
         context_name: &'a str,
+        kubeconfig: Option<&'a str>,
         destination: &'a str,
         client: &'a Client,
     }
@@ -616,8 +630,8 @@ pub async fn delete_kftray_resource(
     /// not count, or a just-deleted object stuck finalizing would block
     /// settling indefinitely.
     async fn any_sibling_resources_remain(
-        client: &Client, context_name: &str, just_deleted_namespace: &str, id: i64,
-        installation_id: &str,
+        client: &Client, context_name: &str, kubeconfig: Option<&str>,
+        just_deleted_namespace: &str, id: i64, installation_id: &str,
     ) -> Result<bool, String> {
         let target = id.to_string();
         let matches = |resources: &[ServerResource]| {
@@ -626,7 +640,7 @@ pub async fn delete_kftray_resource(
             })
         };
 
-        let mut namespaces = namespaces_for_context(context_name).await;
+        let mut namespaces = namespaces_for_context(context_name, kubeconfig).await;
         if !namespaces.iter().any(|ns| ns == just_deleted_namespace) {
             namespaces.push(just_deleted_namespace.to_string());
         }
@@ -686,6 +700,7 @@ pub async fn delete_kftray_resource(
             installation_id,
             namespace,
             context_name,
+            kubeconfig,
             destination,
             client,
         } = *scope;
@@ -801,8 +816,15 @@ pub async fn delete_kftray_resource(
             && let Some(config_id_str) = object_config_id.as_ref()
             && let Ok(id) = config_id_str.parse::<i64>()
         {
-            match any_sibling_resources_remain(client, context_name, namespace, id, installation_id)
-                .await
+            match any_sibling_resources_remain(
+                client,
+                context_name,
+                kubeconfig,
+                namespace,
+                id,
+                installation_id,
+            )
+            .await
             {
                 Ok(true) => {}
                 Ok(false) => {
@@ -836,6 +858,7 @@ pub async fn delete_kftray_resource(
         installation_id,
         namespace,
         context_name,
+        kubeconfig: scope_kubeconfig.as_deref(),
         destination: &destination,
         client: &client,
     };
@@ -890,72 +913,16 @@ pub async fn delete_kftray_resource(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn cleanup_all_kftray_resources(
-    context_name: &str, kubeconfig: Option<String>,
-) -> Result<String, String> {
-    info!(
-        "Cleaning up all kftray resources for context: {}",
-        context_name
-    );
-
+async fn cleanup_resources(
+    context_name: &str, kubeconfig: Option<String>, orphaned_only: bool,
+) -> Result<CleanupResult, String> {
     let namespace_groups = list_all_kftray_resources(context_name, kubeconfig.clone()).await?;
 
-    let mut deleted_count = 0;
-    let mut error_count = 0;
+    let mut result = CleanupResult::default();
 
     for group in namespace_groups {
         for resource in group.resources {
-            match delete_kftray_resource(
-                context_name,
-                &resource.namespace,
-                &resource.resource_type,
-                &resource.name,
-                resource.config_id.clone(),
-                kubeconfig.clone(),
-            )
-            .await
-            {
-                Ok(_) => deleted_count += 1,
-                Err(e) => {
-                    error!("Failed to delete resource {}: {}", resource.name, e);
-                    error_count += 1;
-                }
-            }
-        }
-    }
-
-    let message = if error_count > 0 {
-        format!(
-            "Deleted {} resources with {} errors",
-            deleted_count, error_count
-        )
-    } else {
-        format!("Successfully deleted {} resources", deleted_count)
-    };
-
-    info!("{}", message);
-
-    Ok(message)
-}
-
-#[tauri::command]
-pub async fn cleanup_orphaned_kftray_resources(
-    context_name: &str, kubeconfig: Option<String>,
-) -> Result<String, String> {
-    info!(
-        "Cleaning up orphaned kftray resources for context: {}",
-        context_name
-    );
-
-    let namespace_groups = list_all_kftray_resources(context_name, kubeconfig.clone()).await?;
-
-    let mut deleted_count = 0;
-    let mut error_count = 0;
-
-    for group in namespace_groups {
-        for resource in group.resources {
-            if !resource.is_orphaned {
+            if orphaned_only && !resource.is_orphaned {
                 continue;
             }
 
@@ -969,35 +936,74 @@ pub async fn cleanup_orphaned_kftray_resources(
             )
             .await
             {
-                Ok(_) => deleted_count += 1,
+                Ok(_) => result.deleted += 1,
                 Err(e) => {
-                    error!(
-                        "Failed to delete orphaned resource {}: {}",
-                        resource.name, e
-                    );
-                    error_count += 1;
+                    error!("Failed to delete resource {}: {}", resource.name, e);
+                    result.errors += 1;
                 }
             }
         }
     }
 
-    let message = if error_count > 0 {
-        format!(
-            "Deleted {} orphaned resources with {} errors",
-            deleted_count, error_count
-        )
-    } else {
-        format!("Successfully deleted {} orphaned resources", deleted_count)
-    };
+    info!(
+        "Cleanup for context {}: deleted {} resources with {} errors",
+        context_name, result.deleted, result.errors
+    );
 
-    info!("{}", message);
+    Ok(result)
+}
 
-    Ok(message)
+#[tauri::command]
+pub async fn cleanup_all_kftray_resources(
+    context_name: &str, kubeconfig: Option<String>,
+) -> Result<CleanupResult, String> {
+    info!(
+        "Cleaning up all kftray resources for context: {}",
+        context_name
+    );
+
+    cleanup_resources(context_name, kubeconfig, false).await
+}
+
+#[tauri::command]
+pub async fn cleanup_orphaned_kftray_resources(
+    context_name: &str, kubeconfig: Option<String>,
+) -> Result<CleanupResult, String> {
+    info!(
+        "Cleaning up orphaned kftray resources for context: {}",
+        context_name
+    );
+
+    cleanup_resources(context_name, kubeconfig, true).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_in(context: &str, kubeconfig: Option<&str>) -> Config {
+        Config {
+            context: Some(context.to_string()),
+            kubeconfig: kubeconfig.map(str::to_string),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn configs_match_on_context_and_kubeconfig_with_default_normalized() {
+        for saved in [None, Some("default"), Some("")] {
+            let config = config_in("prod", saved);
+            assert!(config_targets(&config, "prod", None));
+            assert!(config_targets(&config, "prod", Some("default")));
+            assert!(!config_targets(&config, "prod", Some("/kube/other")));
+            assert!(!config_targets(&config, "staging", None));
+        }
+
+        let custom = config_in("prod", Some("/kube/other"));
+        assert!(config_targets(&custom, "prod", Some("/kube/other")));
+        assert!(!config_targets(&custom, "prod", None));
+        assert!(!config_targets(&custom, "prod", Some("/kube/third")));
+    }
 
     /// An unlabeled name this installation never created must not be
     /// deletable: pre-fix, `delete_kube_resource` gated on `belongs_here`,
