@@ -2,6 +2,42 @@ import type { Facet } from '@/types'
 
 import type { ConfigDraft, StringOption } from './types'
 
+type ClearableField =
+  | 'context'
+  | 'namespace'
+  | 'remote_port'
+  | 'service'
+  | 'target'
+
+const PORT_TARGET_FIELDS: readonly ClearableField[] = [
+  'service',
+  'target',
+  'remote_port',
+]
+const CASCADE: Partial<Record<keyof ConfigDraft, readonly ClearableField[]>> = {
+  kubeconfig: ['context', 'namespace', ...PORT_TARGET_FIELDS],
+  context: ['namespace', ...PORT_TARGET_FIELDS],
+  namespace: PORT_TARGET_FIELDS,
+  workload_type: PORT_TARGET_FIELDS,
+  service: ['remote_port'],
+  target: ['remote_port'],
+}
+
+export const applyDraftChange = (
+  draft: ConfigDraft,
+  change: Partial<ConfigDraft>,
+): ConfigDraft => {
+  const cleared: Partial<Record<ClearableField, string>> = {}
+  for (const key of Object.keys(change) as (keyof ConfigDraft)[]) {
+    if (change[key] !== draft[key]) {
+      for (const field of CASCADE[key] ?? []) {
+        cleared[field] = ''
+      }
+    }
+  }
+  return { ...draft, ...cleared, ...change }
+}
+
 export const trimConfigValues = (draft: ConfigDraft): ConfigDraft => ({
   ...draft,
   alias: draft.alias?.trim(),

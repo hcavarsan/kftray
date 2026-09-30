@@ -1,5 +1,4 @@
 import { Info } from 'lucide-react'
-import Select from 'react-select'
 
 import { Flex, Stack, Text } from '@chakra-ui/react'
 
@@ -7,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { selectStyles } from '@/components/ui/select-styles'
 import { Tooltip } from '@/components/ui/tooltip'
 
-import { Field, TextField } from './Field'
+import { Field, FieldSelect, TextField } from './Field'
 import type { ConfigDraft, StringOption } from './types'
 
 const exposureOptions: StringOption[] = [
@@ -44,11 +43,21 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
         }
         label='Exposure Type *'
       >
-        <Select<StringOption>
+        <FieldSelect<StringOption>
           onChange={option =>
-            onUpdate({
-              exposure_type: option?.value === 'public' ? 'public' : 'cluster',
-            })
+            onUpdate(
+              option?.value === 'public'
+                ? { exposure_type: 'public' }
+                : {
+                    cert_issuer: '',
+                    cert_issuer_kind: undefined,
+                    cert_manager_enabled: false,
+                    domain_enabled: false,
+                    exposure_type: 'cluster',
+                    ingress_annotations: '',
+                    ingress_class: '',
+                  },
+            )
           }
           options={exposureOptions}
           styles={selectStyles<StringOption>()}
@@ -105,7 +114,7 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
           {draft.cert_manager_enabled && (
             <>
               <Field error={errors.cert_issuer_kind} label='Issuer Kind *'>
-                <Select<StringOption>
+                <FieldSelect<StringOption>
                   onChange={option =>
                     onUpdate({
                       cert_issuer_kind:

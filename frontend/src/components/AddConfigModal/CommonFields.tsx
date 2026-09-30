@@ -1,6 +1,4 @@
 import { Info } from 'lucide-react'
-import Select from 'react-select'
-import CreatableSelect from 'react-select/creatable'
 
 import { Grid, Stack, Text } from '@chakra-ui/react'
 
@@ -8,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { selectStyles } from '@/components/ui/select-styles'
 import { Tooltip } from '@/components/ui/tooltip'
 
-import { Field, TextField } from './Field'
+import { Field, FieldCreatableSelect, FieldSelect, TextField } from './Field'
 import type { ConfigDraft, StringOption } from './types'
 
 const workloadTypeOptions: StringOption[] = [
@@ -101,17 +99,10 @@ export function CommonFields({
           )}
         </Stack>
         <Field error={errors.context} label='Context *'>
-          <Select<StringOption>
+          <FieldSelect<StringOption>
             isLoading={contextQuery.isLoading}
             onBlur={() => onContextFocusChange(false)}
-            onChange={option =>
-              onUpdate({
-                context: option?.value ?? '',
-                namespace: '',
-                service: '',
-                target: '',
-              })
-            }
+            onChange={option => onUpdate({ context: option?.value ?? '' })}
             onFocus={() => onContextFocusChange(true)}
             options={(contextQuery.data ?? []).map(({ name }) => ({
               label: name,
@@ -132,7 +123,7 @@ export function CommonFields({
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <Field error={errors.workload_type} label='Workload Type'>
-          <Select<StringOption>
+          <FieldSelect<StringOption>
             onChange={option =>
               onUpdate({
                 exposure_type:
@@ -162,7 +153,7 @@ export function CommonFields({
           />
         </Field>
         <Field error={errors.namespace} label='Namespace *'>
-          <CreatableSelect<StringOption>
+          <FieldCreatableSelect<StringOption>
             formatCreateLabel={value => `Use "${value}"`}
             isLoading={namespaceQuery.isLoading}
             noOptionsMessage={() =>
@@ -170,13 +161,7 @@ export function CommonFields({
                 ? 'Type namespace name manually'
                 : 'No namespaces found'
             }
-            onChange={option =>
-              onUpdate({
-                namespace: option?.value ?? '',
-                service: '',
-                target: '',
-              })
-            }
+            onChange={option => onUpdate({ namespace: option?.value ?? '' })}
             options={(namespaceQuery.data ?? []).map(({ name }) => ({
               label: name,
               value: name,

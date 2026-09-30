@@ -1,7 +1,15 @@
 import type { ReactNode } from 'react'
-import Select from 'react-select'
+import Select, { type GroupBase, type Props as SelectProps } from 'react-select'
+import CreatableSelect, { type CreatableProps } from 'react-select/creatable'
 
-import { Flex, Input, Stack, Text } from '@chakra-ui/react'
+import {
+  Field as ChakraField,
+  Flex,
+  Input,
+  Stack,
+  Text,
+  useFieldContext,
+} from '@chakra-ui/react'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { selectStyles } from '@/components/ui/select-styles'
@@ -37,11 +45,16 @@ interface TextFieldProps extends FieldProps {
 
 export function Field({ children, error, hint, label }: FieldProps) {
   return (
-    <Stack gap={1.5}>
+    <ChakraField.Root gap={1.5} alignItems='stretch'>
       <Flex align='center' gap={1}>
-        <Text fontSize='xs' color='fg.muted'>
+        <ChakraField.Label
+          fontSize='xs'
+          fontWeight='normal'
+          color='fg.muted'
+          m={0}
+        >
           {label}
-        </Text>
+        </ChakraField.Label>
         {hint}
       </Flex>
       {children}
@@ -50,7 +63,23 @@ export function Field({ children, error, hint, label }: FieldProps) {
           {error}
         </Text>
       )}
-    </Stack>
+    </ChakraField.Root>
+  )
+}
+
+export function FieldSelect<Option, IsMulti extends boolean = false>(
+  props: SelectProps<Option, IsMulti, GroupBase<Option>>,
+) {
+  const field = useFieldContext()
+  return <Select<Option, IsMulti> inputId={field?.ids.control} {...props} />
+}
+
+export function FieldCreatableSelect<Option, IsMulti extends boolean = false>(
+  props: CreatableProps<Option, IsMulti, GroupBase<Option>>,
+) {
+  const field = useFieldContext()
+  return (
+    <CreatableSelect<Option, IsMulti> inputId={field?.ids.control} {...props} />
   )
 }
 
@@ -89,7 +118,7 @@ export function TextField({
 export function ProtocolField({ draft, error, onUpdate }: DraftFieldProps) {
   return (
     <Field error={error} label='Protocol *'>
-      <Select<StringOption>
+      <FieldSelect<StringOption>
         onChange={option =>
           onUpdate({ protocol: option?.value === 'udp' ? 'udp' : 'tcp' })
         }

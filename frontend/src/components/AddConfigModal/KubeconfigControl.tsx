@@ -2,7 +2,10 @@ import { HStack, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useKubeconfigPicker } from '@/hooks/useKubeconfigPicker'
+import {
+  DEFAULT_KUBECONFIG,
+  useKubeconfigPicker,
+} from '@/hooks/useKubeconfigPicker'
 
 interface KubeconfigControlProps {
   kubeconfig: string
@@ -16,6 +19,7 @@ export function KubeconfigControl({
   const { browse } = useKubeconfigPicker({
     value: kubeconfig,
     onChange,
+    onError: () => onChange(DEFAULT_KUBECONFIG),
     meta: { errorToast: { title: 'Error selecting kubeconfig' } },
   })
 
