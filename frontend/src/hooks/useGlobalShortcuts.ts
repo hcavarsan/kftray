@@ -7,7 +7,6 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
-import { useTauriEvent } from '@/hooks/useTauriEvent'
 
 export interface Shortcut {
   id: number
@@ -39,10 +38,6 @@ export function useGlobalShortcuts() {
   const queryClient = useQueryClient()
   const shortcuts = useQuery(shortcutsQuery)
   const { data: platformStatus } = useQuery(platformStatusQuery)
-
-  useTauriEvent<PlatformStatus>('platform-status-update', event =>
-    queryClient.setQueryData(platformStatusQuery.queryKey, event.payload),
-  )
 
   const deleteShortcut = useMutation({
     mutationFn: (id: number) => invoke('delete_shortcut', { id }),

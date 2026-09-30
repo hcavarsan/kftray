@@ -4,10 +4,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tauri::{
-    AppHandle,
-    Emitter,
-};
+use tauri::AppHandle;
 
 use crate::shortcuts::get_manager;
 
@@ -219,35 +216,18 @@ pub async fn check_shortcut_conflicts(
 
 #[tauri::command]
 pub async fn get_platform_status(
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<kftray_shortcuts::models::PlatformStatus, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
-    let status = manager.get_platform_status();
 
-    // Emit status update event
-    let _ = app.emit("platform-status-update", &status);
-
-    Ok(status)
+    Ok(manager.get_platform_status())
 }
 
 #[tauri::command]
-pub async fn try_fix_platform_permissions(app: AppHandle) -> Result<String, String> {
+pub async fn try_fix_platform_permissions(_app: AppHandle) -> Result<String, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
-    let result = manager.try_fix_permissions().map_err(|e| e.to_string());
 
-    // Emit status update events
-    let _ = app.emit("permission-fix-attempted", &result);
-
-    match &result {
-        Ok(message) => {
-            let _ = app.emit("permission-fix-success", message);
-        }
-        Err(error) => {
-            let _ = app.emit("permission-fix-error", error);
-        }
-    }
-
-    result
+    manager.try_fix_permissions().map_err(|e| e.to_string())
 }

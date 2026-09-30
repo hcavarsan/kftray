@@ -14,7 +14,6 @@ use log::{
 };
 use tauri::{
     AppHandle,
-    Emitter,
     Manager,
 };
 use tauri_plugin_notification::NotificationExt;
@@ -333,8 +332,6 @@ impl ActionHandler for StartAllPortForwardAction {
             ))
             .show();
 
-        let _ = self.app_handle.emit("port-forward-status-changed", ());
-
         outcome.into_result()
     }
 
@@ -398,8 +395,6 @@ impl ActionHandler for StopAllPortForwardAction {
                 outcome.failed_suffix()
             ))
             .show();
-
-        let _ = self.app_handle.emit("port-forward-status-changed", ());
 
         outcome.into_result_as("stop")
     }
@@ -511,8 +506,6 @@ impl ActionHandler for StartPortForwardAction {
                 outcome.failed_suffix()
             ))
             .show();
-
-        let _ = self.app_handle.emit("port-forward-status-changed", ());
 
         outcome.into_result()
     }
@@ -643,8 +636,6 @@ impl ActionHandler for StopPortForwardAction {
                 outcome.failed_suffix()
             ))
             .show();
-
-        let _ = self.app_handle.emit("port-forward-status-changed", ());
 
         outcome.into_result_as("stop")
     }
@@ -815,12 +806,8 @@ impl ActionHandler for TogglePortForwardAction {
                 .body(message)
                 .show();
 
-            let _ = self.app_handle.emit("port-forward-status-changed", ());
-
             return outcome.into_result_as("toggle");
         }
-
-        let _ = self.app_handle.emit("port-forward-status-changed", ());
 
         Ok(())
     }
