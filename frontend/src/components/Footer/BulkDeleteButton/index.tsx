@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 
-import { Box, Button } from '@chakra-ui/react'
+import { Box } from '@chakra-ui/react'
 
+import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -81,24 +82,16 @@ function BulkDeleteButton({
           offset: { mainAxis: 8, crossAxis: 0 },
         }}
       >
-        <Button
+        <FooterActionButton
           aria-label='Delete selected configs'
-          size='sm'
-          variant='ghost'
           onClick={() =>
             handleDeleteClick(selectedConfigs.map(config => config.id))
           }
-          height='32px'
-          minWidth='32px'
           bg='red.500'
-          px={1.5}
-          borderRadius='md'
-          border='1px solid'
-          borderColor='app.border'
           _hover={{ bg: 'red.600' }}
         >
           <Box as={Trash2} width='12px' height='12px' />
-        </Button>
+        </FooterActionButton>
       </Tooltip>
 
       {state.isDialogOpen && (

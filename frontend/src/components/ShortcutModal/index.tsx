@@ -3,7 +3,6 @@ import { AlertTriangle, Edit2, Plus, Trash2, Wrench } from 'lucide-react'
 
 import {
   Box,
-  Dialog,
   Flex,
   HStack,
   Stack,
@@ -16,10 +15,11 @@ import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import {
   AppDialog,
+  AppDialogBody,
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { fetchConfigsWithState } from '@/hooks/useConfigs'
+import { configsQuery } from '@/hooks/useConfigs'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { errorMessage } from '@/lib/errors'
 
@@ -29,8 +29,7 @@ import ShortcutFormModal from './ShortcutFormModal'
 export default function ShortcutModal({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Shortcut | 'new' | null>(null)
   const { data: configs = [] } = useQuery({
-    queryKey: ['configs', 'shortcuts'],
-    queryFn: fetchConfigsWithState,
+    ...configsQuery,
     meta: {
       errorToast: {
         title: 'Error',
@@ -52,7 +51,7 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
         maxWidth='600px'
         height='96vh'
       >
-        <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
+        <AppDialogBody overflowX='hidden'>
           {platformStatus?.platform === 'linux' &&
             platformStatus.needs_permission_fix && (
               <Box
@@ -247,7 +246,7 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
               })
             )}
           </Stack>
-        </Dialog.Body>
+        </AppDialogBody>
 
         <AppDialogFooter justify='space-between'>
           <Button

@@ -18,8 +18,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
+import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
-import { Button } from '@/components/ui/button'
 import {
   AppDialog,
   AppDialogFooter,
@@ -274,22 +274,12 @@ function Footer({
         <Group display='flex' alignItems='center' gap={2}>
           <MenuRoot>
             <MenuTrigger asChild>
-              <Button
+              <FooterActionButton
                 aria-label='Open configuration menu'
-                size='sm'
-                variant='ghost'
                 onClick={() => refetchLogSize()}
-                height='32px'
-                minWidth='32px'
-                bg='whiteAlpha.50'
-                px={1.5}
-                borderRadius='md'
-                border='1px solid'
-                borderColor='app.border'
-                _hover={{ bg: 'whiteAlpha.100' }}
               >
                 <Box as={MenuIcon} width='12px' height='12px' />
-              </Button>
+              </FooterActionButton>
             </MenuTrigger>
             <MenuContent>{renderMenuItems()}</MenuContent>
           </MenuRoot>
@@ -301,23 +291,13 @@ function Footer({
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
           >
-            <Button
+            <FooterActionButton
               aria-label='Add new config'
-              size='sm'
-              variant='ghost'
               onClick={onAddConfig}
               disabled={!!credentials}
-              height='32px'
-              minWidth='32px'
-              bg='whiteAlpha.50'
-              px={1.5}
-              borderRadius='md'
-              border='1px solid'
-              borderColor='app.border'
-              _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box as={Plus} width='12px' height='12px' />
-            </Button>
+            </FooterActionButton>
           </Tooltip>
 
           <BulkDeleteButton
@@ -334,22 +314,12 @@ function Footer({
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
           >
-            <Button
+            <FooterActionButton
               aria-label='Manage global shortcuts'
-              size='sm'
-              variant='ghost'
               onClick={onOpenShortcuts}
-              height='32px'
-              minWidth='32px'
-              bg='whiteAlpha.50'
-              px={1.5}
-              borderRadius='md'
-              border='1px solid'
-              borderColor='app.border'
-              _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box as={Keyboard} width='14px' height='14px' />
-            </Button>
+            </FooterActionButton>
           </Tooltip>
 
           <Tooltip
@@ -359,25 +329,15 @@ function Footer({
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
           >
-            <Button
+            <FooterActionButton
               aria-label='Configure git sync'
-              size='sm'
-              variant='ghost'
               onClick={onOpenGitSync}
-              height='32px'
-              minWidth='32px'
-              bg='whiteAlpha.50'
-              px={1.5}
-              borderRadius='md'
-              border='1px solid'
-              borderColor='app.border'
-              _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box display='flex' alignItems='center' gap={1}>
                 <Box as={GitBranch} width='14px' height='14px' />
                 <Box as={Settings} width='14px' height='14px' />
               </Box>
-            </Button>
+            </FooterActionButton>
           </Tooltip>
           <SyncConfigsButton />
         </Group>
