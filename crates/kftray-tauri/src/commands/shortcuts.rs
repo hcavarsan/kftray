@@ -4,7 +4,6 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tauri::AppHandle;
 
 use crate::shortcuts::get_manager;
 
@@ -58,9 +57,7 @@ impl From<CreateShortcutRequest> for ShortcutDefinition {
 }
 
 #[tauri::command]
-pub async fn create_shortcut(
-    _app: AppHandle, request: CreateShortcutRequest,
-) -> Result<i64, String> {
+pub async fn create_shortcut(request: CreateShortcutRequest) -> Result<i64, String> {
     info!("Creating shortcut: {}", request.name);
     let manager = get_manager().await?;
     let mut manager = manager.lock().await;
@@ -71,7 +68,7 @@ pub async fn create_shortcut(
 }
 
 #[tauri::command]
-pub async fn get_shortcuts(_app: AppHandle) -> Result<Vec<ShortcutResponse>, String> {
+pub async fn get_shortcuts() -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     let shortcuts = manager
@@ -82,9 +79,7 @@ pub async fn get_shortcuts(_app: AppHandle) -> Result<Vec<ShortcutResponse>, Str
 }
 
 #[tauri::command]
-pub async fn update_shortcut(
-    _app: AppHandle, id: i64, request: CreateShortcutRequest,
-) -> Result<(), String> {
+pub async fn update_shortcut(id: i64, request: CreateShortcutRequest) -> Result<(), String> {
     info!("Updating shortcut ID: {}", id);
     let manager = get_manager().await?;
     let mut manager = manager.lock().await;
@@ -97,7 +92,7 @@ pub async fn update_shortcut(
 }
 
 #[tauri::command]
-pub async fn delete_shortcut(_app: AppHandle, id: i64) -> Result<(), String> {
+pub async fn delete_shortcut(id: i64) -> Result<(), String> {
     info!("Deleting shortcut ID: {}", id);
     let manager = get_manager().await?;
     let mut manager = manager.lock().await;
@@ -105,7 +100,7 @@ pub async fn delete_shortcut(_app: AppHandle, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn validate_shortcut_key(_app: AppHandle, shortcut_key: String) -> Result<bool, String> {
+pub async fn validate_shortcut_key(shortcut_key: String) -> Result<bool, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     manager
@@ -138,7 +133,7 @@ pub struct ActionInfo {
 
 #[tauri::command]
 pub async fn create_config_shortcut(
-    _app: AppHandle, config_id: i64, name: String, shortcut_key: String, action: String,
+    config_id: i64, name: String, shortcut_key: String, action: String,
 ) -> Result<i64, String> {
     info!(
         "Creating config shortcut for config {}: {} -> {}",
@@ -165,9 +160,7 @@ pub async fn create_config_shortcut(
 }
 
 #[tauri::command]
-pub async fn get_shortcuts_by_config(
-    _app: AppHandle, config_id: i64,
-) -> Result<Vec<ShortcutResponse>, String> {
+pub async fn get_shortcuts_by_config(config_id: i64) -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     let shortcuts = manager
@@ -193,7 +186,7 @@ pub async fn normalize_shortcut_key(shortcut_str: String) -> Result<String, Stri
 
 #[tauri::command]
 pub async fn check_shortcut_conflicts(
-    _app: AppHandle, shortcut_key: String, exclude_id: Option<i64>,
+    shortcut_key: String, exclude_id: Option<i64>,
 ) -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
@@ -204,10 +197,7 @@ pub async fn check_shortcut_conflicts(
 
     let conflicts: Vec<ShortcutResponse> = shortcuts
         .into_iter()
-        .filter(|s| {
-            s.shortcut_key == shortcut_key
-                && (exclude_id.is_none() || s.id != Some(exclude_id.unwrap_or(0)))
-        })
+        .filter(|s| s.shortcut_key == shortcut_key && exclude_id.is_none_or(|id| s.id != Some(id)))
         .map(ShortcutResponse::from)
         .collect();
 
@@ -215,9 +205,7 @@ pub async fn check_shortcut_conflicts(
 }
 
 #[tauri::command]
-pub async fn get_platform_status(
-    _app: AppHandle,
-) -> Result<kftray_shortcuts::models::PlatformStatus, String> {
+pub async fn get_platform_status() -> Result<kftray_shortcuts::models::PlatformStatus, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
 
@@ -225,7 +213,7 @@ pub async fn get_platform_status(
 }
 
 #[tauri::command]
-pub async fn try_fix_platform_permissions(_app: AppHandle) -> Result<String, String> {
+pub async fn try_fix_platform_permissions() -> Result<String, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
 
