@@ -31,7 +31,7 @@ describe('applyConfigsToCache', () => {
     expect(client.getQueryData(configsQuery.queryKey)).toEqual([makeConfig(1)])
   })
 
-  it('leaves an empty cache untouched instead of running the update', async () => {
+  it('leaves an absent cache untouched instead of running the update', async () => {
     const client = new QueryClient()
     const update = vi.fn((current: Config[]) => current)
 
