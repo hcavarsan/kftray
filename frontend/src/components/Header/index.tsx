@@ -22,7 +22,7 @@ interface HeaderProps {
   setSearch: Dispatch<SetStateAction<string>>
 }
 
-function Header({ search, setSearch }: HeaderProps) {
+export function Header({ search, setSearch }: HeaderProps) {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
@@ -259,5 +259,3 @@ function Header({ search, setSearch }: HeaderProps) {
     </Box>
   )
 }
-
-export default Header

@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { Provider } from './components/ui/provider'
-import LogViewerPage from './pages/LogViewerPage'
+import { LogViewerPage } from './pages/LogViewerPage'
 
 import './index.css'
 

@@ -28,7 +28,7 @@ interface AutoImportModalProps {
 
 const contextSelectStyles = selectStyles<StringOption>()
 
-export default function AutoImportModal({ onClose }: AutoImportModalProps) {
+export function AutoImportModal({ onClose }: AutoImportModalProps) {
   const queryClient = useQueryClient()
   const [kubeConfig, setKubeConfig] = useState(DEFAULT_KUBECONFIG)
   const [selectedContext, setSelectedContext] = useState<StringOption | null>(

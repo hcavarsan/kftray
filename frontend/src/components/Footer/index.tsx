@@ -2,10 +2,10 @@ import { GitBranch, Keyboard, Plus, Settings } from 'lucide-react'
 
 import { Box, Group } from '@chakra-ui/react'
 
-import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
+import { BulkDeleteButton } from '@/components/Footer/BulkDeleteButton'
 import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import { FooterMenu } from '@/components/Footer/FooterMenu'
-import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
+import { SyncConfigsButton } from '@/components/Footer/SyncConfigsButton'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
 import type { Config } from '@/types'
@@ -23,7 +23,7 @@ interface FooterProps {
   onOpenServerResources: () => void
 }
 
-function Footer({
+export function Footer({
   selectedConfigs,
   deleteConfigs,
   onAddConfig,
@@ -122,5 +122,3 @@ function Footer({
     </Box>
   )
 }
-
-export default Footer

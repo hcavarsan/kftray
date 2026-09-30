@@ -24,9 +24,9 @@ import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { errorMessage } from '@/lib/errors'
 
 import { findShortcutAction, shortcutConfigIds } from './actions'
-import ShortcutFormModal from './ShortcutFormModal'
+import { ShortcutFormModal } from './ShortcutFormModal'
 
-export default function ShortcutModal({ onClose }: { onClose: () => void }) {
+export function ShortcutModal({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Shortcut | 'new' | null>(null)
   const { data: configs = [] } = useQuery({
     ...configsQuery,

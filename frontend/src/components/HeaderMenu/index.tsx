@@ -9,7 +9,7 @@ import {
   ToolbarIconButton,
   WithTooltip,
 } from '@/components/HeaderMenu/ToolbarParts'
-import ViewControls from '@/components/HeaderMenu/ViewControls'
+import { ViewControls } from '@/components/HeaderMenu/ViewControls'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { Config, ConfigView, Facet } from '@/types'
 
@@ -33,7 +33,7 @@ interface HeaderMenuProps {
   setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
 }
 
-function HeaderMenu({
+export function HeaderMenu({
   configs,
   selectedConfigs,
   initiatePortForwarding,
@@ -227,5 +227,3 @@ function HeaderMenu({
     </Box>
   )
 }
-
-export default HeaderMenu

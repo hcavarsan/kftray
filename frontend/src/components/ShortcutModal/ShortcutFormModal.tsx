@@ -4,7 +4,7 @@ import { Box, Flex, Stack, Text, Wrap, WrapItem } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import ShortcutCapture from '@/components/ShortcutCapture'
+import { ShortcutCapture } from '@/components/ShortcutCapture'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -45,7 +45,7 @@ class ShortcutFormError extends Error {
   }
 }
 
-export default function ShortcutFormModal({
+export function ShortcutFormModal({
   shortcut,
   configs,
   onClose,

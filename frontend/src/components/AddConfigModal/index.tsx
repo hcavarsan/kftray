@@ -119,7 +119,7 @@ function toConfig(
   }
 }
 
-function AddConfigModal({
+export function AddConfigModal({
   initialConfig,
   isEdit,
   onClose,
@@ -298,5 +298,3 @@ function AddConfigModal({
     </AppDialog>
   )
 }
-
-export default AddConfigModal

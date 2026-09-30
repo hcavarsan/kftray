@@ -62,9 +62,7 @@ const contextSelectStyles: typeof baseContextStyles = {
   dropdownIndicator: base => ({ ...base, padding: '0 6px' }),
 }
 
-export default function ServerResourcesModal({
-  onClose,
-}: ServerResourcesModalProps) {
+export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
   const { data: configs } = useQuery({
     ...configsQuery,
     meta: {

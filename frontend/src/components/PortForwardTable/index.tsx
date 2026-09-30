@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
-import Header from '@/components/Header'
-import HeaderMenu from '@/components/HeaderMenu'
-import GroupAccordion from '@/components/PortForwardTable/GroupAccordion'
+import { Header } from '@/components/Header'
+import { HeaderMenu } from '@/components/HeaderMenu'
+import { GroupAccordion } from '@/components/PortForwardTable/GroupAccordion'
 import {
   NO_PODS,
   useActivePods,
@@ -48,7 +48,7 @@ interface TableProps {
   setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
 }
 
-function PortForwardTable({
+export function PortForwardTable({
   configs,
   isInitiating,
   isStopping,
@@ -288,5 +288,3 @@ function PortForwardTable({
     </Box>
   )
 }
-
-export default PortForwardTable

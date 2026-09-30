@@ -49,7 +49,7 @@ interface ShortcutCaptureProps {
   disabled?: boolean
 }
 
-export default function ShortcutCapture({
+export function ShortcutCapture({
   value,
   onChange,
   disabled = false,

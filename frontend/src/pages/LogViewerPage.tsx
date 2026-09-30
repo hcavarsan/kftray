@@ -39,7 +39,7 @@ interface LogData {
 
 const logFilesQueryKey = ['log-files'] as const
 
-function LogViewerPage() {
+export function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
@@ -325,5 +325,3 @@ function LogViewerPage() {
     </Box>
   )
 }
-
-export default LogViewerPage

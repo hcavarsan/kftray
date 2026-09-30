@@ -35,7 +35,7 @@ const chipLabel = ({ field, value }: FilterChip) => {
     : { name: `${name}:`, value }
 }
 
-function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
+export function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
   if (view.filters.length === 0) {
     return null
   }
@@ -97,5 +97,3 @@ function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
     </Flex>
   )
 }
-
-export default ActiveFilterChips

@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openShell } from '@tauri-apps/plugin-shell'
 
-import HttpLogsConfigModal from '@/components/HttpLogsConfigModal'
+import { HttpLogsConfigModal } from '@/components/HttpLogsConfigModal'
 import { ActionsMenu } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ActionsMenu'
 import { ConfigDetailsTooltip } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ConfigDetailsTooltip'
 import { DeleteConfigDialog } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/DeleteConfigDialog'
@@ -308,4 +308,4 @@ function PortForwardRowComponent({
   )
 }
 
-export default memo(PortForwardRowComponent)
+export const PortForwardRow = memo(PortForwardRowComponent)

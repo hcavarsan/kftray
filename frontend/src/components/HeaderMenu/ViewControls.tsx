@@ -8,7 +8,7 @@ interface ViewControlsProps {
   setView: (view: ConfigView) => void
 }
 
-const ViewControls = ({ view, facets, setView }: ViewControlsProps) => {
+export const ViewControls = ({ view, facets, setView }: ViewControlsProps) => {
   if (!view) {
     return null
   }
@@ -20,5 +20,3 @@ const ViewControls = ({ view, facets, setView }: ViewControlsProps) => {
     </>
   )
 }
-
-export default ViewControls

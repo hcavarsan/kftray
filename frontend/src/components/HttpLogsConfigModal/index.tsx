@@ -71,7 +71,7 @@ const formatFileSize = (bytes: number) => {
   return `${bytes} bytes`
 }
 
-export default function HttpLogsConfigModal({
+export function HttpLogsConfigModal({
   configId,
   onClose,
   onSaved,

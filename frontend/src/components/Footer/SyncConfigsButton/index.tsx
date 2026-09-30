@@ -8,7 +8,7 @@ import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
 
-function SyncConfigsButton() {
+export function SyncConfigsButton() {
   const { credentials, syncStatus, lastSync, nextSync, syncConfigs } =
     useGitSync()
 
@@ -63,5 +63,3 @@ function SyncConfigsButton() {
     </Tooltip>
   )
 }
-
-export default SyncConfigsButton

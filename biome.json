@@ -69,6 +69,7 @@
         "useExhaustiveDependencies": "error"
       },
       "style": {
+        "noDefaultExport": "error",
         "useBlockStatements": "error",
         "useConst": "error"
       },
@@ -79,5 +80,17 @@
         "useIterableCallbackReturn": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["frontend/vite.config.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    }
+  ]
 }

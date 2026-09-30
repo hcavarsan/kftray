@@ -29,7 +29,7 @@ const AUTH_METHODS: AuthMethod[] = ['none', 'system', 'token']
 const isAuthMethod = (value: string): value is AuthMethod =>
   AUTH_METHODS.some(method => method === value)
 
-function GitSyncModal({ onClose }: GitSyncModalProps) {
+export function GitSyncModal({ onClose }: GitSyncModalProps) {
   const { isLoadingCredentials } = useGitSync()
 
   if (isLoadingCredentials) {
@@ -237,5 +237,3 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
     </AppDialog>
   )
 }
-
-export default GitSyncModal

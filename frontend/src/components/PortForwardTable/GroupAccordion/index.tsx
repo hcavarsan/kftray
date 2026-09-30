@@ -10,7 +10,7 @@ import {
   TableRoot,
 } from '@chakra-ui/react'
 
-import PortForwardRow from '@/components/PortForwardTable/GroupAccordion/PortForwardRow'
+import { PortForwardRow } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow'
 import {
   AccordionItem,
   AccordionItemContent,
@@ -186,4 +186,4 @@ function GroupAccordionComponent({
   )
 }
 
-export default memo(GroupAccordionComponent)
+export const GroupAccordion = memo(GroupAccordionComponent)

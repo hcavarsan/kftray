@@ -14,7 +14,7 @@ interface BulkDeleteButtonProps {
   deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
-function BulkDeleteButton({
+export function BulkDeleteButton({
   selectedConfigs,
   deleteConfigs,
 }: BulkDeleteButtonProps) {
@@ -66,5 +66,3 @@ function BulkDeleteButton({
     </Box>
   )
 }
-
-export default BulkDeleteButton

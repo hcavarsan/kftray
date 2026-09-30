@@ -3,7 +3,7 @@ import { Filter } from 'lucide-react'
 
 import { Box, Flex, Menu, Portal, Text } from '@chakra-ui/react'
 
-import ActiveFilterChips from '@/components/HeaderMenu/ActiveFilterChips'
+import { ActiveFilterChips } from '@/components/HeaderMenu/ActiveFilterChips'
 import {
   contentProps,
   itemProps,

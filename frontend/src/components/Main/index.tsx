@@ -4,21 +4,41 @@ import { Box, VStack } from '@chakra-ui/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import Footer from '@/components/Footer'
-import PortForwardTable from '@/components/PortForwardTable'
+import { Footer } from '@/components/Footer'
+import { PortForwardTable } from '@/components/PortForwardTable'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
 import { usePortForwarding } from './usePortForwarding'
 
-const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
-const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
-const GitSyncModal = lazy(() => import('@/components/GitSyncModal'))
-const ServerResourcesModal = lazy(
-  () => import('@/components/ServerResourcesModal'),
+const AddConfigModal = lazy(() =>
+  import('@/components/AddConfigModal').then(m => ({
+    default: m.AddConfigModal,
+  })),
 )
-const SettingsModal = lazy(() => import('@/components/SettingsModal'))
-const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
+const AutoImportModal = lazy(() =>
+  import('@/components/AutoImportModal').then(m => ({
+    default: m.AutoImportModal,
+  })),
+)
+const GitSyncModal = lazy(() =>
+  import('@/components/GitSyncModal').then(m => ({ default: m.GitSyncModal })),
+)
+const ServerResourcesModal = lazy(() =>
+  import('@/components/ServerResourcesModal').then(m => ({
+    default: m.ServerResourcesModal,
+  })),
+)
+const SettingsModal = lazy(() =>
+  import('@/components/SettingsModal').then(m => ({
+    default: m.SettingsModal,
+  })),
+)
+const ShortcutModal = lazy(() =>
+  import('@/components/ShortcutModal').then(m => ({
+    default: m.ShortcutModal,
+  })),
+)
 
 type ActiveModal =
   | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
@@ -32,7 +52,7 @@ type ActiveModal =
     }
   | null
 
-function Main() {
+export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
@@ -214,5 +234,3 @@ function Main() {
     </Box>
   )
 }
-
-export default Main

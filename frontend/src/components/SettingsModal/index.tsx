@@ -151,7 +151,7 @@ function SettingsForm({
   )
 }
 
-export default function SettingsModal({ onClose }: { onClose: () => void }) {
+export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, ssl, log, appMode, mcp] = useQueries({
     queries: SETTINGS_QUERIES,
   })
