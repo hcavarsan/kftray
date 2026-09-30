@@ -240,7 +240,7 @@
   gap: 4px;
   padding: 2px 4px;
   font-size: var(--font-size-small);
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: var(--chakra-colors-app-shade);
   border: 1px solid var(--chakra-colors-app-active);
   border-radius: 10px;
 }
@@ -288,5 +288,5 @@
 
 .switch[data-state="checked"]::before {
   transform: translateX(16px);
-  background-color: rgb(59, 130, 246);
+  background-color: var(--chakra-colors-blue-500);
 }

@@ -5,29 +5,29 @@ export const LEVEL_COLORS: Record<
   { bg: string; text: string; border: string }
 > = {
   ERROR: {
-    bg: 'rgba(229, 62, 62, 0.15)',
-    text: 'rgba(252, 129, 129, 1)',
-    border: 'rgba(229, 62, 62, 0.3)',
+    bg: 'log.error.bg',
+    text: 'log.error.text',
+    border: 'log.error.border',
   },
   WARN: {
-    bg: 'rgba(161, 98, 7, 0.15)',
-    text: 'rgba(251, 191, 36, 1)',
-    border: 'rgba(161, 98, 7, 0.3)',
+    bg: 'log.warn.bg',
+    text: 'log.warn.text',
+    border: 'log.warn.border',
   },
   INFO: {
     bg: 'app.accentSubtle',
-    text: 'rgba(147, 197, 253, 1)',
+    text: 'app.accentText',
     border: 'app.accentMuted',
   },
   DEBUG: {
-    bg: 'rgba(139, 92, 246, 0.15)',
-    text: 'rgba(196, 181, 253, 1)',
-    border: 'rgba(139, 92, 246, 0.3)',
+    bg: 'log.debug.bg',
+    text: 'log.debug.text',
+    border: 'log.debug.border',
   },
   TRACE: {
-    bg: 'rgba(100, 116, 139, 0.15)',
-    text: 'rgba(148, 163, 184, 1)',
-    border: 'rgba(100, 116, 139, 0.3)',
+    bg: 'log.trace.bg',
+    text: 'log.trace.text',
+    border: 'log.trace.border',
   },
 }
 

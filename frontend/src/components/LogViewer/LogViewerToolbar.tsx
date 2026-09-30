@@ -205,7 +205,7 @@ function LogViewerToolbarComponent({
             w='24px'
             minW='24px'
             color='whiteAlpha.600'
-            _hover={{ bg: 'rgba(229, 62, 62, 0.1)', color: 'red.300' }}
+            _hover={{ bg: 'status.danger.bg', color: 'red.300' }}
           >
             <Trash2 size={12} />
           </IconButton>

@@ -156,8 +156,8 @@ function HeaderMenu({
               },
             },
             '& input:checked': {
-              background: '#3182CE',
-              borderColor: '#3182CE',
+              background: 'app.checked',
+              borderColor: 'app.checked',
             },
           }}
         />

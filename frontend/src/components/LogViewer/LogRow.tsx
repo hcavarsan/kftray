@@ -57,7 +57,7 @@ function HighlightedText({
           <Box
             as='mark'
             key={key}
-            bg='rgba(251, 191, 36, 0.3)'
+            bg='search.match'
             color='white'
             px={0.5}
             borderRadius='2px'

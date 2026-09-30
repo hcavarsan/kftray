@@ -19,7 +19,12 @@ import { Toaster, toaster } from './toaster'
 declare module '@tanstack/react-query' {
   interface Register {
     queryMeta: {
-      errorToast?: { title: string; description?: string; duration?: number }
+      errorToast?: {
+        id?: string
+        title: string
+        description?: string
+        duration?: number
+      }
     }
   }
 }
@@ -58,7 +63,62 @@ const system = createSystem(
             accent: color('rgba(59, 130, 246, 0.8)'),
             accentMuted: color('rgba(59, 130, 246, 0.3)'),
             accentSubtle: color('rgba(59, 130, 246, 0.15)'),
+            accentText: color('rgba(147, 197, 253, 1)'),
+            accentTextMuted: color('rgba(147, 197, 253, 0.8)'),
+            checked: color('#3182CE'),
+            shade: color('rgba(0, 0, 0, 0.2)'),
+            scrim: color('rgba(0, 0, 0, 0.8)'),
           },
+          log: {
+            error: {
+              bg: color('rgba(229, 62, 62, 0.15)'),
+              text: color('rgba(252, 129, 129, 1)'),
+              border: color('rgba(229, 62, 62, 0.3)'),
+            },
+            warn: {
+              bg: color('rgba(161, 98, 7, 0.15)'),
+              text: color('rgba(251, 191, 36, 1)'),
+              border: color('rgba(161, 98, 7, 0.3)'),
+            },
+            debug: {
+              bg: color('rgba(139, 92, 246, 0.15)'),
+              text: color('rgba(196, 181, 253, 1)'),
+              border: color('rgba(139, 92, 246, 0.3)'),
+            },
+            trace: {
+              bg: color('rgba(100, 116, 139, 0.15)'),
+              text: color('rgba(148, 163, 184, 1)'),
+              border: color('rgba(100, 116, 139, 0.3)'),
+            },
+          },
+          status: {
+            unresponsive: color('rgba(217, 119, 6, 0.7)'),
+            busy: color('rgba(100, 116, 139, 0.6)'),
+            rollout: color('rgba(161, 98, 7, 0.7)'),
+            stopped: color('rgba(100, 116, 139, 0.4)'),
+            success: {
+              bg: color('rgba(56, 161, 105, 0.1)'),
+              border: color('rgba(56, 161, 105, 0.2)'),
+            },
+            danger: {
+              bg: color('rgba(229, 62, 62, 0.1)'),
+              border: color('rgba(229, 62, 62, 0.2)'),
+            },
+            warning: {
+              border: color('rgba(255, 165, 0, 0.3)'),
+            },
+          },
+          search: {
+            bg: color('rgba(251, 191, 36, 0.1)'),
+            border: color('rgba(251, 191, 36, 0.2)'),
+            match: color('rgba(251, 191, 36, 0.3)'),
+          },
+        },
+        shadows: {
+          popover: color('0 8px 24px rgba(0, 0, 0, 0.45)'),
+          dialog: color(
+            '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+          ),
         },
       },
       layerStyles: {
@@ -94,6 +154,7 @@ const queryClient = new QueryClient({
 
       if (toast) {
         toaster.error({
+          id: toast.id,
           title: toast.title,
           description: toast.description ?? errorMessage(error),
           duration: toast.duration,

@@ -203,7 +203,7 @@ function LogFileSelectorComponent({
                           borderRadius='3px'
                           color='whiteAlpha.400'
                           _hover={{
-                            bg: 'rgba(229, 62, 62, 0.1)',
+                            bg: 'status.danger.bg',
                             color: 'red.400',
                           }}
                           _focus={{ outline: 'none', boxShadow: 'none' }}

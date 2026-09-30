@@ -216,8 +216,7 @@ export default function HttpLogsConfigModal({
       onClose={onClose}
       maxWidth='420px'
       contentProps={{
-        boxShadow:
-          '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+        boxShadow: 'dialog',
         css: {
           '&::-webkit-scrollbar': { display: 'none' },
           msOverflowStyle: 'none',

@@ -14,12 +14,14 @@ const withDefault = async <T>(load: Promise<T>, fallback: T) => {
 }
 
 const generalLoadToast = {
+  id: 'settings-load-error',
   title: 'Error',
   description: 'Failed to load settings',
   duration: 3000,
 }
 
 const windowLoadToast = {
+  id: 'window-settings-load-error',
   title: 'Error',
   description: 'Failed to load window and MCP settings',
   duration: 3000,

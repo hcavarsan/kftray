@@ -194,7 +194,7 @@ export default function ShortcutCapture({
           mt={1}
           fontSize='2xs'
           color='blue.300'
-          bg='rgba(0, 0, 0, 0.8)'
+          bg='app.scrim'
           px={2}
           py={1}
           borderRadius='sm'

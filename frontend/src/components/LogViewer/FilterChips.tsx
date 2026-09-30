@@ -4,7 +4,7 @@ import { X } from 'lucide-react'
 import { Box, Flex, Text } from '@chakra-ui/react'
 
 import { LEVEL_COLORS } from './constants'
-import type { FilterChipsProps, LogLevel } from './types'
+import type { FilterChipsProps } from './types'
 
 function Chip({
   label,
@@ -44,7 +44,7 @@ function Chip({
         borderRadius='2px'
         cursor='pointer'
         opacity={0.7}
-        _hover={{ opacity: 1, bg: 'rgba(0, 0, 0, 0.2)' }}
+        _hover={{ opacity: 1, bg: 'app.shade' }}
         onClick={e => {
           e.stopPropagation()
           onRemove()
@@ -75,7 +75,7 @@ function FilterChipsComponent({
   return (
     <Flex align='center' gap={1.5} flexWrap='wrap' pt={2}>
       {selectedLevels.map(level => {
-        const colors = LEVEL_COLORS[level as LogLevel]
+        const colors = LEVEL_COLORS[level]
 
         return (
           <Chip
@@ -120,9 +120,9 @@ function FilterChipsComponent({
       {searchText.trim() && (
         <Chip
           label={`"${searchText.length > 15 ? `${searchText.slice(0, 12)}...` : searchText}"`}
-          bg='rgba(251, 191, 36, 0.1)'
-          color='rgba(251, 191, 36, 1)'
-          borderColor='rgba(251, 191, 36, 0.2)'
+          bg='search.bg'
+          color='log.warn.text'
+          borderColor='search.border'
           onRemove={onClearSearch}
         />
       )}

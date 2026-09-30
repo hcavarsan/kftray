@@ -55,7 +55,8 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                 bg='app.panel'
                 p={3}
                 borderRadius='md'
-                border='1px solid rgba(255, 165, 0, 0.3)'
+                border='1px solid'
+                borderColor='status.warning.border'
                 mb={3}
               >
                 <Flex align='center' gap={2} mb={2}>

@@ -31,7 +31,7 @@ interface GitSyncModalProps {
 const AUTH_METHODS: AuthMethod[] = ['none', 'system', 'token']
 
 const isAuthMethod = (value: string): value is AuthMethod =>
-  AUTH_METHODS.includes(value as AuthMethod)
+  AUTH_METHODS.some(method => method === value)
 
 function GitSyncModal({ onClose }: GitSyncModalProps) {
   const { isLoadingCredentials } = useGitSync()

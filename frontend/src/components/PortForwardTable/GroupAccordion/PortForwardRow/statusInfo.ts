@@ -13,7 +13,7 @@ export function getStatusInfo(
 ): StatusInfo {
   if (pendingAction?.timedOut) {
     return {
-      color: 'rgba(217, 119, 6, 0.7)',
+      color: 'status.unresponsive',
       status: 'Unresponsive',
       description:
         pendingAction.action === 'starting'
@@ -51,7 +51,7 @@ export function getStatusInfo(
     pendingAction?.action === 'deleting'
   ) {
     return {
-      color: 'rgba(100, 116, 139, 0.6)',
+      color: 'status.busy',
       status: 'Busy',
       description:
         pendingAction.action === 'saving'
@@ -63,7 +63,7 @@ export function getStatusInfo(
   if (config.is_running) {
     if (activePod?.includes('pending-rollout')) {
       return {
-        color: 'rgba(161, 98, 7, 0.7)',
+        color: 'status.rollout',
         status: 'Rollout',
         description: 'Pod rollout in progress',
       }
@@ -89,7 +89,7 @@ export function getStatusInfo(
   }
 
   return {
-    color: 'rgba(100, 116, 139, 0.4)',
+    color: 'status.stopped',
     status: 'Stopped',
     description: 'Port forward is stopped',
   }
@@ -105,7 +105,7 @@ export function getConfigDetails(
   activePod: string | null,
 ): ConfigDetail[] {
   const details: ConfigDetail[] = [
-    { label: 'Alias', value: config.alias },
+    { label: 'Alias', value: config.alias ?? '' },
     { label: 'Workload', value: config.workload_type },
   ]
 
@@ -135,19 +135,25 @@ export function getConfigDetails(
     } else {
       details.push({
         label: 'URL',
-        value: `http://${config.alias}.${config.namespace}.svc.cluster.local:${config.local_port}`,
+        value: `http://${config.alias}.${config.namespace ?? ''}.svc.cluster.local:${config.local_port}`,
       })
       details.push({ label: 'Service Name', value: config.alias })
     }
     details.push({ label: 'Local Port', value: String(config.local_port) })
   } else {
-    details.push({ label: 'Service', value: config.service })
-    details.push({ label: 'Target Port', value: String(config.remote_port) })
-    details.push({ label: 'Protocol', value: config.protocol })
+    details.push({
+      label: 'Service',
+      value: config.workload_type === 'service' ? config.service : '',
+    })
+    details.push({
+      label: 'Target Port',
+      value: String(config.remote_port ?? ''),
+    })
+    details.push({ label: 'Protocol', value: config.protocol ?? '' })
   }
 
-  details.push({ label: 'Context', value: config.context })
-  details.push({ label: 'Namespace', value: config.namespace })
+  details.push({ label: 'Context', value: config.context ?? '' })
+  details.push({ label: 'Namespace', value: config.namespace ?? '' })
 
   const tagsLabel = Object.entries(config.tags ?? {})
     .map(([key, value]) => (value ? `${key}=${value}` : key))

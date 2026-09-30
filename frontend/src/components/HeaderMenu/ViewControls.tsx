@@ -15,7 +15,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import type { ConfigView, Facet, ViewCondition } from '@/types'
 
 const NO_GROUP = '__none__'
-const ACCENT = 'rgb(59, 130, 246)'
 
 interface ToolbarIconButtonProps extends ComponentProps<typeof IconButton> {
   active?: boolean
@@ -40,12 +39,16 @@ export const ToolbarIconButton = ({
     border='1px solid'
     borderColor={active ? 'blue.500/35' : 'app.border'}
     bg={active ? 'blue.500/12' : 'whiteAlpha.50'}
-    color={active ? 'rgb(96, 165, 250)' : 'whiteAlpha.700'}
+    color={active ? 'blue.400' : 'whiteAlpha.700'}
     _hover={{
       bg: active ? 'blue.500/18' : 'whiteAlpha.100',
-      color: active ? 'rgb(147, 197, 253)' : 'whiteAlpha.900',
+      color: active ? 'app.accentText' : 'whiteAlpha.900',
     }}
-    _focusVisible={{ outline: `1px solid ${ACCENT}`, outlineOffset: '1px' }}
+    _focusVisible={{
+      outline: '1px solid',
+      outlineColor: 'blue.500',
+      outlineOffset: '1px',
+    }}
     {...rest}
   >
     {children}
@@ -57,7 +60,7 @@ export const ToolbarIconButton = ({
         minW='12px'
         h='12px'
         px='3px'
-        bg={ACCENT}
+        bg='blue.500'
         color='white'
         fontSize='8px'
         fontWeight='semibold'
@@ -90,7 +93,7 @@ const contentProps = {
   border: '1px solid',
   borderColor: 'app.border',
   borderRadius: 'md',
-  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+  boxShadow: 'popover',
   minW: '200px',
   maxW: '260px',
   maxH: '300px',

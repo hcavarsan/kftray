@@ -75,13 +75,13 @@ export function selectStyles<Option, IsMulti extends boolean = false>(
     }),
     multiValueLabel: base => ({
       ...base,
-      color: 'rgba(147, 197, 253, 1)',
+      color: token('accent-text'),
       fontSize: '11px',
       padding: '0 4px',
     }),
     multiValueRemove: base => ({
       ...base,
-      color: 'rgba(147, 197, 253, 0.8)',
+      color: token('accent-text-muted'),
       ':hover': { background: token('accent-muted'), color: 'white' },
     }),
   }

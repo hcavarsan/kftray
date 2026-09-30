@@ -226,11 +226,16 @@ function Footer({
               p={3}
               bg={
                 helperActionResult.success
-                  ? 'rgba(56, 161, 105, 0.1)'
-                  : 'rgba(229, 62, 62, 0.1)'
+                  ? 'status.success.bg'
+                  : 'status.danger.bg'
               }
               borderRadius='md'
-              border={`1px solid ${helperActionResult.success ? 'rgba(56, 161, 105, 0.2)' : 'rgba(229, 62, 62, 0.2)'}`}
+              border='1px solid'
+              borderColor={
+                helperActionResult.success
+                  ? 'status.success.border'
+                  : 'status.danger.border'
+              }
             >
               <Box
                 fontSize='xs'

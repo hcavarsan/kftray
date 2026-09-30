@@ -37,7 +37,29 @@ const ALL_CONTEXTS = '__all__'
 const CONTEXT_TIMEOUT_MS = 8000
 const RESOURCES_KEY = 'server-resources'
 
-const contextSelectStyles = selectStyles<ContextOption>(28)
+const baseContextStyles = selectStyles<ContextOption>(28)
+
+const contextSelectStyles: typeof baseContextStyles = {
+  ...baseContextStyles,
+  control: (base, state) => ({
+    ...baseContextStyles.control?.(base, state),
+    background: 'var(--chakra-colors-app-bg)',
+    cursor: 'pointer',
+  }),
+  menuList: base => ({ ...base, padding: 0, maxHeight: '150px' }),
+  option: (base, state) => ({
+    ...baseContextStyles.option?.(base, state),
+    color: 'white',
+    padding: '6px 10px',
+    cursor: 'pointer',
+  }),
+  placeholder: (base, state) => ({
+    ...baseContextStyles.placeholder?.(base, state),
+    color: 'var(--chakra-colors-app-text-disabled)',
+  }),
+  indicatorSeparator: () => ({ display: 'none' }),
+  dropdownIndicator: base => ({ ...base, padding: '0 6px' }),
+}
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
   let timer = 0
@@ -111,10 +133,14 @@ export default function ServerResourcesModal({
     ]
   }, [configs])
 
+  const defaultValue = contextOptions[1]?.value
+
+  if (selectedValue === null && defaultValue) {
+    setSelectedValue(defaultValue)
+  }
+
   const selected =
-    contextOptions.find(option => option.value === selectedValue) ??
-    contextOptions[1] ??
-    null
+    contextOptions.find(option => option.value === selectedValue) ?? null
   const isAll = selected?.value === ALL_CONTEXTS
   const targets = selected?.targets ?? []
 

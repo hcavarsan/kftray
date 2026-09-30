@@ -123,7 +123,7 @@ function GroupAccordionComponent({
                   transition: 'all 0.2s ease-in-out',
                   backgroundColor:
                     groupProgressValue === 100
-                      ? 'rgb(59, 130, 246)'
+                      ? 'blue.500'
                       : groupProgressValue > 0
                         ? 'app.accent'
                         : 'app.divider',
