@@ -1,6 +1,8 @@
 packages:
   - frontend
 
+minimumReleaseAge: 1440
+
 allowBuilds:
   oxc-resolver: true
 
