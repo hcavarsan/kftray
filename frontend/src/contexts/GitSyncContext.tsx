@@ -37,6 +37,10 @@ const GitSyncContext = createContext<GitSyncContextValue | null>(null)
 
 const credentialsQueryKey = ['git-sync-credentials']
 
+const importMutationKey = ['git-import']
+
+const importScope = { id: 'git-import' }
+
 export function GitSyncProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null)
@@ -48,11 +52,9 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       staleTime: Number.POSITIVE_INFINITY,
     })
 
-  const {
-    mutate: sync,
-    mutateAsync: syncAsync,
-    isPending: isSyncing,
-  } = useMutation({
+  const { mutateAsync: syncAsync, isPending: isSyncing } = useMutation({
+    mutationKey: importMutationKey,
+    scope: importScope,
     mutationFn: (creds: GitConfig) => gitService.importConfigs(creds),
     onSuccess: () => {
       setLastSyncTime(Date.now())
@@ -70,6 +72,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
   })
 
   const saveMutation = useMutation({
+    mutationKey: importMutationKey,
+    scope: importScope,
     mutationFn: async (creds: GitConfig) => {
       await gitService.importConfigs(creds)
       await gitService.saveCredentials(creds)
@@ -105,10 +109,15 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const intervalId = setInterval(() => sync(credentials), interval * 60000)
+    const intervalId = setInterval(() => {
+      if (queryClient.isMutating({ mutationKey: importMutationKey }) > 0) {
+        return
+      }
+      syncAsync(credentials).catch(() => undefined)
+    }, interval * 60000)
 
     return () => clearInterval(intervalId)
-  }, [credentials, sync])
+  }, [credentials, syncAsync, queryClient])
 
   const saveCredentials = useCallback(
     async (creds: GitConfig) => {

@@ -1,31 +1,25 @@
-import type { ChangeEvent, FormEvent } from 'react'
+import type { FormEvent } from 'react'
 import { useState } from 'react'
-import { Plus, X } from 'lucide-react'
 
-import {
-  Box,
-  Button,
-  Flex,
-  HStack,
-  IconButton,
-  Input,
-  Slider,
-  Stack,
-  Text,
-} from '@chakra-ui/react'
+import { Box, Button, HStack, Stack, Text } from '@chakra-ui/react'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   AppDialog,
+  AppDialogBody,
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
 import { useGitSync } from '@/contexts/GitSyncContext'
 import { errorMessage } from '@/lib/errors'
 import type { GitConfig } from '@/services/gitService'
 import type { AuthMethod } from '@/types'
+
+import { AuthFields } from './AuthFields'
+import { ConfigPathsField } from './ConfigPathsField'
+import { PollingIntervalField } from './PollingIntervalField'
+import { RepositoryFields } from './RepositoryFields'
 
 interface GitSyncModalProps {
   onClose: () => void
@@ -164,147 +158,31 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       maxWidth='400px'
       height='95vh'
     >
-      <Box flex='1' overflowY='auto' p={3}>
+      <AppDialogBody>
         <form onSubmit={handleSaveSettings} id='git-sync-form'>
           <Stack gap={4}>
-            <Stack gap={2}>
-              <Text fontSize='xs' color='gray.400'>
-                GitHub Repository URL
-              </Text>
-              <Input
-                value={formState.repoUrl}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setFormState(prev => ({
-                    ...prev,
-                    repoUrl: e.target.value,
-                  }))
-                }
-                placeholder='https://github.com/username/repo'
-                bg='app.panel'
-                borderColor='app.border'
-                position='relative'
-                _hover={{
-                  borderColor: 'app.divider',
-                  bg: 'app.panel',
-                  zIndex: 2,
-                }}
-                height='30px'
-                fontSize='12px'
-                borderRadius='md'
-                px={2}
-              />
-            </Stack>
+            <RepositoryFields
+              repoUrl={formState.repoUrl}
+              onRepoUrlChange={repoUrl =>
+                setFormState(prev => ({ ...prev, repoUrl }))
+              }
+            />
 
-            <Stack gap={2}>
-              <Flex justify='space-between' align='center'>
-                <Text fontSize='xs' color='gray.400'>
-                  Config Path(s)
-                </Text>
-                <IconButton
-                  aria-label='Add config path'
-                  size='xs'
-                  variant='ghost'
-                  onClick={handleAddConfigPath}
-                  color='gray.400'
-                  _hover={{ bg: 'whiteAlpha.100' }}
-                >
-                  <Box as={Plus} width='12px' height='12px' />
-                </IconButton>
-              </Flex>
-              {formState.configPaths.map(field => (
-                <HStack key={field.id} gap={1}>
-                  <Input
-                    value={field.value}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                      handleConfigPathChange(field.id, e.target.value)
-                    }
-                    placeholder='path/to/config.json'
-                    bg='app.panel'
-                    borderColor='app.border'
-                    _hover={{
-                      borderColor: 'app.divider',
-                      bg: 'app.panel',
-                    }}
-                    height='30px'
-                    fontSize='12px'
-                  />
-                  <IconButton
-                    aria-label='Remove config path'
-                    size='xs'
-                    variant='ghost'
-                    onClick={() => handleRemoveConfigPath(field.id)}
-                    color='gray.500'
-                    _hover={{ bg: 'whiteAlpha.100' }}
-                    disabled={
-                      formState.configPaths.length === 1 && !field.value
-                    }
-                  >
-                    <Box as={X} width='12px' height='12px' />
-                  </IconButton>
-                </HStack>
-              ))}
-            </Stack>
+            <ConfigPathsField
+              configPaths={formState.configPaths}
+              onChange={handleConfigPathChange}
+              onAdd={handleAddConfigPath}
+              onRemove={handleRemoveConfigPath}
+            />
 
-            <Stack gap={2}>
-              <Text fontSize='xs' color='gray.400'>
-                Authentication Method
-              </Text>
-              <Stack
-                direction='row'
-                gap={2}
-                bg='app.panel'
-                p={2}
-                borderRadius='md'
-                border='1px solid'
-                borderColor='app.border'
-              >
-                <RadioGroup
-                  value={formState.authMethod}
-                  onValueChange={handleAuthMethodChange}
-                  size='xs'
-                >
-                  <Stack direction='row' gap={2}>
-                    <Radio value='none'>
-                      <Text fontSize='xs' color='gray.400'>
-                        Public Repository
-                      </Text>
-                    </Radio>
-                    <Radio value='system'>
-                      <Text fontSize='xs' color='gray.400'>
-                        Use System Git Credentials
-                      </Text>
-                    </Radio>
-                    <Radio value='token'>
-                      <Text fontSize='xs' color='gray.400'>
-                        GitHub Token
-                      </Text>
-                    </Radio>
-                  </Stack>
-                </RadioGroup>
-              </Stack>
-
-              {formState.authMethod === 'token' && (
-                <Input
-                  type='password'
-                  value={formState.gitToken}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setFormState(prev => ({
-                      ...prev,
-                      gitToken: e.target.value,
-                    }))
-                  }
-                  placeholder='Enter your GitHub token'
-                  bg='app.panel'
-                  borderColor='app.border'
-                  _hover={{
-                    borderColor: 'app.divider',
-                    bg: 'app.panel',
-                  }}
-                  height='30px'
-                  fontSize='12px'
-                />
-              )}
-            </Stack>
+            <AuthFields
+              authMethod={formState.authMethod}
+              gitToken={formState.gitToken}
+              onAuthMethodChange={handleAuthMethodChange}
+              onGitTokenChange={gitToken =>
+                setFormState(prev => ({ ...prev, gitToken }))
+              }
+            />
 
             <Stack gap={1}>
               <Checkbox
@@ -327,63 +205,15 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
               </Text>
             </Stack>
 
-            <Stack gap={2} mt={2}>
-              <Flex justify='space-between' align='center'>
-                <Text fontSize='xs' color='gray.400'>
-                  Polling Interval (minutes)
-                </Text>
-                <Input
-                  value={
-                    formState.pollingInterval === 0
-                      ? 'off'
-                      : `${formState.pollingInterval} min`
-                  }
-                  readOnly
-                  width='65px'
-                  height='24px'
-                  textAlign='center'
-                  bg='app.panel'
-                  borderColor='app.border'
-                  fontSize='11px'
-                  _disabled={{
-                    opacity: 0.8,
-                    cursor: 'default',
-                  }}
-                />
-              </Flex>
-              <Box>
-                <Slider.Root
-                  value={[formState.pollingInterval]}
-                  min={0}
-                  max={120}
-                  step={5}
-                  onValueChange={details =>
-                    setFormState(prev => ({
-                      ...prev,
-                      pollingInterval: details.value[0],
-                    }))
-                  }
-                >
-                  <Slider.Control>
-                    <Slider.Track>
-                      <Slider.Range />
-                    </Slider.Track>
-                    <Slider.Thumb index={0} />
-                  </Slider.Control>
-                </Slider.Root>
-              </Box>
-              <Flex justify='space-between' align='center'>
-                <Text fontSize='xs' color='gray.400'>
-                  Disabled
-                </Text>
-                <Text fontSize='xs' color='gray.400'>
-                  120 min
-                </Text>
-              </Flex>
-            </Stack>
+            <PollingIntervalField
+              value={formState.pollingInterval}
+              onChange={pollingInterval =>
+                setFormState(prev => ({ ...prev, pollingInterval }))
+              }
+            />
           </Stack>
         </form>
-      </Box>
+      </AppDialogBody>
 
       <AppDialogFooter justify='space-between'>
         <Box>
