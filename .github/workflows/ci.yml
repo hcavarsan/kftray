@@ -47,6 +47,9 @@ jobs:
       - name: Perform linting
         run: pnpm --filter @kftray/ui run lint:check
 
+      - name: Run tests
+        run: pnpm --filter @kftray/ui run test
+
   rust-format:
     name: rustfmt
     runs-on: ubuntu-22.04

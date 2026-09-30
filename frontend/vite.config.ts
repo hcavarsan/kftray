@@ -1,5 +1,5 @@
 import { visualizer } from 'rollup-plugin-visualizer'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 import { codecovVitePlugin } from '@codecov/vite-plugin'
 import react from '@vitejs/plugin-react'
@@ -32,6 +32,11 @@ export default defineConfig({
   ],
 
   clearScreen: false,
+
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
 
   server: {
     port: 1420,

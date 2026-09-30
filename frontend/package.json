@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "taze": "taze major -I",
-    "taze:minor": "taze minor -w"
+    "taze:minor": "taze minor -w",
+    "test": "vitest run"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.37.0",
@@ -39,6 +40,7 @@
     "rollup-plugin-visualizer": "^7.1.1",
     "taze": "^21.2.0",
     "typescript": "7.0.2",
-    "vite": "8.3.1"
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
   }
 }
