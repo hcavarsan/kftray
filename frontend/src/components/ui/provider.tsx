@@ -36,6 +36,7 @@ import {
   tooltipSlotRecipe,
 } from '@chakra-ui/react/theme'
 import {
+  MutationCache,
   QueryCache,
   QueryClient,
   QueryClientProvider,
@@ -45,16 +46,32 @@ import { errorMessage } from '@/lib/errors'
 
 import { Toaster, toaster } from './toaster'
 
+interface ErrorToastMeta {
+  errorToast?: {
+    id?: string
+    title: string
+    description?: string
+    duration?: number
+  }
+}
+
 declare module '@tanstack/react-query' {
   interface Register {
-    queryMeta: {
-      errorToast?: {
-        id?: string
-        title: string
-        description?: string
-        duration?: number
-      }
-    }
+    queryMeta: ErrorToastMeta
+    mutationMeta: ErrorToastMeta
+  }
+}
+
+const showErrorToast = (error: unknown, meta: ErrorToastMeta | undefined) => {
+  const toast = meta?.errorToast
+
+  if (toast) {
+    toaster.error({
+      id: toast.id,
+      title: toast.title,
+      description: toast.description ?? errorMessage(error),
+      duration: toast.duration,
+    })
   }
 }
 
@@ -218,18 +235,11 @@ const queryClient = new QueryClient({
     mutations: { networkMode: 'always' },
   },
   queryCache: new QueryCache({
-    onError: (error, query) => {
-      const toast = query.meta?.errorToast
-
-      if (toast) {
-        toaster.error({
-          id: toast.id,
-          title: toast.title,
-          description: toast.description ?? errorMessage(error),
-          duration: toast.duration,
-        })
-      }
-    },
+    onError: (error, query) => showErrorToast(error, query.meta),
+  }),
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) =>
+      showErrorToast(error, mutation.meta),
   }),
 })
 
