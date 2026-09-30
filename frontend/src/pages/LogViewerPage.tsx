@@ -50,6 +50,7 @@ function LogViewerPage() {
     searchText: '',
   })
   const deferredSearchText = useDeferredValue(filter.searchText)
+  const { levels, modules } = filter
   const queryClient = useQueryClient()
   const appWindow = getCurrentWebviewWindow()
 
@@ -75,10 +76,10 @@ function LogViewerPage() {
       autoRefresh && selectedFile === null ? AUTO_REFRESH_INTERVAL : false,
   })
   const clearLogsMutation = useMutation({
-    mutationFn: () => invoke('clear_logs', { filename: selectedFile }),
-    onSuccess: async () => {
+    mutationFn: (filename: string | null) => invoke('clear_logs', { filename }),
+    onSuccess: async (_, filename) => {
       setExpandedIds(new Set())
-      await queryClient.invalidateQueries({ queryKey: ['logs', selectedFile] })
+      await queryClient.invalidateQueries({ queryKey: ['logs', filename] })
       toaster.success({
         title: 'Logs Cleared',
         description: 'Log file has been cleared',
@@ -97,9 +98,7 @@ function LogViewerPage() {
     mutationFn: (filename: string) => invoke('delete_log_file', { filename }),
     onSuccess: async (_, filename) => {
       await queryClient.invalidateQueries({ queryKey: logFilesQueryKey })
-      if (selectedFile === filename) {
-        setSelectedFile(null)
-      }
+      setSelectedFile(current => (current === filename ? null : current))
       toaster.success({
         title: 'File Deleted',
         description: 'Log file has been deleted',
@@ -119,8 +118,13 @@ function LogViewerPage() {
   const logInfo = logsQuery.data?.info
   const availableModules = useMemo(() => extractModules(entries), [entries])
   const filteredEntries = useMemo(
-    () => filterLogs(entries, { ...filter, searchText: deferredSearchText }),
-    [deferredSearchText, entries, filter],
+    () =>
+      filterLogs(entries, {
+        levels,
+        modules,
+        searchText: deferredSearchText,
+      }),
+    [deferredSearchText, entries, levels, modules],
   )
 
   const handleFileSelect = useCallback((filename: string | null) => {
@@ -146,8 +150,8 @@ function LogViewerPage() {
     })
   }, [])
   const handleClear = useCallback(() => {
-    clearLogsMutation.mutate()
-  }, [clearLogsMutation])
+    clearLogsMutation.mutate(selectedFile)
+  }, [clearLogsMutation, selectedFile])
   const handleExport = useCallback(async () => {
     setIsExporting(true)
     try {

@@ -6,15 +6,7 @@ import { Box, Flex, Menu, Portal, Text } from '@chakra-ui/react'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 
-import type { LogFileInfo } from './types'
-
-interface LogFileSelectorProps {
-  logFiles: LogFileInfo[]
-  selectedFile: string | null
-  onFileSelect: (filename: string | null) => void
-  onDeleteFile?: (filename: string) => void
-  isLoading?: boolean
-}
+import type { LogFileSelectorProps } from './types'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
