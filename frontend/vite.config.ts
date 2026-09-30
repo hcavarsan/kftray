@@ -21,7 +21,7 @@ export default defineConfig({
       uploadToken: process.env.CODECOV_TOKEN,
       gitService: 'github',
     }),
-    process.env.ANALYZE &&
+    !!process.env.ANALYZE &&
       visualizer({
         open: true,
         gzipSize: true,
