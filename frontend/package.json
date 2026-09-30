@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc && vite build",
     "build:analyze": "ANALYZE=true pnpm build",
+    "check": "tsc --noEmit",
     "dev": "vite",
     "format": "biome format --write .",
     "lint": "biome check --write .",
