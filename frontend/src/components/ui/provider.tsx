@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { ThemeProvider } from 'next-themes'
 
 import {
   ChakraProvider,
@@ -7,14 +6,28 @@ import {
   defaultConfig,
   defineConfig,
 } from '@chakra-ui/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query'
 
-import { Toaster } from './toaster'
+import { errorMessage } from '@/lib/errors'
+
+import { Toaster, toaster } from './toaster'
+
+declare module '@tanstack/react-query' {
+  interface Register {
+    queryMeta: {
+      errorToast?: { title: string; description?: string; duration?: number }
+    }
+  }
+}
 
 const color = (value: string) => ({ value })
 
 const system = createSystem(
-  defaultConfig,
+  { ...defaultConfig, globalCss: {} },
   defineConfig({
     globalCss: {
       body: {
@@ -74,20 +87,28 @@ const system = createSystem(
   }),
 )
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      const toast = query.meta?.errorToast
+
+      if (toast) {
+        toaster.error({
+          title: toast.title,
+          description: toast.description ?? errorMessage(error),
+          duration: toast.duration,
+        })
+      }
+    },
+  }),
+})
 
 export function Provider({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ChakraProvider value={system}>
-        <ThemeProvider
-          attribute='class'
-          forcedTheme='dark'
-          disableTransitionOnChange
-        >
-          {children}
-          <Toaster />
-        </ThemeProvider>
+        {children}
+        <Toaster />
       </ChakraProvider>
     </QueryClientProvider>
   )
