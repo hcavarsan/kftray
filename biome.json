@@ -97,7 +97,10 @@
         "frontend/src/**",
         "!frontend/src/components/ui/provider.tsx"
       ],
-      "plugins": ["./biome-plugins/no-raw-colors.grit"]
+      "plugins": [
+        "./biome-plugins/no-raw-colors.grit",
+        "./biome-plugins/no-raw-colors-css.grit"
+      ]
     }
   ]
 }
