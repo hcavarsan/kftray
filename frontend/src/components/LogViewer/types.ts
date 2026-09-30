@@ -10,6 +10,7 @@ export interface LogEntry {
   module: string | null
   message: string
   is_parsed: boolean
+  searchable: string
 }
 
 export interface LogInfo {

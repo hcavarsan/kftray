@@ -1,6 +1,5 @@
-import type React from 'react'
-import { useEffect, useState } from 'react'
-import ReactSelect, { type ActionMeta, type SingleValue } from 'react-select'
+import { useState } from 'react'
+import ReactSelect from 'react-select'
 
 import {
   Button,
@@ -12,73 +11,58 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
 
-import { fetchKubeContexts } from '@/components/AddConfigModal/utils'
 import { Checkbox } from '@/components/ui/checkbox'
+import { AppDialog } from '@/components/ui/dialog'
+import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
-import type {
-  AutoImportModalProps,
-  Config,
-  KubeContext,
-  StringOption,
-} from '@/types'
+import { configsQuery } from '@/hooks/useConfigs'
+import { useKubeContexts } from '@/hooks/useKube'
+import { selectFile } from '@/lib/nativeDialog'
+import type { StoredConfig, StringOption } from '@/types'
 
-import { autoImportSelectStyles } from './styles'
+interface AutoImportModalProps {
+  onClose: () => void
+}
 
-const AutoImportModal: React.FC<AutoImportModalProps> = ({
-  isOpen,
-  onClose,
-}) => {
-  const [state, setState] = useState({
-    selectedContext: null as SingleValue<StringOption>,
-    kubeConfig: 'default',
-    aliasAsDomain: false,
-    enableAutoLoopback: false,
-    isImporting: false,
+const DEFAULT_KUBECONFIG = 'default'
+
+const contextSelectStyles = selectStyles<StringOption>(35)
+
+export default function AutoImportModal({ onClose }: AutoImportModalProps) {
+  const queryClient = useQueryClient()
+  const [kubeConfig, setKubeConfig] = useState(DEFAULT_KUBECONFIG)
+  const [selectedContext, setSelectedContext] = useState<StringOption | null>(
+    null,
+  )
+  const [aliasAsDomain, setAliasAsDomain] = useState(false)
+  const [enableAutoLoopback, setEnableAutoLoopback] = useState(false)
+
+  const contextQuery = useKubeContexts(kubeConfig, true, {
+    errorToast: { title: 'Error fetching contexts', duration: 1000 },
   })
+  const contextOptions = contextQuery.data?.map(context => ({
+    label: context.name,
+    value: context.name,
+  }))
+  const isDefaultKubeconfig = kubeConfig === DEFAULT_KUBECONFIG
 
-  const contextQuery = useQuery<KubeContext[]>({
-    queryKey: ['kube-contexts', state.kubeConfig],
-    queryFn: () => fetchKubeContexts(state.kubeConfig),
-    enabled: isOpen,
-  })
-
-  const handleCheckboxChange = (
-    checkbox: string,
-    e: { checked: boolean | 'indeterminate' },
-  ) => {
-    const isCheckedBoolean = e.checked === 'indeterminate' ? false : e.checked
-
-    if (checkbox === 'alias_as_domain') {
-      setState(prev => ({ ...prev, aliasAsDomain: isCheckedBoolean }))
-    } else if (checkbox === 'enable_auto_loopback') {
-      setState(prev => ({ ...prev, enableAutoLoopback: isCheckedBoolean }))
-    }
+  const changeKubeconfig = (path: string) => {
+    setKubeConfig(path)
+    setSelectedContext(null)
   }
 
   const handleSetKubeConfig = async () => {
     try {
-      await invoke('open_save_dialog')
-      const selectedPath = await open({
-        multiple: false,
-        filters: [],
-      })
+      const path = await selectFile()
 
-      await invoke('close_save_dialog')
-
-      if (selectedPath) {
-        const filePath = Array.isArray(selectedPath)
-          ? selectedPath[0]
-          : selectedPath
-
-        setState(prev => ({ ...prev, kubeConfig: filePath ?? 'default' }))
+      if (path) {
+        changeKubeconfig(path)
       }
-    } catch (error) {
-      console.error('Error selecting a file: ', error)
-      setState(prev => ({ ...prev, kubeConfig: 'default' }))
+    } catch {
+      changeKubeconfig(DEFAULT_KUBECONFIG)
       toaster.error({
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
@@ -87,8 +71,46 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
     }
   }
 
-  const handleImport = async () => {
-    if (!state.selectedContext) {
+  const importMutation = useMutation({
+    mutationFn: async (contextName: string) => {
+      const configs = await invoke<StoredConfig[]>(
+        'get_services_with_annotations',
+        {
+          contextName,
+          kubeconfigPath: kubeConfig,
+        },
+      )
+      const json = JSON.stringify(
+        configs.map(config => ({
+          ...config,
+          domain_enabled: aliasAsDomain || config.domain_enabled,
+          auto_loopback_address:
+            enableAutoLoopback || config.auto_loopback_address,
+        })),
+      )
+
+      await invoke('import_configs_cmd', { json })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      toaster.success({
+        title: 'Success',
+        description: 'Configs imported successfully.',
+        duration: 1000,
+      })
+      onClose()
+    },
+    onError: () => {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to import configs.',
+        duration: 1000,
+      })
+    },
+  })
+
+  const handleImport = () => {
+    if (!selectedContext) {
       toaster.error({
         title: 'Error',
         description: 'Please select a context.',
@@ -98,300 +120,173 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       return
     }
 
-    setState(prev => ({ ...prev, isImporting: true }))
-    try {
-      const configs = await invoke<Config[]>('get_services_with_annotations', {
-        contextName: state.selectedContext.value,
-        kubeconfigPath: state.kubeConfig,
-      })
-
-      for (const config of configs) {
-        if (state.aliasAsDomain) {
-          config.domain_enabled = true
-        }
-        if (state.enableAutoLoopback) {
-          config.auto_loopback_address = true
-        }
-      }
-
-      const configsJson = JSON.stringify(configs)
-
-      await invoke('import_configs_cmd', { json: configsJson })
-
-      toaster.success({
-        title: 'Success',
-        description: 'Configs imported successfully.',
-        duration: 1000,
-      })
-      onClose()
-    } catch (error) {
-      console.error('Failed to import configs:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to import configs.',
-        duration: 1000,
-      })
-    } finally {
-      setState(prev => ({ ...prev, isImporting: false }))
-    }
+    importMutation.mutate(selectedContext.value)
   }
 
-  const handleSelectChange = (
-    newValue: SingleValue<StringOption>,
-    _actionMeta: ActionMeta<StringOption>,
-  ) => {
-    setState(prev => ({
-      ...prev,
-      selectedContext: newValue,
-    }))
-  }
-
-  useEffect(() => {
-    if (!isOpen) {
-      setState(prev => ({
-        ...prev,
-        selectedContext: null,
-        kubeConfig: 'default',
-      }))
-    }
-  }, [isOpen])
-
-  useEffect(() => {
-    if (contextQuery.error) {
-      console.error('Error fetching contexts:', contextQuery.error)
-      toaster.error({
-        title: 'Error fetching contexts',
-        description:
-          contextQuery.error instanceof Error
-            ? contextQuery.error.message
-            : 'An unknown error occurred',
-        duration: 1000,
-      })
-    }
-  }, [contextQuery.error])
+  const kubeconfigButtonProps = (active: boolean) => ({
+    size: 'xs' as const,
+    variant: active ? ('solid' as const) : ('ghost' as const),
+    bg: active ? 'whiteAlpha.100' : 'transparent',
+    _hover: { bg: active ? 'whiteAlpha.200' : 'whiteAlpha.50' },
+    height: '22px',
+  })
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={onClose}>
-      <Dialog.Backdrop
-        bg='transparent'
-        backdropFilter='blur(4px)'
-        borderRadius='lg'
-        height='100vh'
-      />
-      <Dialog.Positioner overflow='hidden'>
-        <Dialog.Content
-          onClick={e => e.stopPropagation()}
-          maxWidth='400px'
-          width='90vw'
-          bg='#111111'
-          borderRadius='lg'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-          overflow='hidden'
-          mt={70}
-        >
-          <Dialog.Header
-            p={1.5}
-            bg='#161616'
-            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-          >
-            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-              Auto Import
-            </Text>
-          </Dialog.Header>
-
-          <Dialog.Body p={3}>
-            <Stack gap={4}>
-              <Stack gap={1.5}>
-                <Flex align='center' justify='space-between'>
-                  <Text fontSize='xs' color='gray.400'>
-                    Kubeconfig *
-                  </Text>
-                  <Flex gap={2}>
-                    <Button
-                      size='xs'
-                      variant={
-                        state.kubeConfig === 'default' ? 'solid' : 'ghost'
-                      }
-                      onClick={() =>
-                        setState(prev => ({ ...prev, kubeConfig: 'default' }))
-                      }
-                      bg={
-                        state.kubeConfig === 'default'
-                          ? 'whiteAlpha.100'
-                          : 'transparent'
-                      }
-                      _hover={{
-                        bg:
-                          state.kubeConfig === 'default'
-                            ? 'whiteAlpha.200'
-                            : 'whiteAlpha.50',
-                      }}
-                      height='22px'
-                    >
-                      <Text fontSize='xs'>Default</Text>
-                    </Button>
-                    <Button
-                      size='xs'
-                      variant={
-                        state.kubeConfig !== 'default' ? 'solid' : 'ghost'
-                      }
-                      onClick={handleSetKubeConfig}
-                      bg={
-                        state.kubeConfig !== 'default'
-                          ? 'whiteAlpha.100'
-                          : 'transparent'
-                      }
-                      _hover={{
-                        bg:
-                          state.kubeConfig !== 'default'
-                            ? 'whiteAlpha.200'
-                            : 'whiteAlpha.50',
-                      }}
-                      height='22px'
-                    >
-                      <Text fontSize='xs'>Set Custom Kubeconfig</Text>
-                    </Button>
-                  </Flex>
-                </Flex>
-
-                {state.kubeConfig !== 'default' && (
-                  <Flex
-                    bg='#161616'
-                    border='1px solid rgba(255, 255, 255, 0.08)'
-                    borderRadius='md'
-                    height='35px'
-                    align='center'
-                    justify='space-between'
-                    px={2}
-                    _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                  >
-                    <Text
-                      fontSize='xs'
-                      color='gray.300'
-                      truncate
-                      maxW='250px'
-                      title={state.kubeConfig}
-                    >
-                      {state.kubeConfig}
-                    </Text>
-                    <Button
-                      size='xs'
-                      variant='ghost'
-                      onClick={handleSetKubeConfig}
-                      bg='whiteAlpha.50'
-                      _hover={{ bg: 'whiteAlpha.100' }}
-                      height='22px'
-                      minW='70px'
-                    >
-                      Browse
-                    </Button>
-                  </Flex>
-                )}
-                {contextQuery.isError && (
-                  <Text color='red.300' fontSize='xs'>
-                    Please select a valid kubeconfig file
-                  </Text>
-                )}
-              </Stack>
-
-              <Stack gap={1.5}>
-                <Text fontSize='xs' color='gray.400'>
-                  Context *
-                </Text>
-                {contextQuery.isLoading ? (
-                  <Flex justify='center' py={2}>
-                    <Spinner size='sm' color='blue.400' />
-                  </Flex>
-                ) : (
-                  <ReactSelect<StringOption>
-                    options={contextQuery.data?.map(context => ({
-                      label: context.name,
-                      value: context.name,
-                    }))}
-                    value={state.selectedContext}
-                    onChange={handleSelectChange}
-                    styles={autoImportSelectStyles}
-                  />
-                )}
-                {contextQuery.isError && (
-                  <Text color='red.300' fontSize='xs'>
-                    Please select a valid kubeconfig file
-                  </Text>
-                )}
-              </Stack>
-              <Stack>
-                <Checkbox
-                  size='xs'
-                  checked={state.aliasAsDomain}
-                  onCheckedChange={e =>
-                    handleCheckboxChange('alias_as_domain', e)
-                  }
+    <AppDialog
+      title='Auto Import'
+      onClose={onClose}
+      maxWidth='400px'
+      headerPadding={1.5}
+      closable={false}
+      contentProps={{ mt: 70 }}
+    >
+      <Dialog.Body p={3}>
+        <Stack gap={4}>
+          <Stack gap={1.5}>
+            <Flex align='center' justify='space-between'>
+              <Text fontSize='xs' color='gray.400'>
+                Kubeconfig *
+              </Text>
+              <Flex gap={2}>
+                <Button
+                  {...kubeconfigButtonProps(isDefaultKubeconfig)}
+                  onClick={() => changeKubeconfig(DEFAULT_KUBECONFIG)}
                 >
-                  <Text fontSize='xs' color='gray.400'>
-                    Enable alias as domain for all configurations
-                  </Text>
-                </Checkbox>
-
-                <Checkbox
-                  size='xs'
-                  checked={state.enableAutoLoopback}
-                  onCheckedChange={e =>
-                    handleCheckboxChange('enable_auto_loopback', e)
-                  }
+                  <Text fontSize='xs'>Default</Text>
+                </Button>
+                <Button
+                  {...kubeconfigButtonProps(!isDefaultKubeconfig)}
+                  onClick={handleSetKubeConfig}
                 >
-                  <Text fontSize='xs' color='gray.400'>
-                    Auto select address for all configurations
-                  </Text>
-                </Checkbox>
-              </Stack>
+                  <Text fontSize='xs'>Set Custom Kubeconfig</Text>
+                </Button>
+              </Flex>
+            </Flex>
 
-              <VStack align='start' gap={2.5} mt={2}>
-                <Text fontSize='xs' color='gray.300'>
-                  Services must have:
+            {!isDefaultKubeconfig && (
+              <Flex
+                bg='app.panel'
+                border='1px solid'
+                borderColor='app.border'
+                borderRadius='md'
+                height='35px'
+                align='center'
+                justify='space-between'
+                px={2}
+                _hover={{ borderColor: 'app.borderStrong' }}
+              >
+                <Text
+                  fontSize='xs'
+                  color='gray.300'
+                  truncate
+                  maxW='250px'
+                  title={kubeConfig}
+                >
+                  {kubeConfig}
                 </Text>
-                <Stack gap={1.5}>
-                  <Text fontSize='xs' color='gray.400'>
-                    • Annotation{' '}
-                    <Text as='span' color='blue.300' fontFamily='mono'>
-                      kftray.app/enabled: true
-                    </Text>
-                  </Text>
-                  <Text fontSize='xs' color='gray.400'>
-                    • Config format:{' '}
-                    <Text as='span' color='blue.300' fontFamily='mono'>
-                      alias-localPort-targetPort
-                    </Text>
-                  </Text>
-                </Stack>
-              </VStack>
-
-              <HStack justify='flex-end' gap={2} mt={2}>
                 <Button
                   size='xs'
                   variant='ghost'
-                  onClick={onClose}
-                  _hover={{ bg: 'whiteAlpha.50' }}
-                  height='28px'
+                  onClick={handleSetKubeConfig}
+                  bg='whiteAlpha.50'
+                  _hover={{ bg: 'whiteAlpha.100' }}
+                  height='22px'
+                  minW='70px'
                 >
-                  Cancel
+                  Browse
                 </Button>
-                <Button
-                  size='xs'
-                  bg='blue.500'
-                  _hover={{ bg: 'blue.600' }}
-                  onClick={handleImport}
-                  disabled={!state.selectedContext || state.isImporting}
-                  height='28px'
-                >
-                  Import
-                </Button>
-              </HStack>
+              </Flex>
+            )}
+          </Stack>
+
+          <Stack gap={1.5}>
+            <Text fontSize='xs' color='gray.400'>
+              Context *
+            </Text>
+            {contextQuery.isLoading ? (
+              <Flex justify='center' py={2}>
+                <Spinner size='sm' color='blue.400' />
+              </Flex>
+            ) : (
+              <ReactSelect<StringOption>
+                aria-label='Context'
+                options={contextOptions}
+                value={selectedContext}
+                onChange={setSelectedContext}
+                styles={contextSelectStyles}
+              />
+            )}
+            {contextQuery.isError && (
+              <Text color='red.300' fontSize='xs'>
+                Please select a valid kubeconfig file
+              </Text>
+            )}
+          </Stack>
+          <Stack>
+            <Checkbox
+              size='xs'
+              checked={aliasAsDomain}
+              onCheckedChange={e => setAliasAsDomain(e.checked === true)}
+            >
+              <Text fontSize='xs' color='gray.400'>
+                Enable alias as domain for all configurations
+              </Text>
+            </Checkbox>
+
+            <Checkbox
+              size='xs'
+              checked={enableAutoLoopback}
+              onCheckedChange={e => setEnableAutoLoopback(e.checked === true)}
+            >
+              <Text fontSize='xs' color='gray.400'>
+                Auto select address for all configurations
+              </Text>
+            </Checkbox>
+          </Stack>
+
+          <VStack align='start' gap={2.5} mt={2}>
+            <Text fontSize='xs' color='gray.300'>
+              Services must have:
+            </Text>
+            <Stack gap={1.5}>
+              <Text fontSize='xs' color='gray.400'>
+                • Annotation{' '}
+                <Text as='span' color='blue.300' fontFamily='mono'>
+                  kftray.app/enabled: true
+                </Text>
+              </Text>
+              <Text fontSize='xs' color='gray.400'>
+                • Config format:{' '}
+                <Text as='span' color='blue.300' fontFamily='mono'>
+                  alias-localPort-targetPort
+                </Text>
+              </Text>
             </Stack>
-          </Dialog.Body>
-        </Dialog.Content>
-      </Dialog.Positioner>
-    </Dialog.Root>
+          </VStack>
+
+          <HStack justify='flex-end' gap={2} mt={2}>
+            <Button
+              size='xs'
+              variant='ghost'
+              onClick={onClose}
+              _hover={{ bg: 'whiteAlpha.50' }}
+              height='28px'
+            >
+              Cancel
+            </Button>
+            <Button
+              size='xs'
+              bg='blue.500'
+              _hover={{ bg: 'blue.600' }}
+              onClick={handleImport}
+              disabled={!selectedContext || importMutation.isPending}
+              height='28px'
+            >
+              Import
+            </Button>
+          </HStack>
+        </Stack>
+      </Dialog.Body>
+    </AppDialog>
   )
 }
-
-export default AutoImportModal

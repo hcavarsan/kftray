@@ -1,49 +1,89 @@
-import type React from 'react'
-import { memo, useEffect, useState } from 'react'
-import {
-  ClipboardIcon,
-  Copy,
-  ExternalLinkIcon,
-  FileIcon,
-  Info,
-  Menu,
-  Pencil,
-  SettingsIcon,
-  Trash2,
-} from 'lucide-react'
+import { memo, useState } from 'react'
+import { ClipboardIcon, ExternalLinkIcon, Info } from 'lucide-react'
 
-import {
-  Box,
-  Button,
-  DialogBackdrop,
-  DialogCloseTrigger,
-  DialogContent,
-  DialogRoot,
-  Flex,
-  IconButton,
-  Table,
-  Text,
-} from '@chakra-ui/react'
+import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
+import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { open as openShell } from '@tauri-apps/plugin-shell'
 
 import HttpLogsConfigModal from '@/components/HttpLogsConfigModal'
-import { Checkbox } from '@/components/ui/checkbox'
+import { ActionsMenu } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ActionsMenu'
+import { ConfigDetailsTooltip } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ConfigDetailsTooltip'
+import { DeleteConfigDialog } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/DeleteConfigDialog'
 import {
-  MenuContent,
-  MenuItem,
-  MenuRoot,
-  MenuTrigger,
-} from '@/components/ui/menu'
+  formatConfigDetails,
+  getConfigDetails,
+  getStatusInfo,
+} from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/statusInfo'
+import {
+  httpLogsEnabledQueryKey,
+  useHttpLogsEnabled,
+  useSetHttpLogsEnabled,
+} from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { PortForwardRowProps, PortForwardToggleAction } from '@/types'
+import { errorMessage } from '@/lib/errors'
+import type {
+  Config,
+  PendingConfigAction,
+  PortForwardToggleAction,
+} from '@/types'
 
 import '../../styles.css'
 
-const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
+const HTTP_URL_PATTERN = /^https?:\/\//i
+
+function openConfigUrl(url: string) {
+  if (!HTTP_URL_PATTERN.test(url)) {
+    return
+  }
+
+  openShell(url).catch(error => {
+    toaster.error({
+      title: 'Failed to open URL',
+      description: errorMessage(error),
+    })
+  })
+}
+
+function buildLocalUrl(config: Config): string {
+  if (config.workload_type === 'expose') {
+    if (config.exposure_type === 'public') {
+      const protocol = config.cert_manager_enabled ? 'https' : 'http'
+
+      return `${protocol}://${config.alias}`
+    }
+
+    const host = config.local_address || '127.0.0.1'
+
+    return `http://${host}:${config.local_port}`
+  }
+
+  const baseUrl = config.domain_enabled
+    ? config.alias
+    : config.local_address || 'localhost'
+
+  return `http://${baseUrl}:${config.local_port}`
+}
+
+interface PortForwardRowProps {
+  config: Config
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
+  onSelectionChange: (id: number, isSelected: boolean) => void
+  selected: boolean
+  pendingAction: PendingConfigAction | null
+  activePod: string | null
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
+}
+
+function PortForwardRowComponent({
   config,
   deleteConfigs,
   handleEditConfig,
@@ -51,260 +91,70 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
   selected,
   onSelectionChange,
   pendingAction,
+  activePod,
   toggleConfigForward,
-}) => {
-  const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
-    [key: string]: boolean
-  }>({})
+}: PortForwardRowProps) {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
-  const [activePod, setActivePod] = useState<string | null>(null)
   const isPending = pendingAction !== null
 
-  useEffect(() => {
-    const fallback = config.http_logs_enabled ?? false
-    const fetchHttpLogState = async () => {
-      try {
-        const enabled = await invoke<boolean>('get_http_logs_cmd', {
-          configId: config.id,
-        })
+  const queryClient = useQueryClient()
+  const { data: httpLogsEnabled } = useHttpLogsEnabled(config.id)
+  const setHttpLogsEnabled = useSetHttpLogsEnabled(config.id)
 
-        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
-      } catch (error) {
-        console.error('Error fetching HTTP log state:', error)
-        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: fallback }))
-      }
-    }
-
-    fetchHttpLogState()
-  }, [config.id, config.http_logs_enabled])
-
-  useEffect(() => {
-    if (!config.is_running) {
-      setActivePod(null)
-
-      return
-    }
-
-    let cancelled = false
-
-    const fetchInitialPod = async () => {
-      try {
-        const podName = await invoke<string | null>('get_active_pod_cmd', {
-          configId: config.id.toString(),
-        })
-
-        if (!cancelled) {
-          setActivePod(podName)
-        }
-      } catch (error) {
-        console.error('Error fetching initial active pod:', error)
-        if (!cancelled) {
-          setActivePod(null)
-        }
-      }
-    }
-
-    fetchInitialPod()
-
-    return () => {
-      cancelled = true
-    }
-  }, [config.is_running, config.id])
-
-  useEffect(() => {
-    const setupListener = async () => {
-      const unlisten = await listen('active_pod_changed', (event: any) => {
-        const { configId, podName } = event.payload
-
-        if (configId === config.id.toString()) {
-          setActivePod(podName)
-        }
-      })
-
-      return unlisten
-    }
-
-    const unlistenPromise = setupListener()
-
-    return () => {
-      unlistenPromise.then(unlisten => unlisten())
-    }
-  }, [config.id])
-
-  const handleToggleHttpLogs = async () => {
-    try {
-      const newState = !httpLogsEnabled[config.id]
-
-      await invoke('set_http_logs_cmd', {
-        configId: config.id,
-        enable: newState,
-      })
-      setHttpLogsEnabled(prevState => ({
-        ...prevState,
-        [config.id]: newState,
-      }))
-    } catch (error) {
-      console.error('Error toggling HTTP logs:', error)
-      toaster.error({
-        title: 'Error toggling HTTP logs',
-        description: error instanceof Error ? error.message : String(error),
-        duration: 1000,
-      })
-    }
-  }
+  const status = getStatusInfo(config, pendingAction, activePod)
+  const configDetails = getConfigDetails(config, activePod)
 
   const handleInspectLogs = async () => {
     try {
-      const logFileName = `${config.id}_${config.local_port}.http`
-
-      await invoke('open_log_file', { logFileName: logFileName })
+      await invoke('open_log_file', {
+        logFileName: `${config.id}_${config.local_port}.http`,
+      })
     } catch (error) {
-      console.error('Error opening log file:', error)
       toaster.error({
         title: 'Error opening log file',
-        description: error instanceof Error ? error.message : String(error),
+        description: errorMessage(error),
         duration: 1000,
       })
     }
   }
 
-  const handleOpenHttpLogsConfig = () => {
-    setIsHttpLogsConfigOpen(true)
-  }
-
-  const handleCloseHttpLogsConfig = () => {
-    setIsHttpLogsConfigOpen(false)
-  }
-
-  const handleHttpLogsConfigSave = async () => {
-    try {
-      const enabled = await invoke<boolean>('get_http_logs_cmd', {
-        configId: config.id,
-      })
-
-      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
-    } catch (error) {
-      console.error('Error fetching HTTP log state:', error)
-      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: false }))
-    }
-  }
-
-  const handleOpenLocalURL = () => {
-    // For expose workload
-    if (config.workload_type === 'expose') {
-      // Public exposure: use ingress URL
-      if (config.exposure_type === 'public') {
-        const protocol = config.cert_manager_enabled ? 'https' : 'http'
-        const url = `${protocol}://${config.alias}`
-
-        openShell(url).catch(console.error)
-
-        return
-      }
-
-      // Cluster-only exposure: open local service
-      const host = config.local_address || '127.0.0.1'
-      const localUrl = `http://${host}:${config.local_port}`
-
-      openShell(localUrl).catch(console.error)
-
-      return
-    }
-
-    // For other workloads, use local address with port
-    const baseUrl = config.domain_enabled
-      ? config.alias
-      : config.local_address || 'localhost'
-
-    openShell(`http://${baseUrl}:${config.local_port}`).catch(console.error)
-  }
-
   const togglePortForwarding = async (isChecked: boolean) => {
-    const action: PortForwardToggleAction = isChecked ? 'starting' : 'stopping'
-
-    await toggleConfigForward(config, action)
-  }
-
-  const handleOpenChange = (details: { open: boolean }) => {
-    setIsDeleteDialogOpen(details.open)
-  }
-
-  const handleOpenDeleteDialog = () => {
-    setIsDeleteDialogOpen(true)
+    await toggleConfigForward(config, isChecked ? 'starting' : 'stopping')
   }
 
   const handleCopyPodName = async () => {
-    if (activePod) {
-      try {
-        await navigator.clipboard.writeText(activePod)
-        toaster.success({
-          title: 'Pod name copied',
-          description: `${activePod} copied to clipboard`,
-          duration: 1000,
-        })
-      } catch (error) {
-        console.error('Failed to copy pod name:', error)
-        toaster.error({
-          title: 'Copy failed',
-          description: 'Failed to copy pod name to clipboard',
-          duration: 1000,
-        })
-      }
+    if (!activePod) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(activePod)
+      toaster.success({
+        title: 'Pod name copied',
+        description: `${activePod} copied to clipboard`,
+        duration: 1000,
+      })
+    } catch {
+      toaster.error({
+        title: 'Copy failed',
+        description: 'Failed to copy pod name to clipboard',
+        duration: 1000,
+      })
     }
   }
 
-  const tagsLabel = Object.entries(config.tags ?? {})
-    .map(([key, value]) => (value ? `${key}=${value}` : key))
-    .join(', ')
-
   const handleCopyConfigDetails = async () => {
     try {
-      let details = `Status: ${getStatusInfo().status}\n`
-
-      details += `Alias: ${config.alias}\n`
-      details += `Workload: ${config.workload_type}\n`
-
-      if (config.workload_type === 'expose') {
-        details += `Exposure: ${config.exposure_type === 'public' ? 'Public (Internet)' : 'Cluster Only'}\n`
-
-        if (config.exposure_type === 'public') {
-          const protocol = config.cert_manager_enabled ? 'https' : 'http'
-
-          details += `URL: ${protocol}://${config.alias}\n`
-          details += `TLS/SSL: ${config.cert_manager_enabled ? 'Enabled' : 'Disabled'}\n`
-          if (config.cert_manager_enabled) {
-            details += `Cert Issuer: ${config.cert_issuer || 'default'}\n`
-          }
-        } else {
-          details += `URL: http://${config.alias}.${config.namespace}.svc.cluster.local:${config.local_port}\n`
-          details += `Service Name: ${config.alias}\n`
-        }
-        details += `Local Port: ${config.local_port}\n`
-      } else {
-        details += `Service: ${config.service}\n`
-        details += `Target Port: ${config.remote_port}\n`
-        details += `Protocol: ${config.protocol}\n`
-      }
-
-      details += `Context: ${config.context}\n`
-      details += `Namespace: ${config.namespace}\n`
-      if (tagsLabel) {
-        details += `Tags: ${tagsLabel}\n`
-      }
-
-      if (activePod) {
-        details += `Active Pod: ${activePod}\n`
-      }
-
-      await navigator.clipboard.writeText(details)
+      await navigator.clipboard.writeText(
+        formatConfigDetails(status, configDetails),
+      )
       toaster.success({
         title: 'Config details copied',
         description: 'All configuration details copied to clipboard',
         duration: 1000,
       })
-    } catch (error) {
-      console.error('Failed to copy config details:', error)
+    } catch {
       toaster.error({
         title: 'Copy failed',
         description: 'Failed to copy config details to clipboard',
@@ -313,93 +163,11 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
     }
   }
 
-  const getStatusInfo = () => {
-    if (pendingAction?.timedOut) {
-      return {
-        color: 'rgba(217, 119, 6, 0.7)',
-        status: 'Unresponsive',
-        description:
-          pendingAction.action === 'starting'
-            ? 'Start is taking longer than expected...'
-            : pendingAction.action === 'stopping'
-              ? 'Stop is taking longer than expected...'
-              : 'This action is taking longer than expected...',
-      }
-    }
+  const handleDeleteConfirm = async () => {
+    const success = await deleteConfigs([config.id])
 
-    if (pendingAction?.action === 'starting') {
-      return {
-        color: 'rgba(59, 130, 246, 0.8)',
-        status: 'Starting',
-        description:
-          config.workload_type === 'expose'
-            ? 'Expose tunnel is starting...'
-            : 'Port forward is starting...',
-      }
-    }
-
-    if (pendingAction?.action === 'stopping') {
-      return {
-        color: 'rgba(59, 130, 246, 0.8)',
-        status: 'Stopping',
-        description:
-          config.workload_type === 'expose'
-            ? 'Expose tunnel is stopping...'
-            : 'Port forward is stopping...',
-      }
-    }
-
-    if (
-      pendingAction?.action === 'saving' ||
-      pendingAction?.action === 'deleting'
-    ) {
-      return {
-        color: 'rgba(100, 116, 139, 0.6)',
-        status: 'Busy',
-        description:
-          pendingAction.action === 'saving'
-            ? 'Saving configuration...'
-            : 'Deleting configuration...',
-      }
-    }
-
-    // Follow same logic as checkbox: config.is_running
-    if (config.is_running) {
-      // Orange: Running but has specific issues
-      if (activePod?.includes('pending-rollout')) {
-        return {
-          color: 'rgba(161, 98, 7, 0.7)',
-          status: 'Rollout',
-          description: 'Pod rollout in progress',
-        }
-      }
-
-      // For expose workload, if is_running is true, it's running
-      if (config.workload_type === 'expose') {
-        return {
-          color: 'rgba(59, 130, 246, 0.8)',
-          status: 'Running',
-          description: activePod
-            ? `Tunnel active via ${activePod}`
-            : 'Expose tunnel is active',
-        }
-      }
-
-      // Blue: Running (default for any running state)
-      return {
-        color: 'rgba(59, 130, 246, 0.8)',
-        status: activePod ? 'Running' : 'Pending',
-        description: activePod
-          ? `Connected to ${activePod}`
-          : 'Waiting for healthy pod...',
-      }
-    }
-
-    // Gray: Stopped
-    return {
-      color: 'rgba(100, 116, 139, 0.4)',
-      status: 'Stopped',
-      description: 'Port forward is stopped',
+    if (success) {
+      setIsDeleteDialogOpen(false)
     }
   }
 
@@ -410,98 +178,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
           <Flex align='center' gap={1.5}>
             <Tooltip
               content={
-                <Box p={1}>
-                  <Text fontSize='xs' fontWeight='medium'>
-                    Status: {getStatusInfo().status}
-                  </Text>
-                  <Box
-                    borderTop='1px solid'
-                    borderColor='rgba(255,255,255,0.1)'
-                    pt={1}
-                    mt={1}
-                  >
-                    <Text fontSize='xs'>
-                      <strong>Alias:</strong> {config.alias}
-                    </Text>
-                    <Text fontSize='xs'>
-                      <strong>Workload:</strong> {config.workload_type}
-                    </Text>
-                    {config.workload_type === 'expose' && (
-                      <>
-                        <Text fontSize='xs'>
-                          <strong>Exposure:</strong>{' '}
-                          {config.exposure_type === 'public'
-                            ? 'Public (Internet)'
-                            : 'Cluster Only'}
-                        </Text>
-                        {config.exposure_type === 'public' ? (
-                          <>
-                            <Text fontSize='xs'>
-                              <strong>URL:</strong>{' '}
-                              {config.cert_manager_enabled ? 'https' : 'http'}
-                              ://
-                              {config.alias}
-                            </Text>
-                            <Text fontSize='xs'>
-                              <strong>TLS/SSL:</strong>{' '}
-                              {config.cert_manager_enabled
-                                ? 'Enabled'
-                                : 'Disabled'}
-                            </Text>
-                            {config.cert_manager_enabled && (
-                              <Text fontSize='xs'>
-                                <strong>Cert Issuer:</strong>{' '}
-                                {config.cert_issuer || 'default'}
-                              </Text>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <Text fontSize='xs'>
-                              <strong>URL:</strong> http://
-                              {config.alias}.{config.namespace}
-                              .svc.cluster.local:
-                              {config.local_port}
-                            </Text>
-                            <Text fontSize='xs'>
-                              <strong>Service Name:</strong> {config.alias}
-                            </Text>
-                            <Text fontSize='xs'>
-                              <strong>Namespace:</strong> {config.namespace}
-                            </Text>
-                          </>
-                        )}
-                        <Text fontSize='xs'>
-                          <strong>Local Port:</strong> {config.local_port}
-                        </Text>
-                      </>
-                    )}
-                    {config.workload_type !== 'expose' && (
-                      <>
-                        <Text fontSize='xs'>
-                          <strong>Service:</strong> {config.service}
-                        </Text>
-                        <Text fontSize='xs'>
-                          <strong>Target Port:</strong> {config.remote_port}
-                        </Text>
-                        <Text fontSize='xs'>
-                          <strong>Protocol:</strong> {config.protocol}
-                        </Text>
-                      </>
-                    )}
-                    <Text fontSize='xs'>
-                      <strong>Context:</strong> {config.context}
-                    </Text>
-                    <Text fontSize='xs'>
-                      <strong>Namespace:</strong> {config.namespace}
-                    </Text>
-                    {tagsLabel && (
-                      <Text fontSize='xs'>
-                        <strong>Tags:</strong> {tagsLabel}
-                      </Text>
-                    )}
-                  </Box>
-                </Box>
+                <ConfigDetailsTooltip status={status} details={configDetails} />
               }
               portalled
             >
@@ -509,9 +186,9 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                 <Checkbox
                   size='xs'
                   checked={selected}
-                  onCheckedChange={e => {
+                  onCheckedChange={e =>
                     onSelectionChange(config.id, e.checked === true)
-                  }}
+                  }
                   className='checkbox'
                 />
 
@@ -519,9 +196,9 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                   size='xs'
                   variant='ghost'
                   aria-label='Info'
-                  onClick={handleCopyConfigDetails}
+                  onClick={() => void handleCopyConfigDetails()}
                   className='icon-button'
-                  style={{ color: getStatusInfo().color }}
+                  color={status.color}
                 >
                   <Box as={Info} width='12px' height='12px' />
                 </IconButton>
@@ -543,8 +220,8 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
             <Switch
               size='sm'
               checked={config.is_running}
-              onCheckedChange={details =>
-                void togglePortForwarding(details.checked)
+              onCheckedChange={state =>
+                void togglePortForwarding(state.checked)
               }
               disabled={isPending}
               data-loading={isPending ? '' : undefined}
@@ -565,7 +242,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                     size='2xs'
                     variant='ghost'
                     aria-label='Open URL'
-                    onClick={handleOpenLocalURL}
+                    onClick={() => openConfigUrl(buildLocalUrl(config))}
                     className='icon-button'
                   >
                     <ExternalLinkIcon size={10} />
@@ -580,7 +257,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                   content={
                     <Box p={1}>
                       <Text fontSize='xs' fontWeight='medium'>
-                        Status: {getStatusInfo().status}
+                        Status: {status.status}
                       </Text>
                       <Text fontSize='xs' color='gray.400'>
                         Pod: {activePod} (click to copy)
@@ -592,7 +269,7 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
                   <IconButton
                     size='2xs'
                     variant='ghost'
-                    onClick={handleCopyPodName}
+                    onClick={() => void handleCopyPodName()}
                     aria-label='Copy Pod Name'
                     className='icon-button'
                   >
@@ -607,145 +284,39 @@ const PortForwardRowComponent: React.FC<PortForwardRowProps> = ({
         </Table.Cell>
 
         <Table.Cell className='table-cell'>
-          <MenuRoot>
-            <MenuTrigger asChild>
-              <IconButton
-                size='xs'
-                ml={5}
-                variant='ghost'
-                aria-label='Actions'
-                className='icon-button'
-              >
-                <Box as={Menu} width='12px' height='12px' />
-              </IconButton>
-            </MenuTrigger>
-            <MenuContent className='menu-content'>
-              <MenuItem
-                className='menu-item'
-                value='edit'
-                disabled={isPending}
-                onClick={() => void handleEditConfig(config.id)}
-              >
-                <Box as={Pencil} width='12px' height='12px' />
-                <Text ml={2} fontSize='xs'>
-                  Edit
-                </Text>
-              </MenuItem>
-              <MenuItem
-                className='menu-item'
-                value='duplicate'
-                disabled={isPending}
-                onClick={() => void handleDuplicateConfig(config.id)}
-              >
-                <Box as={Copy} width='12px' height='12px' />
-                <Text ml={2} fontSize='xs'>
-                  Duplicate
-                </Text>
-              </MenuItem>
-              <MenuItem
-                className='menu-item'
-                value='delete'
-                disabled={isPending}
-                onClick={handleOpenDeleteDialog}
-              >
-                <Box as={Trash2} width='12px' height='12px' />
-                <Text ml={2} fontSize='xs'>
-                  Delete
-                </Text>
-              </MenuItem>
-              {config.protocol === 'tcp' && (
-                <>
-                  <MenuItem
-                    className='menu-item'
-                    value='http-logs'
-                    onClick={handleToggleHttpLogs}
-                  >
-                    <FileIcon size={12} />
-                    <Text ml={2} fontSize='xs'>
-                      {httpLogsEnabled[config.id] === true
-                        ? 'Disable'
-                        : 'Enable'}{' '}
-                      HTTP Logs
-                    </Text>
-                  </MenuItem>
-                  {httpLogsEnabled[config.id] === true && (
-                    <MenuItem
-                      className='menu-item'
-                      value='open-http-logs'
-                      onClick={handleInspectLogs}
-                    >
-                      <FileIcon size={12} />
-                      <Text ml={2} fontSize='xs'>
-                        Open HTTP Logs File
-                      </Text>
-                    </MenuItem>
-                  )}
-                  <MenuItem
-                    className='menu-item'
-                    value='http-logs-config'
-                    onClick={handleOpenHttpLogsConfig}
-                  >
-                    <SettingsIcon size={12} />
-                    <Text ml={2} fontSize='xs'>
-                      HTTP Logs Settings
-                    </Text>
-                  </MenuItem>
-                </>
-              )}
-            </MenuContent>
-          </MenuRoot>
+          <ActionsMenu
+            protocol={config.protocol}
+            isPending={isPending}
+            httpLogsEnabled={httpLogsEnabled}
+            onEdit={() => void handleEditConfig(config.id)}
+            onDuplicate={() => void handleDuplicateConfig(config.id)}
+            onOpenDeleteDialog={() => setIsDeleteDialogOpen(true)}
+            onToggleHttpLogs={() => setHttpLogsEnabled.mutate(!httpLogsEnabled)}
+            onInspectLogs={() => void handleInspectLogs()}
+            onOpenHttpLogsConfig={() => setIsHttpLogsConfigOpen(true)}
+          />
         </Table.Cell>
       </Table.Row>
 
       {isDeleteDialogOpen && (
-        <DialogRoot open={isDeleteDialogOpen} onOpenChange={handleOpenChange}>
-          <DialogBackdrop className='dialog-backdrop' />
-          <DialogContent className='dialog-content'>
-            <Box className='dialog-header'>
-              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-                Delete Configuration
-              </Text>
-            </Box>
-
-            <Box className='dialog-body'>
-              <Text fontSize='xs' color='gray.400'>
-                Are you sure? You can&lsquo;t undo this action afterwards.
-              </Text>
-            </Box>
-
-            <Box className='dialog-footer'>
-              <DialogCloseTrigger asChild>
-                <Button size='xs' variant='ghost' className='dialog-button'>
-                  Cancel
-                </Button>
-              </DialogCloseTrigger>
-              <Button
-                size='xs'
-                className='dialog-button dialog-button-primary'
-                disabled={isPending}
-                onClick={() => {
-                  void (async () => {
-                    const success = await deleteConfigs([config.id])
-
-                    if (success) {
-                      setIsDeleteDialogOpen(false)
-                    }
-                  })()
-                }}
-              >
-                Delete
-              </Button>
-            </Box>
-          </DialogContent>
-        </DialogRoot>
+        <DeleteConfigDialog
+          isPending={isPending}
+          onConfirm={() => void handleDeleteConfirm()}
+          onClose={() => setIsDeleteDialogOpen(false)}
+        />
       )}
 
-      <HttpLogsConfigModal
-        configId={config.id}
-        isOpen={isHttpLogsConfigOpen}
-        onClose={handleCloseHttpLogsConfig}
-        onSave={handleHttpLogsConfigSave}
-      />
+      {isHttpLogsConfigOpen && (
+        <HttpLogsConfigModal
+          configId={config.id}
+          onClose={() => setIsHttpLogsConfigOpen(false)}
+          onSaved={() =>
+            queryClient.invalidateQueries({
+              queryKey: httpLogsEnabledQueryKey(config.id),
+            })
+          }
+        />
+      )}
     </>
   )
 }

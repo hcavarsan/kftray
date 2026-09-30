@@ -6,7 +6,6 @@ import { Box, Flex, Menu, Portal, Text } from '@chakra-ui/react'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 
-import { COLORS } from './constants'
 import type { LogFileInfo } from './types'
 
 interface LogFileSelectorProps {
@@ -93,10 +92,10 @@ function LogFileSelectorComponent({
           px={2}
           bg='transparent'
           color='whiteAlpha.800'
-          borderColor={COLORS.borderDefault}
+          borderColor='app.border'
           _hover={{
             bg: 'whiteAlpha.50',
-            borderColor: COLORS.borderHover,
+            borderColor: 'app.borderStrong',
           }}
           disabled={isLoading}
         >
@@ -105,11 +104,7 @@ function LogFileSelectorComponent({
               w='6px'
               h='6px'
               borderRadius='full'
-              bg={
-                selectedFileInfo?.is_current
-                  ? COLORS.accentBlue
-                  : 'whiteAlpha.400'
-              }
+              bg={selectedFileInfo?.is_current ? 'blue.500' : 'whiteAlpha.400'}
               flexShrink={0}
             />
             <Text
@@ -133,9 +128,9 @@ function LogFileSelectorComponent({
       <Portal>
         <Menu.Positioner>
           <Menu.Content
-            bg={COLORS.bgSecondary}
+            bg='app.panel'
             border='1px solid'
-            borderColor={COLORS.borderDefault}
+            borderColor='app.border'
             minW='240px'
             maxH='250px'
             overflowY='auto'
@@ -145,7 +140,7 @@ function LogFileSelectorComponent({
               px={2}
               py={1}
               borderBottom='1px solid'
-              borderBottomColor={COLORS.borderSubtle}
+              borderBottomColor='app.hover'
             >
               <Text fontSize='10px' color='whiteAlpha.500' fontWeight='medium'>
                 Log Files ({logFiles.length})
@@ -159,11 +154,9 @@ function LogFileSelectorComponent({
                   key={file.filename}
                   value={file.filename}
                   onClick={() => handleSelect(file.filename)}
-                  bg={isSelected ? 'rgba(59, 130, 246, 0.1)' : 'transparent'}
+                  bg={isSelected ? 'blue.500/10' : 'transparent'}
                   _hover={{
-                    bg: isSelected
-                      ? 'rgba(59, 130, 246, 0.15)'
-                      : 'whiteAlpha.50',
+                    bg: isSelected ? 'app.accentSubtle' : 'whiteAlpha.50',
                   }}
                   py={1.5}
                   px={2}
@@ -174,18 +167,16 @@ function LogFileSelectorComponent({
                         w='6px'
                         h='6px'
                         borderRadius='full'
-                        bg={
-                          file.is_current ? COLORS.accentBlue : 'whiteAlpha.300'
-                        }
+                        bg={file.is_current ? 'blue.500' : 'whiteAlpha.300'}
                         flexShrink={0}
                       />
                       <Text
                         fontSize='11px'
                         color={
                           file.is_current
-                            ? COLORS.accentBlue
+                            ? 'blue.500'
                             : isSelected
-                              ? COLORS.accentBlue
+                              ? 'blue.500'
                               : 'whiteAlpha.900'
                         }
                         fontWeight={file.is_current ? 'medium' : 'normal'}
@@ -212,7 +203,7 @@ function LogFileSelectorComponent({
                           borderRadius='3px'
                           color='whiteAlpha.400'
                           _hover={{
-                            bg: 'rgba(229, 62, 62, 0.1)',
+                            bg: 'status.danger.bg',
                             color: 'red.400',
                           }}
                           _focus={{ outline: 'none', boxShadow: 'none' }}

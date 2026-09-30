@@ -51,7 +51,7 @@
     "rules": {
       "preset": "recommended",
       "a11y": {
-        "preset": "none"
+        "preset": "recommended"
       },
       "complexity": {
         "noBannedTypes": "off",
@@ -63,19 +63,19 @@
         }
       },
       "correctness": {
-        "noUnusedFunctionParameters": "warn",
-        "noUnusedImports": "warn",
-        "noUnusedVariables": "warn",
-        "useExhaustiveDependencies": "warn"
+        "noUnusedFunctionParameters": "error",
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "useExhaustiveDependencies": "error"
       },
       "style": {
         "useBlockStatements": "error",
         "useConst": "error"
       },
       "suspicious": {
-        "noArrayIndexKey": "off",
+        "noConsole": "error",
         "noEmptyBlockStatements": "error",
-        "noExplicitAny": "off",
+        "noExplicitAny": "error",
         "useIterableCallbackReturn": "error"
       }
     }

@@ -1,4 +1,3 @@
-import type React from 'react'
 import { X } from 'lucide-react'
 
 import { chakra, Flex, Text } from '@chakra-ui/react'
@@ -36,10 +35,7 @@ const chipLabel = ({ field, value }: FilterChip) => {
     : { name: `${name}:`, value }
 }
 
-const ActiveFilterChips: React.FC<ActiveFilterChipsProps> = ({
-  view,
-  setView,
-}) => {
+function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
   if (view.filters.length === 0) {
     return null
   }
@@ -66,15 +62,16 @@ const ActiveFilterChips: React.FC<ActiveFilterChipsProps> = ({
             ps={1.5}
             pe={0.5}
             borderRadius='sm'
-            bg='rgba(59, 130, 246, 0.1)'
-            border='1px solid rgba(59, 130, 246, 0.25)'
+            bg='blue.500/10'
+            border='1px solid'
+            borderColor='blue.500/25'
             fontSize='10px'
             lineHeight='1'
           >
             <Text as='span' color='whiteAlpha.600'>
               {label.name}
             </Text>
-            <Text as='span' color='rgb(147, 197, 253)' truncate maxW='120px'>
+            <Text as='span' color='app.accentText' truncate maxW='120px'>
               {label.value}
             </Text>
             <chakra.button
@@ -88,8 +85,8 @@ const ActiveFilterChips: React.FC<ActiveFilterChipsProps> = ({
               borderRadius='sm'
               color='whiteAlpha.500'
               cursor='pointer'
-              _hover={{ bg: 'rgba(59, 130, 246, 0.25)', color: 'white' }}
-              _focusVisible={{ outline: '1px solid rgb(59, 130, 246)' }}
+              _hover={{ bg: 'blue.500/25', color: 'white' }}
+              _focusVisible={{ outline: '1px solid', outlineColor: 'blue.500' }}
               onClick={() => remove(chip)}
             >
               <X size={9} />

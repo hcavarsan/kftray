@@ -1,8 +1,7 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
 
 import { Provider } from './components/ui/provider'
-import { Toaster } from './components/ui/toaster'
 import LogViewerPage from './pages/LogViewerPage'
 
 import './index.css'
@@ -13,11 +12,10 @@ if (!rootElement) {
   throw new Error('Failed to find the root element')
 }
 
-ReactDOM.createRoot(rootElement).render(
-  <React.StrictMode>
-    <Provider forcedTheme='dark'>
+createRoot(rootElement).render(
+  <StrictMode>
+    <Provider>
       <LogViewerPage />
-      <Toaster />
     </Provider>
-  </React.StrictMode>,
+  </StrictMode>,
 )

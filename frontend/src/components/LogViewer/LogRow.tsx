@@ -3,9 +3,11 @@ import { ChevronDown, ChevronRight, Copy } from 'lucide-react'
 
 import { Box, Flex, IconButton, Text } from '@chakra-ui/react'
 
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { errorMessage } from '@/lib/errors'
 
-import { COLORS, LEVEL_COLORS } from './constants'
+import { LEVEL_COLORS } from './constants'
 import type { LogLevel, LogRowProps } from './types'
 import { highlightText } from './utils/filterLogs'
 
@@ -48,12 +50,14 @@ function HighlightedText({
 
   return (
     <>
-      {segments.map((segment, index) =>
-        segment.isMatch ? (
+      {segments.map((segment, index) => {
+        const key = `${segment.isMatch}-${segment.text}-${index}`
+
+        return segment.isMatch ? (
           <Box
             as='mark'
-            key={index}
-            bg='rgba(251, 191, 36, 0.3)'
+            key={key}
+            bg='search.match'
             color='white'
             px={0.5}
             borderRadius='2px'
@@ -61,16 +65,22 @@ function HighlightedText({
             {segment.text}
           </Box>
         ) : (
-          <span key={index}>{segment.text}</span>
-        ),
-      )}
+          <span key={key}>{segment.text}</span>
+        )
+      })}
     </>
   )
 }
 
 function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
-  const levelColors = entry.level ? LEVEL_COLORS[entry.level as LogLevel] : null
+  const levelColors = entry.level ? LEVEL_COLORS[entry.level] : null
   const [showCopied, setShowCopied] = useState(false)
+  const copyFeedbackTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
+  useEffect(() => {
+    return () => {
+      clearTimeout(copyFeedbackTimeoutRef.current)
+    }
+  }, [])
 
   const handleCopyAll = useCallback(async () => {
     const parts = []
@@ -87,23 +97,25 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
     parts.push(`Message: ${entry.message}`)
     try {
       await navigator.clipboard.writeText(parts.join('\n'))
+      clearTimeout(copyFeedbackTimeoutRef.current)
       setShowCopied(true)
-      setTimeout(() => setShowCopied(false), 1500)
-    } catch (err) {
-      console.error('Failed to copy:', err)
+      copyFeedbackTimeoutRef.current = setTimeout(() => {
+        setShowCopied(false)
+      }, 1500)
+    } catch (error) {
+      toaster.error({ title: 'Error', description: errorMessage(error) })
     }
   }, [entry])
 
   return (
     <Box
       mt={2}
-      p={3}
-      bg={COLORS.bgSecondary}
+      bg='app.panel'
       borderRadius='4px'
       border='1px solid'
-      borderColor={COLORS.borderDefault}
+      borderColor='app.border'
       borderLeft='2px solid'
-      borderLeftColor={levelColors?.border ?? COLORS.borderDefault}
+      borderLeftColor={levelColors?.border ?? 'app.border'}
       fontSize='11px'
       fontFamily='mono'
     >
@@ -139,11 +151,7 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
             <Text color='whiteAlpha.500' display='inline' fontSize='10px'>
               Module:{' '}
             </Text>
-            <Text
-              color={COLORS.accentCyan}
-              display='inline'
-              wordBreak='break-all'
-            >
+            <Text color='cyan.300' display='inline' wordBreak='break-all'>
               {entry.module}
             </Text>
           </Box>
@@ -186,7 +194,7 @@ function LogRowComponent({
   style,
   searchText,
 }: LogRowProps) {
-  const levelColors = entry.level ? LEVEL_COLORS[entry.level as LogLevel] : null
+  const levelColors = entry.level ? LEVEL_COLORS[entry.level] : null
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -218,9 +226,9 @@ function LogRowComponent({
       px={2}
       py={1}
       borderBottom='1px solid'
-      borderBottomColor={COLORS.borderSubtle}
-      bg={isExpanded ? 'rgba(255, 255, 255, 0.02)' : 'transparent'}
-      _hover={{ bg: 'rgba(255, 255, 255, 0.03)' }}
+      borderBottomColor='app.hover'
+      bg={isExpanded ? 'white/2' : 'transparent'}
+      _hover={{ bg: 'app.faint' }}
       transition='background 0.1s'
       overflow='hidden'
     >
@@ -243,7 +251,7 @@ function LogRowComponent({
 
         {entry.level && (
           <Box flexShrink={0}>
-            <LevelBadge level={entry.level as LogLevel} />
+            <LevelBadge level={entry.level} />
           </Box>
         )}
 
@@ -251,7 +259,7 @@ function LogRowComponent({
           <Text
             fontSize='11px'
             fontFamily='mono'
-            color={COLORS.accentCyan}
+            color='cyan.300'
             flexShrink={0}
             maxW='180px'
             overflow='hidden'

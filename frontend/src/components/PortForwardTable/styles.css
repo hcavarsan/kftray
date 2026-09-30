@@ -13,8 +13,7 @@
 
 .table-container {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-  scrollbar-gutter: stable;
+  scrollbar-color: var(--chakra-colors-app-active) transparent;
   border: none;
   overflow-y: auto;
 }
@@ -33,12 +32,12 @@
 }
 
 .table-container::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--chakra-colors-app-active);
   border-radius: 2px;
 }
 
 .table-container::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--chakra-colors-app-hover);
 }
 
 .accordion-trigger {
@@ -49,14 +48,18 @@
 
 .accordion-content {
   padding: 8px;
-  background-color: rgba(22, 22, 22, 0.3);
+  background-color: color-mix(
+    in srgb,
+    var(--chakra-colors-app-panel) 30%,
+    transparent
+  );
   border: none;
 }
 
 .table-header {
   height: 28px;
   font-size: var(--font-size-small);
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--chakra-colors-app-placeholder);
   text-transform: uppercase;
   letter-spacing: 0.25em;
   border: none;
@@ -64,12 +67,16 @@
 
 .table-row {
   height: var(--row-height);
-  background-color: rgba(22, 22, 22, 0.4);
+  background-color: color-mix(
+    in srgb,
+    var(--chakra-colors-app-panel) 40%,
+    transparent
+  );
   border: none;
 }
 
 .table-row:hover {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: var(--chakra-colors-app-faint);
 }
 
 .table-cell {
@@ -83,7 +90,7 @@
   min-width: var(--icon-size);
   height: var(--icon-size);
   padding: 0;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--chakra-colors-app-text-disabled);
 }
 
 .checkbox {
@@ -122,10 +129,14 @@
 }
 
 .accordion-item {
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--chakra-colors-app-subtle);
   border-radius: var(--border-radius);
   margin: 1px 0;
-  background-color: rgba(22, 22, 22, 0.3);
+  background-color: color-mix(
+    in srgb,
+    var(--chakra-colors-app-panel) 30%,
+    transparent
+  );
   overflow: auto;
 }
 
@@ -139,7 +150,11 @@
 }
 
 .accordion-trigger:hover {
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: color-mix(
+    in srgb,
+    var(--chakra-colors-white) 2%,
+    transparent
+  );
 }
 
 .accordion-header {
@@ -152,7 +167,11 @@
 
 .accordion-content {
   padding: var(--accordion-padding);
-  background-color: rgba(22, 22, 22, 0.3);
+  background-color: color-mix(
+    in srgb,
+    var(--chakra-colors-app-panel) 30%,
+    transparent
+  );
   border: none;
 }
 
@@ -176,7 +195,7 @@
 .table-header-cell {
   padding: 4px var(--padding-x);
   font-size: var(--font-size-small);
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--chakra-colors-app-placeholder);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 500;
@@ -208,10 +227,10 @@
 .context-tag {
   padding: 2px 6px;
   font-size: var(--font-size-small);
-  background-color: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: var(--chakra-colors-app-subtle);
+  border: 1px solid var(--chakra-colors-app-active);
   border-radius: var(--border-radius);
-  color: rgba(255, 255, 255, 0.9);
+  color: color-mix(in srgb, var(--chakra-colors-white) 90%, transparent);
 }
 
 .status-tag {
@@ -220,8 +239,8 @@
   gap: 4px;
   padding: 2px 4px;
   font-size: var(--font-size-small);
-  background-color: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: var(--chakra-colors-app-shade);
+  border: 1px solid var(--chakra-colors-app-active);
   border-radius: 10px;
 }
 
@@ -233,85 +252,22 @@
 .progress-wrapper {
   width: 50px;
   height: 3px;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--chakra-colors-app-active);
   border-radius: 2px;
   overflow: hidden;
-}
-
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background-color: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  z-index: 50;
-}
-
-.dialog-content {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  max-width: 400px;
-  width: 90vw;
-  background-color: #111111;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 0;
-  z-index: 51;
-}
-
-.dialog-header {
-  padding: 12px 16px;
-  background-color: #161616;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.dialog-body {
-  padding: 16px;
-}
-
-.dialog-footer {
-  padding: 12px 16px;
-  background-color: #111111;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.dialog-button {
-  height: 28px;
-  min-width: 60px;
-  font-size: 12px;
-  padding: 0 12px;
-  border-radius: 4px;
-  transition: background-color 0.2s ease;
-}
-
-.dialog-button:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-}
-
-.dialog-button-primary {
-  background-color: rgb(59, 130, 246);
-  color: white;
-}
-
-.dialog-button-primary:hover {
-  background-color: rgb(37, 99, 235);
 }
 
 .switch {
   position: relative;
   width: 30px !important;
   height: 14px !important;
-  background-color: rgba(255, 255, 255, 0.06) !important;
+  background-color: var(--chakra-colors-app-subtle) !important;
   border-radius: 10px !important;
   transition: all 0.2s ease;
 }
 
 .switch[data-state="checked"] {
-  background-color: rgba(59, 130, 246, 0.3) !important;
+  background-color: var(--chakra-colors-app-accent-muted) !important;
 }
 
 .switch[data-disabled] {
@@ -324,12 +280,12 @@
   position: absolute;
   width: 14px;
   height: 14px;
-  background-color: rgba(255, 255, 255, 0.7);
+  background-color: var(--chakra-colors-app-text-secondary);
   border-radius: 50%;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .switch[data-state="checked"]::before {
   transform: translateX(16px);
-  background-color: rgb(59, 130, 246);
+  background-color: var(--chakra-colors-blue-500);
 }

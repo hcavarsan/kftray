@@ -1,4 +1,4 @@
-import type React from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { useMemo } from 'react'
 import {
   ChevronsDownUp,
@@ -17,9 +17,29 @@ import ViewControls, {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { HeaderMenuProps } from '@/types'
+import type { Config, ConfigView, Facet } from '@/types'
 
-const HeaderMenu: React.FC<HeaderMenuProps> = ({
+interface HeaderMenuProps {
+  configs: Config[]
+  selectedConfigs: Config[]
+  initiatePortForwarding: (configs: Config[]) => void
+  startSelectedPortForwarding: () => void
+  stopSelectedPortForwarding: () => void
+  stopAllPortForwarding: () => void
+  abortStartOperation: () => void
+  abortStopOperation: () => void
+  isInitiating: boolean
+  isStopping: boolean
+  toggleExpandAll: () => void
+  expandedIndices: string[]
+  groupCount: number
+  view: ConfigView | null
+  facets: Facet[]
+  setView: (view: ConfigView) => void
+  setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
+}
+
+function HeaderMenu({
   configs,
   selectedConfigs,
   initiatePortForwarding,
@@ -37,20 +57,41 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   facets,
   setView,
   setSelectedConfigs,
-}) => {
+}: HeaderMenuProps) {
   const isAllExpanded = expandedIndices.length === groupCount
   const expandLabel = isAllExpanded
     ? 'Collapse all groups'
     : 'Expand all groups'
 
-  const isSelectAllChecked = useMemo(() => {
-    return (
-      configs.length > 0 &&
-      configs.every(config =>
-        selectedConfigs.some(selected => selected.id === config.id),
-      )
-    )
-  }, [configs, selectedConfigs])
+  const selectedIds = useMemo(
+    () => new Set(selectedConfigs.map(config => config.id)),
+    [selectedConfigs],
+  )
+  const configById = useMemo(
+    () => new Map(configs.map(config => [config.id, config])),
+    [configs],
+  )
+
+  const isSelectAllChecked = useMemo(
+    () =>
+      configs.length > 0 && configs.every(config => selectedIds.has(config.id)),
+    [configs, selectedIds],
+  )
+
+  const hasSelectedNotRunning = useMemo(
+    () =>
+      selectedConfigs.some(
+        selected => configById.get(selected.id)?.is_running === false,
+      ),
+    [selectedConfigs, configById],
+  )
+  const hasSelectedRunning = useMemo(
+    () =>
+      selectedConfigs.some(
+        selected => configById.get(selected.id)?.is_running === true,
+      ),
+    [selectedConfigs, configById],
+  )
 
   const handleCheckboxChange = ({
     checked,
@@ -63,21 +104,17 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   const isStartBusy =
     isInitiating ||
     (selectedConfigs.length > 0
-      ? selectedConfigs.every(selected => {
-          const currentConfig = configs.find(c => c.id === selected.id)
-
-          return currentConfig?.is_running
-        })
+      ? selectedConfigs.every(
+          selected => configById.get(selected.id)?.is_running === true,
+        )
       : configs.every(config => config.is_running))
 
   const isStopBusy =
     isStopping ||
     (selectedConfigs.length > 0
-      ? selectedConfigs.every(selected => {
-          const currentConfig = configs.find(c => c.id === selected.id)
-
-          return currentConfig && !currentConfig.is_running
-        })
+      ? selectedConfigs.every(
+          selected => configById.get(selected.id)?.is_running === false,
+        )
       : configs.every(config => !config.is_running))
 
   return (
@@ -86,20 +123,20 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       alignItems='center'
       justifyContent='space-between'
       width='100%'
-      bg='#161616'
+      bg='app.panel'
       px={3}
       py={3}
       borderTopRadius='none'
       borderTop='none'
       borderBottomRadius='lg'
-      border='1px solid rgba(255, 255, 255, 0.08)'
+      border='1px solid'
+      borderColor='app.border'
       position='relative'
       zIndex={10}
-      borderTopColor='rgba(255, 255, 255, 0.04)'
+      borderTopColor='app.faint'
       mt='-1px'
     >
       <Group display='flex' alignItems='center' gap={3}>
-        {/* Checkbox */}
         <Checkbox
           ml={2}
           size='sm'
@@ -109,34 +146,28 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             '& input': {
               width: '10px',
               height: '10px',
-              background: '#1A1A1A',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
+              background: 'app.raised',
+              border: '1px solid',
+              borderColor: 'app.borderStrong',
               borderRadius: '3px',
               '&:hover': {
-                borderColor: 'rgba(255, 255, 255, 0.25)',
+                borderColor:
+                  'color-mix(in srgb, var(--chakra-colors-white) 25%, transparent)',
               },
             },
             '& input:checked': {
-              background: '#3182CE',
-              borderColor: '#3182CE',
+              background: 'app.checked',
+              borderColor: 'app.checked',
             },
           }}
         />
 
-        {/* Action Buttons */}
         <Group display='flex' alignItems='center' gap={2}>
           <Tooltip
             content={
               isInitiating
                 ? 'Starting port forwards...'
-                : selectedConfigs.length > 0 &&
-                    selectedConfigs.some(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig && !currentConfig.is_running
-                    })
+                : selectedConfigs.length > 0 && hasSelectedNotRunning
                   ? 'Start selected port forwards'
                   : 'Start all port forwards'
             }
@@ -162,7 +193,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
             >
               {isInitiating ? (
                 <>
@@ -190,14 +222,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     marginRight={1.5}
                   />
                   <span style={{ fontSize: '11px' }}>
-                    {selectedConfigs.length > 0 &&
-                    selectedConfigs.some(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig && !currentConfig.is_running
-                    })
+                    {selectedConfigs.length > 0 && hasSelectedNotRunning
                       ? 'Start Selected'
                       : 'Start All'}
                   </span>
@@ -231,14 +256,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             content={
               isStopping
                 ? 'Stopping port forwards...'
-                : selectedConfigs.length > 0 &&
-                    selectedConfigs.some(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig?.is_running
-                    })
+                : selectedConfigs.length > 0 && hasSelectedRunning
                   ? 'Stop selected port forwards'
                   : 'Stop all port forwards'
             }
@@ -261,7 +279,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
             >
               {isStopping ? (
                 <>
@@ -284,14 +303,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                 <>
                   <Box as={X} width='12px' height='12px' marginRight={1.5} />
                   <span style={{ fontSize: '11px' }}>
-                    {selectedConfigs.length > 0 &&
-                    selectedConfigs.some(selected => {
-                      const currentConfig = configs.find(
-                        c => c.id === selected.id,
-                      )
-
-                      return currentConfig?.is_running
-                    })
+                    {selectedConfigs.length > 0 && hasSelectedRunning
                       ? 'Stop Selected'
                       : 'Stop All'}
                   </span>

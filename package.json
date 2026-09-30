@@ -27,7 +27,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@codecov/vite-plugin": "2.0.1",
     "@tauri-apps/cli": "^2.12.0"
   }
 }

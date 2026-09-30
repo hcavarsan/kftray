@@ -32,11 +32,14 @@ function LogViewerListComponent({
   const [listRef, setListRef] = useState<ListImperativeAPI | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
-  const prevEntriesLengthRef = useRef(entries.length)
-
+  const rowHeightKey = `${entries.map(entry => entry.id).join(',')}:${Array.from(
+    expandedIds,
+  )
+    .sort((left, right) => left - right)
+    .join(',')}`
   const dynamicRowHeight = useDynamicRowHeight({
     defaultRowHeight: ROW_HEIGHT_COLLAPSED,
-    key: `${entries.length}-${expandedIds.size}`,
+    key: rowHeightKey,
   })
 
   useLayoutEffect(() => {
@@ -69,23 +72,21 @@ function LogViewerListComponent({
 
   const handleHeightChange = useCallback(
     (id: number, height: number) => {
-      const index = entries.findIndex(e => e.id === id)
-
+      const index = entries.findIndex(entry => entry.id === id)
       if (index !== -1) {
         dynamicRowHeight.setRowHeight(index, height)
       }
     },
-    [entries, dynamicRowHeight],
+    [dynamicRowHeight, entries],
   )
 
   useEffect(() => {
     if (autoFollow && listRef && entries.length > 0) {
       requestAnimationFrame(() => {
-        listRef?.scrollToRow({ index: entries.length - 1, align: 'end' })
+        listRef.scrollToRow({ index: entries.length - 1, align: 'end' })
       })
     }
-    prevEntriesLengthRef.current = entries.length
-  }, [entries.length, autoFollow, listRef])
+  }, [autoFollow, entries.length, listRef])
 
   const Row = useCallback(
     ({

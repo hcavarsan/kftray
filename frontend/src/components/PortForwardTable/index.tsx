@@ -1,11 +1,12 @@
-import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import GroupAccordion from '@/components/PortForwardTable/GroupAccordion'
+import { useActivePods } from '@/components/PortForwardTable/useActivePods'
 import {
   ALL_GROUP_ID,
   useConfigView,
@@ -14,9 +15,36 @@ import {
   AccordionRoot,
   type ValueChangeDetails,
 } from '@/components/ui/accordion'
-import type { Config, ResolvedGroup, TableProps } from '@/types'
+import type {
+  Config,
+  PendingConfigAction,
+  PortForwardToggleAction,
+  ResolvedGroup,
+} from '@/types'
 
-const PortForwardTable: React.FC<TableProps> = ({
+interface TableProps {
+  configs: Config[]
+  isInitiating: boolean
+  isStopping: boolean
+  pendingConfigActions: Map<number, PendingConfigAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
+  initiatePortForwarding: (configs: Config[]) => Promise<void>
+  startSelectedPortForwarding: () => Promise<void>
+  stopSelectedPortForwarding: () => Promise<void>
+  stopAllPortForwarding: () => Promise<void>
+  abortStartOperation: () => void
+  abortStopOperation: () => void
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
+  selectedConfigs: Config[]
+  setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
+}
+
+function PortForwardTable({
   configs,
   isInitiating,
   isStopping,
@@ -33,12 +61,16 @@ const PortForwardTable: React.FC<TableProps> = ({
   deleteConfigs,
   selectedConfigs,
   setSelectedConfigs,
-}) => {
+}: TableProps) {
   const [search, setSearch] = useState<string>('')
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
-  const prevSelectedConfigsRef = useRef<Config[]>(selectedConfigs)
-  const [isSelectAllChecked, setIsSelectAllChecked] = useState<boolean>(false)
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
+
+  const selectedIds = useMemo(
+    () => new Set(selectedConfigs.map(config => config.id)),
+    [selectedConfigs],
+  )
+  const activePods = useActivePods(configs)
 
   const filteredConfigs = useMemo(() => {
     const searchLower = search.toLowerCase()
@@ -46,17 +78,19 @@ const PortForwardTable: React.FC<TableProps> = ({
     return configs
       .filter(
         config =>
-          config.alias.toLowerCase().includes(searchLower) ||
-          config.context.toLowerCase().includes(searchLower) ||
-          config.remote_address?.toLowerCase().includes(searchLower) ||
-          config.local_port.toString().includes(searchLower) ||
+          (config.alias ?? '').toLowerCase().includes(searchLower) ||
+          (config.context ?? '').toLowerCase().includes(searchLower) ||
+          (config.workload_type === 'proxy' &&
+            config.remote_address.toLowerCase().includes(searchLower)) ||
+          String(config.local_port ?? '').includes(searchLower) ||
           Object.entries(config.tags ?? {}).some(([key, value]) =>
             `${key}=${value}`.toLowerCase().includes(searchLower),
           ),
       )
       .sort(
         (a, b) =>
-          a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+          (a.alias ?? '').localeCompare(b.alias ?? '') ||
+          (a.context ?? '').localeCompare(b.context ?? ''),
       )
   }, [configs, search])
 
@@ -73,17 +107,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   useEffect(() => {
     setExpandedIndices(groupBy === null ? [ALL_GROUP_ID] : [])
   }, [groupBy])
-
-  useEffect(() => {
-    if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      setIsSelectAllChecked(
-        configs.every(config =>
-          selectedConfigs.some(selected => selected.id === config.id),
-        ),
-      )
-      prevSelectedConfigsRef.current = selectedConfigs
-    }
-  }, [selectedConfigs, configs])
 
   useEffect(() => {
     setSelectedConfigs(prev => {
@@ -123,11 +146,11 @@ const PortForwardTable: React.FC<TableProps> = ({
 
       setSelectedConfigs(prev => {
         if (isChecked) {
-          const selectedIds = new Set(prev.map(config => config.id))
+          const selectedInGroup = new Set(prev.map(config => config.id))
 
           return [
             ...prev,
-            ...group.configs.filter(config => !selectedIds.has(config.id)),
+            ...group.configs.filter(config => !selectedInGroup.has(config.id)),
           ]
         }
 
@@ -165,13 +188,10 @@ const PortForwardTable: React.FC<TableProps> = ({
       bg='transparent'
       position='relative'
     >
-      {/* Header Section */}
       <Box position='sticky' top={0} zIndex={5} bg='transparent' mb={2}>
         <Box display='flex' flexDirection='column' width='100%' gap={0}>
           <Header search={search} setSearch={setSearch} />
           <HeaderMenu
-            isSelectAllChecked={isSelectAllChecked}
-            setIsSelectAllChecked={setIsSelectAllChecked}
             configs={visibleConfigs}
             selectedConfigs={selectedConfigs}
             setSelectedConfigs={setSelectedConfigs}
@@ -193,16 +213,16 @@ const PortForwardTable: React.FC<TableProps> = ({
         </Box>
       </Box>
 
-      {/* Content Section */}
       <Box
         className='table-container'
         css={{
           flex: 1,
           overflowY: 'auto',
-          backgroundColor: '#161616',
+          backgroundColor: 'app.panel',
           borderRadius: 'var(--border-radius)',
           padding: '4px',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          border: '1px solid',
+          borderColor: 'app.border',
         }}
       >
         {groups.length === 0 && configs.length > 0 && (
@@ -224,7 +244,8 @@ const PortForwardTable: React.FC<TableProps> = ({
               px={2}
               fontSize='11px'
               bg='whiteAlpha.50'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
               _hover={{ bg: 'whiteAlpha.100' }}
               onClick={() => {
                 setSearch('')
@@ -247,7 +268,8 @@ const PortForwardTable: React.FC<TableProps> = ({
             <GroupAccordion
               key={group.id}
               group={group}
-              selectedConfigs={selectedConfigs}
+              selectedIds={selectedIds}
+              activePods={activePods}
               deleteConfigs={deleteConfigs}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}

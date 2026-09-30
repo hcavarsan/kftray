@@ -1,27 +1,28 @@
-'use client'
-
-import { forwardRef } from 'react'
+import type { RefAttributes, RefObject } from 'react'
 
 import { Menu as ChakraMenu, Portal } from '@chakra-ui/react'
 
-interface MenuContentProps extends ChakraMenu.ContentProps {
+interface MenuContentProps
+  extends ChakraMenu.ContentProps,
+    RefAttributes<HTMLDivElement> {
   portalled?: boolean
-  portalRef?: React.RefObject<HTMLElement>
+  portalRef?: RefObject<HTMLElement>
 }
 
-export const MenuContent = forwardRef<HTMLDivElement, MenuContentProps>(
-  (props, ref) => {
-    const { portalled = true, portalRef, ...rest } = props
-
-    return (
-      <Portal disabled={!portalled} container={portalRef}>
-        <ChakraMenu.Positioner>
-          <ChakraMenu.Content ref={ref} {...rest} />
-        </ChakraMenu.Positioner>
-      </Portal>
-    )
-  },
-)
+export function MenuContent({
+  portalled = true,
+  portalRef,
+  ref,
+  ...props
+}: MenuContentProps) {
+  return (
+    <Portal disabled={!portalled} container={portalRef}>
+      <ChakraMenu.Positioner>
+        <ChakraMenu.Content ref={ref} {...props} />
+      </ChakraMenu.Positioner>
+    </Portal>
+  )
+}
 
 export const MenuRoot = ChakraMenu.Root
 export const MenuItem = ChakraMenu.Item

@@ -11,7 +11,6 @@ import {
 
 import { Box, Flex, IconButton, Input, Spinner } from '@chakra-ui/react'
 
-import { COLORS } from './constants'
 import { FilterChips } from './FilterChips'
 import { LevelFilterDropdown } from './LevelFilterDropdown'
 import { ModuleFilterDropdown } from './ModuleFilterDropdown'
@@ -80,11 +79,7 @@ function LogViewerToolbarComponent({
   }, [onFilterChange])
 
   return (
-    <Box
-      borderBottom='1px solid'
-      borderBottomColor={COLORS.borderSubtle}
-      pb={2}
-    >
+    <Box borderBottom='1px solid' borderBottomColor='app.hover' pb={2}>
       <Flex align='center' gap={2} flexWrap='wrap'>
         <IconButton
           aria-label={autoRefresh ? 'Stop following' : 'Follow logs'}
@@ -95,16 +90,12 @@ function LogViewerToolbarComponent({
           minW='28px'
           borderRadius='4px'
           border='1px solid'
-          borderColor={
-            autoRefresh ? 'rgba(59, 130, 246, 0.4)' : COLORS.borderDefault
-          }
-          bg={autoRefresh ? 'rgba(59, 130, 246, 0.15)' : 'transparent'}
-          color={autoRefresh ? COLORS.accentBlue : 'whiteAlpha.600'}
+          borderColor={autoRefresh ? 'blue.500/40' : 'app.border'}
+          bg={autoRefresh ? 'app.accentSubtle' : 'transparent'}
+          color={autoRefresh ? 'blue.500' : 'whiteAlpha.600'}
           _hover={{
-            bg: autoRefresh ? 'rgba(59, 130, 246, 0.2)' : 'whiteAlpha.50',
-            borderColor: autoRefresh
-              ? 'rgba(59, 130, 246, 0.5)'
-              : COLORS.borderHover,
+            bg: autoRefresh ? 'blue.500/20' : 'whiteAlpha.50',
+            borderColor: autoRefresh ? 'blue.500/50' : 'app.borderStrong',
           }}
           onClick={() => onAutoRefreshChange(!autoRefresh)}
           title={autoRefresh ? 'Stop following' : 'Follow logs'}
@@ -138,13 +129,13 @@ function LogViewerToolbarComponent({
             pl={6}
             height='24px'
             fontSize='11px'
-            bg={COLORS.bgInput}
+            bg='app.raised'
             border='1px solid'
-            borderColor={COLORS.borderDefault}
+            borderColor='app.border'
             color='whiteAlpha.900'
             _placeholder={{ color: 'whiteAlpha.400' }}
-            _hover={{ borderColor: COLORS.borderHover }}
-            _focus={{ borderColor: COLORS.accentBlue, boxShadow: 'none' }}
+            _hover={{ borderColor: 'app.borderStrong' }}
+            _focus={{ borderColor: 'blue.500', boxShadow: 'none' }}
           />
         </Flex>
 
@@ -214,7 +205,7 @@ function LogViewerToolbarComponent({
             w='24px'
             minW='24px'
             color='whiteAlpha.600'
-            _hover={{ bg: 'rgba(229, 62, 62, 0.1)', color: 'red.300' }}
+            _hover={{ bg: 'status.danger.bg', color: 'red.300' }}
           >
             <Trash2 size={12} />
           </IconButton>

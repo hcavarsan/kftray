@@ -1,5 +1,4 @@
-import type React from 'react'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { InfoIcon, RepeatIcon } from 'lucide-react'
 
 import {
@@ -20,11 +19,40 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { ProgressBar, ProgressRoot } from '@/components/ui/progress'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { GroupAccordionProps } from '@/types'
+import type {
+  Config,
+  PendingConfigAction,
+  PortForwardToggleAction,
+  ResolvedGroup,
+} from '@/types'
 
-const GroupAccordion: React.FC<GroupAccordionProps> = ({
+const columns = [
+  { width: '40%', label: 'Alias' },
+  { width: '20%', label: 'Port' },
+  { width: '20%', label: 'Status' },
+  { width: '20%', label: 'Actions' },
+]
+
+interface GroupAccordionProps {
+  group: ResolvedGroup
+  selectedIds: Set<number>
+  activePods: Map<number, string | null>
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  handleEditConfig: (id: number) => Promise<void>
+  handleDuplicateConfig: (id: number) => Promise<void>
+  handleSelectionChange: (id: number, isSelected: boolean) => void
+  handleCheckboxChange: (group: ResolvedGroup, isChecked: boolean) => void
+  pendingConfigActions: Map<number, PendingConfigAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardToggleAction,
+  ) => Promise<void>
+}
+
+function GroupAccordionComponent({
   group,
-  selectedConfigs,
+  selectedIds,
+  activePods,
   handleSelectionChange,
   handleCheckboxChange,
   pendingConfigActions,
@@ -32,25 +60,18 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
   deleteConfigs,
   handleEditConfig,
   handleDuplicateConfig,
-}) => {
+}: GroupAccordionProps) {
   const groupConfigs = group.configs
-  const isGroupSelected = useMemo(() => {
-    return groupConfigs.every(config =>
-      selectedConfigs.some(selected => selected.id === config.id),
-    )
-  }, [groupConfigs, selectedConfigs])
+  const isGroupSelected = useMemo(
+    () => groupConfigs.every(config => selectedIds.has(config.id)),
+    [groupConfigs, selectedIds],
+  )
 
   const groupRunningCount = groupConfigs.filter(
     config => config.is_running,
   ).length
   const groupTotalCount = groupConfigs.length
   const groupProgressValue = (groupRunningCount / groupTotalCount) * 100
-  const columns = [
-    { width: '40%', label: 'Alias' },
-    { width: '20%', label: 'Port' },
-    { width: '20%', label: 'Status' },
-    { width: '20%', label: 'Actions' },
-  ]
 
   return (
     <AccordionItem value={group.id} className='accordion-item'>
@@ -91,7 +112,7 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
               css={{
                 width: '40px',
                 height: '3px',
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                backgroundColor: 'app.active',
                 borderRadius: '2px',
               }}
             >
@@ -102,10 +123,10 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
                   transition: 'all 0.2s ease-in-out',
                   backgroundColor:
                     groupProgressValue === 100
-                      ? 'rgb(59, 130, 246)'
+                      ? 'blue.500'
                       : groupProgressValue > 0
-                        ? 'rgba(59, 130, 246, 0.8)'
-                        : 'rgba(255, 255, 255, 0.2)',
+                        ? 'app.accent'
+                        : 'app.divider',
                 }}
               />
             </ProgressRoot>
@@ -117,7 +138,7 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
           width='100%'
           px={1}
           py={0.5}
-          bg='rgba(22, 22, 22, 0.5)'
+          bg='app.panel/50'
           borderRadius='md'
           border='none'
         >
@@ -150,11 +171,10 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
                   deleteConfigs={deleteConfigs}
                   handleEditConfig={handleEditConfig}
                   handleDuplicateConfig={handleDuplicateConfig}
-                  selected={selectedConfigs.some(
-                    selectedConfig => selectedConfig.id === config.id,
-                  )}
+                  selected={selectedIds.has(config.id)}
                   onSelectionChange={handleSelectionChange}
                   pendingAction={pendingConfigActions.get(config.id) ?? null}
+                  activePod={activePods.get(config.id) ?? null}
                   toggleConfigForward={toggleConfigForward}
                 />
               ))}
@@ -166,4 +186,4 @@ const GroupAccordion: React.FC<GroupAccordionProps> = ({
   )
 }
 
-export default GroupAccordion
+export default memo(GroupAccordionComponent)

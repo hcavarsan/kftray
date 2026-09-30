@@ -1,5 +1,4 @@
-import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { AlertTriangle, Edit2, Plus, Trash2, Wrench } from 'lucide-react'
 
 import {
@@ -12,461 +11,287 @@ import {
   Wrap,
   WrapItem,
 } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/core'
+import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
-import { DialogCloseTrigger } from '@/components/ui/dialog'
-import { toaster } from '@/components/ui/toaster'
+import { AppDialog } from '@/components/ui/dialog'
+import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
-import type { Config } from '@/types'
+import { errorMessage } from '@/lib/errors'
 
+import { findShortcutAction, shortcutConfigIds } from './actions'
 import ShortcutFormModal from './ShortcutFormModal'
 
-interface ShortcutModalProps {
-  isOpen: boolean
-  onClose: () => void
-}
-
-interface ShortcutAction {
-  id: string
-  name: string
-  actionType: string
-  requiresConfig: boolean
-}
-
-const SHORTCUT_ACTIONS: ShortcutAction[] = [
-  {
-    id: 'toggle_window',
-    name: 'Toggle Window',
-    actionType: 'toggle_window',
-    requiresConfig: false,
-  },
-  {
-    id: 'start_all',
-    name: 'Start All Port Forward',
-    actionType: 'start_all_port_forward',
-    requiresConfig: false,
-  },
-  {
-    id: 'stop_all',
-    name: 'Stop All Port Forward',
-    actionType: 'stop_all_port_forward',
-    requiresConfig: false,
-  },
-  {
-    id: 'start_port_forward',
-    name: 'Start Port Forward',
-    actionType: 'start_port_forward',
-    requiresConfig: true,
-  },
-  {
-    id: 'stop_port_forward',
-    name: 'Stop Port Forward',
-    actionType: 'stop_port_forward',
-    requiresConfig: true,
-  },
-  {
-    id: 'toggle_port_forward',
-    name: 'Toggle Port Forward',
-    actionType: 'toggle_port_forward',
-    requiresConfig: true,
-  },
-]
-
-const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
-  const [configs, setConfigs] = useState<Config[]>([])
-  const [editingShortcut, setEditingShortcut] = useState<Shortcut | null>(null)
-  const [isFormModalOpen, setIsFormModalOpen] = useState(false)
-
-  const {
-    shortcuts,
-    deleteShortcut,
-    refreshShortcuts,
-    platformStatus,
-    tryFixPermissions,
-    isFixingPermissions,
-  } = useGlobalShortcuts()
-
-  const loadConfigs = useCallback(async () => {
-    try {
-      const allConfigs = await invoke<Config[]>('get_configs_cmd')
-
-      setConfigs(allConfigs)
-    } catch (error) {
-      console.error('Failed to load configs:', error)
-      toaster.error({
+export default function ShortcutModal({ onClose }: { onClose: () => void }) {
+  const [editing, setEditing] = useState<Shortcut | 'new' | null>(null)
+  const { data: configs = [] } = useQuery({
+    queryKey: ['configs', 'shortcuts'],
+    queryFn: fetchConfigsWithState,
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to load configurations',
         duration: 3000,
-      })
-    }
-  }, [])
-
-  useEffect(() => {
-    if (isOpen) {
-      loadConfigs()
-      refreshShortcuts()
-    }
-  }, [isOpen, refreshShortcuts, loadConfigs])
-
-  const handleFormSaved = async () => {
-    setIsFormModalOpen(false)
-    setEditingShortcut(null)
-    await refreshShortcuts()
-  }
-
-  const handleDeleteShortcut = async (id: number) => {
-    try {
-      const deleted = await deleteShortcut(id)
-
-      if (deleted) {
-        toaster.success({
-          title: 'Deleted',
-          description: 'Shortcut deleted successfully',
-          duration: 3000,
-        })
-      }
-    } catch (error) {
-      console.error('Error deleting shortcut:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to delete shortcut',
-        duration: 3000,
-      })
-    }
-  }
-
-  const handleEditShortcut = (shortcut: Shortcut) => {
-    setEditingShortcut(shortcut)
-    setIsFormModalOpen(true)
-  }
-
-  const handleAddShortcut = () => {
-    setEditingShortcut(null)
-    setIsFormModalOpen(true)
-  }
-
-  const handleTryFixPermissions = async () => {
-    try {
-      const success = await tryFixPermissions()
-
-      if (success) {
-        toaster.success({
-          title: 'Permission Fix Started',
-          description:
-            'Please logout and login again for changes to take effect',
-          duration: 5000,
-        })
-      }
-    } catch (error) {
-      console.error('Error fixing permissions:', error)
-      toaster.error({
-        title: 'Permission Fix Failed',
-        description: 'Failed to fix input group permissions',
-        duration: 3000,
-      })
-    }
-  }
-
-  const getShortcutDisplayInfo = useCallback(
-    (shortcut: Shortcut) => {
-      const action = SHORTCUT_ACTIONS.find(
-        a => a.actionType === shortcut.action_type,
-      )
-
-      return {
-        actionName: action?.name || shortcut.action_type,
-        relatedConfigs:
-          action?.requiresConfig && shortcut.action_data
-            ? (() => {
-                try {
-                  const data = JSON.parse(shortcut.action_data)
-                  const configIds = data.config_ids || []
-
-                  return configs.filter(c => configIds.includes(c.id))
-                } catch (e) {
-                  console.error('Error parsing action data:', e)
-
-                  return []
-                }
-              })()
-            : [],
-      }
+      },
     },
-    [configs],
-  )
+  })
+  const { shortcuts, platformStatus, deleteShortcut, fixPermissions } =
+    useGlobalShortcuts()
+
+  const shortcutList = shortcuts.data ?? []
 
   return (
-    <Dialog.Root
-      open={isOpen}
-      onOpenChange={({ open }) => !open && onClose()}
-      modal={true}
-      closeOnEscape={true}
-    >
-      <Dialog.Backdrop
-        bg='transparent'
-        backdropFilter='blur(4px)'
-        height='100vh'
-      />
-      <Dialog.Positioner overflow='hidden'>
-        <Dialog.Content
-          onClick={e => e.stopPropagation()}
-          maxWidth='600px'
-          width='90vw'
-          height='96vh'
-          bg='#111111'
-          borderRadius='lg'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-          overflow='hidden'
-          position='absolute'
-          my={2}
-          display='flex'
-          flexDirection='column'
-        >
-          <DialogCloseTrigger style={{ marginTop: '-4px' }} />
-
-          <Dialog.Header
-            p={3}
-            bg='#161616'
-            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-          >
-            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-              Global Shortcuts
-            </Text>
-          </Dialog.Header>
-
-          <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
-            {platformStatus?.platform === 'linux' &&
-              platformStatus?.needs_permission_fix && (
-                <Box
-                  bg='#161616'
-                  p={3}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 165, 0, 0.3)'
-                  mb={3}
-                >
-                  <Flex align='center' gap={2} mb={2}>
-                    <AlertTriangle size={14} color='orange' />
-                    <Text
-                      fontSize='xs'
-                      fontWeight='medium'
-                      color='orange.300'
-                      letterSpacing='0.025em'
-                    >
-                      Linux Permission Issue
-                    </Text>
-                  </Flex>
-                  <Text fontSize='xs' color='gray.300' lineHeight='1.4' mb={2}>
-                    Missing input group permissions. Shortcuts won&apos;t work
-                    when app window is hidden.
-                  </Text>
-                  <Text fontSize='xs' color='gray.400' lineHeight='1.4' mb={3}>
-                    Current: {platformStatus?.current_implementation}
-                  </Text>
-                  {platformStatus?.can_fix_permissions && (
-                    <Button
-                      size='2xs'
-                      variant='outline'
-                      onClick={handleTryFixPermissions}
-                      loading={isFixingPermissions}
-                      loadingText='Fixing...'
-                      borderColor='orange.400'
-                      color='orange.300'
-                      _hover={{
-                        borderColor: 'orange.300',
-                        bg: 'orange.900',
-                        color: 'orange.200',
-                      }}
-                      height='24px'
-                      fontSize='xs'
-                      px={3}
-                    >
-                      <Wrench size={10} />
-                      <Text ml={1.5} fontSize='xs'>
-                        Try Fix Permissions
-                      </Text>
-                    </Button>
-                  )}
-                </Box>
-              )}
-            <Stack gap={2.5}>
-              {shortcuts.length === 0 ? (
-                <Box
-                  bg='#161616'
-                  p={3}
-                  borderRadius='md'
-                  border='1px solid rgba(255, 255, 255, 0.08)'
-                  textAlign='center'
-                >
+    <>
+      <AppDialog
+        title='Global Shortcuts'
+        onClose={onClose}
+        maxWidth='600px'
+        height='96vh'
+      >
+        <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
+          {platformStatus?.platform === 'linux' &&
+            platformStatus.needs_permission_fix && (
+              <Box
+                bg='app.panel'
+                p={3}
+                borderRadius='md'
+                border='1px solid'
+                borderColor='status.warning.border'
+                mb={3}
+              >
+                <Flex align='center' gap={2} mb={2}>
+                  <AlertTriangle size={14} color='orange' />
                   <Text
                     fontSize='xs'
-                    color='gray.300'
-                    mb={1}
-                    fontWeight='normal'
+                    fontWeight='medium'
+                    color='orange.300'
                     letterSpacing='0.025em'
                   >
-                    No shortcuts configured
+                    Linux Permission Issue
                   </Text>
-                  <Text fontSize='xs' color='gray.400' lineHeight='1.3'>
-                    Add your first keyboard shortcut to get started
-                  </Text>
-                </Box>
-              ) : (
-                shortcuts.map(shortcut => {
-                  const { actionName, relatedConfigs } =
-                    getShortcutDisplayInfo(shortcut)
-
-                  return (
-                    <Box
-                      key={shortcut.id}
-                      bg='#161616'
-                      p={2}
-                      borderRadius='md'
-                      border='1px solid rgba(255, 255, 255, 0.08)'
-                      _hover={{
-                        borderColor: 'rgba(255, 255, 255, 0.15)',
-                      }}
-                      display='flex'
-                      flexDirection='column'
-                      height='100%'
-                    >
-                      <Flex align='center' justify='space-between' mb={1}>
-                        <Box flex={1}>
-                          <Text
-                            fontSize='xs'
-                            fontWeight='normal'
-                            color='gray.300'
-                            mb={1}
-                            letterSpacing='0.025em'
-                          >
-                            {actionName}
-                          </Text>
-                          <Text
-                            fontSize='xs'
-                            color='gray.400'
-                            fontFamily='mono'
-                            bg='rgba(255, 255, 255, 0.05)'
-                            px={2}
-                            py={1}
-                            borderRadius='sm'
-                            display='inline-block'
-                          >
-                            {shortcut.shortcut_key}
-                          </Text>
-                        </Box>
-                        <HStack gap={1}>
-                          <Button
-                            size='2xs'
-                            variant='ghost'
-                            onClick={() => handleEditShortcut(shortcut)}
-                            color='whiteAlpha.700'
-                            _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                            height='20px'
-                            px={2}
-                            minW='auto'
-                          >
-                            <Edit2 size={8} />
-                          </Button>
-                          <Button
-                            size='2xs'
-                            variant='ghost'
-                            onClick={() => handleDeleteShortcut(shortcut.id)}
-                            color='red.300'
-                            _hover={{ color: 'red.200', bg: 'red.900' }}
-                            height='20px'
-                            px={2}
-                            minW='auto'
-                          >
-                            <Trash2 size={8} />
-                          </Button>
-                        </HStack>
-                      </Flex>
-
-                      {relatedConfigs.length > 0 && (
-                        <Box flex='1'>
-                          <Text
-                            fontSize='xs'
-                            color='gray.400'
-                            mb={0.5}
-                            lineHeight='1.3'
-                          >
-                            Configs:
-                          </Text>
-                          <Wrap gap={1}>
-                            {relatedConfigs.map(config => (
-                              <WrapItem key={config.id}>
-                                <Box
-                                  bg='rgba(255, 255, 255, 0.03)'
-                                  border='1px solid rgba(255, 255, 255, 0.05)'
-                                  borderRadius='sm'
-                                  px={2}
-                                  py={1}
-                                >
-                                  <Text fontSize='xs' color='gray.400'>
-                                    {config.alias}
-                                  </Text>
-                                </Box>
-                              </WrapItem>
-                            ))}
-                          </Wrap>
-                        </Box>
-                      )}
-                    </Box>
-                  )
-                })
-              )}
-            </Stack>
-          </Dialog.Body>
-
-          <Dialog.Footer
-            px={3}
-            py={2}
-            bg='#161616'
-            borderTop='1px solid rgba(255, 255, 255, 0.05)'
-            flexShrink={0}
-          >
-            <Flex justify='space-between' align='center' width='100%'>
-              <Button
-                onClick={handleAddShortcut}
-                variant='ghost'
-                size='xs'
-                _hover={{ bg: 'whiteAlpha.50' }}
-                color='gray.300'
-                height='28px'
-                fontSize='xs'
-                px={2}
-              >
-                <Plus size={10} />
-                <Text ml={1} fontSize='xs' fontWeight='normal'>
-                  Add New Shortcut
+                </Flex>
+                <Text fontSize='xs' color='gray.300' lineHeight='1.4' mb={2}>
+                  Missing input group permissions. Shortcuts won&apos;t work
+                  when app window is hidden.
                 </Text>
-              </Button>
-
-              <Button
-                variant='ghost'
-                size='xs'
-                onClick={onClose}
-                _hover={{ bg: 'whiteAlpha.50' }}
-                color='gray.400'
-                height='28px'
-                fontSize='xs'
+                <Text fontSize='xs' color='gray.400' lineHeight='1.4' mb={3}>
+                  Current: {platformStatus.current_implementation}
+                </Text>
+                {platformStatus.can_fix_permissions && (
+                  <Button
+                    size='2xs'
+                    variant='outline'
+                    onClick={() => fixPermissions.mutate()}
+                    loading={fixPermissions.isPending}
+                    loadingText='Fixing...'
+                    borderColor='orange.400'
+                    color='orange.300'
+                    _hover={{
+                      borderColor: 'orange.300',
+                      bg: 'orange.900',
+                      color: 'orange.200',
+                    }}
+                    height='24px'
+                    fontSize='xs'
+                    px={3}
+                  >
+                    <Wrench size={10} />
+                    <Text ml={1.5} fontSize='xs'>
+                      Try Fix Permissions
+                    </Text>
+                  </Button>
+                )}
+              </Box>
+            )}
+          <Stack gap={2.5}>
+            {shortcutList.length === 0 ? (
+              <Box
+                bg='app.panel'
+                p={3}
+                borderRadius='md'
+                border='1px solid'
+                borderColor='app.border'
+                textAlign='center'
               >
-                Close
-              </Button>
-            </Flex>
-          </Dialog.Footer>
-        </Dialog.Content>
-      </Dialog.Positioner>
+                <Text
+                  fontSize='xs'
+                  color='gray.300'
+                  mb={1}
+                  fontWeight='normal'
+                  letterSpacing='0.025em'
+                >
+                  {shortcuts.isError
+                    ? 'Failed to load shortcuts'
+                    : 'No shortcuts configured'}
+                </Text>
+                <Text fontSize='xs' color='gray.400' lineHeight='1.3'>
+                  {shortcuts.isError
+                    ? errorMessage(shortcuts.error)
+                    : 'Add your first keyboard shortcut to get started'}
+                </Text>
+              </Box>
+            ) : (
+              shortcutList.map(shortcut => {
+                const action = findShortcutAction(shortcut.action_type)
+                const configIds = action?.requiresConfig
+                  ? shortcutConfigIds(shortcut.action_data)
+                  : []
+                const relatedConfigs = configs.filter(config =>
+                  configIds.includes(config.id),
+                )
 
-      <ShortcutFormModal
-        isOpen={isFormModalOpen}
-        onClose={() => setIsFormModalOpen(false)}
-        editingShortcut={editingShortcut}
-        configs={configs}
-        onSaved={handleFormSaved}
-      />
-    </Dialog.Root>
+                return (
+                  <Box
+                    key={shortcut.id}
+                    bg='app.panel'
+                    p={2}
+                    borderRadius='md'
+                    border='1px solid'
+                    borderColor='app.border'
+                    _hover={{ borderColor: 'app.borderStrong' }}
+                    display='flex'
+                    flexDirection='column'
+                    height='100%'
+                  >
+                    <Flex align='center' justify='space-between' mb={1}>
+                      <Box flex={1}>
+                        <Text
+                          fontSize='xs'
+                          fontWeight='normal'
+                          color='gray.300'
+                          mb={1}
+                          letterSpacing='0.025em'
+                        >
+                          {action?.name ?? shortcut.action_type}
+                        </Text>
+                        <Text
+                          fontSize='xs'
+                          color='gray.400'
+                          fontFamily='mono'
+                          bg='app.hover'
+                          px={2}
+                          py={1}
+                          borderRadius='sm'
+                          display='inline-block'
+                        >
+                          {shortcut.shortcut_key}
+                        </Text>
+                      </Box>
+                      <HStack gap={1}>
+                        <Button
+                          aria-label='Edit shortcut'
+                          size='2xs'
+                          variant='ghost'
+                          onClick={() => setEditing(shortcut)}
+                          color='whiteAlpha.700'
+                          _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                          height='20px'
+                          px={2}
+                          minW='auto'
+                        >
+                          <Edit2 size={8} />
+                        </Button>
+                        <Button
+                          aria-label='Delete shortcut'
+                          size='2xs'
+                          variant='ghost'
+                          onClick={() => deleteShortcut.mutate(shortcut.id)}
+                          disabled={deleteShortcut.isPending}
+                          color='red.300'
+                          _hover={{ color: 'red.200', bg: 'red.900' }}
+                          height='20px'
+                          px={2}
+                          minW='auto'
+                        >
+                          <Trash2 size={8} />
+                        </Button>
+                      </HStack>
+                    </Flex>
+
+                    {relatedConfigs.length > 0 && (
+                      <Box flex='1'>
+                        <Text
+                          fontSize='xs'
+                          color='gray.400'
+                          mb={0.5}
+                          lineHeight='1.3'
+                        >
+                          Configs:
+                        </Text>
+                        <Wrap gap={1}>
+                          {relatedConfigs.map(config => (
+                            <WrapItem key={config.id}>
+                              <Box
+                                bg='app.faint'
+                                border='1px solid'
+                                borderColor='app.hover'
+                                borderRadius='sm'
+                                px={2}
+                                py={1}
+                              >
+                                <Text fontSize='xs' color='gray.400'>
+                                  {config.alias}
+                                </Text>
+                              </Box>
+                            </WrapItem>
+                          ))}
+                        </Wrap>
+                      </Box>
+                    )}
+                  </Box>
+                )
+              })
+            )}
+          </Stack>
+        </Dialog.Body>
+
+        <Dialog.Footer
+          px={3}
+          py={2}
+          bg='app.panel'
+          borderTop='1px solid'
+          borderColor='app.hover'
+          flexShrink={0}
+        >
+          <Flex justify='space-between' align='center' width='100%'>
+            <Button
+              onClick={() => setEditing('new')}
+              variant='ghost'
+              size='xs'
+              _hover={{ bg: 'whiteAlpha.50' }}
+              color='gray.300'
+              height='28px'
+              fontSize='xs'
+              px={2}
+            >
+              <Plus size={10} />
+              <Text ml={1} fontSize='xs' fontWeight='normal'>
+                Add New Shortcut
+              </Text>
+            </Button>
+
+            <Button
+              variant='ghost'
+              size='xs'
+              onClick={onClose}
+              _hover={{ bg: 'whiteAlpha.50' }}
+              color='gray.400'
+              height='28px'
+              fontSize='xs'
+            >
+              Close
+            </Button>
+          </Flex>
+        </Dialog.Footer>
+      </AppDialog>
+
+      {editing && (
+        <ShortcutFormModal
+          shortcut={editing === 'new' ? null : editing}
+          configs={configs}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </>
   )
 }
-
-export default ShortcutModal

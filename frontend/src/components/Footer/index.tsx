@@ -1,5 +1,4 @@
-import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import {
   Download,
   Eraser,
@@ -14,20 +13,14 @@ import {
   Wrench,
 } from 'lucide-react'
 
-import { Box, Group } from '@chakra-ui/react'
+import { Box, Dialog, Group } from '@chakra-ui/react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
 import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
 import { Button } from '@/components/ui/button'
-import {
-  DialogBody,
-  DialogCloseTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogRoot,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { AppDialog } from '@/components/ui/dialog'
 import {
   MenuContent,
   MenuItem,
@@ -36,56 +29,64 @@ import {
   MenuTrigger,
   MenuTriggerItem,
 } from '@/components/ui/menu'
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { FooterProps } from '@/types'
+import { useGitSync } from '@/contexts/GitSyncContext'
+import { errorMessage } from '@/lib/errors'
+import type { Config } from '@/types'
 
-const Footer: React.FC<FooterProps> = ({
-  openModal,
-  openGitSyncModal,
-  handleExportConfigs,
-  handleImportConfigs,
-  credentialsSaved,
-  setCredentialsSaved,
-  isGitSyncModalOpen,
-  setPollingInterval,
-  pollingInterval,
+interface FooterProps {
+  selectedConfigs: Config[]
+  deleteConfigs: (ids: number[]) => Promise<boolean>
+  onAddConfig: () => void
+  onImportConfigs: () => void
+  onExportConfigs: () => void
+  onOpenGitSync: () => void
+  onOpenAutoImport: () => void
+  onOpenShortcuts: () => void
+  onOpenSettings: () => void
+  onOpenServerResources: () => void
+}
+
+const httpLogSizeQueryKey = ['http-log-size']
+
+function Footer({
   selectedConfigs,
-  syncStatus,
-  onSyncComplete,
-  openShortcutModal,
-  setIsAutoImportModalOpen,
   deleteConfigs,
-  openSettingsModal,
-  openServerResourcesModal,
-}) => {
-  const [logState, setLogState] = useState({
-    size: 0,
-    fetchError: false,
+  onAddConfig,
+  onImportConfigs,
+  onExportConfigs,
+  onOpenGitSync,
+  onOpenAutoImport,
+  onOpenShortcuts,
+  onOpenSettings,
+  onOpenServerResources,
+}: FooterProps) {
+  const { credentials } = useGitSync()
+  const queryClient = useQueryClient()
+
+  const {
+    data: logSize = 0,
+    refetch: refetchLogSize,
+    isError: hasLogSizeError,
+  } = useQuery({
+    queryKey: httpLogSizeQueryKey,
+    queryFn: () => invoke<number>('get_http_log_size'),
   })
 
-  const handleSyncFailure = useCallback((error: Error) => {
-    console.error('Sync failed:', error)
-  }, [])
-
-  const fetchLogSize = async () => {
-    try {
-      const size = await invoke<number>('get_http_log_size')
-
-      setLogState({ size, fetchError: false })
-    } catch (error) {
-      console.error('Failed to fetch log size:', error)
-      setLogState(prev => ({ ...prev, fetchError: true }))
-    }
-  }
-
-  const handleClearLogs = async () => {
-    try {
-      await invoke('clear_http_logs')
-      setLogState(prev => ({ ...prev, size: 0 }))
-    } catch (error) {
-      console.error('Failed to clear logs:', error)
-    }
-  }
+  const clearLogsMutation = useMutation({
+    mutationFn: () => invoke('clear_http_logs'),
+    onSuccess: () => {
+      queryClient.setQueryData(httpLogSizeQueryKey, 0)
+    },
+    onError: error => {
+      toaster.error({
+        title: 'Error clearing logs',
+        description: errorMessage(error),
+        duration: 2000,
+      })
+    },
+  })
 
   const [helperActionResult, setHelperActionResult] = useState<{
     success: boolean
@@ -98,7 +99,6 @@ const Footer: React.FC<FooterProps> = ({
       const result = await invoke<boolean>('install_helper')
 
       if (result) {
-        console.log('Helper successfully installed')
         setHelperActionResult({
           success: true,
           message: 'kftray-helper was successfully installed',
@@ -106,10 +106,9 @@ const Footer: React.FC<FooterProps> = ({
         })
       }
     } catch (error) {
-      console.error('Failed to install helper:', error)
       setHelperActionResult({
         success: false,
-        message: String(error),
+        message: errorMessage(error),
         action: 'install',
       })
     }
@@ -120,7 +119,6 @@ const Footer: React.FC<FooterProps> = ({
       const result = await invoke<boolean>('remove_helper')
 
       if (result) {
-        console.log('Helper successfully uninstalled')
         setHelperActionResult({
           success: true,
           message: 'kftray-helper was successfully uninstalled',
@@ -128,10 +126,9 @@ const Footer: React.FC<FooterProps> = ({
         })
       }
     } catch (error) {
-      console.error('Failed to uninstall helper:', error)
       setHelperActionResult({
         success: false,
-        message: String(error),
+        message: errorMessage(error),
         action: 'uninstall',
       })
     }
@@ -143,15 +140,15 @@ const Footer: React.FC<FooterProps> = ({
 
   const renderMenuItems = () => (
     <>
-      <MenuItem value='export' onClick={handleExportConfigs}>
+      <MenuItem value='export' onClick={onExportConfigs}>
         <Box as={Upload} width='12px' height='12px' />
         <Box fontSize='11px'>Export Local File</Box>
       </MenuItem>
 
       <MenuItem
         value='import'
-        onClick={handleImportConfigs}
-        disabled={credentialsSaved}
+        onClick={onImportConfigs}
+        disabled={!!credentials}
       >
         <Box as={Download} width='12px' height='12px' />
         <Box fontSize='11px'>Import Local File</Box>
@@ -159,19 +156,18 @@ const Footer: React.FC<FooterProps> = ({
 
       <MenuItem
         value='clear-logs'
-        onClick={handleClearLogs}
-        disabled={logState.size === 0 || logState.fetchError}
+        onClick={() => clearLogsMutation.mutate()}
+        disabled={
+          logSize === 0 || hasLogSizeError || clearLogsMutation.isPending
+        }
       >
         <Box as={Eraser} width='12px' height='12px' />
         <Box fontSize='11px'>
-          Prune Logs ({(logState.size / (1024 * 1024)).toFixed(2)} MB)
+          Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
         </Box>
       </MenuItem>
 
-      <MenuItem
-        value='auto-import'
-        onClick={() => setIsAutoImportModalOpen(true)}
-      >
+      <MenuItem value='auto-import' onClick={onOpenAutoImport}>
         <Box as={FolderSync} width='12px' height='12px' />
         <Box fontSize='11px'>Auto Import</Box>
       </MenuItem>
@@ -194,14 +190,14 @@ const Footer: React.FC<FooterProps> = ({
         </MenuContent>
       </MenuRoot>
 
-      <MenuItem value='server-resources' onClick={openServerResourcesModal}>
+      <MenuItem value='server-resources' onClick={onOpenServerResources}>
         <Box as={Server} width='12px' height='12px' />
         <Box fontSize='11px'>Server Resources</Box>
       </MenuItem>
 
-      <MenuSeparator borderColor='rgba(255, 255, 255, 0.08)' my={1} />
+      <MenuSeparator borderColor='app.border' my={1} />
 
-      <MenuItem value='settings' onClick={openSettingsModal}>
+      <MenuItem value='settings' onClick={onOpenSettings}>
         <Box as={Settings} width='12px' height='12px' />
         <Box fontSize='11px'>Settings</Box>
       </MenuItem>
@@ -210,101 +206,91 @@ const Footer: React.FC<FooterProps> = ({
 
   return (
     <>
-      <DialogRoot
-        open={!!helperActionResult}
-        onOpenChange={open => !open && closeHelperActionDialog()}
-      >
-        <DialogContent
+      {helperActionResult && (
+        <AppDialog
+          title={
+            helperActionResult.success
+              ? helperActionResult.action === 'install'
+                ? 'Installation Successful'
+                : 'Uninstallation Successful'
+              : helperActionResult.action === 'install'
+                ? 'Installation Failed'
+                : 'Uninstallation Failed'
+          }
+          onClose={closeHelperActionDialog}
           maxWidth='400px'
-          width='350px'
-          bg='#111111'
-          borderRadius='lg'
-          border='1px solid rgba(255, 255, 255, 0.08)'
-          overflow='hidden'
+          headerPadding={1.5}
         >
-          <DialogHeader
-            p={1.5}
-            bg='#161616'
-            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-          >
-            <DialogTitle fontSize='sm' fontWeight='medium' color='gray.100'>
-              {helperActionResult?.success
-                ? helperActionResult.action === 'install'
-                  ? 'Installation Successful'
-                  : 'Uninstallation Successful'
-                : helperActionResult?.action === 'install'
-                  ? 'Installation Failed'
-                  : 'Uninstallation Failed'}
-            </DialogTitle>
-            <DialogCloseTrigger onClick={closeHelperActionDialog} />
-          </DialogHeader>
-
-          <DialogBody p={3}>
+          <Dialog.Body p={3}>
             <Box
               p={3}
               bg={
-                helperActionResult?.success
-                  ? 'rgba(56, 161, 105, 0.1)'
-                  : 'rgba(229, 62, 62, 0.1)'
+                helperActionResult.success
+                  ? 'status.success.bg'
+                  : 'status.danger.bg'
               }
               borderRadius='md'
-              border={`1px solid ${helperActionResult?.success ? 'rgba(56, 161, 105, 0.2)' : 'rgba(229, 62, 62, 0.2)'}`}
+              border='1px solid'
+              borderColor={
+                helperActionResult.success
+                  ? 'status.success.border'
+                  : 'status.danger.border'
+              }
             >
-              {helperActionResult && (
-                <Box
-                  fontSize='xs'
-                  color={helperActionResult.success ? 'green.300' : 'red.300'}
-                >
-                  {helperActionResult.message}
-                </Box>
-              )}
+              <Box
+                fontSize='xs'
+                color={helperActionResult.success ? 'green.300' : 'red.300'}
+              >
+                {helperActionResult.message}
+              </Box>
             </Box>
 
             <Box display='flex' justifyContent='flex-end' mt={4}>
               <Button
                 onClick={closeHelperActionDialog}
                 size='xs'
-                bg={helperActionResult?.success ? 'green.600' : 'red.600'}
+                bg={helperActionResult.success ? 'green.600' : 'red.600'}
                 _hover={{
-                  bg: helperActionResult?.success ? 'green.700' : 'red.700',
+                  bg: helperActionResult.success ? 'green.700' : 'red.700',
                 }}
                 height='28px'
               >
                 Close
               </Button>
             </Box>
-          </DialogBody>
-        </DialogContent>
-      </DialogRoot>
-
+          </Dialog.Body>
+        </AppDialog>
+      )}
       <Box
         display='flex'
         alignItems='center'
         justifyContent='space-between'
         width='100%'
-        bg='#161616'
+        bg='app.panel'
         px={3}
         py={2}
         borderRadius='lg'
-        border='1px solid rgba(255, 255, 255, 0.08)'
+        border='1px solid'
+        borderColor='app.border'
         position='relative'
         mt='-1px'
         height='50px'
       >
-        {/* Left Section */}
         <Group display='flex' alignItems='center' gap={2}>
           <MenuRoot>
             <MenuTrigger asChild>
               <Button
+                aria-label='Open configuration menu'
                 size='sm'
                 variant='ghost'
-                onClick={fetchLogSize}
+                onClick={() => refetchLogSize()}
                 height='32px'
                 minWidth='32px'
                 bg='whiteAlpha.50'
                 px={1.5}
                 borderRadius='md'
-                border='1px solid rgba(255, 255, 255, 0.08)'
+                border='1px solid'
+                borderColor='app.border'
                 _hover={{ bg: 'whiteAlpha.100' }}
               >
                 <Box as={MenuIcon} width='12px' height='12px' />
@@ -323,16 +309,18 @@ const Footer: React.FC<FooterProps> = ({
             }}
           >
             <Button
+              aria-label='Add new config'
               size='sm'
               variant='ghost'
-              onClick={openModal}
-              disabled={credentialsSaved}
+              onClick={onAddConfig}
+              disabled={!!credentials}
               height='32px'
               minWidth='32px'
               bg='whiteAlpha.50'
               px={1.5}
               borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
               _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box as={Plus} width='12px' height='12px' />
@@ -345,7 +333,6 @@ const Footer: React.FC<FooterProps> = ({
           />
         </Group>
 
-        {/* Right Section */}
         <Group display='flex' alignItems='center' gap={2}>
           <Tooltip
             content='Manage Global Shortcuts'
@@ -357,15 +344,17 @@ const Footer: React.FC<FooterProps> = ({
             }}
           >
             <Button
+              aria-label='Manage global shortcuts'
               size='sm'
               variant='ghost'
-              onClick={openShortcutModal}
+              onClick={onOpenShortcuts}
               height='32px'
               minWidth='32px'
               bg='whiteAlpha.50'
               px={1.5}
               borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
               _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box as={Keyboard} width='14px' height='14px' />
@@ -382,15 +371,17 @@ const Footer: React.FC<FooterProps> = ({
             }}
           >
             <Button
+              aria-label='Configure git sync'
               size='sm'
               variant='ghost'
-              onClick={openGitSyncModal}
+              onClick={onOpenGitSync}
               height='32px'
               minWidth='32px'
               bg='whiteAlpha.50'
               px={1.5}
               borderRadius='md'
-              border='1px solid rgba(255, 255, 255, 0.08)'
+              border='1px solid'
+              borderColor='app.border'
               _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box display='flex' alignItems='center' gap={1}>
@@ -399,18 +390,7 @@ const Footer: React.FC<FooterProps> = ({
               </Box>
             </Button>
           </Tooltip>
-          <SyncConfigsButton
-            serviceName='kftray'
-            accountName='github_config'
-            onSyncFailure={handleSyncFailure}
-            credentialsSaved={credentialsSaved}
-            setCredentialsSaved={setCredentialsSaved}
-            isGitSyncModalOpen={isGitSyncModalOpen}
-            setPollingInterval={setPollingInterval}
-            pollingInterval={pollingInterval}
-            syncStatus={syncStatus}
-            onSyncComplete={onSyncComplete}
-          />
+          <SyncConfigsButton />
         </Group>
       </Box>
     </>

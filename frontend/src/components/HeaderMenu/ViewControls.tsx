@@ -1,5 +1,5 @@
-import type React from 'react'
 import type { ComponentProps, ReactNode } from 'react'
+import { useMemo } from 'react'
 import { Filter, Layers } from 'lucide-react'
 
 import { Box, Flex, IconButton, Menu, Portal, Text } from '@chakra-ui/react'
@@ -15,7 +15,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import type { ConfigView, Facet, ViewCondition } from '@/types'
 
 const NO_GROUP = '__none__'
-const ACCENT = 'rgb(59, 130, 246)'
 
 interface ToolbarIconButtonProps extends ComponentProps<typeof IconButton> {
   active?: boolean
@@ -38,16 +37,18 @@ export const ToolbarIconButton = ({
     overflow='visible'
     borderRadius='md'
     border='1px solid'
-    borderColor={
-      active ? 'rgba(59, 130, 246, 0.35)' : 'rgba(255, 255, 255, 0.08)'
-    }
-    bg={active ? 'rgba(59, 130, 246, 0.12)' : 'whiteAlpha.50'}
-    color={active ? 'rgb(96, 165, 250)' : 'whiteAlpha.700'}
+    borderColor={active ? 'blue.500/35' : 'app.border'}
+    bg={active ? 'blue.500/12' : 'whiteAlpha.50'}
+    color={active ? 'blue.400' : 'whiteAlpha.700'}
     _hover={{
-      bg: active ? 'rgba(59, 130, 246, 0.18)' : 'whiteAlpha.100',
-      color: active ? 'rgb(147, 197, 253)' : 'whiteAlpha.900',
+      bg: active ? 'blue.500/18' : 'whiteAlpha.100',
+      color: active ? 'app.accentText' : 'whiteAlpha.900',
     }}
-    _focusVisible={{ outline: `1px solid ${ACCENT}`, outlineOffset: '1px' }}
+    _focusVisible={{
+      outline: '1px solid',
+      outlineColor: 'blue.500',
+      outlineOffset: '1px',
+    }}
     {...rest}
   >
     {children}
@@ -59,14 +60,14 @@ export const ToolbarIconButton = ({
         minW='12px'
         h='12px'
         px='3px'
-        bg={ACCENT}
+        bg='blue.500'
         color='white'
         fontSize='8px'
         fontWeight='semibold'
         lineHeight='12px'
         textAlign='center'
         borderRadius='full'
-        boxShadow='0 0 0 1.5px #161616'
+        boxShadow='0 0 0 1.5px var(--chakra-colors-app-panel)'
         pointerEvents='none'
       >
         {badge}
@@ -88,10 +89,11 @@ export const WithTooltip = ({
 )
 
 const contentProps = {
-  bg: '#1A1A1A',
-  border: '1px solid rgba(255, 255, 255, 0.08)',
+  bg: 'app.raised',
+  border: '1px solid',
+  borderColor: 'app.border',
   borderRadius: 'md',
-  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+  boxShadow: 'popover',
   minW: '200px',
   maxW: '260px',
   maxH: '300px',
@@ -124,7 +126,7 @@ const sectionLabelProps = {
 
 const separatorProps = {
   my: 1,
-  borderColor: 'rgba(255, 255, 255, 0.06)',
+  borderColor: 'app.subtle',
 }
 
 const Count = ({ value }: { value: number }) => (
@@ -144,10 +146,17 @@ const GroupByMenu = ({
   facets,
   setView,
 }: Required<Omit<ViewControlsProps, 'view'>> & { view: ConfigView }) => {
-  const fields = facets
-    .filter(f => !isTagField(f.field) && f.values.length > 0)
-    .map(f => f.field)
-  const tags = facets.filter(f => isTagField(f.field)).map(f => f.field)
+  const fields = useMemo(
+    () =>
+      facets
+        .filter(f => !isTagField(f.field) && f.values.length > 0)
+        .map(f => f.field),
+    [facets],
+  )
+  const tags = useMemo(
+    () => facets.filter(f => isTagField(f.field)).map(f => f.field),
+    [facets],
+  )
   const current = view.group_by ? fieldLabel(view.group_by) : 'nothing'
 
   return (
@@ -221,11 +230,15 @@ const FilterMenu = ({
     view.filters.some(c => c.field === field && c.values.includes(value))
   const hasAny = (field: string) =>
     view.filters.some(c => c.field === field && c.values.length === 0)
-  const sections = facets.filter(
-    facet =>
-      isTagField(facet.field) ||
-      facet.values.length > 1 ||
-      view.filters.some(c => c.field === facet.field),
+  const sections = useMemo(
+    () =>
+      facets.filter(
+        facet =>
+          isTagField(facet.field) ||
+          facet.values.length > 1 ||
+          view.filters.some(c => c.field === facet.field),
+      ),
+    [facets, view.filters],
   )
 
   return (
@@ -253,10 +266,9 @@ const FilterMenu = ({
               mt={-1}
               pt={1}
               mb={filterCount > 0 ? 1 : 0}
-              bg='#1A1A1A'
-              borderBottom={
-                filterCount > 0 ? '1px solid rgba(255, 255, 255, 0.06)' : 'none'
-              }
+              bg='app.raised'
+              borderBottom={filterCount > 0 ? '1px solid' : 'none'}
+              borderBottomColor='app.subtle'
             >
               <Flex
                 align='center'
@@ -343,11 +355,7 @@ const FilterMenu = ({
   )
 }
 
-const ViewControls: React.FC<ViewControlsProps> = ({
-  view,
-  facets,
-  setView,
-}) => {
+const ViewControls = ({ view, facets, setView }: ViewControlsProps) => {
   if (!view) {
     return null
   }

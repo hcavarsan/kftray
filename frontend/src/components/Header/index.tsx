@@ -1,23 +1,29 @@
-import type React from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
 import { Button } from '@/components/ui/button'
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import type { HeaderProps } from '@/types'
+import { useTauriEvent } from '@/hooks/useTauriEvent'
+import { errorMessage } from '@/lib/errors'
 
 const appWindow = getCurrentWebviewWindow()
 
 type TrayMode = 'tray' | 'window'
 
-const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
+interface HeaderProps {
+  search: string
+  setSearch: Dispatch<SetStateAction<string>>
+}
+
+function Header({ search, setSearch }: HeaderProps) {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
@@ -25,23 +31,22 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    app.getVersion().then(setVersion).catch(console.error)
-
-    const unlistenPin = listen<boolean>('pin-state-changed', event => {
-      setIsPinned(event.payload)
-    })
-
-    invoke<TrayMode>('get_tray_mode_cmd').then(setTrayMode).catch(console.error)
-
-    const unlistenTrayMode = listen<TrayMode>('tray-mode-changed', event => {
-      setTrayMode(event.payload)
-    })
-
-    return () => {
-      unlistenPin.then(unlistenFn => unlistenFn())
-      unlistenTrayMode.then(unlistenFn => unlistenFn())
-    }
+    app
+      .getVersion()
+      .then(setVersion)
+      .catch(() => undefined)
+    invoke<TrayMode>('get_tray_mode_cmd')
+      .then(setTrayMode)
+      .catch(() => undefined)
   }, [])
+
+  useTauriEvent<boolean>('pin-state-changed', event => {
+    setIsPinned(event.payload)
+  })
+
+  useTauriEvent<TrayMode>('tray-mode-changed', event => {
+    setTrayMode(event.payload)
+  })
 
   useEffect(() => {
     if (!dragHandleRef.current) {
@@ -79,16 +84,29 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     try {
       await invoke('handle_exit_app')
     } catch (error) {
-      console.error('Error invoking handle_exit_app:', error)
+      toaster.error({
+        title: 'Failed to exit',
+        description: errorMessage(error),
+      })
     }
   }
 
   const togglePinWindow = async () => {
-    setIsPinned(!isPinned)
-    await invoke('toggle_pin_state')
-    if (!isPinned) {
-      await appWindow.show()
-      await appWindow.setFocus()
+    const next = !isPinned
+
+    setIsPinned(next)
+    try {
+      await invoke('toggle_pin_state')
+      if (next) {
+        await appWindow.show()
+        await appWindow.setFocus()
+      }
+    } catch (error) {
+      setIsPinned(!next)
+      toaster.error({
+        title: 'Failed to toggle pin',
+        description: errorMessage(error),
+      })
     }
   }
 
@@ -96,7 +114,10 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     try {
       await invoke('hide_main_window_cmd')
     } catch (error) {
-      console.error('Error hiding window:', error)
+      toaster.error({
+        title: 'Failed to hide window',
+        description: errorMessage(error),
+      })
     }
   }
 
@@ -105,18 +126,18 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       display='flex'
       alignItems='center'
       justifyContent='space-between'
-      bg='#161616'
+      bg='app.panel'
       borderRadius='lg'
       borderBottomRadius='none'
       width='100%'
       px={3}
       py={3}
       borderBottom='none'
-      border='1px solid rgba(255, 255, 255, 0.08)'
+      border='1px solid'
+      borderColor='app.border'
       position='relative'
       zIndex={10}
     >
-      {/* Left Section */}
       <Box display='flex' alignItems='center' gap={3}>
         <Box display='flex' alignItems='center' gap={2}>
           <Box
@@ -162,7 +183,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           </Tooltip>
         </Box>
 
-        {/* Search Input */}
         <Box position='relative' width='200px' ml={5}>
           <Box
             as={Search}
@@ -181,10 +201,11 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             placeholder='Search...'
             size='sm'
             pl={8}
-            bg='#1A1A1A'
-            border='1px solid rgba(255, 255, 255, 0.08)'
+            bg='app.raised'
+            border='1px solid'
+            borderColor='app.border'
             _hover={{
-              borderColor: 'rgba(255, 255, 255, 0.15)',
+              borderColor: 'app.borderStrong',
             }}
             _focus={{
               borderColor: 'blue.400',
@@ -201,7 +222,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
         </Box>
       </Box>
 
-      {/* Right Section - Window Controls */}
       <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
         <Tooltip
           content={isPinned ? 'Unpin Window' : 'Pin Window'}
@@ -211,7 +231,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Button
             variant='ghost'
             size='sm'
-            onClick={togglePinWindow}
+            onClick={() => void togglePinWindow()}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -236,7 +256,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Button
             variant='ghost'
             size='sm'
-            onClick={hideWindow}
+            onClick={() => void hideWindow()}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -257,7 +277,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Button
             variant='ghost'
             size='sm'
-            onClick={handleStopPortForwardsAndExit}
+            onClick={() => void handleStopPortForwardsAndExit()}
             height='28px'
             width='28px'
             minWidth='28px'

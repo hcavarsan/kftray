@@ -1,10 +1,47 @@
-import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Keyboard } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
+
+const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta']
+
+const KEY_LABELS: Record<string, string> = {
+  Control: 'Ctrl',
+  Meta: 'Cmd',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  ' ': 'Space',
+}
+
+function keyLabel(event: KeyboardEvent): string {
+  const match = /^(?:Key([A-Z])|Digit(\d))$/.exec(event.code)
+
+  if (match) {
+    return (match[1] ?? match[2]).toLowerCase()
+  }
+
+  return KEY_LABELS[event.key] ?? event.key
+}
+
+function activeModifiers(event: KeyboardEvent): string[] {
+  const modifiers: string[] = []
+
+  if (event.ctrlKey || event.metaKey) {
+    modifiers.push(event.ctrlKey ? 'Ctrl' : 'Cmd')
+  }
+  if (event.altKey) {
+    modifiers.push('Alt')
+  }
+  if (event.shiftKey) {
+    modifiers.push('Shift')
+  }
+
+  return modifiers
+}
 
 interface ShortcutCaptureProps {
   value: string
@@ -12,134 +49,73 @@ interface ShortcutCaptureProps {
   disabled?: boolean
 }
 
-const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
+export default function ShortcutCapture({
   value,
   onChange,
   disabled = false,
-}) => {
+}: ShortcutCaptureProps) {
   const [isCapturing, setIsCapturing] = useState(false)
-  const [capturedKeys, setCapturedKeys] = useState<string>('')
+  const [capturedKeys, setCapturedKeys] = useState('')
   const captureRef = useRef<HTMLDivElement>(null)
 
-  const formatKey = useCallback((key: string): string => {
-    const keyMap: Record<string, string> = {
-      Control: 'Ctrl',
-      Meta: 'Cmd',
-      ArrowUp: 'Up',
-      ArrowDown: 'Down',
-      ArrowLeft: 'Left',
-      ArrowRight: 'Right',
-      ' ': 'Space',
+  const stopCapture = () => {
+    setIsCapturing(false)
+    setCapturedKeys('')
+  }
+
+  const commit = useEffectEvent((shortcut: string) => {
+    onChange(shortcut.toLowerCase())
+    stopCapture()
+  })
+
+  useEffect(() => {
+    if (!isCapturing) {
+      return
     }
 
-    return keyMap[key] || key
-  }, [])
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!isCapturing) {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.repeat) {
         return
       }
 
-      event.preventDefault()
-      event.stopPropagation()
+      const modifiers = activeModifiers(event)
 
-      const modifiers: string[] = []
-      const keys: string[] = []
-
-      if (event.ctrlKey || event.metaKey) {
-        modifiers.push(event.ctrlKey ? 'Ctrl' : 'Cmd')
-      }
-      if (event.altKey) {
-        modifiers.push('Alt')
-      }
-      if (event.shiftKey) {
-        modifiers.push('Shift')
-      }
-
-      if (
-        !['Control', 'Alt', 'Shift', 'Meta'].includes(event.key) &&
-        event.key.length > 0
-      ) {
-        keys.push(formatKey(event.key))
-
-        const shortcutString = [...modifiers, ...keys].join('+')
-
-        setCapturedKeys(shortcutString)
-
-        setTimeout(() => {
-          const backendFormat = shortcutString.toLowerCase()
-
-          onChange(backendFormat)
-          setIsCapturing(false)
-          setCapturedKeys('')
-        }, 500)
+      if (!MODIFIER_KEYS.includes(event.key) && event.key.length > 0) {
+        commit([...modifiers, keyLabel(event)].join('+'))
       } else if (modifiers.length > 0) {
         setCapturedKeys(`${modifiers.join('+')}+`)
       }
-    },
-    [isCapturing, formatKey, onChange],
-  )
+    }
 
-  const handleKeyUp = useCallback(
-    (event: KeyboardEvent) => {
-      if (!isCapturing) {
-        return
-      }
-
+    const handleKeyUp = (event: KeyboardEvent) => {
       event.preventDefault()
       event.stopPropagation()
-
-      if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
-        const remaining: string[] = []
-
-        if (event.ctrlKey || event.metaKey) {
-          remaining.push(event.ctrlKey ? 'Ctrl' : 'Cmd')
-        }
-        if (event.altKey) {
-          remaining.push('Alt')
-        }
-        if (event.shiftKey) {
-          remaining.push('Shift')
-        }
+      if (MODIFIER_KEYS.includes(event.key)) {
+        const remaining = activeModifiers(event)
 
         setCapturedKeys(remaining.length > 0 ? `${remaining.join('+')}+` : '')
       }
-    },
-    [isCapturing],
-  )
+    }
 
-  const startCapture = useCallback(() => {
+    document.addEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('keyup', handleKeyUp, true)
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('keyup', handleKeyUp, true)
+    }
+  }, [isCapturing])
+
+  const startCapture = () => {
     if (disabled) {
       return
     }
     setIsCapturing(true)
     setCapturedKeys('')
     captureRef.current?.focus()
-  }, [disabled])
-
-  const stopCapture = useCallback(() => {
-    setIsCapturing(false)
-    setCapturedKeys('')
-  }, [])
-
-  const handleBlur = useCallback(() => {
-    if (isCapturing) {
-      stopCapture()
-    }
-  }, [isCapturing, stopCapture])
-
-  useEffect(() => {
-    if (isCapturing) {
-      document.addEventListener('keydown', handleKeyDown, true)
-      document.addEventListener('keyup', handleKeyUp, true)
-
-      return () => {
-        document.removeEventListener('keydown', handleKeyDown, true)
-        document.removeEventListener('keyup', handleKeyUp, true)
-      }
-    }
-  }, [isCapturing, handleKeyDown, handleKeyUp])
+  }
 
   const displayValue = isCapturing
     ? capturedKeys || 'Press any key combination...'
@@ -149,30 +125,36 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
     <Box position='relative'>
       <Flex
         ref={captureRef}
+        role='button'
+        aria-label='Set keyboard shortcut'
+        aria-disabled={disabled}
         align='center'
         justify='space-between'
         p={2}
-        bg={isCapturing ? '#0a0a0a' : '#161616'}
-        border={`1px solid ${
-          isCapturing ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 255, 255, 0.08)'
-        }`}
+        bg={isCapturing ? 'app.deep' : 'app.panel'}
+        border='1px solid'
+        borderColor={isCapturing ? 'blue.500/50' : 'app.border'}
         borderRadius='md'
         cursor={disabled ? 'not-allowed' : 'pointer'}
         _hover={
-          !disabled && !isCapturing
-            ? { borderColor: 'rgba(255, 255, 255, 0.15)' }
-            : {}
+          !disabled && !isCapturing ? { borderColor: 'app.borderStrong' } : {}
         }
         _focus={
           !disabled
             ? {
                 borderColor: 'blue.400',
-                boxShadow: '0 0 0 1px rgba(59, 130, 246, 0.3)',
+                boxShadow: '0 0 0 1px var(--chakra-colors-app-accent-muted)',
               }
             : {}
         }
         onClick={startCapture}
-        onBlur={handleBlur}
+        onKeyDown={e => {
+          if (!isCapturing && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault()
+            startCapture()
+          }
+        }}
+        onBlur={stopCapture}
         tabIndex={disabled ? -1 : 0}
         opacity={disabled ? 0.5 : 1}
         minH='32px'
@@ -222,7 +204,7 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
           mt={1}
           fontSize='2xs'
           color='blue.300'
-          bg='rgba(0, 0, 0, 0.8)'
+          bg='app.scrim'
           px={2}
           py={1}
           borderRadius='sm'
@@ -235,5 +217,3 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
     </Box>
   )
 }
-
-export default ShortcutCapture

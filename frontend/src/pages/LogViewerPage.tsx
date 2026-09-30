@@ -1,8 +1,13 @@
-import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
@@ -20,17 +25,22 @@ import {
   LogFileSelector,
   LogViewerList,
   LogViewerToolbar,
+  normalizeLogEntries,
 } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { errorMessage } from '@/lib/errors'
 
-const LogViewerPage: React.FC = () => {
-  const [entries, setEntries] = useState<LogEntry[]>([])
-  const [logInfo, setLogInfo] = useState<LogInfo | null>(null)
-  const [logFiles, setLogFiles] = useState<LogFileInfo[]>([])
+interface LogData {
+  entries: LogEntry[]
+  info: LogInfo
+}
+
+const logFilesQueryKey = ['log-files'] as const
+
+function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
@@ -39,70 +49,78 @@ const LogViewerPage: React.FC = () => {
     modules: [],
     searchText: '',
   })
-
-  const containerRef = useRef<HTMLDivElement>(null)
+  const deferredSearchText = useDeferredValue(filter.searchText)
+  const queryClient = useQueryClient()
   const appWindow = getCurrentWebviewWindow()
-  const isInitialLoadRef = useRef(true)
 
-  const fetchLogFiles = useCallback(async () => {
-    try {
-      const files = await invoke<LogFileInfo[]>('list_log_files')
+  const logFilesQuery = useQuery({
+    queryKey: logFilesQueryKey,
+    queryFn: () => invoke<LogFileInfo[]>('list_log_files'),
+  })
+  const logsQuery = useQuery({
+    queryKey: ['logs', selectedFile],
+    queryFn: async (): Promise<LogData> => {
+      const [info, entries] = await Promise.all([
+        invoke<LogInfo>('get_log_info', { filename: selectedFile }),
+        invoke<LogEntry[]>('get_log_contents_json', {
+          lines: DEFAULT_LOG_LINES,
+          filename: selectedFile,
+        }),
+      ])
 
-      setLogFiles(files)
-    } catch (error) {
-      console.error('Error fetching log files:', error)
-    }
-  }, [])
-
-  const fetchLogs = useCallback(
-    async (silent = false) => {
-      if (!silent) {
-        setIsLoading(true)
-      }
-      try {
-        const [info, logEntries] = await Promise.all([
-          invoke<LogInfo>('get_log_info', { filename: selectedFile }),
-          invoke<LogEntry[]>('get_log_contents_json', {
-            lines: DEFAULT_LOG_LINES,
-            filename: selectedFile,
-          }),
-        ])
-
-        setLogInfo(info)
-        setEntries(logEntries)
-      } catch (error) {
-        console.error('Error fetching logs:', error)
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
-        isInitialLoadRef.current = false
-      }
+      return { info, entries: normalizeLogEntries(entries) }
     },
-    [selectedFile],
-  )
+    placeholderData: keepPreviousData,
+    refetchInterval:
+      autoRefresh && selectedFile === null ? AUTO_REFRESH_INTERVAL : false,
+  })
+  const clearLogsMutation = useMutation({
+    mutationFn: () => invoke('clear_logs', { filename: selectedFile }),
+    onSuccess: async () => {
+      setExpandedIds(new Set())
+      await queryClient.invalidateQueries({ queryKey: ['logs', selectedFile] })
+      toaster.success({
+        title: 'Logs Cleared',
+        description: 'Log file has been cleared',
+        duration: 2000,
+      })
+    },
+    onError: () => {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to clear logs',
+        duration: 3000,
+      })
+    },
+  })
+  const deleteLogFileMutation = useMutation({
+    mutationFn: (filename: string) => invoke('delete_log_file', { filename }),
+    onSuccess: async (_, filename) => {
+      await queryClient.invalidateQueries({ queryKey: logFilesQueryKey })
+      if (selectedFile === filename) {
+        setSelectedFile(null)
+      }
+      toaster.success({
+        title: 'File Deleted',
+        description: 'Log file has been deleted',
+        duration: 2000,
+      })
+    },
+    onError: error => {
+      toaster.error({
+        title: 'Error',
+        description: errorMessage(error),
+        duration: 3000,
+      })
+    },
+  })
 
-  useEffect(() => {
-    fetchLogFiles()
-  }, [fetchLogFiles])
-
-  useEffect(() => {
-    fetchLogs(false)
-  }, [fetchLogs])
-
-  useEffect(() => {
-    if (!autoRefresh || selectedFile !== null) {
-      return
-    }
-    const interval = setInterval(() => fetchLogs(true), AUTO_REFRESH_INTERVAL)
-
-    return () => clearInterval(interval)
-  }, [autoRefresh, fetchLogs, selectedFile])
-
+  const entries = logsQuery.data?.entries ?? []
+  const logInfo = logsQuery.data?.info
   const availableModules = useMemo(() => extractModules(entries), [entries])
   const filteredEntries = useMemo(
-    () => filterLogs(entries, filter),
-    [entries, filter],
+    () => filterLogs(entries, { ...filter, searchText: deferredSearchText }),
+    [deferredSearchText, entries, filter],
   )
 
   const handleFileSelect = useCallback((filename: string | null) => {
@@ -112,85 +130,42 @@ const LogViewerPage: React.FC = () => {
       setAutoRefresh(false)
     }
   }, [])
-
   const handleDeleteFile = useCallback(
-    async (filename: string) => {
-      try {
-        await invoke('delete_log_file', { filename })
-        await fetchLogFiles()
-        if (selectedFile === filename) {
-          setSelectedFile(null)
-        }
-        toaster.success({
-          title: 'File Deleted',
-          description: 'Log file has been deleted',
-          duration: 2000,
-        })
-      } catch (error) {
-        console.error('Error deleting log file:', error)
-        toaster.error({
-          title: 'Error',
-          description: String(error),
-          duration: 3000,
-        })
-      }
-    },
-    [fetchLogFiles, selectedFile],
+    (filename: string) => deleteLogFileMutation.mutate(filename),
+    [deleteLogFileMutation],
   )
-
   const handleToggleExpand = useCallback((id: number) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev)
-
-      if (next.has(id)) {
-        next.delete(id)
+    setExpandedIds(previousIds => {
+      const nextIds = new Set(previousIds)
+      if (nextIds.has(id)) {
+        nextIds.delete(id)
       } else {
-        next.add(id)
+        nextIds.add(id)
       }
-
-      return next
+      return nextIds
     })
   }, [])
-
-  const handleClear = useCallback(async () => {
-    try {
-      await invoke('clear_logs', { filename: selectedFile })
-      await fetchLogs(false)
-      setExpandedIds(new Set())
-      toaster.success({
-        title: 'Logs Cleared',
-        description: 'Log file has been cleared',
-        duration: 2000,
-      })
-    } catch (error) {
-      console.error('Error clearing logs:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to clear logs',
-        duration: 3000,
-      })
-    }
-  }, [fetchLogs, selectedFile])
-
+  const handleClear = useCallback(() => {
+    clearLogsMutation.mutate()
+  }, [clearLogsMutation])
   const handleExport = useCallback(async () => {
     setIsExporting(true)
     try {
       const report = await invoke<string>('generate_diagnostic_report')
-      const blob = new Blob([report], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-
-      a.href = url
-      a.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
+      const url = URL.createObjectURL(
+        new Blob([report], { type: 'application/json' }),
+      )
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
+      anchor.click()
       URL.revokeObjectURL(url)
       toaster.success({
         title: 'Report Generated',
         description: 'Diagnostic report has been downloaded',
         duration: 3000,
       })
-    } catch (error) {
-      console.error('Error generating report:', error)
+    } catch {
       toaster.error({
         title: 'Error',
         description: 'Failed to generate report',
@@ -200,12 +175,10 @@ const LogViewerPage: React.FC = () => {
       setIsExporting(false)
     }
   }, [])
-
   const handleOpenFolder = useCallback(async () => {
     try {
       await invoke('open_log_directory')
-    } catch (error) {
-      console.error('Error opening log directory:', error)
+    } catch {
       toaster.error({
         title: 'Error',
         description: 'Failed to open log directory',
@@ -213,19 +186,17 @@ const LogViewerPage: React.FC = () => {
       })
     }
   }, [])
-
   const handleCopyLogs = useCallback(async () => {
     try {
-      const allRawLogs = entries.map(e => e.raw).join('\n')
-
-      await navigator.clipboard.writeText(allRawLogs)
+      await navigator.clipboard.writeText(
+        entries.map(entry => entry.raw).join('\n'),
+      )
       toaster.success({
         title: 'Copied',
         description: 'Logs copied to clipboard',
         duration: 2000,
       })
-    } catch (error) {
-      console.error('Error copying logs:', error)
+    } catch {
       toaster.error({
         title: 'Error',
         description: 'Failed to copy logs',
@@ -233,7 +204,6 @@ const LogViewerPage: React.FC = () => {
       })
     }
   }, [entries])
-
   const handleClose = useCallback(async () => {
     await appWindow.close()
   }, [appWindow])
@@ -243,14 +213,15 @@ const LogViewerPage: React.FC = () => {
       display='flex'
       flexDirection='column'
       height='100vh'
-      bg='#111111'
+      bg='app.bg'
       color='white'
       overflow='hidden'
     >
       <Flex
         p={3}
-        bg='#161616'
-        borderBottom='1px solid rgba(255, 255, 255, 0.08)'
+        bg='app.panel'
+        borderBottom='1px solid'
+        borderColor='app.border'
         align='center'
         justify='space-between'
         flexShrink={0}
@@ -260,13 +231,12 @@ const LogViewerPage: React.FC = () => {
           <Text fontSize='sm' fontWeight='medium' color='gray.100'>
             Application Logs
           </Text>
-          {isLoading && (
+          {logsQuery.isLoading && (
             <Text fontSize='xs' color='blue.400'>
               Loading...
             </Text>
           )}
         </Flex>
-
         <Tooltip
           content='Close Window'
           portalled
@@ -281,20 +251,22 @@ const LogViewerPage: React.FC = () => {
             minWidth='28px'
             p={0}
             _hover={{ bg: 'whiteAlpha.100' }}
+            aria-label='Close window'
           >
             <Box as={X} width='14px' height='14px' color='whiteAlpha.700' />
           </Button>
         </Tooltip>
       </Flex>
-
-      <Box px={3} py={2} bg='#141414' flexShrink={0}>
+      <Box px={3} py={2} bg='app.sunken' flexShrink={0}>
         <Flex align='center' gap={2} mb={2}>
           <LogFileSelector
-            logFiles={logFiles}
+            logFiles={logFilesQuery.data ?? []}
             selectedFile={selectedFile}
             onFileSelect={handleFileSelect}
             onDeleteFile={handleDeleteFile}
-            isLoading={isLoading}
+            isLoading={
+              logFilesQuery.isLoading || deleteLogFileMutation.isPending
+            }
           />
         </Flex>
         <LogViewerToolbar
@@ -311,28 +283,27 @@ const LogViewerPage: React.FC = () => {
           isExporting={isExporting}
         />
       </Box>
-
-      <Box
-        ref={containerRef}
-        flex={1}
-        bg='#0a0a0a'
-        overflow='hidden'
-        position='relative'
-      >
-        <LogViewerList
-          entries={filteredEntries}
-          expandedIds={expandedIds}
-          onToggleExpand={handleToggleExpand}
-          searchText={filter.searchText}
-          autoFollow={autoRefresh}
-        />
+      <Box flex={1} bg='app.deep' overflow='hidden' position='relative'>
+        {logsQuery.isError ? (
+          <Flex height='100%' align='center' justify='center'>
+            <Text color='red.300'>{errorMessage(logsQuery.error)}</Text>
+          </Flex>
+        ) : (
+          <LogViewerList
+            entries={filteredEntries}
+            expandedIds={expandedIds}
+            onToggleExpand={handleToggleExpand}
+            searchText={deferredSearchText}
+            autoFollow={autoRefresh}
+          />
+        )}
       </Box>
-
       <Flex
         px={3}
         py={2}
-        bg='#161616'
-        borderTop='1px solid rgba(255, 255, 255, 0.05)'
+        bg='app.panel'
+        borderTop='1px solid'
+        borderColor='app.subtle'
         align='center'
         justify='space-between'
         flexShrink={0}

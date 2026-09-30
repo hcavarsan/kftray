@@ -1,0 +1,110 @@
+import type { ComponentType, ReactNode } from 'react'
+
+import { Box, Flex, Text } from '@chakra-ui/react'
+
+interface SettingCardProps {
+  title: string
+  description: ReactNode
+  icon?: ComponentType<{ className?: string }>
+  iconColor?: string
+  statusColor?: string
+  statusTitle?: string
+  opacity?: number
+  action?: ReactNode
+  children: ReactNode
+}
+
+export function SettingCard({
+  title,
+  description,
+  icon: Icon,
+  iconColor,
+  statusColor,
+  statusTitle,
+  opacity,
+  action,
+  children,
+}: SettingCardProps) {
+  return (
+    <Box
+      layerStyle='card'
+      p={2}
+      display='flex'
+      flexDirection='column'
+      height='100%'
+      opacity={opacity}
+    >
+      <Flex
+        align='center'
+        justify={action ? 'space-between' : 'flex-start'}
+        gap={1.5}
+        mb={1}
+      >
+        <Flex align='center' gap={1.5}>
+          {Icon && (
+            <Box as={Icon} width='10px' height='10px' color={iconColor} />
+          )}
+          <Text fontSize='sm' fontWeight='500' color='white'>
+            {title}
+          </Text>
+          {statusColor && (
+            <Box
+              width='5px'
+              height='5px'
+              borderRadius='full'
+              bg={statusColor}
+              title={statusTitle}
+            />
+          )}
+        </Flex>
+        {action}
+      </Flex>
+      <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
+        {description}
+      </Text>
+      <Box borderTop='1px solid' borderColor='app.subtle' mt={3} pt={3}>
+        {children}
+      </Box>
+    </Box>
+  )
+}
+
+export function SettingRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <Flex align='center' justify='flex-end' gap={2}>
+      <Text fontSize='xs' color='whiteAlpha.500'>
+        {label}
+      </Text>
+      {children}
+    </Flex>
+  )
+}
+
+export const compactInputProps = {
+  layerStyle: 'field' as const,
+  size: 'xs' as const,
+  height: '22px',
+  bg: 'app.bg',
+  textAlign: 'center' as const,
+  _placeholder: { color: 'whiteAlpha.500' },
+}
+
+export const compactActionButtonProps = {
+  size: '2xs' as const,
+  variant: 'outline' as const,
+  height: '18px',
+  fontSize: '10px',
+  color: 'whiteAlpha.600',
+  borderColor: 'app.active',
+  _hover: { borderColor: 'app.divider', bg: 'whiteAlpha.50' },
+  px: 1.5,
+}
+
+export const isDigitsUpTo = (value: string, max: number) =>
+  value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= max)

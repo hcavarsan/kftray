@@ -1,20 +1,22 @@
-import { forwardRef } from 'react'
+import type { RefAttributes } from 'react'
 import { ChevronDown } from 'lucide-react'
 
 import { Accordion, HStack } from '@chakra-ui/react'
 
-interface AccordionItemTriggerProps extends Accordion.ItemTriggerProps {
+interface AccordionItemTriggerProps
+  extends Accordion.ItemTriggerProps,
+    RefAttributes<HTMLButtonElement> {
   indicatorPlacement?: 'start' | 'end'
 }
 
-export const AccordionItemTrigger = forwardRef<
-  HTMLButtonElement,
-  AccordionItemTriggerProps
->((props, ref) => {
-  const { children, indicatorPlacement = 'end', ...rest } = props
-
+export function AccordionItemTrigger({
+  children,
+  indicatorPlacement = 'end',
+  ref,
+  ...props
+}: AccordionItemTriggerProps) {
   return (
-    <Accordion.ItemTrigger {...rest} ref={ref}>
+    <Accordion.ItemTrigger {...props} ref={ref}>
       {indicatorPlacement === 'start' && (
         <Accordion.ItemIndicator rotate={{ base: '-90deg', _open: '0deg' }}>
           <ChevronDown />
@@ -30,20 +32,22 @@ export const AccordionItemTrigger = forwardRef<
       )}
     </Accordion.ItemTrigger>
   )
-})
+}
 
-interface AccordionItemContentProps extends Accordion.ItemContentProps {}
+interface AccordionItemContentProps
+  extends Accordion.ItemContentProps,
+    RefAttributes<HTMLDivElement> {}
 
-export const AccordionItemContent = forwardRef<
-  HTMLDivElement,
-  AccordionItemContentProps
->((props, ref) => {
+export function AccordionItemContent({
+  ref,
+  ...props
+}: AccordionItemContentProps) {
   return (
     <Accordion.ItemContent>
       <Accordion.ItemBody {...props} ref={ref} />
     </Accordion.ItemContent>
   )
-})
+}
 
 export interface ValueChangeDetails {
   value: string[]

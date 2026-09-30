@@ -12,7 +12,6 @@ import {
   Text,
 } from '@chakra-ui/react'
 
-import { COLORS } from './constants'
 import type { ModuleFilterDropdownProps } from './types'
 
 function ModuleFilterDropdownComponent({
@@ -76,17 +75,13 @@ function ModuleFilterDropdownComponent({
           w='24px'
           minW='24px'
           position='relative'
-          bg={hasSelection ? 'rgba(34, 211, 238, 0.1)' : 'transparent'}
-          color={hasSelection ? COLORS.accentCyan : 'whiteAlpha.600'}
+          bg={hasSelection ? 'cyan.400/10' : 'transparent'}
+          color={hasSelection ? 'cyan.300' : 'whiteAlpha.600'}
           border='1px solid'
-          borderColor={
-            hasSelection ? 'rgba(34, 211, 238, 0.2)' : COLORS.borderDefault
-          }
+          borderColor={hasSelection ? 'cyan.400/20' : 'app.border'}
           _hover={{
-            bg: hasSelection ? 'rgba(34, 211, 238, 0.15)' : 'whiteAlpha.50',
-            borderColor: hasSelection
-              ? 'rgba(34, 211, 238, 0.3)'
-              : COLORS.borderHover,
+            bg: hasSelection ? 'cyan.400/15' : 'whiteAlpha.50',
+            borderColor: hasSelection ? 'cyan.400/30' : 'app.borderStrong',
           }}
         >
           <Layers size={12} />
@@ -95,7 +90,7 @@ function ModuleFilterDropdownComponent({
               position='absolute'
               top='-3px'
               right='-3px'
-              bg={COLORS.accentCyan}
+              bg='cyan.300'
               color='black'
               fontSize='8px'
               fontWeight='bold'
@@ -114,9 +109,9 @@ function ModuleFilterDropdownComponent({
       <Portal>
         <Menu.Positioner>
           <Menu.Content
-            bg={COLORS.bgSecondary}
+            bg='app.panel'
             border='1px solid'
-            borderColor={COLORS.borderDefault}
+            borderColor='app.border'
             minW='220px'
             maxH='280px'
             py={0.5}
@@ -125,7 +120,7 @@ function ModuleFilterDropdownComponent({
               px={2}
               py={1}
               borderBottom='1px solid'
-              borderBottomColor={COLORS.borderSubtle}
+              borderBottomColor='app.hover'
             >
               <Flex justify='space-between' align='center' mb={1}>
                 <Text
@@ -138,7 +133,7 @@ function ModuleFilterDropdownComponent({
                 {hasSelection && (
                   <Text
                     fontSize='9px'
-                    color={COLORS.accentBlue}
+                    color='blue.500'
                     cursor='pointer'
                     onClick={handleClearAll}
                     _hover={{ textDecoration: 'underline' }}
@@ -154,13 +149,13 @@ function ModuleFilterDropdownComponent({
                 onChange={e => setSearchText(e.target.value)}
                 height='22px'
                 fontSize='10px'
-                bg={COLORS.bgInput}
+                bg='app.raised'
                 border='1px solid'
-                borderColor={COLORS.borderDefault}
+                borderColor='app.border'
                 color='whiteAlpha.900'
                 _placeholder={{ color: 'whiteAlpha.400' }}
-                _hover={{ borderColor: COLORS.borderHover }}
-                _focus={{ borderColor: COLORS.accentBlue, boxShadow: 'none' }}
+                _hover={{ borderColor: 'app.borderStrong' }}
+                _focus={{ borderColor: 'blue.500', boxShadow: 'none' }}
               />
             </Box>
             <Box maxH='200px' overflowY='auto'>
@@ -188,10 +183,10 @@ function ModuleFilterDropdownComponent({
                         <Checkbox.Root checked={isSelected} size='sm'>
                           <Checkbox.HiddenInput />
                           <Checkbox.Control
-                            borderColor={COLORS.borderDefault}
+                            borderColor='app.border'
                             _checked={{
-                              bg: COLORS.accentCyan,
-                              borderColor: COLORS.accentCyan,
+                              bg: 'cyan.300',
+                              borderColor: 'cyan.300',
                             }}
                           >
                             <Checkbox.Indicator />
@@ -200,7 +195,7 @@ function ModuleFilterDropdownComponent({
                         <Text
                           fontSize='10px'
                           fontFamily='mono'
-                          color={COLORS.accentCyan}
+                          color='cyan.300'
                           overflow='hidden'
                           textOverflow='ellipsis'
                           whiteSpace='nowrap'
