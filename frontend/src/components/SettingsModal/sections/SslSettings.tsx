@@ -42,8 +42,8 @@ export function SslSettings({
         title='SSL/HTTPS'
         description='Enable HTTPS for port forwards with domain aliases. Creates SSL certificates automatically.'
         icon={Shield}
-        iconColor='blue.400'
-        statusColor={sslEnabled ? 'green.400' : 'gray.500'}
+        iconColor='accent.fg'
+        statusColor={sslEnabled ? 'success.fg' : 'fg.subtle'}
         statusTitle={sslEnabled ? 'Enabled' : 'Disabled'}
         opacity={disabled ? 0.5 : undefined}
         note={disabled ? LOAD_FAILED_NOTE : undefined}

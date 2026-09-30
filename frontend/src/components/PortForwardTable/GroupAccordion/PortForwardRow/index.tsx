@@ -2,11 +2,11 @@ import { memo, useState } from 'react'
 import { ClipboardIcon, ExternalLinkIcon, Info } from 'lucide-react'
 
 import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openShell } from '@tauri-apps/plugin-shell'
 
-import HttpLogsConfigModal from '@/components/HttpLogsConfigModal'
+import { HttpLogsConfigModal } from '@/components/HttpLogsConfigModal'
 import { ActionsMenu } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ActionsMenu'
 import { ConfigDetailsTooltip } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ConfigDetailsTooltip'
 import { DeleteConfigDialog } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/DeleteConfigDialog'
@@ -24,7 +24,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { errorMessage } from '@/lib/errors'
 import type {
   Config,
   PendingConfigAction,
@@ -34,19 +33,6 @@ import type {
 import '../../styles.css'
 
 const HTTP_URL_PATTERN = /^https?:\/\//i
-
-function openConfigUrl(url: string) {
-  if (!HTTP_URL_PATTERN.test(url)) {
-    return
-  }
-
-  openShell(url).catch(error => {
-    toaster.error({
-      title: 'Failed to open URL',
-      description: errorMessage(error),
-    })
-  })
-}
 
 function buildLocalUrl(config: Config): string {
   if (config.workload_type === 'expose') {
@@ -105,62 +91,59 @@ function PortForwardRowComponent({
   const status = getStatusInfo(config, pendingAction, activePod)
   const configDetails = getConfigDetails(config, activePod)
 
-  const handleInspectLogs = async () => {
-    try {
-      await invoke('open_log_file', {
-        logFileName: `${config.id}_${config.local_port}.http`,
-      })
-    } catch (error) {
-      toaster.error({
-        title: 'Error opening log file',
-        description: errorMessage(error),
+  const inspectLogs = useMutation({
+    mutationFn: (logFileName: string) =>
+      invoke('open_log_file', { logFileName }),
+    meta: { errorToast: { title: 'Error opening log file', duration: 1000 } },
+  })
+
+  const openUrl = useMutation({
+    mutationFn: (url: string) => openShell(url),
+    meta: { errorToast: { title: 'Failed to open URL' } },
+  })
+
+  const copyPodName = useMutation({
+    mutationFn: (podName: string) => navigator.clipboard.writeText(podName),
+    onSuccess: (_data, podName) =>
+      toaster.success({
+        title: 'Pod name copied',
+        description: `${podName} copied to clipboard`,
         duration: 1000,
-      })
+      }),
+    meta: {
+      errorToast: {
+        title: 'Copy failed',
+        description: 'Failed to copy pod name to clipboard',
+        duration: 1000,
+      },
+    },
+  })
+
+  const copyConfigDetails = useMutation({
+    mutationFn: (details: string) => navigator.clipboard.writeText(details),
+    onSuccess: () =>
+      toaster.success({
+        title: 'Config details copied',
+        description: 'All configuration details copied to clipboard',
+        duration: 1000,
+      }),
+    meta: {
+      errorToast: {
+        title: 'Copy failed',
+        description: 'Failed to copy config details to clipboard',
+        duration: 1000,
+      },
+    },
+  })
+
+  const handleOpenUrl = (url: string) => {
+    if (HTTP_URL_PATTERN.test(url)) {
+      openUrl.mutate(url)
     }
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
     await toggleConfigForward(config, isChecked ? 'starting' : 'stopping')
-  }
-
-  const handleCopyPodName = async () => {
-    if (!activePod) {
-      return
-    }
-
-    try {
-      await navigator.clipboard.writeText(activePod)
-      toaster.success({
-        title: 'Pod name copied',
-        description: `${activePod} copied to clipboard`,
-        duration: 1000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Copy failed',
-        description: 'Failed to copy pod name to clipboard',
-        duration: 1000,
-      })
-    }
-  }
-
-  const handleCopyConfigDetails = async () => {
-    try {
-      await navigator.clipboard.writeText(
-        formatConfigDetails(status, configDetails),
-      )
-      toaster.success({
-        title: 'Config details copied',
-        description: 'All configuration details copied to clipboard',
-        duration: 1000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Copy failed',
-        description: 'Failed to copy config details to clipboard',
-        duration: 1000,
-      })
-    }
   }
 
   const handleDeleteConfirm = async () => {
@@ -195,7 +178,11 @@ function PortForwardRowComponent({
                   size='xs'
                   variant='ghost'
                   aria-label='Info'
-                  onClick={() => void handleCopyConfigDetails()}
+                  onClick={() =>
+                    copyConfigDetails.mutate(
+                      formatConfigDetails(status, configDetails),
+                    )
+                  }
                   className='icon-button'
                   color={status.color}
                 >
@@ -241,7 +228,7 @@ function PortForwardRowComponent({
                     size='2xs'
                     variant='ghost'
                     aria-label='Open URL'
-                    onClick={() => openConfigUrl(buildLocalUrl(config))}
+                    onClick={() => handleOpenUrl(buildLocalUrl(config))}
                     className='icon-button'
                   >
                     <ExternalLinkIcon size={10} />
@@ -258,7 +245,7 @@ function PortForwardRowComponent({
                       <Text fontSize='xs' fontWeight='medium'>
                         Status: {status.status}
                       </Text>
-                      <Text fontSize='xs' color='gray.400'>
+                      <Text fontSize='xs' color='fg.muted'>
                         Pod: {activePod} (click to copy)
                       </Text>
                     </Box>
@@ -267,7 +254,7 @@ function PortForwardRowComponent({
                   <IconButton
                     size='2xs'
                     variant='ghost'
-                    onClick={() => void handleCopyPodName()}
+                    onClick={() => copyPodName.mutate(activePod)}
                     aria-label='Copy Pod Name'
                     className='icon-button'
                   >
@@ -290,7 +277,9 @@ function PortForwardRowComponent({
             onDuplicate={() => void handleDuplicateConfig(config.id)}
             onOpenDeleteDialog={() => setIsDeleteDialogOpen(true)}
             onToggleHttpLogs={() => setHttpLogsEnabled.mutate(!httpLogsEnabled)}
-            onInspectLogs={() => void handleInspectLogs()}
+            onInspectLogs={() =>
+              inspectLogs.mutate(`${config.id}_${config.local_port}.http`)
+            }
             onOpenHttpLogsConfig={() => setIsHttpLogsConfigOpen(true)}
           />
         </Table.Cell>
@@ -319,4 +308,4 @@ function PortForwardRowComponent({
   )
 }
 
-export default memo(PortForwardRowComponent)
+export const PortForwardRow = memo(PortForwardRowComponent)

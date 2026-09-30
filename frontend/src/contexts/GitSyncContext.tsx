@@ -8,11 +8,14 @@ import {
   useState,
 } from 'react'
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  type UseMutateFunction,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 
-import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
-import { errorMessage } from '@/lib/errors'
 import type { GitConfig } from '@/services/gitService'
 import { gitService } from '@/services/gitService'
 
@@ -28,8 +31,8 @@ interface GitSyncContextValue {
   syncStatus: SyncStatus
   lastSync: string | null
   nextSync: string | null
-  saveCredentials: (credentials: GitConfig) => Promise<void>
-  deleteCredentials: () => Promise<void>
+  saveCredentials: UseMutateFunction<GitConfig, Error, GitConfig>
+  deleteCredentials: UseMutateFunction<void, Error, void>
   syncConfigs: () => Promise<void>
 }
 
@@ -60,13 +63,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       setLastSyncTime(Date.now())
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
     },
-    onError: error => {
-      toaster.error({
-        title: 'Sync Failed',
-        description: errorMessage(error),
-        duration: 3000,
-      })
-    },
+    meta: { errorToast: { title: 'Sync Failed', duration: 3000 } },
     retry: 2,
     retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
   })
@@ -85,6 +82,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
       setLastSyncTime(Date.now())
     },
+    meta: { errorToast: { title: 'Error saving settings', duration: 1000 } },
   })
 
   const deleteMutation = useMutation({
@@ -92,6 +90,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     onSuccess: () => {
       queryClient.setQueryData(credentialsQueryKey, null)
     },
+    meta: { errorToast: { title: 'Error saving settings', duration: 1000 } },
   })
 
   const syncConfigs = useCallback(async () => {
@@ -119,17 +118,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(intervalId)
   }, [credentials, syncAsync, queryClient])
 
-  const saveCredentials = useCallback(
-    async (creds: GitConfig) => {
-      await saveMutation.mutateAsync(creds)
-    },
-    [saveMutation],
-  )
-
-  const deleteCredentials = useCallback(
-    () => deleteMutation.mutateAsync(),
-    [deleteMutation],
-  )
+  const { mutate: saveCredentials } = saveMutation
+  const { mutate: deleteCredentials } = deleteMutation
 
   const value = useMemo<GitSyncContextValue>(
     () => ({

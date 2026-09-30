@@ -131,10 +131,10 @@ function LogViewerListComponent({
         flexDirection='column'
         gap={2}
       >
-        <Text color='whiteAlpha.400' fontSize='13px'>
+        <Text color='fg.faint' fontSize='13px'>
           No log entries to display
         </Text>
-        <Text color='whiteAlpha.300' fontSize='11px'>
+        <Text color='fg.faint' fontSize='11px'>
           Logs will appear here as they are generated
         </Text>
       </Box>

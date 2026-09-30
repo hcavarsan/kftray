@@ -22,7 +22,7 @@ export function LogFilterAction({ label, onClick }: LogFilterActionProps) {
   return (
     <Text
       fontSize='9px'
-      color='blue.500'
+      color='accent.fg'
       cursor='pointer'
       onClick={onClick}
       _hover={{ textDecoration: 'underline' }}
@@ -87,12 +87,14 @@ export function LogFilterDropdown<T extends string>({
           minW='24px'
           position='relative'
           bg={hasSelection ? accent.activeBg : 'transparent'}
-          color={hasSelection ? accent.activeColor : 'whiteAlpha.600'}
+          color={hasSelection ? accent.activeColor : 'fg.subtle'}
           border='1px solid'
-          borderColor={hasSelection ? accent.activeBorder : 'app.border'}
+          borderColor={hasSelection ? accent.activeBorder : 'border'}
           _hover={{
-            bg: hasSelection ? accent.hoverBg : 'whiteAlpha.50',
-            borderColor: hasSelection ? accent.hoverBorder : 'app.borderStrong',
+            bg: hasSelection ? accent.hoverBg : 'bg.faint',
+            borderColor: hasSelection
+              ? accent.hoverBorder
+              : 'border.emphasized',
           }}
         >
           {icon}
@@ -120,9 +122,9 @@ export function LogFilterDropdown<T extends string>({
       <Portal>
         <Menu.Positioner>
           <Menu.Content
-            bg='app.panel'
+            bg='bg.surface'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
             minW={minW}
             maxH={maxH}
             py={0.5}
@@ -131,18 +133,14 @@ export function LogFilterDropdown<T extends string>({
               px={2}
               py={1}
               borderBottom='1px solid'
-              borderBottomColor='app.hover'
+              borderBottomColor='border.subtle'
             >
               <Flex
                 justify='space-between'
                 align='center'
                 mb={searchable ? 1 : undefined}
               >
-                <Text
-                  fontSize='10px'
-                  color='whiteAlpha.500'
-                  fontWeight='medium'
-                >
+                <Text fontSize='10px' color='fg.subtle' fontWeight='medium'>
                   {title}
                 </Text>
                 {headerActions ??
@@ -161,20 +159,23 @@ export function LogFilterDropdown<T extends string>({
                   onChange={e => setSearchText(e.target.value)}
                   height='22px'
                   fontSize='10px'
-                  bg='app.raised'
+                  bg='bg.raised'
                   border='1px solid'
-                  borderColor='app.border'
-                  color='whiteAlpha.900'
-                  _placeholder={{ color: 'whiteAlpha.400' }}
-                  _hover={{ borderColor: 'app.borderStrong' }}
-                  _focus={{ borderColor: 'blue.500', boxShadow: 'none' }}
+                  borderColor='border'
+                  color='fg'
+                  _placeholder={{ color: 'fg.faint' }}
+                  _hover={{ borderColor: 'border.emphasized' }}
+                  _focus={{
+                    borderColor: 'accent.focusRing',
+                    boxShadow: 'none',
+                  }}
                 />
               )}
             </Box>
             <Box maxH='200px' overflowY='auto'>
               {visibleItems.length === 0 ? (
                 <Box px={2} py={1}>
-                  <Text fontSize='10px' color='whiteAlpha.400'>
+                  <Text fontSize='10px' color='fg.faint'>
                     {items.length === 0 ? emptyLabel : 'No match'}
                   </Text>
                 </Box>
@@ -185,7 +186,7 @@ export function LogFilterDropdown<T extends string>({
                     value={item}
                     onClick={() => handleToggle(item)}
                     bg='transparent'
-                    _hover={{ bg: 'whiteAlpha.50' }}
+                    _hover={{ bg: 'bg.faint' }}
                     py={1}
                     px={2}
                   >
@@ -196,7 +197,7 @@ export function LogFilterDropdown<T extends string>({
                       >
                         <Checkbox.HiddenInput />
                         <Checkbox.Control
-                          borderColor='app.border'
+                          borderColor='border'
                           _checked={{
                             bg: accent.checkedBg,
                             borderColor: accent.checkedBg,

@@ -13,7 +13,7 @@
 
 .table-container {
   scrollbar-width: thin;
-  scrollbar-color: var(--chakra-colors-app-active) transparent;
+  scrollbar-color: var(--chakra-colors-bg-active) transparent;
   scrollbar-gutter: stable both-edges;
   border: none;
   overflow-y: auto;
@@ -33,12 +33,12 @@
 }
 
 .table-container::-webkit-scrollbar-thumb {
-  background-color: var(--chakra-colors-app-active);
+  background-color: var(--chakra-colors-bg-active);
   border-radius: 2px;
 }
 
 .table-container::-webkit-scrollbar-thumb:hover {
-  background-color: var(--chakra-colors-app-hover);
+  background-color: var(--chakra-colors-bg-hover);
 }
 
 .accordion-trigger {
@@ -51,7 +51,7 @@
   padding: 8px;
   background-color: color-mix(
     in srgb,
-    var(--chakra-colors-app-panel) 30%,
+    var(--chakra-colors-bg-surface) 30%,
     transparent
   );
   border: none;
@@ -60,7 +60,7 @@
 .table-header {
   height: 28px;
   font-size: var(--font-size-small);
-  color: var(--chakra-colors-app-placeholder);
+  color: var(--chakra-colors-fg-subtle);
   text-transform: uppercase;
   letter-spacing: 0.25em;
   border: none;
@@ -70,14 +70,14 @@
   height: var(--row-height);
   background-color: color-mix(
     in srgb,
-    var(--chakra-colors-app-panel) 40%,
+    var(--chakra-colors-bg-surface) 40%,
     transparent
   );
   border: none;
 }
 
 .table-row:hover {
-  background-color: var(--chakra-colors-app-faint);
+  background-color: var(--chakra-colors-bg-faint);
 }
 
 .table-cell {
@@ -91,7 +91,7 @@
   min-width: var(--icon-size);
   height: var(--icon-size);
   padding: 0;
-  color: var(--chakra-colors-app-text-disabled);
+  color: var(--chakra-colors-fg-subtle);
 }
 
 .checkbox {
@@ -130,12 +130,12 @@
 }
 
 .accordion-item {
-  border: 1px solid var(--chakra-colors-app-subtle);
+  border: 1px solid var(--chakra-colors-border-subtle);
   border-radius: var(--border-radius);
   margin: 1px 0;
   background-color: color-mix(
     in srgb,
-    var(--chakra-colors-app-panel) 30%,
+    var(--chakra-colors-bg-surface) 30%,
     transparent
   );
   overflow: auto;
@@ -151,11 +151,7 @@
 }
 
 .accordion-trigger:hover {
-  background-color: color-mix(
-    in srgb,
-    var(--chakra-colors-white) 2%,
-    transparent
-  );
+  background-color: var(--chakra-colors-bg-faint);
 }
 
 .accordion-header {
@@ -170,7 +166,7 @@
   padding: var(--accordion-padding);
   background-color: color-mix(
     in srgb,
-    var(--chakra-colors-app-panel) 30%,
+    var(--chakra-colors-bg-surface) 30%,
     transparent
   );
   border: none;
@@ -196,7 +192,7 @@
 .table-header-cell {
   padding: 4px var(--padding-x);
   font-size: var(--font-size-small);
-  color: var(--chakra-colors-app-placeholder);
+  color: var(--chakra-colors-fg-subtle);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 500;
@@ -228,10 +224,10 @@
 .context-tag {
   padding: 2px 6px;
   font-size: var(--font-size-small);
-  background-color: var(--chakra-colors-app-subtle);
-  border: 1px solid var(--chakra-colors-app-active);
+  background-color: var(--chakra-colors-bg-hover);
+  border: 1px solid var(--chakra-colors-border-emphasized);
   border-radius: var(--border-radius);
-  color: color-mix(in srgb, var(--chakra-colors-white) 90%, transparent);
+  color: var(--chakra-colors-fg);
 }
 
 .status-tag {
@@ -240,8 +236,8 @@
   gap: 4px;
   padding: 2px 4px;
   font-size: var(--font-size-small);
-  background-color: var(--chakra-colors-app-shade);
-  border: 1px solid var(--chakra-colors-app-active);
+  background-color: var(--chakra-colors-bg-shade);
+  border: 1px solid var(--chakra-colors-border-emphasized);
   border-radius: 10px;
 }
 
@@ -253,7 +249,7 @@
 .progress-wrapper {
   width: 50px;
   height: 3px;
-  background-color: var(--chakra-colors-app-active);
+  background-color: var(--chakra-colors-bg-active);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -262,13 +258,13 @@
   position: relative;
   width: 30px !important;
   height: 14px !important;
-  background-color: var(--chakra-colors-app-subtle) !important;
+  background-color: var(--chakra-colors-bg-hover) !important;
   border-radius: 10px !important;
   transition: all 0.2s ease;
 }
 
 .switch[data-state="checked"] {
-  background-color: var(--chakra-colors-app-accent-muted) !important;
+  background-color: var(--chakra-colors-accent-muted) !important;
 }
 
 .switch[data-disabled] {
@@ -281,12 +277,12 @@
   position: absolute;
   width: 14px;
   height: 14px;
-  background-color: var(--chakra-colors-app-text-secondary);
+  background-color: var(--chakra-colors-fg-muted);
   border-radius: 50%;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .switch[data-state="checked"]::before {
   transform: translateX(16px);
-  background-color: var(--chakra-colors-blue-500);
+  background-color: var(--chakra-colors-accent-solid);
 }

@@ -32,16 +32,16 @@ export const ToolbarIconButton = ({
     overflow='visible'
     borderRadius='md'
     border='1px solid'
-    borderColor={active ? 'blue.500/35' : 'app.border'}
-    bg={active ? 'blue.500/12' : 'whiteAlpha.50'}
-    color={active ? 'blue.400' : 'whiteAlpha.700'}
+    borderColor={active ? 'accent.emphasized' : 'border'}
+    bg={active ? 'accent.subtle' : 'bg.faint'}
+    color={active ? 'accent.fg' : 'fg.muted'}
     _hover={{
-      bg: active ? 'blue.500/18' : 'whiteAlpha.100',
-      color: active ? 'app.accentText' : 'whiteAlpha.900',
+      bg: active ? 'accent.muted' : 'bg.hover',
+      color: active ? 'accent.fg' : 'fg',
     }}
     _focusVisible={{
       outline: '1px solid',
-      outlineColor: 'blue.500',
+      outlineColor: 'accent.focusRing',
       outlineOffset: '1px',
     }}
     {...rest}
@@ -55,14 +55,14 @@ export const ToolbarIconButton = ({
         minW='12px'
         h='12px'
         px='3px'
-        bg='blue.500'
-        color='white'
+        bg='accent.solid'
+        color='fg'
         fontSize='8px'
         fontWeight='semibold'
         lineHeight='12px'
         textAlign='center'
         borderRadius='full'
-        boxShadow='0 0 0 1.5px var(--chakra-colors-app-panel)'
+        boxShadow='0 0 0 1.5px var(--chakra-colors-bg-surface)'
         pointerEvents='none'
       >
         {badge}
@@ -84,9 +84,9 @@ export const WithTooltip = ({
 )
 
 export const contentProps = {
-  bg: 'app.raised',
+  bg: 'bg.raised',
   border: '1px solid',
-  borderColor: 'app.border',
+  borderColor: 'border',
   borderRadius: 'md',
   boxShadow: 'popover',
   minW: '200px',
@@ -104,15 +104,15 @@ export const itemProps = {
   pe: 2.5,
   borderRadius: 'sm',
   mx: 1,
-  color: 'whiteAlpha.900',
+  color: 'fg',
   bg: 'transparent',
-  _highlighted: { bg: 'whiteAlpha.100' },
+  _highlighted: { bg: 'bg.hover' },
 }
 
 export const sectionLabelProps = {
   fontSize: '10px',
   fontWeight: 'medium',
-  color: 'whiteAlpha.500',
+  color: 'fg.subtle',
   ps: 3.5,
   pe: 2.5,
   pt: 1.5,
@@ -121,5 +121,5 @@ export const sectionLabelProps = {
 
 export const separatorProps = {
   my: 1,
-  borderColor: 'app.subtle',
+  borderColor: 'border.subtle',
 }

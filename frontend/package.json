@@ -14,7 +14,7 @@
     "tauri": "tauri",
     "taze": "taze major -I",
     "taze:minor": "taze minor -w",
-    "knip": "knip"
+    "test": "vitest run"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.37.0",
@@ -37,9 +37,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
-    "knip": "^6.38.0",
     "rollup-plugin-visualizer": "^7.1.1",
+    "taze": "^21.2.0",
     "typescript": "7.0.2",
-    "vite": "8.3.1"
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
   }
 }

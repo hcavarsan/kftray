@@ -26,7 +26,7 @@ export function getStatusInfo(
 
   if (pendingAction?.action === 'starting') {
     return {
-      color: 'app.accent',
+      color: 'accent.fg',
       status: 'Starting',
       description:
         config.workload_type === 'expose'
@@ -37,7 +37,7 @@ export function getStatusInfo(
 
   if (pendingAction?.action === 'stopping') {
     return {
-      color: 'app.accent',
+      color: 'accent.fg',
       status: 'Stopping',
       description:
         config.workload_type === 'expose'
@@ -71,7 +71,7 @@ export function getStatusInfo(
 
     if (config.workload_type === 'expose') {
       return {
-        color: 'app.accent',
+        color: 'accent.fg',
         status: 'Running',
         description: activePod
           ? `Tunnel active via ${activePod}`
@@ -80,7 +80,7 @@ export function getStatusInfo(
     }
 
     return {
-      color: 'app.accent',
+      color: 'accent.fg',
       status: activePod ? 'Running' : 'Pending',
       description: activePod
         ? `Connected to ${activePod}`

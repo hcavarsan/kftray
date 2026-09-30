@@ -45,10 +45,10 @@ function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
         loading={isSaving}
         loadingText='Saving...'
         disabled={!onSave}
-        bg='blue.500'
-        color='white'
-        _hover={{ bg: 'blue.600' }}
-        _active={{ bg: 'blue.700' }}
+        bg='accent.solid'
+        color='fg'
+        _hover={{ bg: 'accent.solidHover' }}
+        _active={{ bg: 'accent.solidActive' }}
         height='28px'
         fontSize='xs'
       >
@@ -151,7 +151,7 @@ function SettingsForm({
   )
 }
 
-export default function SettingsModal({ onClose }: { onClose: () => void }) {
+export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, ssl, log, appMode, mcp] = useQueries({
     queries: SETTINGS_QUERIES,
   })
@@ -180,11 +180,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <AppDialogBody>
             <Stack align='center' justify='center' height='100%'>
               {loadError ? (
-                <Text fontSize='xs' color='red.300'>
+                <Text fontSize='xs' color='danger.fg'>
                   Failed to load settings: {errorMessage(loadError)}
                 </Text>
               ) : (
-                <Spinner size='sm' color='whiteAlpha.600' />
+                <Spinner size='sm' color='fg.subtle' />
               )}
             </Stack>
           </AppDialogBody>

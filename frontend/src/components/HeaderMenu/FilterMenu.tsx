@@ -3,7 +3,7 @@ import { Filter } from 'lucide-react'
 
 import { Box, Flex, Menu, Portal, Text } from '@chakra-ui/react'
 
-import ActiveFilterChips from '@/components/HeaderMenu/ActiveFilterChips'
+import { ActiveFilterChips } from '@/components/HeaderMenu/ActiveFilterChips'
 import {
   contentProps,
   itemProps,
@@ -22,7 +22,7 @@ import {
 import type { ViewCondition } from '@/types'
 
 const Count = ({ value }: { value: number }) => (
-  <Text as='span' ms='auto' ps={3} fontSize='10px' color='whiteAlpha.400'>
+  <Text as='span' ms='auto' ps={3} fontSize='10px' color='fg.faint'>
     {value}
   </Text>
 )
@@ -70,9 +70,9 @@ export const FilterMenu = ({ view, facets, setView }: ViewMenuProps) => {
               mt={-1}
               pt={1}
               mb={filterCount > 0 ? 1 : 0}
-              bg='app.raised'
+              bg='bg.raised'
               borderBottom={filterCount > 0 ? '1px solid' : 'none'}
-              borderBottomColor='app.subtle'
+              borderBottomColor='border.subtle'
             >
               <Flex
                 align='center'
@@ -89,7 +89,7 @@ export const FilterMenu = ({ view, facets, setView }: ViewMenuProps) => {
                     value='clear'
                     onClick={() => setFilters([])}
                     fontSize='10px'
-                    color='blue.300'
+                    color='accent.fg'
                     flex='none'
                     w='auto'
                     whiteSpace='nowrap'
@@ -98,7 +98,7 @@ export const FilterMenu = ({ view, facets, setView }: ViewMenuProps) => {
                     py={0.5}
                     borderRadius='sm'
                     bg='transparent'
-                    _highlighted={{ bg: 'whiteAlpha.100' }}
+                    _highlighted={{ bg: 'bg.hover' }}
                   >
                     Clear all
                   </Menu.Item>
@@ -107,7 +107,7 @@ export const FilterMenu = ({ view, facets, setView }: ViewMenuProps) => {
               <ActiveFilterChips view={view} setView={setView} />
             </Box>
             {sections.length === 0 && (
-              <Text fontSize='11px' color='whiteAlpha.500' px={3.5} py={1.5}>
+              <Text fontSize='11px' color='fg.subtle' px={3.5} py={1.5}>
                 Nothing to filter yet
               </Text>
             )}

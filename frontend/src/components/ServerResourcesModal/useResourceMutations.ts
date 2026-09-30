@@ -41,13 +41,7 @@ export function useResourceMutations(onCleaned: () => void) {
         duration: 2000,
       })
     },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: `Failed to delete: ${errorMessage(error)}`,
-        duration: 3000,
-      })
-    },
+    meta: { errorToast: { title: 'Failed to delete', duration: 3000 } },
     onSettled: invalidateResources,
   })
 
@@ -116,13 +110,7 @@ export function useResourceMutations(onCleaned: () => void) {
         duration: 5000,
       })
     },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: `Cleanup failed: ${errorMessage(error)}`,
-        duration: 3000,
-      })
-    },
+    meta: { errorToast: { title: 'Cleanup failed', duration: 3000 } },
     onSettled: invalidateResources,
   })
 

@@ -49,7 +49,7 @@ interface ShortcutCaptureProps {
   disabled?: boolean
 }
 
-export default function ShortcutCapture({
+export function ShortcutCapture({
   value,
   onChange,
   disabled = false,
@@ -136,19 +136,19 @@ export default function ShortcutCapture({
         align='center'
         justify='space-between'
         p={2}
-        bg={isCapturing ? 'app.deep' : 'app.panel'}
+        bg={isCapturing ? 'bg.deep' : 'bg.surface'}
         border='1px solid'
-        borderColor={isCapturing ? 'blue.500/50' : 'app.border'}
+        borderColor={isCapturing ? 'accent.emphasized' : 'border'}
         borderRadius='md'
         cursor={disabled ? 'not-allowed' : 'pointer'}
         _hover={
-          !disabled && !isCapturing ? { borderColor: 'app.borderStrong' } : {}
+          !disabled && !isCapturing ? { borderColor: 'border.emphasized' } : {}
         }
         _focus={
           !disabled
             ? {
-                borderColor: 'blue.400',
-                boxShadow: '0 0 0 1px var(--chakra-colors-app-accent-muted)',
+                borderColor: 'accent.focusRing',
+                boxShadow: '0 0 0 1px var(--chakra-colors-accent-muted)',
               }
             : {}
         }
@@ -169,13 +169,11 @@ export default function ShortcutCapture({
             as={Keyboard}
             width='12px'
             height='12px'
-            color={isCapturing ? 'blue.400' : 'whiteAlpha.600'}
+            color={isCapturing ? 'accent.fg' : 'fg.subtle'}
           />
           <Text
             fontSize='xs'
-            color={
-              isCapturing ? 'blue.300' : value ? 'white' : 'whiteAlpha.500'
-            }
+            color={isCapturing ? 'accent.fg' : value ? 'fg' : 'fg.subtle'}
             fontFamily={isCapturing || value ? 'mono' : 'inherit'}
             letterSpacing={isCapturing || value ? '0.5px' : 'normal'}
           >
@@ -191,8 +189,8 @@ export default function ShortcutCapture({
               e.stopPropagation()
               stopCapture()
             }}
-            color='whiteAlpha.600'
-            _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+            color='fg.subtle'
+            _hover={{ color: 'fg', bg: 'bg.hover' }}
             height='20px'
             px={1.5}
           >
@@ -208,8 +206,8 @@ export default function ShortcutCapture({
           left={0}
           mt={1}
           fontSize='2xs'
-          color='blue.300'
-          bg='app.scrim'
+          color='accent.fg'
+          bg='bg.scrim'
           px={2}
           py={1}
           borderRadius='sm'

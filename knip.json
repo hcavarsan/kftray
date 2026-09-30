@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [],
+      "project": [],
+      "ignoreBinaries": ["rustup"]
+    },
+    "frontend": {
+      "entry": ["src/logs.tsx"],
+      "project": ["src/**/*.{ts,tsx}!"]
+    }
+  }
+}

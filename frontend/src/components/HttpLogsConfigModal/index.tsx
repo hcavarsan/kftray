@@ -1,16 +1,7 @@
 import { useState } from 'react'
 import { FileText } from 'lucide-react'
 
-import {
-  Box,
-  Dialog,
-  Field,
-  Flex,
-  Grid,
-  Input,
-  Stack,
-  Text,
-} from '@chakra-ui/react'
+import { Box, Dialog, Flex, Grid, Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -20,9 +11,11 @@ import {
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
+
+import { NumberField } from './NumberField'
+import { SwitchCard } from './SwitchCard'
 
 interface HttpLogsConfig {
   config_id: number
@@ -78,33 +71,7 @@ const formatFileSize = (bytes: number) => {
   return `${bytes} bytes`
 }
 
-const cardProps = {
-  bg: 'app.panel',
-  p: 2.5,
-  borderRadius: 'md',
-  border: '1px solid',
-  borderColor: 'app.border',
-  height: 'fit-content',
-}
-
-const numberInputProps = {
-  type: 'number',
-  size: 'xs',
-  width: '60px',
-  height: '24px',
-  bg: 'app.bg',
-  border: '1px solid',
-  borderColor: 'app.border',
-  _hover: { borderColor: 'app.borderStrong' },
-  _focus: { borderColor: 'blue.400', boxShadow: 'none' },
-  _invalid: { borderColor: 'red.400' },
-  color: 'white',
-  _placeholder: { color: 'whiteAlpha.500' },
-  textAlign: 'center',
-  fontSize: 'xs',
-} as const
-
-export default function HttpLogsConfigModal({
+export function HttpLogsConfigModal({
   configId,
   onClose,
   onSaved,
@@ -153,12 +120,12 @@ export default function HttpLogsConfigModal({
       onSaved?.()
       onClose()
     },
-    onError: () => {
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to save HTTP logs configuration',
         duration: 3000,
-      })
+      },
     },
   })
 
@@ -211,8 +178,8 @@ export default function HttpLogsConfigModal({
     <AppDialog
       title={
         <Flex align='center' gap={2}>
-          <Box as={FileText} width='14px' height='14px' color='blue.400' />
-          <Text as='span' fontWeight='600' color='white'>
+          <Box as={FileText} width='14px' height='14px' color='accent.fg' />
+          <Text as='span' fontWeight='600' color='fg'>
             HTTP Logs Configuration
           </Text>
         </Flex>
@@ -223,7 +190,7 @@ export default function HttpLogsConfigModal({
       <Dialog.Body px={4} py={3}>
         {!draft ? (
           <Box py={6} textAlign='center'>
-            <Text color={configQuery.isError ? 'red.300' : 'whiteAlpha.600'}>
+            <Text color={configQuery.isError ? 'danger.fg' : 'fg.subtle'}>
               {configQuery.isError
                 ? `Failed to load configuration: ${errorMessage(configQuery.error)}`
                 : 'Loading configuration...'}
@@ -232,110 +199,44 @@ export default function HttpLogsConfigModal({
         ) : (
           <Stack gap={3}>
             <Grid templateColumns='1fr 1fr' gap={3}>
-              <Box {...cardProps}>
-                <Flex direction='column' gap={2}>
-                  <Text fontSize='sm' fontWeight='500' color='white'>
-                    Enable HTTP Logs
-                  </Text>
-                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                    Enable HTTP request/response logging for this configuration
-                  </Text>
-                  <Box alignSelf='flex-start'>
-                    <Switch
-                      aria-label='Enable HTTP Logs'
-                      checked={draft.enabled}
-                      onCheckedChange={details =>
-                        update({ enabled: details.checked })
-                      }
-                      colorPalette='blue'
-                    />
-                  </Box>
-                </Flex>
-              </Box>
-
-              <Box {...cardProps}>
-                <Flex direction='column' gap={2}>
-                  <Text fontSize='sm' fontWeight='500' color='white'>
-                    Automatic Cleanup
-                  </Text>
-                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                    Automatically remove old log files based on retention period
-                  </Text>
-                  <Box alignSelf='flex-start'>
-                    <Switch
-                      aria-label='Automatic Cleanup'
-                      checked={draft.auto_cleanup}
-                      onCheckedChange={details =>
-                        update({ auto_cleanup: details.checked })
-                      }
-                      colorPalette='blue'
-                    />
-                  </Box>
-                </Flex>
-              </Box>
-
-              <Field.Root {...cardProps} invalid={!!errors.maxFileSizeMb}>
-                <Flex direction='column' gap={2}>
-                  <Field.Label fontSize='sm' fontWeight='500' color='white'>
-                    Maximum File Size
-                  </Field.Label>
-                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                    Maximum file size before rotation. Current:{' '}
-                    {formatFileSize(
-                      fileSizeMb
-                        ? fileSizeMb * MB
-                        : (configQuery.data?.max_file_size ?? 0),
-                    )}
-                  </Text>
-                  <Flex align='center' gap={1}>
-                    <Input
-                      {...numberInputProps}
-                      value={draft.maxFileSizeMb}
-                      onChange={e =>
-                        updateNumber('maxFileSizeMb', e.target.value)
-                      }
-                      placeholder='10'
-                      min={1}
-                      max={100}
-                    />
-                    <Text fontSize='xs' color='whiteAlpha.600'>
-                      MB
-                    </Text>
-                  </Flex>
-                  <Field.ErrorText fontSize='xs'>
-                    {errors.maxFileSizeMb}
-                  </Field.ErrorText>
-                </Flex>
-              </Field.Root>
-
-              <Field.Root {...cardProps} invalid={!!errors.retentionDays}>
-                <Flex direction='column' gap={2}>
-                  <Field.Label fontSize='sm' fontWeight='500' color='white'>
-                    Retention Period
-                  </Field.Label>
-                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
-                    Days to keep log files before cleanup
-                  </Text>
-                  <Flex align='center' gap={1}>
-                    <Input
-                      {...numberInputProps}
-                      value={draft.retentionDays}
-                      onChange={e =>
-                        updateNumber('retentionDays', e.target.value)
-                      }
-                      placeholder='7'
-                      min={1}
-                      max={365}
-                    />
-                    <Text fontSize='xs' color='whiteAlpha.600'>
-                      days
-                    </Text>
-                  </Flex>
-                  <Field.ErrorText fontSize='xs'>
-                    {errors.retentionDays}
-                  </Field.ErrorText>
-                </Flex>
-              </Field.Root>
+              <SwitchCard
+                title='Enable HTTP Logs'
+                description='Enable HTTP request/response logging for this configuration'
+                checked={draft.enabled}
+                onCheckedChange={enabled => update({ enabled })}
+              />
+              <SwitchCard
+                title='Automatic Cleanup'
+                description='Automatically remove old log files based on retention period'
+                checked={draft.auto_cleanup}
+                onCheckedChange={auto_cleanup => update({ auto_cleanup })}
+              />
+              <NumberField
+                label='Maximum File Size'
+                description={`Maximum file size before rotation. Current: ${formatFileSize(
+                  fileSizeMb
+                    ? fileSizeMb * MB
+                    : (configQuery.data?.max_file_size ?? 0),
+                )}`}
+                value={draft.maxFileSizeMb}
+                onChange={value => updateNumber('maxFileSizeMb', value)}
+                placeholder='10'
+                min={1}
+                max={100}
+                unit='MB'
+                error={errors.maxFileSizeMb}
+              />
+              <NumberField
+                label='Retention Period'
+                description='Days to keep log files before cleanup'
+                value={draft.retentionDays}
+                onChange={value => updateNumber('retentionDays', value)}
+                placeholder='7'
+                min={1}
+                max={365}
+                unit='days'
+                error={errors.retentionDays}
+              />
             </Grid>
           </Stack>
         )}
@@ -352,10 +253,10 @@ export default function HttpLogsConfigModal({
           loading={saveMutation.isPending}
           loadingText='Saving...'
           disabled={!draft}
-          bg='blue.500'
-          color='white'
-          _hover={{ bg: 'blue.600' }}
-          _active={{ bg: 'blue.700' }}
+          bg='accent.solid'
+          color='fg'
+          _hover={{ bg: 'accent.solidHover' }}
+          _active={{ bg: 'accent.solidActive' }}
           height='28px'
           fontSize='xs'
         >

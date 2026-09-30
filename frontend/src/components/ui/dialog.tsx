@@ -51,9 +51,9 @@ export function AppDialog({
             maxWidth={maxWidth}
             width='90vw'
             height={height}
-            bg='app.bg'
+            bg='bg.canvas'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
             borderRadius='lg'
             boxShadow='dialog'
             overflow='hidden'
@@ -65,9 +65,9 @@ export function AppDialog({
             <Dialog.Header
               px={3}
               py={2}
-              bg='app.panel'
+              bg='bg.surface'
               borderBottom='1px solid'
-              borderColor='app.hover'
+              borderColor='border.subtle'
               flexShrink={0}
             >
               <Flex align='center' gap={2} width='100%'>
@@ -77,7 +77,7 @@ export function AppDialog({
                   fontSize='sm'
                   lineHeight='20px'
                   fontWeight='medium'
-                  color='gray.100'
+                  color='fg'
                   truncate
                 >
                   {title}
@@ -114,9 +114,9 @@ export function AppDialogFooter({
     <Dialog.Footer
       px={3}
       py={2}
-      bg='app.panel'
+      bg='bg.surface'
       borderTop='1px solid'
-      borderColor='app.hover'
+      borderColor='border.subtle'
       flexShrink={0}
     >
       <Flex justify={justify} align='center' gap={2} width='100%'>
@@ -140,8 +140,8 @@ export function DialogCancelButton({
       size='xs'
       variant='ghost'
       height='28px'
-      color='gray.400'
-      _hover={{ bg: 'whiteAlpha.50' }}
+      color='fg.muted'
+      _hover={{ bg: 'bg.faint' }}
       onClick={onClick}
       disabled={disabled}
     >
@@ -175,7 +175,7 @@ export function ConfirmDialog({
       maxWidth='400px'
     >
       <Dialog.Body p={3}>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           {description}
         </Text>
       </Dialog.Body>

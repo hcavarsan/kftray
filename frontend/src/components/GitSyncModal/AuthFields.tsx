@@ -20,17 +20,17 @@ export function AuthFields({
 }: AuthFieldsProps) {
   return (
     <Stack gap={2}>
-      <Text fontSize='xs' color='gray.400'>
+      <Text fontSize='xs' color='fg.muted'>
         Authentication Method
       </Text>
       <Stack
         direction='row'
         gap={2}
-        bg='app.panel'
+        bg='bg.surface'
         p={2}
         borderRadius='md'
         border='1px solid'
-        borderColor='app.border'
+        borderColor='border'
       >
         <RadioGroup
           value={authMethod}
@@ -39,17 +39,17 @@ export function AuthFields({
         >
           <Stack direction='row' gap={2}>
             <Radio value='none'>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Public Repository
               </Text>
             </Radio>
             <Radio value='system'>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Use System Git Credentials
               </Text>
             </Radio>
             <Radio value='token'>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 GitHub Token
               </Text>
             </Radio>
@@ -65,11 +65,11 @@ export function AuthFields({
             onGitTokenChange(e.target.value)
           }
           placeholder='Enter your GitHub token'
-          bg='app.panel'
-          borderColor='app.border'
+          bg='bg.surface'
+          borderColor='border'
           _hover={{
-            borderColor: 'app.divider',
-            bg: 'app.panel',
+            borderColor: 'border.strong',
+            bg: 'bg.surface',
           }}
           height='30px'
           fontSize='12px'

@@ -12,7 +12,7 @@ export function PollingIntervalField({
   return (
     <Stack gap={2} mt={2}>
       <Flex justify='space-between' align='center'>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           Polling Interval (minutes)
         </Text>
         <Input
@@ -21,8 +21,8 @@ export function PollingIntervalField({
           width='65px'
           height='24px'
           textAlign='center'
-          bg='app.panel'
-          borderColor='app.border'
+          bg='bg.surface'
+          borderColor='border'
           fontSize='11px'
           _disabled={{
             opacity: 0.8,
@@ -47,10 +47,10 @@ export function PollingIntervalField({
         </Slider.Root>
       </Box>
       <Flex justify='space-between' align='center'>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           Disabled
         </Text>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           120 min
         </Text>
       </Flex>

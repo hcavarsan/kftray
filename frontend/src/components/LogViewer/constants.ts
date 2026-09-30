@@ -15,9 +15,9 @@ export const LEVEL_COLORS: Record<
     border: 'log.warn.border',
   },
   INFO: {
-    bg: 'app.accentSubtle',
-    text: 'app.accentText',
-    border: 'app.accentMuted',
+    bg: 'accent.subtle',
+    text: 'accent.fg',
+    border: 'accent.muted',
   },
   DEBUG: {
     bg: 'log.debug.bg',

@@ -39,14 +39,14 @@ export function Field({ children, error, hint, label }: FieldProps) {
   return (
     <Stack gap={1.5}>
       <Flex align='center' gap={1}>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           {label}
         </Text>
         {hint}
       </Flex>
       {children}
       {error && (
-        <Text color='red.300' fontSize='xs'>
+        <Text color='danger.fg' fontSize='xs'>
           {error}
         </Text>
       )}
@@ -68,9 +68,9 @@ export function TextField({
   return (
     <Field error={error} hint={hint} label={label}>
       <Input
-        bg='app.panel'
+        bg='bg.surface'
         border='1px solid'
-        borderColor='app.border'
+        borderColor='border'
         disabled={disabled}
         fontSize='13px'
         height='28px'
@@ -79,8 +79,8 @@ export function TextField({
         placeholder={placeholder}
         type={type}
         value={value}
-        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-        _hover={{ borderColor: 'app.borderStrong' }}
+        _focus={{ borderColor: 'accent.focusRing', boxShadow: 'none' }}
+        _hover={{ borderColor: 'border.emphasized' }}
       />
     </Field>
   )
@@ -131,7 +131,7 @@ export function LocalAddressField({ draft, onUpdate }: DraftFieldProps) {
         }
         size='xs'
       >
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           Auto select address
         </Text>
       </Checkbox>

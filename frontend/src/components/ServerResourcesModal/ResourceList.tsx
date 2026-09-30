@@ -27,7 +27,7 @@ export function ResourceList({
   if (!hasSelection) {
     return (
       <Flex align='center' justify='center' height='100%' minHeight='200px'>
-        <Text fontSize='xs' color='whiteAlpha.400'>
+        <Text fontSize='xs' color='fg.faint'>
           Select a context
         </Text>
       </Flex>
@@ -43,9 +43,9 @@ export function ResourceList({
         direction='column'
         gap={2}
       >
-        <Spinner size='sm' color='blue.400' />
+        <Spinner size='sm' color='accent.fg' />
         {isAll && (
-          <Text fontSize='xs' color='whiteAlpha.500'>
+          <Text fontSize='xs' color='fg.subtle'>
             Loading contexts...
           </Text>
         )}
@@ -55,7 +55,7 @@ export function ResourceList({
   if (error) {
     return (
       <Flex align='center' justify='center' height='100%' minHeight='200px'>
-        <Text fontSize='xs' color='red.300' textAlign='center'>
+        <Text fontSize='xs' color='danger.fg' textAlign='center'>
           Failed to load resources: {errorMessage(error)}
         </Text>
       </Flex>
@@ -70,10 +70,10 @@ export function ResourceList({
         height='100%'
         minHeight='200px'
       >
-        <Text fontSize='xs' color='whiteAlpha.500' mb={1}>
+        <Text fontSize='xs' color='fg.subtle' mb={1}>
           No resources
         </Text>
-        <Text fontSize='xs' color='whiteAlpha.400'>
+        <Text fontSize='xs' color='fg.faint'>
           Server pods appear when port forwards start
         </Text>
       </Flex>
@@ -92,7 +92,7 @@ export function ResourceList({
       ))}
       {isFetching && (
         <Flex justify='center' py={2}>
-          <Spinner size='xs' color='blue.400' />
+          <Spinner size='xs' color='accent.fg' />
         </Flex>
       )}
     </Stack>

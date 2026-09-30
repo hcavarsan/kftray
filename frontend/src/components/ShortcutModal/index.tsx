@@ -24,9 +24,9 @@ import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { errorMessage } from '@/lib/errors'
 
 import { findShortcutAction, shortcutConfigIds } from './actions'
-import ShortcutFormModal from './ShortcutFormModal'
+import { ShortcutFormModal } from './ShortcutFormModal'
 
-export default function ShortcutModal({ onClose }: { onClose: () => void }) {
+export function ShortcutModal({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Shortcut | 'new' | null>(null)
   const { data: configs = [] } = useQuery({
     ...configsQuery,
@@ -55,29 +55,37 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
           {platformStatus?.platform === 'linux' &&
             platformStatus.needs_permission_fix && (
               <Box
-                bg='app.panel'
+                bg='bg.surface'
                 p={3}
                 borderRadius='md'
                 border='1px solid'
-                borderColor='status.warning.border'
+                borderColor='warning.border'
                 mb={3}
               >
                 <Flex align='center' gap={2} mb={2}>
-                  <AlertTriangle size={14} color='orange' />
+                  <AlertTriangle
+                    size={14}
+                    color='var(--chakra-colors-warning-fg)'
+                  />
                   <Text
                     fontSize='xs'
                     fontWeight='medium'
-                    color='orange.300'
+                    color='warning.fg'
                     letterSpacing='0.025em'
                   >
                     Linux Permission Issue
                   </Text>
                 </Flex>
-                <Text fontSize='xs' color='gray.300' lineHeight='1.4' mb={2}>
+                <Text
+                  fontSize='xs'
+                  color='fg.secondary'
+                  lineHeight='1.4'
+                  mb={2}
+                >
                   Missing input group permissions. Shortcuts won&apos;t work
                   when app window is hidden.
                 </Text>
-                <Text fontSize='xs' color='gray.400' lineHeight='1.4' mb={3}>
+                <Text fontSize='xs' color='fg.muted' lineHeight='1.4' mb={3}>
                   Current: {platformStatus.current_implementation}
                 </Text>
                 {platformStatus.can_fix_permissions && (
@@ -87,12 +95,12 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                     onClick={() => fixPermissions.mutate()}
                     loading={fixPermissions.isPending}
                     loadingText='Fixing...'
-                    borderColor='orange.400'
-                    color='orange.300'
+                    borderColor='warning.border'
+                    color='warning.fg'
                     _hover={{
-                      borderColor: 'orange.300',
-                      bg: 'orange.900',
-                      color: 'orange.200',
+                      borderColor: 'warning.border',
+                      bg: 'warning.subtle',
+                      color: 'warning.fg',
                     }}
                     height='24px'
                     fontSize='xs'
@@ -109,16 +117,16 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
           <Stack gap={2.5}>
             {shortcutList.length === 0 ? (
               <Box
-                bg='app.panel'
+                bg='bg.surface'
                 p={3}
                 borderRadius='md'
                 border='1px solid'
-                borderColor='app.border'
+                borderColor='border'
                 textAlign='center'
               >
                 <Text
                   fontSize='xs'
-                  color='gray.300'
+                  color='fg.secondary'
                   mb={1}
                   fontWeight='normal'
                   letterSpacing='0.025em'
@@ -127,7 +135,7 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                     ? 'Failed to load shortcuts'
                     : 'No shortcuts configured'}
                 </Text>
-                <Text fontSize='xs' color='gray.400' lineHeight='1.3'>
+                <Text fontSize='xs' color='fg.muted' lineHeight='1.3'>
                   {shortcuts.isError
                     ? errorMessage(shortcuts.error)
                     : 'Add your first keyboard shortcut to get started'}
@@ -146,12 +154,12 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                 return (
                   <Box
                     key={shortcut.id}
-                    bg='app.panel'
+                    bg='bg.surface'
                     p={2}
                     borderRadius='md'
                     border='1px solid'
-                    borderColor='app.border'
-                    _hover={{ borderColor: 'app.borderStrong' }}
+                    borderColor='border'
+                    _hover={{ borderColor: 'border.emphasized' }}
                     display='flex'
                     flexDirection='column'
                     height='100%'
@@ -161,7 +169,7 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                         <Text
                           fontSize='xs'
                           fontWeight='normal'
-                          color='gray.300'
+                          color='fg.secondary'
                           mb={1}
                           letterSpacing='0.025em'
                         >
@@ -169,9 +177,9 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                         </Text>
                         <Text
                           fontSize='xs'
-                          color='gray.400'
+                          color='fg.muted'
                           fontFamily='mono'
-                          bg='app.hover'
+                          bg='bg.hover'
                           px={2}
                           py={1}
                           borderRadius='sm'
@@ -186,8 +194,8 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                           size='2xs'
                           variant='ghost'
                           onClick={() => setEditing(shortcut)}
-                          color='whiteAlpha.700'
-                          _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                          color='fg.muted'
+                          _hover={{ color: 'fg', bg: 'bg.hover' }}
                           height='20px'
                           px={2}
                           minW='auto'
@@ -200,8 +208,8 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                           variant='ghost'
                           onClick={() => deleteShortcut.mutate(shortcut.id)}
                           disabled={deleteShortcut.isPending}
-                          color='red.300'
-                          _hover={{ color: 'red.200', bg: 'red.900' }}
+                          color='danger.fg'
+                          _hover={{ color: 'danger.fg', bg: 'danger.subtle' }}
                           height='20px'
                           px={2}
                           minW='auto'
@@ -215,7 +223,7 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                       <Box flex='1'>
                         <Text
                           fontSize='xs'
-                          color='gray.400'
+                          color='fg.muted'
                           mb={0.5}
                           lineHeight='1.3'
                         >
@@ -225,14 +233,14 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
                           {relatedConfigs.map(config => (
                             <WrapItem key={config.id}>
                               <Box
-                                bg='app.faint'
+                                bg='bg.faint'
                                 border='1px solid'
-                                borderColor='app.hover'
+                                borderColor='border.subtle'
                                 borderRadius='sm'
                                 px={2}
                                 py={1}
                               >
-                                <Text fontSize='xs' color='gray.400'>
+                                <Text fontSize='xs' color='fg.muted'>
                                   {config.alias}
                                 </Text>
                               </Box>
@@ -253,8 +261,8 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
             onClick={() => setEditing('new')}
             variant='ghost'
             size='xs'
-            _hover={{ bg: 'whiteAlpha.50' }}
-            color='gray.300'
+            _hover={{ bg: 'bg.faint' }}
+            color='fg.secondary'
             height='28px'
             fontSize='xs'
             px={2}

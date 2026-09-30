@@ -1,12 +1,10 @@
-import Main from '@/components/Main'
+import { Main } from '@/components/Main'
 import { GitSyncProvider } from '@/contexts/GitSyncContext'
 
-function App() {
+export function App() {
   return (
     <GitSyncProvider>
       <Main />
     </GitSyncProvider>
   )
 }
-
-export default App

@@ -1,25 +1,44 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
+import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import Footer from '@/components/Footer'
-import PortForwardTable from '@/components/PortForwardTable'
-import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
+import { Footer } from '@/components/Footer'
+import { PortForwardTable } from '@/components/PortForwardTable'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
 import { usePortForwarding } from './usePortForwarding'
 
-const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
-const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
-const GitSyncModal = lazy(() => import('@/components/GitSyncModal'))
-const ServerResourcesModal = lazy(
-  () => import('@/components/ServerResourcesModal'),
+const AddConfigModal = lazy(() =>
+  import('@/components/AddConfigModal').then(m => ({
+    default: m.AddConfigModal,
+  })),
 )
-const SettingsModal = lazy(() => import('@/components/SettingsModal'))
-const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
+const AutoImportModal = lazy(() =>
+  import('@/components/AutoImportModal').then(m => ({
+    default: m.AutoImportModal,
+  })),
+)
+const GitSyncModal = lazy(() =>
+  import('@/components/GitSyncModal').then(m => ({ default: m.GitSyncModal })),
+)
+const ServerResourcesModal = lazy(() =>
+  import('@/components/ServerResourcesModal').then(m => ({
+    default: m.ServerResourcesModal,
+  })),
+)
+const SettingsModal = lazy(() =>
+  import('@/components/SettingsModal').then(m => ({
+    default: m.SettingsModal,
+  })),
+)
+const ShortcutModal = lazy(() =>
+  import('@/components/ShortcutModal').then(m => ({
+    default: m.ShortcutModal,
+  })),
+)
 
 type ActiveModal =
   | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
@@ -33,18 +52,29 @@ type ActiveModal =
     }
   | null
 
-function Main() {
+export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
+  const queryClient = useQueryClient()
   const forwarding = usePortForwarding()
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
   const closeModal = () => setActiveModal(null)
 
-  const openConfig = useCallback(async (id: number, isEdit: boolean) => {
-    try {
-      const config = await invoke<StoredConfig>('get_config_cmd', { id })
+  const openConfig = useCallback(
+    async (id: number, isEdit: boolean) => {
+      const config = await queryClient
+        .fetchQuery({
+          queryKey: ['config', id],
+          queryFn: () => invoke<StoredConfig>('get_config_cmd', { id }),
+          staleTime: 0,
+          meta: { errorToast: { title: 'Failed to load configuration' } },
+        })
+        .catch(() => null)
 
+      if (!config) {
+        return
+      }
       setActiveModal({
         type: 'config',
         isEdit,
@@ -52,13 +82,9 @@ function Main() {
           ? config
           : { ...config, id: 0, alias: `${config.alias ?? ''}-copy` },
       })
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to load configuration',
-        description: errorMessage(error),
-      })
-    }
-  }, [])
+    },
+    [queryClient],
+  )
 
   const editConfig = useCallback(
     (id: number) => openConfig(id, true),
@@ -94,7 +120,7 @@ function Main() {
       maxHeight='100%'
       maxW='100%'
       overflow='hidden'
-      bg='app.bg'
+      bg='bg.canvas'
       borderRadius='lg'
     >
       <VStack
@@ -110,7 +136,7 @@ function Main() {
           height='100%'
           position='relative'
           overflow='hidden'
-          bg='app.bg'
+          bg='bg.canvas'
         >
           <Box
             position='absolute'
@@ -208,5 +234,3 @@ function Main() {
     </Box>
   )
 }
-
-export default Main

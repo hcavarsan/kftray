@@ -12,14 +12,14 @@ import type {
 } from './types'
 
 const LEVEL_ACCENT: LogFilterAccent = {
-  activeBg: 'blue.500/10',
-  activeColor: 'blue.500',
-  activeBorder: 'app.accentMuted',
-  hoverBg: 'app.accentSubtle',
-  hoverBorder: 'blue.500/40',
-  badgeBg: 'blue.500',
-  badgeColor: 'white',
-  checkedBg: 'blue.500',
+  activeBg: 'accent.subtle',
+  activeColor: 'accent.fg',
+  activeBorder: 'accent.muted',
+  hoverBg: 'accent.subtle',
+  hoverBorder: 'accent.emphasized',
+  badgeBg: 'accent.solid',
+  badgeColor: 'fg',
+  checkedBg: 'accent.solid',
 }
 
 const renderLevel = (level: LogLevel) => (
@@ -53,7 +53,7 @@ function LevelFilterDropdownComponent({
             label='All'
             onClick={() => onLevelChange([...ALL_LEVELS])}
           />
-          <Text fontSize='9px' color='whiteAlpha.300'>
+          <Text fontSize='9px' color='fg.faint'>
             |
           </Text>
           <LogFilterAction label='None' onClick={() => onLevelChange([])} />

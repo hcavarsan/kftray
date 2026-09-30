@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
@@ -103,11 +103,85 @@ interface SectionPlan {
   skip?: boolean
 }
 
+interface SectionFailure {
+  section: SettingsSection
+  error: unknown
+}
+
 interface UseSettingsSaveOptions {
   draft: SettingsDraft
   initial: SettingsDraft
   loaded: LoadedSections
   onClose: () => void
+}
+
+function buildPlans(
+  draft: SettingsDraft,
+  baseline: SettingsDraft,
+  loaded: LoadedSections,
+): SectionPlan[] {
+  const mcpPort = parseInt(draft.mcpPort, 10)
+
+  return [
+    {
+      section: 'General',
+      keys: ['disconnectTimeout', 'networkMonitor', 'autoUpdateEnabled'],
+      write: async () => {
+        await invoke('update_disconnect_timeout', {
+          minutes: parseInt(draft.disconnectTimeout, 10),
+        })
+        await invoke('update_network_monitor', {
+          enabled: draft.networkMonitor,
+        })
+        await invoke('update_auto_update_enabled', {
+          enabled: draft.autoUpdateEnabled,
+        })
+      },
+    },
+    {
+      section: 'SSL',
+      skip: !loaded.ssl,
+      keys: ['sslEnabled', 'sslCertValidityDays'],
+      write: () =>
+        invoke('set_ssl_settings', {
+          sslEnabled: draft.sslEnabled,
+          sslCertValidityDays: parseInt(draft.sslCertValidityDays, 10),
+          sslAutoRegenerate: true,
+          sslCaAutoInstall: true,
+        }),
+    },
+    {
+      section: 'Logs',
+      skip: !loaded.log,
+      keys: ['logRetentionCount', 'logRetentionDays'],
+      write: () =>
+        invoke('set_log_settings', {
+          settings: {
+            retention_count: parseInt(draft.logRetentionCount, 10),
+            retention_days: parseInt(draft.logRetentionDays, 10),
+          },
+        }),
+    },
+    {
+      section: 'Window',
+      keys: ['appMode'],
+      write: () => invoke('set_app_mode_cmd', { mode: draft.appMode }),
+    },
+    {
+      section: 'MCP Server',
+      keys: Number.isNaN(mcpPort) ? ['mcpEnabled'] : ['mcpPort', 'mcpEnabled'],
+      write: async () => {
+        if (!Number.isNaN(mcpPort) && draft.mcpPort !== baseline.mcpPort) {
+          await invoke('update_mcp_server_port', { port: mcpPort })
+        }
+        if (draft.mcpEnabled !== baseline.mcpEnabled) {
+          await invoke('update_mcp_server_enabled', {
+            enabled: draft.mcpEnabled,
+          })
+        }
+      },
+    },
+  ]
 }
 
 export function useSettingsSave({
@@ -118,9 +192,78 @@ export function useSettingsSave({
 }: UseSettingsSaveOptions) {
   const queryClient = useQueryClient()
   const [baseline, setBaseline] = useState(initial)
-  const [isSaving, setIsSaving] = useState(false)
 
-  const save = async () => {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const failures: SectionFailure[] = []
+
+      for (const { section, keys, write, skip } of buildPlans(
+        draft,
+        baseline,
+        loaded,
+      )) {
+        if (skip || keys.every(key => draft[key] === baseline[key])) {
+          continue
+        }
+
+        try {
+          await write()
+          setBaseline(prev => ({
+            ...prev,
+            ...Object.fromEntries(keys.map(key => [key, draft[key]])),
+          }))
+        } catch (error) {
+          failures.push({ section, error })
+        }
+      }
+
+      for (const query of SETTINGS_QUERIES) {
+        queryClient.invalidateQueries({ queryKey: query.queryKey })
+      }
+
+      return failures
+    },
+    onSuccess: failures => {
+      if (failures.length > 0) {
+        toaster.error(
+          failures.length === 1
+            ? SECTION_FAILURES[failures[0].section](failures[0].error)
+            : {
+                title: 'Some settings were not saved',
+                description: failures
+                  .map(
+                    ({ section, error }) =>
+                      `${section}: ${errorMessage(error)}`,
+                  )
+                  .join('\n'),
+                duration: 6000,
+              },
+        )
+
+        return
+      }
+
+      const sslJustEnabled = !baseline.sslEnabled && draft.sslEnabled
+
+      toaster.success(
+        sslJustEnabled
+          ? {
+              title: 'SSL/HTTPS Enabled Successfully',
+              description:
+                'SSL certificates have been generated and installed. You may need to restart your browser for SSL connections to work properly.',
+              duration: 8000,
+            }
+          : {
+              title: 'Settings Saved',
+              description: 'All settings have been saved successfully',
+              duration: 3000,
+            },
+      )
+      onClose()
+    },
+  })
+
+  const save = () => {
     const invalid = validationError(draft)
 
     if (invalid) {
@@ -132,130 +275,8 @@ export function useSettingsSave({
       return
     }
 
-    const mcpPort = parseInt(draft.mcpPort, 10)
-    const plans: SectionPlan[] = [
-      {
-        section: 'General',
-        keys: ['disconnectTimeout', 'networkMonitor', 'autoUpdateEnabled'],
-        write: async () => {
-          await invoke('update_disconnect_timeout', {
-            minutes: parseInt(draft.disconnectTimeout, 10),
-          })
-          await invoke('update_network_monitor', {
-            enabled: draft.networkMonitor,
-          })
-          await invoke('update_auto_update_enabled', {
-            enabled: draft.autoUpdateEnabled,
-          })
-        },
-      },
-      {
-        section: 'SSL',
-        skip: !loaded.ssl,
-        keys: ['sslEnabled', 'sslCertValidityDays'],
-        write: () =>
-          invoke('set_ssl_settings', {
-            sslEnabled: draft.sslEnabled,
-            sslCertValidityDays: parseInt(draft.sslCertValidityDays, 10),
-            sslAutoRegenerate: true,
-            sslCaAutoInstall: true,
-          }),
-      },
-      {
-        section: 'Logs',
-        skip: !loaded.log,
-        keys: ['logRetentionCount', 'logRetentionDays'],
-        write: () =>
-          invoke('set_log_settings', {
-            settings: {
-              retention_count: parseInt(draft.logRetentionCount, 10),
-              retention_days: parseInt(draft.logRetentionDays, 10),
-            },
-          }),
-      },
-      {
-        section: 'Window',
-        keys: ['appMode'],
-        write: () => invoke('set_app_mode_cmd', { mode: draft.appMode }),
-      },
-      {
-        section: 'MCP Server',
-        keys: Number.isNaN(mcpPort)
-          ? ['mcpEnabled']
-          : ['mcpPort', 'mcpEnabled'],
-        write: async () => {
-          if (!Number.isNaN(mcpPort) && draft.mcpPort !== baseline.mcpPort) {
-            await invoke('update_mcp_server_port', { port: mcpPort })
-          }
-          if (draft.mcpEnabled !== baseline.mcpEnabled) {
-            await invoke('update_mcp_server_enabled', {
-              enabled: draft.mcpEnabled,
-            })
-          }
-        },
-      },
-    ]
-
-    setIsSaving(true)
-    const failures: { section: SettingsSection; error: unknown }[] = []
-
-    for (const { section, keys, write, skip } of plans) {
-      if (skip || keys.every(key => draft[key] === baseline[key])) {
-        continue
-      }
-
-      try {
-        await write()
-        setBaseline(prev => ({
-          ...prev,
-          ...Object.fromEntries(keys.map(key => [key, draft[key]])),
-        }))
-      } catch (error) {
-        failures.push({ section, error })
-      }
-    }
-
-    for (const query of SETTINGS_QUERIES) {
-      queryClient.invalidateQueries({ queryKey: query.queryKey })
-    }
-    setIsSaving(false)
-
-    if (failures.length > 0) {
-      toaster.error(
-        failures.length === 1
-          ? SECTION_FAILURES[failures[0].section](failures[0].error)
-          : {
-              title: 'Some settings were not saved',
-              description: failures
-                .map(
-                  ({ section, error }) => `${section}: ${errorMessage(error)}`,
-                )
-                .join('\n'),
-              duration: 6000,
-            },
-      )
-
-      return
-    }
-
-    const sslJustEnabled = !baseline.sslEnabled && draft.sslEnabled
-
-    toaster.success(
-      sslJustEnabled
-        ? {
-            title: 'SSL/HTTPS Enabled Successfully',
-            description:
-              'SSL certificates have been generated and installed. You may need to restart your browser for SSL connections to work properly.',
-            duration: 8000,
-          }
-        : {
-            title: 'Settings Saved',
-            description: 'All settings have been saved successfully',
-            duration: 3000,
-          },
-    )
-    onClose()
+    saveMutation.mutate()
   }
 
-  return { save, isSaving }
+  return { save, isSaving: saveMutation.isPending }
 }

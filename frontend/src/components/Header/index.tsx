@@ -3,16 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
 import { Button } from '@/components/ui/button'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTauriEvent } from '@/hooks/useTauriEvent'
-import { errorMessage } from '@/lib/errors'
 
 const appWindow = getCurrentWebviewWindow()
 
@@ -23,7 +22,7 @@ interface HeaderProps {
   setSearch: Dispatch<SetStateAction<string>>
 }
 
-function Header({ search, setSearch }: HeaderProps) {
+export function Header({ search, setSearch }: HeaderProps) {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
@@ -80,53 +79,39 @@ function Header({ search, setSearch }: HeaderProps) {
     }
   }, [])
 
-  async function handleStopPortForwardsAndExit() {
-    try {
-      await invoke('handle_exit_app')
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to exit',
-        description: errorMessage(error),
-      })
-    }
-  }
+  const exitMutation = useMutation({
+    mutationFn: () => invoke('handle_exit_app'),
+    meta: { errorToast: { title: 'Failed to exit' } },
+  })
 
-  const togglePinWindow = async () => {
-    const next = !isPinned
-
-    setIsPinned(next)
-    try {
+  const pinMutation = useMutation({
+    mutationFn: async (next: boolean) => {
       await invoke('toggle_pin_state')
       if (next) {
         await appWindow.show()
         await appWindow.setFocus()
       }
-    } catch (error) {
+    },
+    onMutate: next => {
+      setIsPinned(next)
+    },
+    onError: (_error, next) => {
       setIsPinned(!next)
-      toaster.error({
-        title: 'Failed to toggle pin',
-        description: errorMessage(error),
-      })
-    }
-  }
+    },
+    meta: { errorToast: { title: 'Failed to toggle pin' } },
+  })
 
-  const hideWindow = async () => {
-    try {
-      await invoke('hide_main_window_cmd')
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to hide window',
-        description: errorMessage(error),
-      })
-    }
-  }
+  const hideMutation = useMutation({
+    mutationFn: () => invoke('hide_main_window_cmd'),
+    meta: { errorToast: { title: 'Failed to hide window' } },
+  })
 
   return (
     <Box
       display='flex'
       alignItems='center'
       justifyContent='space-between'
-      bg='app.panel'
+      bg='bg.surface'
       borderRadius='lg'
       borderBottomRadius='none'
       width='100%'
@@ -134,7 +119,7 @@ function Header({ search, setSearch }: HeaderProps) {
       py={3}
       borderBottom='none'
       border='1px solid'
-      borderColor='app.border'
+      borderColor='border'
       position='relative'
       zIndex={10}
     >
@@ -146,7 +131,7 @@ function Header({ search, setSearch }: HeaderProps) {
             onMouseEnter={() => setTooltipOpen(true)}
             onMouseLeave={() => setTooltipOpen(false)}
             cursor='move'
-            _hover={{ color: 'whiteAlpha.700' }}
+            _hover={{ color: 'fg.muted' }}
             mb={0.5}
           >
             <Tooltip content='Move Window Position' open={tooltipOpen}>
@@ -154,7 +139,7 @@ function Header({ search, setSearch }: HeaderProps) {
                 as={GripVertical}
                 width='22px'
                 height='22px'
-                color='whiteAlpha.500'
+                color='fg.subtle'
                 data-drag
               />
             </Tooltip>
@@ -184,7 +169,7 @@ function Header({ search, setSearch }: HeaderProps) {
             transform='translateY(-50%)'
             width='14px'
             height='14px'
-            color='whiteAlpha.500'
+            color='fg.subtle'
           />
           <Input
             value={search}
@@ -192,22 +177,22 @@ function Header({ search, setSearch }: HeaderProps) {
             placeholder='Search...'
             size='sm'
             pl={8}
-            bg='app.raised'
+            bg='bg.raised'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
             _hover={{
-              borderColor: 'app.borderStrong',
+              borderColor: 'border.emphasized',
             }}
             _focus={{
-              borderColor: 'blue.400',
+              borderColor: 'accent.focusRing',
               boxShadow: 'none',
             }}
             height='28px'
             fontSize='13px'
             width='100%'
-            color='whiteAlpha.900'
+            color='fg'
             _placeholder={{
-              color: 'whiteAlpha.400',
+              color: 'fg.faint',
             }}
           />
         </Box>
@@ -218,19 +203,19 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void togglePinWindow()}
+            onClick={() => pinMutation.mutate(!isPinned)}
             height='28px'
             width='28px'
             minWidth='28px'
             p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
             <Box
               as={isPinned ? Pin : PinOff}
               width='16px'
               height='16px'
-              color='whiteAlpha.700'
+              color='fg.muted'
             />
           </Button>
         </Tooltip>
@@ -241,16 +226,16 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void hideWindow()}
+            onClick={() => hideMutation.mutate()}
             height='28px'
             width='28px'
             minWidth='28px'
             p={0}
             ml={-1.5}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
-            <Box as={Minus} width='15px' height='15px' color='whiteAlpha.700' />
+            <Box as={Minus} width='15px' height='15px' color='fg.muted' />
           </Button>
         </Tooltip>
 
@@ -258,21 +243,19 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void handleStopPortForwardsAndExit()}
+            onClick={() => exitMutation.mutate()}
             height='28px'
             width='28px'
             minWidth='28px'
             p={0}
             ml={-1.5}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
-            <Box as={X} width='15px' height='15px' color='whiteAlpha.700' />
+            <Box as={X} width='15px' height='15px' color='fg.muted' />
           </Button>
         </Tooltip>
       </Box>
     </Box>
   )
 }
-
-export default Header

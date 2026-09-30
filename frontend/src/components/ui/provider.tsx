@@ -36,6 +36,7 @@ import {
   tooltipSlotRecipe,
 } from '@chakra-ui/react/theme'
 import {
+  MutationCache,
   QueryCache,
   QueryClient,
   QueryClientProvider,
@@ -45,16 +46,32 @@ import { errorMessage } from '@/lib/errors'
 
 import { Toaster, toaster } from './toaster'
 
+interface ErrorToastMeta {
+  errorToast?: {
+    id?: string
+    title: string
+    description?: string
+    duration?: number
+  }
+}
+
 declare module '@tanstack/react-query' {
   interface Register {
-    queryMeta: {
-      errorToast?: {
-        id?: string
-        title: string
-        description?: string
-        duration?: number
-      }
-    }
+    queryMeta: ErrorToastMeta
+    mutationMeta: ErrorToastMeta
+  }
+}
+
+const showErrorToast = (error: unknown, meta: ErrorToastMeta | undefined) => {
+  const toast = meta?.errorToast
+
+  if (toast) {
+    toaster.error({
+      id: toast.id,
+      title: toast.title,
+      description: toast.description ?? errorMessage(error),
+      duration: toast.duration,
+    })
   }
 }
 
@@ -108,31 +125,57 @@ const system = createSystem(
     theme: {
       semanticTokens: {
         colors: {
-          app: {
-            bg: color('#111111'),
+          bg: {
+            canvas: color('#111111'),
             deep: color('#0a0a0a'),
-            sunken: color('#141414'),
-            panel: color('#161616'),
-            raised: color('#1A1A1A'),
-            faint: color('rgba(255, 255, 255, 0.03)'),
-            hover: color('rgba(255, 255, 255, 0.05)'),
-            subtle: color('rgba(255, 255, 255, 0.06)'),
-            border: color('rgba(255, 255, 255, 0.08)'),
+            surface: color('#161616'),
+            raised: color('#1a1a1a'),
+            faint: color('rgba(255, 255, 255, 0.04)'),
+            hover: color('rgba(255, 255, 255, 0.06)'),
             active: color('rgba(255, 255, 255, 0.1)'),
-            borderStrong: color('rgba(255, 255, 255, 0.15)'),
-            divider: color('rgba(255, 255, 255, 0.2)'),
-            placeholder: color('rgba(255, 255, 255, 0.5)'),
-            textSecondary: color('rgba(255, 255, 255, 0.7)'),
-            textDisabled: color('rgba(255, 255, 255, 0.4)'),
-            muted: color('#6B7280'),
-            accent: color('rgba(59, 130, 246, 0.8)'),
-            accentMuted: color('rgba(59, 130, 246, 0.3)'),
-            accentSubtle: color('rgba(59, 130, 246, 0.15)'),
-            accentText: color('rgba(147, 197, 253, 1)'),
-            accentTextMuted: color('rgba(147, 197, 253, 0.8)'),
-            checked: color('#3182CE'),
             shade: color('rgba(0, 0, 0, 0.2)'),
             scrim: color('rgba(0, 0, 0, 0.8)'),
+          },
+          fg: {
+            DEFAULT: color('#ffffff'),
+            secondary: color('#d4d4d8'),
+            muted: color('#a1a1aa'),
+            subtle: color('rgba(255, 255, 255, 0.48)'),
+            faint: color('rgba(255, 255, 255, 0.24)'),
+          },
+          border: {
+            DEFAULT: color('rgba(255, 255, 255, 0.08)'),
+            subtle: color('rgba(255, 255, 255, 0.05)'),
+            emphasized: color('rgba(255, 255, 255, 0.15)'),
+            strong: color('rgba(255, 255, 255, 0.2)'),
+          },
+          accent: {
+            fg: color('#60a5fa'),
+            secondary: color('#c084fc'),
+            solid: color('#3b82f6'),
+            solidHover: color('#2563eb'),
+            solidActive: color('#1d4ed8'),
+            focusRing: color('#60a5fa'),
+            subtle: color('rgba(59, 130, 246, 0.12)'),
+            muted: color('rgba(59, 130, 246, 0.25)'),
+            emphasized: color('rgba(59, 130, 246, 0.45)'),
+          },
+          danger: {
+            fg: color('#fca5a5'),
+            solid: color('#ef4444'),
+            emphasized: color('#dc2626'),
+            subtle: color('rgba(229, 62, 62, 0.1)'),
+            muted: color('rgba(229, 62, 62, 0.2)'),
+          },
+          success: {
+            fg: color('#4ade80'),
+            subtle: color('rgba(56, 161, 105, 0.1)'),
+            border: color('rgba(56, 161, 105, 0.2)'),
+          },
+          warning: {
+            fg: color('#fdba74'),
+            subtle: color('#3b1106'),
+            border: color('#fb923c'),
           },
           log: {
             error: {
@@ -155,23 +198,20 @@ const system = createSystem(
               text: color('rgba(148, 163, 184, 1)'),
               border: color('rgba(100, 116, 139, 0.3)'),
             },
+            module: {
+              fg: color('#67e8f9'),
+              solid: color('#67e8f9'),
+              contrast: color('#000000'),
+              subtle: color('rgba(34, 211, 238, 0.1)'),
+              muted: color('rgba(34, 211, 238, 0.2)'),
+              emphasized: color('rgba(34, 211, 238, 0.3)'),
+            },
           },
           status: {
             unresponsive: color('rgba(217, 119, 6, 0.7)'),
             busy: color('rgba(100, 116, 139, 0.6)'),
             rollout: color('rgba(161, 98, 7, 0.7)'),
             stopped: color('rgba(100, 116, 139, 0.4)'),
-            success: {
-              bg: color('rgba(56, 161, 105, 0.1)'),
-              border: color('rgba(56, 161, 105, 0.2)'),
-            },
-            danger: {
-              bg: color('rgba(229, 62, 62, 0.1)'),
-              border: color('rgba(229, 62, 62, 0.2)'),
-            },
-            warning: {
-              border: color('rgba(255, 165, 0, 0.3)'),
-            },
           },
           search: {
             bg: color('rgba(251, 191, 36, 0.1)'),
@@ -189,22 +229,22 @@ const system = createSystem(
       layerStyles: {
         card: {
           value: {
-            bg: 'app.panel',
+            bg: 'bg.surface',
             borderWidth: '1px',
-            borderColor: 'app.border',
+            borderColor: 'border',
             borderRadius: 'md',
           },
         },
         field: {
           value: {
-            bg: 'app.panel',
+            bg: 'bg.surface',
             borderWidth: '1px',
-            borderColor: 'app.border',
-            color: 'white',
+            borderColor: 'border',
+            color: 'fg',
             fontSize: 'xs',
-            _hover: { borderColor: 'app.borderStrong' },
-            _focus: { borderColor: 'blue.400', boxShadow: 'none' },
-            _placeholder: { color: 'app.placeholder' },
+            _hover: { borderColor: 'border.emphasized' },
+            _focus: { borderColor: 'accent.focusRing', boxShadow: 'none' },
+            _placeholder: { color: 'fg.subtle' },
           },
         },
       },
@@ -218,18 +258,11 @@ const queryClient = new QueryClient({
     mutations: { networkMode: 'always' },
   },
   queryCache: new QueryCache({
-    onError: (error, query) => {
-      const toast = query.meta?.errorToast
-
-      if (toast) {
-        toaster.error({
-          id: toast.id,
-          title: toast.title,
-          description: toast.description ?? errorMessage(error),
-          duration: toast.duration,
-        })
-      }
-    },
+    onError: (error, query) => showErrorToast(error, query.meta),
+  }),
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) =>
+      showErrorToast(error, mutation.meta),
   }),
 })
 

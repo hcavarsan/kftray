@@ -1,13 +1,11 @@
-import { useState } from 'react'
 import { FileText, Trash2 } from 'lucide-react'
 
 import { Box, Flex, Input, Stack } from '@chakra-ui/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
 
 import { logFilesQuery } from '../queries'
 import {
@@ -36,7 +34,6 @@ export function LogSettings({
 }: LogSettingsProps) {
   const queryClient = useQueryClient()
   const { data: logFiles = [] } = useQuery(logFilesQuery)
-  const [isCleaning, setIsCleaning] = useState(false)
 
   const totalSize = logFiles.reduce((acc, f) => acc + f.size, 0)
   const totalSizeLabel =
@@ -46,11 +43,9 @@ export function LogSettings({
         ? `${(totalSize / 1024).toFixed(1)} KB`
         : `${(totalSize / (1024 * 1024)).toFixed(1)} MB`
 
-  const cleanupLogs = async () => {
-    setIsCleaning(true)
-    try {
-      const deleted = await invoke<number>('cleanup_old_logs')
-
+  const cleanupMutation = useMutation({
+    mutationFn: () => invoke<number>('cleanup_old_logs'),
+    onSuccess: async deleted => {
       await queryClient.invalidateQueries({ queryKey: logFilesQuery.queryKey })
 
       if (deleted > 0) {
@@ -66,28 +61,20 @@ export function LogSettings({
           duration: 3000,
         })
       }
-    } catch (error) {
-      toaster.error({
-        title: 'Cleanup Failed',
-        description: errorMessage(error),
-        duration: 4000,
-      })
-    } finally {
-      setIsCleaning(false)
-    }
-  }
+    },
+    meta: { errorToast: { title: 'Cleanup Failed', duration: 4000 } },
+  })
 
-  const openLogsWindow = async () => {
-    try {
-      await invoke('open_log_viewer_window_cmd')
-    } catch {
-      toaster.error({
+  const openLogsMutation = useMutation({
+    mutationFn: () => invoke('open_log_viewer_window_cmd'),
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to open log viewer',
         duration: 3000,
-      })
-    }
-  }
+      },
+    },
+  })
 
   return (
     <>
@@ -132,14 +119,17 @@ export function LogSettings({
         description={`${logFiles.length} files • ${totalSizeLabel} total`}
       >
         <Flex direction='column' align='flex-end' gap={1}>
-          <Button {...compactActionButtonProps} onClick={openLogsWindow}>
+          <Button
+            {...compactActionButtonProps}
+            onClick={() => openLogsMutation.mutate()}
+          >
             <Box as={FileText} width='8px' height='8px' mr={0.5} />
             View Logs
           </Button>
           <Button
             {...compactActionButtonProps}
-            onClick={cleanupLogs}
-            loading={isCleaning}
+            onClick={() => cleanupMutation.mutate()}
+            loading={cleanupMutation.isPending}
             loadingText='...'
           >
             <Box as={Trash2} width='8px' height='8px' mr={0.5} />

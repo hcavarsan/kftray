@@ -1,23 +1,16 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { useMemo } from 'react'
-import {
-  ChevronsDownUp,
-  ChevronsUpDown,
-  Loader2,
-  RefreshCw,
-  X,
-} from 'lucide-react'
+import { ChevronsDownUp, ChevronsUpDown, RefreshCw, X } from 'lucide-react'
 
-import { Box, chakra, Group } from '@chakra-ui/react'
+import { Box, Group } from '@chakra-ui/react'
 
+import { ForwardBatchButton } from '@/components/HeaderMenu/ForwardBatchButton'
 import {
   ToolbarIconButton,
   WithTooltip,
 } from '@/components/HeaderMenu/ToolbarParts'
-import ViewControls from '@/components/HeaderMenu/ViewControls'
-import { Button } from '@/components/ui/button'
+import { ViewControls } from '@/components/HeaderMenu/ViewControls'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tooltip } from '@/components/ui/tooltip'
 import type { Config, ConfigView, Facet } from '@/types'
 
 interface HeaderMenuProps {
@@ -40,7 +33,7 @@ interface HeaderMenuProps {
   setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
 }
 
-function HeaderMenu({
+export function HeaderMenu({
   configs,
   selectedConfigs,
   initiatePortForwarding,
@@ -124,17 +117,17 @@ function HeaderMenu({
       alignItems='center'
       justifyContent='space-between'
       width='100%'
-      bg='app.panel'
+      bg='bg.surface'
       px={3}
       py={3}
       borderTopRadius='none'
       borderTop='none'
       borderBottomRadius='lg'
       border='1px solid'
-      borderColor='app.border'
+      borderColor='border'
       position='relative'
       zIndex={10}
-      borderTopColor='app.faint'
+      borderTopColor='border.subtle'
       mt='-1px'
     >
       <Group display='flex' alignItems='center' gap={3}>
@@ -147,188 +140,74 @@ function HeaderMenu({
             '& input': {
               width: '10px',
               height: '10px',
-              background: 'app.raised',
+              background: 'bg.raised',
               border: '1px solid',
-              borderColor: 'app.borderStrong',
+              borderColor: 'border.emphasized',
               borderRadius: '3px',
               '&:hover': {
-                borderColor:
-                  'color-mix(in srgb, var(--chakra-colors-white) 25%, transparent)',
+                borderColor: 'border.strong',
               },
             },
             '& input:checked': {
-              background: 'app.checked',
-              borderColor: 'app.checked',
+              background: 'accent.solid',
+              borderColor: 'accent.solid',
             },
           }}
         />
 
         <Group display='flex' alignItems='center' gap={2}>
-          <Tooltip
-            content={
+          <ForwardBatchButton
+            icon={RefreshCw}
+            label={
+              selectedConfigs.length > 0 && hasSelectedNotRunning
+                ? 'Start Selected'
+                : 'Start All'
+            }
+            busyLabel='Starting...'
+            tooltip={
               isInitiating
                 ? 'Starting port forwards...'
                 : selectedConfigs.length > 0 && hasSelectedNotRunning
                   ? 'Start selected port forwards'
                   : 'Start all port forwards'
             }
-          >
-            <Button
-              size='xs'
-              variant='ghost'
-              disabled={isStartBusy}
-              onClick={
-                selectedConfigs.length > 0
-                  ? () => void startSelectedPortForwarding()
-                  : () =>
-                      void initiatePortForwarding(
-                        configs.filter(config => !config.is_running),
-                      )
-              }
-              _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
-              _disabled={{ cursor: 'not-allowed' }}
-              height='26px'
-              minWidth='90px'
-              bg='whiteAlpha.50'
-              px={2}
-              borderRadius='md'
-              border='1px solid'
-              borderColor='app.border'
-            >
-              {isInitiating ? (
-                <>
-                  <Box
-                    as={Loader2}
-                    width='12px'
-                    height='12px'
-                    marginRight={1.5}
-                    animation='spin 1s linear infinite'
-                    css={{
-                      '@keyframes spin': {
-                        from: { transform: 'rotate(0deg)' },
-                        to: { transform: 'rotate(360deg)' },
-                      },
-                    }}
-                  />
-                  <span style={{ fontSize: '11px' }}>Starting...</span>
-                </>
-              ) : (
-                <>
-                  <Box
-                    as={RefreshCw}
-                    width='12px'
-                    height='12px'
-                    marginRight={1.5}
-                  />
-                  <span style={{ fontSize: '11px' }}>
-                    {selectedConfigs.length > 0 && hasSelectedNotRunning
-                      ? 'Start Selected'
-                      : 'Start All'}
-                  </span>
-                </>
-              )}
-            </Button>
-          </Tooltip>
+            isPending={isInitiating}
+            disabled={isStartBusy}
+            onClick={
+              selectedConfigs.length > 0
+                ? () => void startSelectedPortForwarding()
+                : () =>
+                    void initiatePortForwarding(
+                      configs.filter(config => !config.is_running),
+                    )
+            }
+            onCancel={abortStartOperation}
+          />
 
-          {isInitiating && (
-            <Tooltip content='Cancel'>
-              <chakra.button
-                type='button'
-                aria-label='Cancel'
-                display='inline-flex'
-                alignItems='center'
-                justifyContent='center'
-                padding='6px'
-                borderRadius='sm'
-                cursor='pointer'
-                bg='transparent'
-                border='none'
-                _hover={{ bg: 'red.700' }}
-                onClick={() => abortStartOperation()}
-              >
-                <Box as={X} width='10px' height='10px' color='red.300' />
-              </chakra.button>
-            </Tooltip>
-          )}
-
-          <Tooltip
-            content={
+          <ForwardBatchButton
+            icon={X}
+            label={
+              selectedConfigs.length > 0 && hasSelectedRunning
+                ? 'Stop Selected'
+                : 'Stop All'
+            }
+            busyLabel='Stopping...'
+            tooltip={
               isStopping
                 ? 'Stopping port forwards...'
                 : selectedConfigs.length > 0 && hasSelectedRunning
                   ? 'Stop selected port forwards'
                   : 'Stop all port forwards'
             }
-          >
-            <Button
-              size='xs'
-              variant='ghost'
-              disabled={isStopBusy}
-              onClick={
-                selectedConfigs.length > 0
-                  ? () => void stopSelectedPortForwarding()
-                  : () => void stopAllPortForwarding()
-              }
-              _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
-              _disabled={{ cursor: 'not-allowed' }}
-              height='26px'
-              minWidth='90px'
-              bg='whiteAlpha.50'
-              px={2}
-              borderRadius='md'
-              border='1px solid'
-              borderColor='app.border'
-            >
-              {isStopping ? (
-                <>
-                  <Box
-                    as={Loader2}
-                    width='12px'
-                    height='12px'
-                    marginRight={1.5}
-                    animation='spin 1s linear infinite'
-                    css={{
-                      '@keyframes spin': {
-                        from: { transform: 'rotate(0deg)' },
-                        to: { transform: 'rotate(360deg)' },
-                      },
-                    }}
-                  />
-                  <span style={{ fontSize: '11px' }}>Stopping...</span>
-                </>
-              ) : (
-                <>
-                  <Box as={X} width='12px' height='12px' marginRight={1.5} />
-                  <span style={{ fontSize: '11px' }}>
-                    {selectedConfigs.length > 0 && hasSelectedRunning
-                      ? 'Stop Selected'
-                      : 'Stop All'}
-                  </span>
-                </>
-              )}
-            </Button>
-          </Tooltip>
-
-          {isStopping && (
-            <Tooltip content='Cancel'>
-              <chakra.button
-                type='button'
-                aria-label='Cancel'
-                display='inline-flex'
-                alignItems='center'
-                justifyContent='center'
-                padding='6px'
-                borderRadius='sm'
-                cursor='pointer'
-                bg='transparent'
-                border='none'
-                _hover={{ bg: 'red.700' }}
-                onClick={() => abortStopOperation()}
-              >
-                <Box as={X} width='10px' height='10px' color='red.300' />
-              </chakra.button>
-            </Tooltip>
-          )}
+            isPending={isStopping}
+            disabled={isStopBusy}
+            onClick={
+              selectedConfigs.length > 0
+                ? () => void stopSelectedPortForwarding()
+                : () => void stopAllPortForwarding()
+            }
+            onCancel={abortStopOperation}
+          />
         </Group>
       </Group>
 
@@ -347,5 +226,3 @@ function HeaderMenu({
     </Box>
   )
 }
-
-export default HeaderMenu

@@ -1,0 +1,54 @@
+import type { RefObject } from 'react'
+
+import type { Config, PortForwardToggleAction, StoredConfig } from '@/types'
+
+import { startForward, stopForward } from './portForwardCommands'
+import { ownsReservation, type PendingMap } from './reservationRegistry'
+
+export interface ForwardCommandDeps {
+  pendingConfigActionsRef: RefObject<PendingMap>
+  inFlightRef: RefObject<Map<number, number>>
+  applyConfigs: (update: (current: Config[]) => Config[]) => Promise<void>
+  refreshConfigs: () => Promise<void>
+}
+
+export async function executeForwardCommand(
+  {
+    pendingConfigActionsRef,
+    inFlightRef,
+    applyConfigs,
+    refreshConfigs,
+  }: ForwardCommandDeps,
+  config: StoredConfig,
+  action: PortForwardToggleAction,
+  token?: number,
+) {
+  if (token !== undefined) {
+    inFlightRef.current.set(config.id, token)
+  }
+  try {
+    if (action === 'starting') {
+      await startForward(config)
+    } else {
+      await stopForward(config)
+    }
+    if (
+      token === undefined ||
+      ownsReservation(pendingConfigActionsRef.current, config.id, token)
+    ) {
+      const isRunning = action === 'starting'
+
+      await applyConfigs(current =>
+        current.map(item =>
+          item.id === config.id ? { ...item, is_running: isRunning } : item,
+        ),
+      )
+    } else {
+      void refreshConfigs()
+    }
+  } finally {
+    if (token !== undefined && inFlightRef.current.get(config.id) === token) {
+      inFlightRef.current.delete(config.id)
+    }
+  }
+}

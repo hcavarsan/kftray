@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 
 import { Stack } from '@chakra-ui/react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
@@ -119,14 +119,13 @@ function toConfig(
   }
 }
 
-function AddConfigModal({
+export function AddConfigModal({
   initialConfig,
   isEdit,
   onClose,
   onSave,
 }: AddConfigModalProps) {
   const [draft, setDraft] = useState<ConfigDraft>(() => toDraft(initialConfig))
-  const [isSaving, setIsSaving] = useState(false)
   const [contextFocused, setContextFocused] = useState(false)
   const [duplicateTagError, setDuplicateTagError] = useState<string | null>(
     null,
@@ -162,6 +161,14 @@ function AddConfigModal({
     target,
     draft.workload_type !== 'proxy' && draft.workload_type !== 'expose',
   )
+  const saveMutation = useMutation({
+    mutationFn: onSave,
+    onSuccess: saved => {
+      if (saved) {
+        onClose()
+      }
+    },
+  })
   const tagOptionsQuery = useQuery({
     queryKey: ['config-tag-options'],
     queryFn: () =>
@@ -177,19 +184,16 @@ function AddConfigModal({
     [portQuery.data],
   )
 
-  const handleSave = async () => {
+  const handleSave = () => {
     const validationErrors = validateDraft(draft)
-    if (Object.keys(validationErrors).length || duplicateTagError || isSaving) {
+    if (
+      Object.keys(validationErrors).length ||
+      duplicateTagError ||
+      saveMutation.isPending
+    ) {
       return
     }
-    setIsSaving(true)
-    try {
-      if (await onSave(toConfig(trimConfigValues(draft), initialConfig))) {
-        onClose()
-      }
-    } finally {
-      setIsSaving(false)
-    }
+    saveMutation.mutate(toConfig(trimConfigValues(draft), initialConfig))
   }
   const workloadType = draft.workload_type
   const resourceOptions =
@@ -277,16 +281,16 @@ function AddConfigModal({
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />
         <Button
-          bg='blue.500'
+          bg='accent.solid'
           disabled={
             Boolean(duplicateTagError) || Object.keys(errors).length > 0
           }
           height='28px'
-          loading={isSaving}
+          loading={saveMutation.isPending}
           loadingText='Saving...'
           onClick={handleSave}
           size='xs'
-          _hover={{ bg: 'blue.600' }}
+          _hover={{ bg: 'accent.solidHover' }}
         >
           {isEdit ? 'Save Changes' : 'Add Config'}
         </Button>
@@ -294,5 +298,3 @@ function AddConfigModal({
     </AppDialog>
   )
 }
-
-export default AddConfigModal

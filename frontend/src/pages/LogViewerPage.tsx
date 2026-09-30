@@ -39,10 +39,9 @@ interface LogData {
 
 const logFilesQueryKey = ['log-files'] as const
 
-function LogViewerPage() {
+export function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [filter, setFilter] = useState<LogFilter>({
     levels: [],
@@ -86,12 +85,12 @@ function LogViewerPage() {
         duration: 2000,
       })
     },
-    onError: () => {
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to clear logs',
         duration: 3000,
-      })
+      },
     },
   })
   const deleteLogFileMutation = useMutation({
@@ -105,12 +104,60 @@ function LogViewerPage() {
         duration: 2000,
       })
     },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: errorMessage(error),
+    meta: { errorToast: { title: 'Error', duration: 3000 } },
+  })
+  const { mutate: exportReport, isPending: isExportingReport } = useMutation({
+    mutationFn: async () => {
+      const report = await invoke<string>('generate_diagnostic_report')
+      const url = URL.createObjectURL(
+        new Blob([report], { type: 'application/json' }),
+      )
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    },
+    onSuccess: () => {
+      toaster.success({
+        title: 'Report Generated',
+        description: 'Diagnostic report has been downloaded',
         duration: 3000,
       })
+    },
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to generate report',
+        duration: 3000,
+      },
+    },
+  })
+  const { mutate: openFolder } = useMutation({
+    mutationFn: () => invoke('open_log_directory'),
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to open log directory',
+        duration: 3000,
+      },
+    },
+  })
+  const { mutate: copyLogs } = useMutation({
+    mutationFn: (text: string) => navigator.clipboard.writeText(text),
+    onSuccess: () => {
+      toaster.success({
+        title: 'Copied',
+        description: 'Logs copied to clipboard',
+        duration: 2000,
+      })
+    },
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to copy logs',
+        duration: 3000,
+      },
     },
   })
 
@@ -152,62 +199,12 @@ function LogViewerPage() {
   const handleClear = useCallback(() => {
     clearLogsMutation.mutate(selectedFile)
   }, [clearLogsMutation, selectedFile])
-  const handleExport = useCallback(async () => {
-    setIsExporting(true)
-    try {
-      const report = await invoke<string>('generate_diagnostic_report')
-      const url = URL.createObjectURL(
-        new Blob([report], { type: 'application/json' }),
-      )
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
-      anchor.click()
-      URL.revokeObjectURL(url)
-      toaster.success({
-        title: 'Report Generated',
-        description: 'Diagnostic report has been downloaded',
-        duration: 3000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to generate report',
-        duration: 3000,
-      })
-    } finally {
-      setIsExporting(false)
-    }
-  }, [])
-  const handleOpenFolder = useCallback(async () => {
-    try {
-      await invoke('open_log_directory')
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to open log directory',
-        duration: 3000,
-      })
-    }
-  }, [])
-  const handleCopyLogs = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(
-        entries.map(entry => entry.raw).join('\n'),
-      )
-      toaster.success({
-        title: 'Copied',
-        description: 'Logs copied to clipboard',
-        duration: 2000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to copy logs',
-        duration: 3000,
-      })
-    }
-  }, [entries])
+  const handleExport = useCallback(() => exportReport(), [exportReport])
+  const handleOpenFolder = useCallback(() => openFolder(), [openFolder])
+  const handleCopyLogs = useCallback(
+    () => copyLogs(entries.map(entry => entry.raw).join('\n')),
+    [copyLogs, entries],
+  )
   const handleClose = useCallback(async () => {
     await appWindow.close()
   }, [appWindow])
@@ -217,26 +214,26 @@ function LogViewerPage() {
       display='flex'
       flexDirection='column'
       height='100vh'
-      bg='app.bg'
-      color='white'
+      bg='bg.canvas'
+      color='fg'
       overflow='hidden'
     >
       <Flex
         p={3}
-        bg='app.panel'
+        bg='bg.surface'
         borderBottom='1px solid'
-        borderColor='app.border'
+        borderColor='border'
         align='center'
         justify='space-between'
         flexShrink={0}
         data-tauri-drag-region
       >
         <Flex align='center' gap={3}>
-          <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+          <Text fontSize='sm' fontWeight='medium' color='fg'>
             Application Logs
           </Text>
           {logsQuery.isLoading && (
-            <Text fontSize='xs' color='blue.400'>
+            <Text fontSize='xs' color='accent.fg'>
               Loading...
             </Text>
           )}
@@ -250,14 +247,14 @@ function LogViewerPage() {
             width='28px'
             minWidth='28px'
             p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
+            _hover={{ bg: 'bg.hover' }}
             aria-label='Close window'
           >
-            <Box as={X} width='14px' height='14px' color='whiteAlpha.700' />
+            <Box as={X} width='14px' height='14px' color='fg.muted' />
           </Button>
         </Tooltip>
       </Flex>
-      <Box px={3} py={2} bg='app.sunken' flexShrink={0}>
+      <Box px={3} py={2} bg='bg.surface' flexShrink={0}>
         <Flex align='center' gap={2} mb={2}>
           <LogFileSelector
             logFiles={logFilesQuery.data ?? []}
@@ -280,13 +277,13 @@ function LogViewerPage() {
           onExport={handleExport}
           onCopy={handleCopyLogs}
           onOpenFolder={handleOpenFolder}
-          isExporting={isExporting}
+          isExporting={isExportingReport}
         />
       </Box>
-      <Box flex={1} bg='app.deep' overflow='hidden' position='relative'>
+      <Box flex={1} bg='bg.deep' overflow='hidden' position='relative'>
         {logsQuery.isError ? (
           <Flex height='100%' align='center' justify='center'>
-            <Text color='red.300'>{errorMessage(logsQuery.error)}</Text>
+            <Text color='danger.fg'>{errorMessage(logsQuery.error)}</Text>
           </Flex>
         ) : (
           <LogViewerList
@@ -301,16 +298,16 @@ function LogViewerPage() {
       <Flex
         px={3}
         py={2}
-        bg='app.panel'
+        bg='bg.surface'
         borderTop='1px solid'
-        borderColor='app.subtle'
+        borderColor='border.subtle'
         align='center'
         justify='space-between'
         flexShrink={0}
       >
         <Text
           fontSize='xs'
-          color='whiteAlpha.400'
+          color='fg.faint'
           overflow='hidden'
           textOverflow='ellipsis'
           whiteSpace='nowrap'
@@ -319,7 +316,7 @@ function LogViewerPage() {
         >
           {logInfo?.log_path}
         </Text>
-        <Text fontSize='xs' color='whiteAlpha.400'>
+        <Text fontSize='xs' color='fg.faint'>
           {filteredEntries.length === entries.length
             ? `${entries.length} entries`
             : `${filteredEntries.length} / ${entries.length} entries`}
@@ -328,5 +325,3 @@ function LogViewerPage() {
     </Box>
   )
 }
-
-export default LogViewerPage

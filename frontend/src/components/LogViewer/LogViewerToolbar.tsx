@@ -79,7 +79,7 @@ function LogViewerToolbarComponent({
   }, [onFilterChange])
 
   return (
-    <Box borderBottom='1px solid' borderBottomColor='app.hover' pb={2}>
+    <Box borderBottom='1px solid' borderBottomColor='border.subtle' pb={2}>
       <Flex align='center' gap={2} flexWrap='wrap'>
         <IconButton
           aria-label={autoRefresh ? 'Stop following' : 'Follow logs'}
@@ -90,12 +90,14 @@ function LogViewerToolbarComponent({
           minW='28px'
           borderRadius='4px'
           border='1px solid'
-          borderColor={autoRefresh ? 'blue.500/40' : 'app.border'}
-          bg={autoRefresh ? 'app.accentSubtle' : 'transparent'}
-          color={autoRefresh ? 'blue.500' : 'whiteAlpha.600'}
+          borderColor={autoRefresh ? 'accent.emphasized' : 'border'}
+          bg={autoRefresh ? 'accent.subtle' : 'transparent'}
+          color={autoRefresh ? 'accent.fg' : 'fg.subtle'}
           _hover={{
-            bg: autoRefresh ? 'blue.500/20' : 'whiteAlpha.50',
-            borderColor: autoRefresh ? 'blue.500/50' : 'app.borderStrong',
+            bg: autoRefresh ? 'accent.muted' : 'bg.faint',
+            borderColor: autoRefresh
+              ? 'accent.emphasized'
+              : 'border.emphasized',
           }}
           onClick={() => onAutoRefreshChange(!autoRefresh)}
           title={autoRefresh ? 'Stop following' : 'Follow logs'}
@@ -115,7 +117,7 @@ function LogViewerToolbarComponent({
           <Box
             position='absolute'
             left={2}
-            color='whiteAlpha.400'
+            color='fg.faint'
             pointerEvents='none'
             zIndex={1}
           >
@@ -129,13 +131,13 @@ function LogViewerToolbarComponent({
             pl={6}
             height='24px'
             fontSize='11px'
-            bg='app.raised'
+            bg='bg.raised'
             border='1px solid'
-            borderColor='app.border'
-            color='whiteAlpha.900'
-            _placeholder={{ color: 'whiteAlpha.400' }}
-            _hover={{ borderColor: 'app.borderStrong' }}
-            _focus={{ borderColor: 'blue.500', boxShadow: 'none' }}
+            borderColor='border'
+            color='fg'
+            _placeholder={{ color: 'fg.faint' }}
+            _hover={{ borderColor: 'border.emphasized' }}
+            _focus={{ borderColor: 'accent.focusRing', boxShadow: 'none' }}
           />
         </Flex>
 
@@ -161,8 +163,8 @@ function LogViewerToolbarComponent({
             h='24px'
             w='24px'
             minW='24px'
-            color='whiteAlpha.600'
-            _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.900' }}
+            color='fg.subtle'
+            _hover={{ bg: 'bg.hover', color: 'fg' }}
           >
             <Copy size={12} />
           </IconButton>
@@ -176,8 +178,8 @@ function LogViewerToolbarComponent({
             h='24px'
             w='24px'
             minW='24px'
-            color='whiteAlpha.600'
-            _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.900' }}
+            color='fg.subtle'
+            _hover={{ bg: 'bg.hover', color: 'fg' }}
           >
             {isExporting ? <Spinner size='xs' /> : <Download size={12} />}
           </IconButton>
@@ -190,8 +192,8 @@ function LogViewerToolbarComponent({
             h='24px'
             w='24px'
             minW='24px'
-            color='whiteAlpha.600'
-            _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.900' }}
+            color='fg.subtle'
+            _hover={{ bg: 'bg.hover', color: 'fg' }}
           >
             <FolderOpen size={12} />
           </IconButton>
@@ -204,8 +206,8 @@ function LogViewerToolbarComponent({
             h='24px'
             w='24px'
             minW='24px'
-            color='whiteAlpha.600'
-            _hover={{ bg: 'status.danger.bg', color: 'red.300' }}
+            color='fg.subtle'
+            _hover={{ bg: 'danger.subtle', color: 'danger.fg' }}
           >
             <Trash2 size={12} />
           </IconButton>

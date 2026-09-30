@@ -68,7 +68,7 @@ function LogFileSelectorComponent({
 
   if (logFiles.length === 0) {
     return (
-      <Text fontSize='xs' color='whiteAlpha.500'>
+      <Text fontSize='xs' color='fg.subtle'>
         No log files
       </Text>
     )
@@ -83,11 +83,11 @@ function LogFileSelectorComponent({
           height='28px'
           px={2}
           bg='transparent'
-          color='whiteAlpha.800'
-          borderColor='app.border'
+          color='fg.secondary'
+          borderColor='border'
           _hover={{
-            bg: 'whiteAlpha.50',
-            borderColor: 'app.borderStrong',
+            bg: 'bg.faint',
+            borderColor: 'border.emphasized',
           }}
           disabled={isLoading}
         >
@@ -96,7 +96,7 @@ function LogFileSelectorComponent({
               w='6px'
               h='6px'
               borderRadius='full'
-              bg={selectedFileInfo?.is_current ? 'blue.500' : 'whiteAlpha.400'}
+              bg={selectedFileInfo?.is_current ? 'accent.solid' : 'fg.faint'}
               flexShrink={0}
             />
             <Text
@@ -110,7 +110,7 @@ function LogFileSelectorComponent({
                 ? 'Current Session'
                 : selectedFileInfo?.created_at || 'Select'}
             </Text>
-            <Text fontSize='10px' color='whiteAlpha.500'>
+            <Text fontSize='10px' color='fg.subtle'>
               ({selectedFileInfo ? formatFileSize(selectedFileInfo.size) : ''})
             </Text>
             <ChevronDown size={12} />
@@ -120,9 +120,9 @@ function LogFileSelectorComponent({
       <Portal>
         <Menu.Positioner>
           <Menu.Content
-            bg='app.panel'
+            bg='bg.surface'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
             minW='240px'
             maxH='250px'
             overflowY='auto'
@@ -132,9 +132,9 @@ function LogFileSelectorComponent({
               px={2}
               py={1}
               borderBottom='1px solid'
-              borderBottomColor='app.hover'
+              borderBottomColor='border.subtle'
             >
-              <Text fontSize='10px' color='whiteAlpha.500' fontWeight='medium'>
+              <Text fontSize='10px' color='fg.subtle' fontWeight='medium'>
                 Log Files ({logFiles.length})
               </Text>
             </Box>
@@ -146,9 +146,9 @@ function LogFileSelectorComponent({
                   key={file.filename}
                   value={file.filename}
                   onClick={() => handleSelect(file.filename)}
-                  bg={isSelected ? 'blue.500/10' : 'transparent'}
+                  bg={isSelected ? 'accent.subtle' : 'transparent'}
                   _hover={{
-                    bg: isSelected ? 'app.accentSubtle' : 'whiteAlpha.50',
+                    bg: isSelected ? 'accent.subtle' : 'bg.faint',
                   }}
                   py={1.5}
                   px={2}
@@ -159,17 +159,17 @@ function LogFileSelectorComponent({
                         w='6px'
                         h='6px'
                         borderRadius='full'
-                        bg={file.is_current ? 'blue.500' : 'whiteAlpha.300'}
+                        bg={file.is_current ? 'accent.solid' : 'fg.faint'}
                         flexShrink={0}
                       />
                       <Text
                         fontSize='11px'
                         color={
                           file.is_current
-                            ? 'blue.500'
+                            ? 'accent.fg'
                             : isSelected
-                              ? 'blue.500'
-                              : 'whiteAlpha.900'
+                              ? 'accent.fg'
+                              : 'fg'
                         }
                         fontWeight={file.is_current ? 'medium' : 'normal'}
                         overflow='hidden'
@@ -178,11 +178,11 @@ function LogFileSelectorComponent({
                       >
                         {file.is_current ? 'Current Session' : file.created_at}
                       </Text>
-                      <Text fontSize='10px' color='whiteAlpha.400'>
+                      <Text fontSize='10px' color='fg.faint'>
                         {formatFileSize(file.size)}
                       </Text>
                       {!file.is_current && (
-                        <Text fontSize='10px' color='whiteAlpha.400'>
+                        <Text fontSize='10px' color='fg.faint'>
                           • {formatAge(file.age_days)}
                         </Text>
                       )}
@@ -193,10 +193,10 @@ function LogFileSelectorComponent({
                           as='button'
                           p={0.5}
                           borderRadius='3px'
-                          color='whiteAlpha.400'
+                          color='fg.faint'
                           _hover={{
-                            bg: 'status.danger.bg',
-                            color: 'red.400',
+                            bg: 'danger.subtle',
+                            color: 'danger.fg',
                           }}
                           _focus={{ outline: 'none', boxShadow: 'none' }}
                           _focusVisible={{ outline: 'none', boxShadow: 'none' }}
