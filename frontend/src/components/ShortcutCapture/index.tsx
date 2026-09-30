@@ -17,6 +17,16 @@ const KEY_LABELS: Record<string, string> = {
   ' ': 'Space',
 }
 
+function keyLabel(event: KeyboardEvent): string {
+  const match = /^(?:Key([A-Z])|Digit(\d))$/.exec(event.code)
+
+  if (match) {
+    return (match[1] ?? match[2]).toLowerCase()
+  }
+
+  return KEY_LABELS[event.key] ?? event.key
+}
+
 function activeModifiers(event: KeyboardEvent): string[] {
   const modifiers: string[] = []
 
@@ -73,7 +83,7 @@ export default function ShortcutCapture({
       const modifiers = activeModifiers(event)
 
       if (!MODIFIER_KEYS.includes(event.key) && event.key.length > 0) {
-        commit([...modifiers, KEY_LABELS[event.key] ?? event.key].join('+'))
+        commit([...modifiers, keyLabel(event)].join('+'))
       } else if (modifiers.length > 0) {
         setCapturedKeys(`${modifiers.join('+')}+`)
       }
