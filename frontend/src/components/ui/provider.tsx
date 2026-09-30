@@ -213,6 +213,10 @@ const system = createSystem(
 )
 
 const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { networkMode: 'always' },
+    mutations: { networkMode: 'always' },
+  },
   queryCache: new QueryCache({
     onError: (error, query) => {
       const toast = query.meta?.errorToast
