@@ -69,9 +69,11 @@ fn lexically_normalized(path: &Path) -> PathBuf {
 fn scoped_account(name: &str, config_dir: Option<&Path>) -> String {
     match config_dir {
         Some(dir) => {
-            let normalized = dir
-                .canonicalize()
-                .unwrap_or_else(|_| lexically_normalized(dir));
+            let normalized = dir.canonicalize().unwrap_or_else(|_| {
+                lexically_normalized(
+                    &std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()),
+                )
+            });
 
             format!("{name}@{}", normalized.display())
         }
@@ -99,10 +101,12 @@ pub fn store_key(
 }
 
 #[tauri::command]
-pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
-    scoped_entry(service, name)?
-        .get_password()
-        .map_err(CustomError::from)
+pub fn get_key(service: &str, name: &str) -> std::result::Result<Option<String>, CustomError> {
+    match scoped_entry(service, name)?.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[tauri::command]
@@ -111,10 +115,6 @@ pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomEr
         .delete_credential()
         .map_err(CustomError::from)
 }
-
-// Removed credentials module - now handled in commons
-
-// Removed functions - now handled in commons
 
 #[tauri::command]
 pub async fn import_configs_from_github(
@@ -170,11 +170,17 @@ mod tests {
         assert!(result.is_ok());
 
         let password = get_key("test_service", "test_name");
-        assert!(password.is_ok());
-        assert_eq!(password.unwrap(), "test_password");
+        assert_eq!(password.unwrap().as_deref(), Some("test_password"));
 
         let result = delete_key("test_service", "test_name");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_key_returns_none_for_missing_entry() {
+        let _guard = use_mock_keyring();
+
+        assert_eq!(get_key("test_service", "missing_name").unwrap(), None);
     }
 
     #[test]
@@ -190,6 +196,25 @@ mod tests {
         assert_ne!(
             scoped_account("github_config", Some(&missing)),
             scoped_account("github_config", Some(&temp.path().join("kftray-b")))
+        );
+    }
+
+    #[test]
+    fn keychain_account_is_absolute_for_relative_missing_config_dirs() {
+        let cwd = std::env::current_dir().unwrap();
+        let relative = scoped_account("github_config", Some(Path::new("nonexistent-rel/kftray")));
+
+        assert_eq!(
+            relative,
+            scoped_account(
+                "github_config",
+                Some(&cwd.join("nonexistent-rel").join("kftray"))
+            )
+        );
+        assert!(relative.starts_with(&format!("github_config@{}", cwd.display())));
+        assert_ne!(
+            relative,
+            scoped_account("github_config", Some(Path::new("nonexistent-other/kftray")))
         );
     }
 
