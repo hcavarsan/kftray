@@ -47,12 +47,13 @@ export function useGlobalShortcuts() {
         description: 'Shortcut deleted successfully',
         duration: 3000,
       }),
-    onError: () =>
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to delete shortcut',
         duration: 3000,
-      }),
+      },
+    },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: shortcutsQuery.queryKey }),
   })
@@ -65,12 +66,13 @@ export function useGlobalShortcuts() {
         description: 'Please logout and login again for changes to take effect',
         duration: 5000,
       }),
-    onError: () =>
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Permission Fix Failed',
         description: 'Failed to fix input group permissions',
         duration: 3000,
-      }),
+      },
+    },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: platformStatusQuery.queryKey }),
   })

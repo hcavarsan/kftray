@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Download, RefreshCw } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -34,6 +34,12 @@ const STATUS_LABEL: Record<Exclude<UpdateStatus, 'idle'>, string> = {
   error: 'Check failed',
 }
 
+const CHECK_FAILED_TOAST = {
+  title: 'Update Check Failed',
+  description: 'Failed to check for updates. Please try again later.',
+  duration: 4000,
+}
+
 interface UpdateSettingsProps {
   autoUpdateEnabled: boolean
   onAutoUpdateEnabledChange: (enabled: boolean) => void
@@ -51,70 +57,61 @@ export function UpdateSettings({
     queryFn: () => app.getVersion(),
   })
   const [latestVersion, setLatestVersion] = useState('')
-  const [status, setStatus] = useState<UpdateStatus>('idle')
-  const [isUpdating, setIsUpdating] = useState(false)
+  const [checkResult, setCheckResult] = useState<UpdateStatus>('idle')
 
-  const checkForUpdates = async () => {
-    setStatus('checking')
-    try {
-      const versionInfo =
-        await invoke<Record<string, string>>('get_version_info')
-
+  const checkMutation = useMutation({
+    mutationFn: () => invoke<Record<string, string>>('get_version_info'),
+    onSuccess: versionInfo => {
       setLatestVersion(versionInfo.latest_version || currentVersion || '')
 
       if (versionInfo.update_available === 'error') {
-        setStatus('error')
-        toaster.error({
-          title: 'Update Check Failed',
-          description: 'Failed to check for updates. Please try again later.',
-          duration: 4000,
-        })
+        setCheckResult('error')
+        toaster.error(CHECK_FAILED_TOAST)
       } else if (versionInfo.update_available === 'true') {
-        setStatus('available')
+        setCheckResult('available')
         toaster.success({
           title: 'Update Available',
           description: `Version ${versionInfo.latest_version} is now available!`,
           duration: 4000,
         })
       } else {
-        setStatus('up-to-date')
+        setCheckResult('up-to-date')
         toaster.success({
           title: 'Up to Date',
           description: 'You are running the latest version.',
           duration: 3000,
         })
       }
-    } catch {
-      setStatus('error')
-      toaster.error({
-        title: 'Update Check Failed',
-        description: 'Failed to check for updates. Please try again later.',
-        duration: 4000,
-      })
-    } finally {
+    },
+    onError: () => setCheckResult('error'),
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: settingsQuery.queryKey })
-    }
-  }
+    },
+    meta: { errorToast: CHECK_FAILED_TOAST },
+  })
 
-  const installUpdate = async () => {
-    setIsUpdating(true)
-    toaster.create({
-      title: 'Installing Update',
-      description:
-        'The update is being downloaded and installed. App will restart automatically.',
-      duration: 5000,
-    })
-    try {
-      await invoke('install_update_silent')
-    } catch {
-      toaster.error({
+  const installMutation = useMutation({
+    mutationFn: () => invoke('install_update_silent'),
+    onMutate: () => {
+      toaster.create({
+        title: 'Installing Update',
+        description:
+          'The update is being downloaded and installed. App will restart automatically.',
+        duration: 5000,
+      })
+    },
+    meta: {
+      errorToast: {
         title: 'Update Failed',
         description: 'Failed to install the update. Please try again later.',
         duration: 4000,
-      })
-      setIsUpdating(false)
-    }
-  }
+      },
+    },
+  })
+
+  const status: UpdateStatus = checkMutation.isPending
+    ? 'checking'
+    : checkResult
 
   const lastCheckSeconds = parseInt(lastUpdateCheck || '0', 10)
   const lastCheckDate = new Date(lastCheckSeconds * 1000)
@@ -145,8 +142,12 @@ export function UpdateSettings({
         action={
           <Button
             {...compactActionButtonProps}
-            onClick={updateAvailable ? installUpdate : checkForUpdates}
-            loading={status === 'checking' || isUpdating}
+            onClick={() =>
+              updateAvailable
+                ? installMutation.mutate()
+                : checkMutation.mutate()
+            }
+            loading={checkMutation.isPending || installMutation.isPending}
             loadingText='...'
           >
             <Box

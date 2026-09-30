@@ -57,13 +57,13 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
   } = useKubeconfigPicker({
     value: kubeConfig,
     onChange: changeKubeconfig,
-    onError: () => {
-      changeKubeconfig(DEFAULT_KUBECONFIG)
-      toaster.error({
+    onError: () => changeKubeconfig(DEFAULT_KUBECONFIG),
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
         duration: 1000,
-      })
+      },
     },
   })
 
@@ -96,12 +96,12 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
       })
       onClose()
     },
-    onError: () => {
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to import configs.',
         duration: 1000,
-      })
+      },
     },
   })
 

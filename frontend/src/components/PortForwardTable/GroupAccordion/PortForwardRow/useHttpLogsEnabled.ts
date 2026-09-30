@@ -1,9 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
-
 export const httpLogsEnabledQueryKey = (configId: number) =>
   ['http-logs-enabled', configId] as const
 
@@ -23,12 +20,8 @@ export function useSetHttpLogsEnabled(configId: number) {
     onSuccess: (_data, enable) => {
       queryClient.setQueryData(httpLogsEnabledQueryKey(configId), enable)
     },
-    onError: error => {
-      toaster.error({
-        title: 'Error toggling HTTP logs',
-        description: errorMessage(error),
-        duration: 1000,
-      })
+    meta: {
+      errorToast: { title: 'Error toggling HTTP logs', duration: 1000 },
     },
   })
 }

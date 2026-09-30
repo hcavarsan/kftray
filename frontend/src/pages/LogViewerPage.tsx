@@ -42,7 +42,6 @@ const logFilesQueryKey = ['log-files'] as const
 function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [filter, setFilter] = useState<LogFilter>({
     levels: [],
@@ -86,12 +85,12 @@ function LogViewerPage() {
         duration: 2000,
       })
     },
-    onError: () => {
-      toaster.error({
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to clear logs',
         duration: 3000,
-      })
+      },
     },
   })
   const deleteLogFileMutation = useMutation({
@@ -105,12 +104,60 @@ function LogViewerPage() {
         duration: 2000,
       })
     },
-    onError: error => {
-      toaster.error({
-        title: 'Error',
-        description: errorMessage(error),
+    meta: { errorToast: { title: 'Error', duration: 3000 } },
+  })
+  const { mutate: exportReport, isPending: isExportingReport } = useMutation({
+    mutationFn: async () => {
+      const report = await invoke<string>('generate_diagnostic_report')
+      const url = URL.createObjectURL(
+        new Blob([report], { type: 'application/json' }),
+      )
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    },
+    onSuccess: () => {
+      toaster.success({
+        title: 'Report Generated',
+        description: 'Diagnostic report has been downloaded',
         duration: 3000,
       })
+    },
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to generate report',
+        duration: 3000,
+      },
+    },
+  })
+  const { mutate: openFolder } = useMutation({
+    mutationFn: () => invoke('open_log_directory'),
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to open log directory',
+        duration: 3000,
+      },
+    },
+  })
+  const { mutate: copyLogs } = useMutation({
+    mutationFn: (text: string) => navigator.clipboard.writeText(text),
+    onSuccess: () => {
+      toaster.success({
+        title: 'Copied',
+        description: 'Logs copied to clipboard',
+        duration: 2000,
+      })
+    },
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to copy logs',
+        duration: 3000,
+      },
     },
   })
 
@@ -152,62 +199,12 @@ function LogViewerPage() {
   const handleClear = useCallback(() => {
     clearLogsMutation.mutate(selectedFile)
   }, [clearLogsMutation, selectedFile])
-  const handleExport = useCallback(async () => {
-    setIsExporting(true)
-    try {
-      const report = await invoke<string>('generate_diagnostic_report')
-      const url = URL.createObjectURL(
-        new Blob([report], { type: 'application/json' }),
-      )
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `kftray-report-${new Date().toISOString().slice(0, 10)}.json`
-      anchor.click()
-      URL.revokeObjectURL(url)
-      toaster.success({
-        title: 'Report Generated',
-        description: 'Diagnostic report has been downloaded',
-        duration: 3000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to generate report',
-        duration: 3000,
-      })
-    } finally {
-      setIsExporting(false)
-    }
-  }, [])
-  const handleOpenFolder = useCallback(async () => {
-    try {
-      await invoke('open_log_directory')
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to open log directory',
-        duration: 3000,
-      })
-    }
-  }, [])
-  const handleCopyLogs = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(
-        entries.map(entry => entry.raw).join('\n'),
-      )
-      toaster.success({
-        title: 'Copied',
-        description: 'Logs copied to clipboard',
-        duration: 2000,
-      })
-    } catch {
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to copy logs',
-        duration: 3000,
-      })
-    }
-  }, [entries])
+  const handleExport = useCallback(() => exportReport(), [exportReport])
+  const handleOpenFolder = useCallback(() => openFolder(), [openFolder])
+  const handleCopyLogs = useCallback(
+    () => copyLogs(entries.map(entry => entry.raw).join('\n')),
+    [copyLogs, entries],
+  )
   const handleClose = useCallback(async () => {
     await appWindow.close()
   }, [appWindow])
@@ -280,7 +277,7 @@ function LogViewerPage() {
           onExport={handleExport}
           onCopy={handleCopyLogs}
           onOpenFolder={handleOpenFolder}
-          isExporting={isExporting}
+          isExporting={isExportingReport}
         />
       </Box>
       <Box flex={1} bg='app.deep' overflow='hidden' position='relative'>

@@ -1,12 +1,11 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
+import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
-import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
@@ -36,15 +35,26 @@ type ActiveModal =
 function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
+  const queryClient = useQueryClient()
   const forwarding = usePortForwarding()
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
   const closeModal = () => setActiveModal(null)
 
-  const openConfig = useCallback(async (id: number, isEdit: boolean) => {
-    try {
-      const config = await invoke<StoredConfig>('get_config_cmd', { id })
+  const openConfig = useCallback(
+    async (id: number, isEdit: boolean) => {
+      const config = await queryClient
+        .fetchQuery({
+          queryKey: ['config', id],
+          queryFn: () => invoke<StoredConfig>('get_config_cmd', { id }),
+          staleTime: 0,
+          meta: { errorToast: { title: 'Failed to load configuration' } },
+        })
+        .catch(() => null)
 
+      if (!config) {
+        return
+      }
       setActiveModal({
         type: 'config',
         isEdit,
@@ -52,13 +62,9 @@ function Main() {
           ? config
           : { ...config, id: 0, alias: `${config.alias ?? ''}-copy` },
       })
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to load configuration',
-        description: errorMessage(error),
-      })
-    }
-  }, [])
+    },
+    [queryClient],
+  )
 
   const editConfig = useCallback(
     (id: number) => openConfig(id, true),

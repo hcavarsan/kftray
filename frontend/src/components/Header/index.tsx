@@ -3,16 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
 import { Button } from '@/components/ui/button'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTauriEvent } from '@/hooks/useTauriEvent'
-import { errorMessage } from '@/lib/errors'
 
 const appWindow = getCurrentWebviewWindow()
 
@@ -80,46 +79,32 @@ function Header({ search, setSearch }: HeaderProps) {
     }
   }, [])
 
-  async function handleStopPortForwardsAndExit() {
-    try {
-      await invoke('handle_exit_app')
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to exit',
-        description: errorMessage(error),
-      })
-    }
-  }
+  const exitMutation = useMutation({
+    mutationFn: () => invoke('handle_exit_app'),
+    meta: { errorToast: { title: 'Failed to exit' } },
+  })
 
-  const togglePinWindow = async () => {
-    const next = !isPinned
-
-    setIsPinned(next)
-    try {
+  const pinMutation = useMutation({
+    mutationFn: async (next: boolean) => {
       await invoke('toggle_pin_state')
       if (next) {
         await appWindow.show()
         await appWindow.setFocus()
       }
-    } catch (error) {
+    },
+    onMutate: next => {
+      setIsPinned(next)
+    },
+    onError: (_error, next) => {
       setIsPinned(!next)
-      toaster.error({
-        title: 'Failed to toggle pin',
-        description: errorMessage(error),
-      })
-    }
-  }
+    },
+    meta: { errorToast: { title: 'Failed to toggle pin' } },
+  })
 
-  const hideWindow = async () => {
-    try {
-      await invoke('hide_main_window_cmd')
-    } catch (error) {
-      toaster.error({
-        title: 'Failed to hide window',
-        description: errorMessage(error),
-      })
-    }
-  }
+  const hideMutation = useMutation({
+    mutationFn: () => invoke('hide_main_window_cmd'),
+    meta: { errorToast: { title: 'Failed to hide window' } },
+  })
 
   return (
     <Box
@@ -218,7 +203,7 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void togglePinWindow()}
+            onClick={() => pinMutation.mutate(!isPinned)}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -241,7 +226,7 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void hideWindow()}
+            onClick={() => hideMutation.mutate()}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -258,7 +243,7 @@ function Header({ search, setSearch }: HeaderProps) {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => void handleStopPortForwardsAndExit()}
+            onClick={() => exitMutation.mutate()}
             height='28px'
             width='28px'
             minWidth='28px'

@@ -2,10 +2,9 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Copy } from 'lucide-react'
 
 import { Box, Flex, IconButton, Text } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { errorMessage } from '@/lib/errors'
 
 import { LEVEL_COLORS } from './constants'
 import type { LogLevel, LogRowProps } from './types'
@@ -82,7 +81,19 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
     }
   }, [])
 
-  const handleCopyAll = useCallback(async () => {
+  const { mutate: copyText } = useMutation({
+    mutationFn: (text: string) => navigator.clipboard.writeText(text),
+    onSuccess: () => {
+      clearTimeout(copyFeedbackTimeoutRef.current)
+      setShowCopied(true)
+      copyFeedbackTimeoutRef.current = setTimeout(() => {
+        setShowCopied(false)
+      }, 1500)
+    },
+    meta: { errorToast: { title: 'Error' } },
+  })
+
+  const handleCopyAll = useCallback(() => {
     const parts = []
 
     if (entry.timestamp) {
@@ -95,17 +106,8 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
       parts.push(`Module: ${entry.module}`)
     }
     parts.push(`Message: ${entry.message}`)
-    try {
-      await navigator.clipboard.writeText(parts.join('\n'))
-      clearTimeout(copyFeedbackTimeoutRef.current)
-      setShowCopied(true)
-      copyFeedbackTimeoutRef.current = setTimeout(() => {
-        setShowCopied(false)
-      }, 1500)
-    } catch (error) {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
-    }
-  }, [entry])
+    copyText(parts.join('\n'))
+  }, [copyText, entry])
 
   return (
     <Box

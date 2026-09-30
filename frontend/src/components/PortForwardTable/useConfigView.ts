@@ -1,10 +1,8 @@
 import { useCallback, useMemo, useRef } from 'react'
 
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
 import type {
   Config,
   ConfigView,
@@ -46,28 +44,26 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
   const { data } = useQuery({
     queryKey,
     queryFn: async () => {
-      try {
-        let version: number
-        let result: ConfigViewResult
+      let version: number
+      let result: ConfigViewResult
 
-        do {
-          version = viewVersionRef.current
-          result = await invoke<ConfigViewResult>('query_config_view_cmd', {
-            view: viewRef.current,
-          })
-        } while (version !== viewVersionRef.current)
-
-        viewRef.current = result.view
-
-        return result
-      } catch (error) {
-        toaster.error({
-          title: 'Failed to load view',
-          description: errorMessage(error),
+      do {
+        version = viewVersionRef.current
+        result = await invoke<ConfigViewResult>('query_config_view_cmd', {
+          view: viewRef.current,
         })
-        throw error
-      }
+      } while (version !== viewVersionRef.current)
+
+      viewRef.current = result.view
+
+      return result
     },
+    meta: { errorToast: { title: 'Failed to load view' } },
+  })
+
+  const { mutate: saveView } = useMutation({
+    mutationFn: (view: ConfigView) => invoke('set_config_view_cmd', { view }),
+    meta: { errorToast: { title: 'Failed to save view' } },
   })
 
   const setView = useCallback(
@@ -80,14 +76,9 @@ export const useConfigView = (configs: Config[], visibleConfigs: Config[]) => {
           prev ? { ...prev, view } : prev,
       )
       void queryClient.invalidateQueries({ queryKey })
-      invoke('set_config_view_cmd', { view }).catch(error =>
-        toaster.error({
-          title: 'Failed to save view',
-          description: errorMessage(error),
-        }),
-      )
+      saveView(view)
     },
-    [queryClient, queryKey],
+    [queryClient, queryKey, saveView],
   )
 
   const groups = useMemo((): ResolvedGroup[] => {

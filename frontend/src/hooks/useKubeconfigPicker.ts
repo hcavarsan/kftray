@@ -1,3 +1,5 @@
+import { type MutationMeta, useMutation } from '@tanstack/react-query'
+
 import { selectFile } from '@/lib/nativeDialog'
 
 export const DEFAULT_KUBECONFIG = 'default'
@@ -5,28 +7,29 @@ export const DEFAULT_KUBECONFIG = 'default'
 interface KubeconfigPickerOptions {
   value: string
   onChange: (path: string) => void
-  onError: (error: unknown) => void
+  meta: MutationMeta
+  onError?: () => void
 }
 
 export function useKubeconfigPicker({
   value,
   onChange,
+  meta,
   onError,
 }: KubeconfigPickerOptions) {
-  const browse = async () => {
-    try {
-      const path = await selectFile()
-
+  const { mutate: browse } = useMutation({
+    mutationFn: selectFile,
+    onSuccess: path => {
       if (path) {
         onChange(path)
       }
-    } catch (error) {
-      onError(error)
-    }
-  }
+    },
+    onError,
+    meta,
+  })
 
   return {
-    browse,
+    browse: () => browse(),
     isDefault: value === DEFAULT_KUBECONFIG,
     resetToDefault: () => onChange(DEFAULT_KUBECONFIG),
   }

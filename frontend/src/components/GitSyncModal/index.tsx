@@ -12,7 +12,6 @@ import {
 } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { useGitSync } from '@/contexts/GitSyncContext'
-import { errorMessage } from '@/lib/errors'
 import type { GitConfig } from '@/services/gitService'
 import type { AuthMethod } from '@/types'
 
@@ -88,7 +87,7 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
     }))
   }
 
-  const handleSaveSettings = async (e: FormEvent<HTMLFormElement>) => {
+  const handleSaveSettings = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     const configPaths = formState.configPaths
@@ -104,38 +103,22 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       flush: formState.flushBeforeSync,
     }
 
-    try {
-      await saveCredentials(newCredentials)
+    saveCredentials(newCredentials, {
+      onSuccess: () => {
+        toaster.success({
+          title: 'Success',
+          description:
+            'Configurations imported and credentials saved successfully',
+          duration: 2000,
+        })
 
-      toaster.success({
-        title: 'Success',
-        description:
-          'Configurations imported and credentials saved successfully',
-        duration: 2000,
-      })
-
-      onClose()
-    } catch (error) {
-      toaster.error({
-        title: 'Error saving settings',
-        description: errorMessage(error),
-        duration: 1000,
-      })
-    }
+        onClose()
+      },
+    })
   }
 
-  const handleDeleteConfig = async () => {
-    try {
-      await deleteCredentials()
-      onClose()
-    } catch (error) {
-      toaster.error({
-        title: 'Error saving settings',
-        description: errorMessage(error),
-        duration: 1000,
-      })
-    }
-  }
+  const handleDeleteConfig = () =>
+    deleteCredentials(undefined, { onSuccess: onClose })
 
   const handleAuthMethodChange = (details: { value: string | null }) => {
     const value = details.value

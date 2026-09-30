@@ -1,10 +1,8 @@
 import { HStack, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useKubeconfigPicker } from '@/hooks/useKubeconfigPicker'
-import { errorMessage } from '@/lib/errors'
 
 interface KubeconfigControlProps {
   kubeconfig: string
@@ -18,11 +16,7 @@ export function KubeconfigControl({
   const { browse } = useKubeconfigPicker({
     value: kubeconfig,
     onChange,
-    onError: error =>
-      toaster.error({
-        description: errorMessage(error),
-        title: 'Error selecting kubeconfig',
-      }),
+    meta: { errorToast: { title: 'Error selecting kubeconfig' } },
   })
 
   return (

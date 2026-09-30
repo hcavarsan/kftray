@@ -1,7 +1,7 @@
-import { useState } from 'react'
 import { Check, ChevronDown, LocateFixed } from 'lucide-react'
 
 import { Box, Flex } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,6 @@ import {
   MenuRoot,
   MenuTrigger,
 } from '@/components/ui/menu'
-import { toaster } from '@/components/ui/toaster'
 
 import {
   compactActionButtonProps,
@@ -34,22 +33,16 @@ export function WindowSettings({
   appMode,
   onAppModeChange,
 }: WindowSettingsProps) {
-  const [isResettingPosition, setIsResettingPosition] = useState(false)
-
-  const resetPosition = async () => {
-    setIsResettingPosition(true)
-    try {
-      await invoke('reset_window_position_cmd')
-    } catch {
-      toaster.error({
+  const resetPositionMutation = useMutation({
+    mutationFn: () => invoke('reset_window_position_cmd'),
+    meta: {
+      errorToast: {
         title: 'Error',
         description: 'Failed to reset window position',
         duration: 3000,
-      })
-    } finally {
-      setIsResettingPosition(false)
-    }
-  }
+      },
+    },
+  })
 
   return (
     <>
@@ -110,8 +103,8 @@ export function WindowSettings({
         <Flex justify='flex-end'>
           <Button
             {...compactActionButtonProps}
-            onClick={resetPosition}
-            loading={isResettingPosition}
+            onClick={() => resetPositionMutation.mutate()}
+            loading={resetPositionMutation.isPending}
             loadingText='...'
           >
             <Box as={LocateFixed} width='8px' height='8px' mr={0.5} />
