@@ -26,7 +26,7 @@ interface AutoImportModalProps {
   onClose: () => void
 }
 
-const contextSelectStyles = selectStyles<StringOption>(35)
+const contextSelectStyles = selectStyles<StringOption>()
 
 export default function AutoImportModal({ onClose }: AutoImportModalProps) {
   const queryClient = useQueryClient()
