@@ -145,6 +145,13 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
   const isFetching = resourceQueries.some(query => query.isFetching)
   const settledCount = resourceQueries.filter(query => !query.isPending).length
   const singleError = !isAll ? resourceQueries[0]?.error : null
+  const failedContexts = isAll
+    ? resourceQueries.flatMap((query, index) =>
+        query.isError ? [targetLabel(targets[index])] : [],
+      )
+    : []
+  const allFailed =
+    failedContexts.length > 0 && failedContexts.length === targets.length
 
   const resources: FlatResource[] = resourceQueries.flatMap((query, index) => {
     const target = targets[index]
@@ -162,7 +169,8 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
   const { deleteMutation, cleanupMutation, invalidateResources } =
     useResourceMutations(() => setCleanupMode(null))
 
-  const busy = isFetching || cleanupMutation.isPending
+  const busy =
+    isFetching || cleanupMutation.isPending || deleteMutation.isPending
 
   return (
     <>
@@ -225,12 +233,15 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
             isAll={isAll}
             isFetching={isFetching}
             error={singleError}
+            failedContexts={failedContexts}
+            allFailed={allFailed}
             resources={resources}
             deletingKey={
               deleteMutation.isPending
                 ? deleteMutation.variables?.key
                 : undefined
             }
+            deleteDisabled={cleanupMutation.isPending}
             onDelete={deleteMutation.mutate}
           />
         </AppDialogBody>
