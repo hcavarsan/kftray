@@ -90,8 +90,8 @@ description = "Generate application icons"
 run = "cargo run --bin generate_icons"
 
 [tasks.knip]
-description = "Detect unused exports in frontend"
-run = "pnpm --filter @kftray/ui run knip"
+description = "Detect unused files, exports and dependencies"
+run = "pnpm run knip"
 
 [tasks.kftui]
 description = "Run kftui CLI"

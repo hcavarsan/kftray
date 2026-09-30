@@ -79,7 +79,7 @@ Run `mise tasks` to see all available tasks:
 
 - `mise run setup` - Setup development environment
 - `mise run generate-icons` - Generate application icons
-- `mise run knip` - Detect unused exports
+- `mise run knip` - Detect unused files, exports and dependencies
 
 ### System Dependencies
 
