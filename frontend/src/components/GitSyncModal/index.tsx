@@ -5,7 +5,6 @@ import { Plus, X } from 'lucide-react'
 import {
   Box,
   Button,
-  Dialog,
   Flex,
   HStack,
   IconButton,
@@ -16,7 +15,11 @@ import {
 } from '@chakra-ui/react'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
 import { useGitSync } from '@/contexts/GitSyncContext'
@@ -160,30 +163,8 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       onClose={onClose}
       maxWidth='400px'
       height='95vh'
-      headerPadding={1.5}
-      closable={false}
     >
-      <Box
-        flex='1'
-        overflowY='auto'
-        p={3}
-        css={{
-          '&::-webkit-scrollbar': {
-            width: '6px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: 'transparent',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'var(--chakra-colors-app-divider)',
-            borderRadius: '3px',
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background:
-              'color-mix(in srgb, var(--chakra-colors-white) 30%, transparent)',
-          },
-        }}
-      >
+      <Box flex='1' overflowY='auto' p={3}>
         <form onSubmit={handleSaveSettings} id='git-sync-form'>
           <Stack gap={4}>
             <Stack gap={2}>
@@ -404,58 +385,42 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
         </form>
       </Box>
 
-      <Dialog.Footer
-        p={3}
-        borderTop='1px solid'
-        borderColor='app.hover'
-        bg='app.bg'
-        flexShrink={0}
-      >
-        <Flex justify='space-between' width='100%'>
-          <Box>
-            {credentials && (
-              <Button
-                size='xs'
-                variant='ghost'
-                onClick={handleDeleteConfig}
-                color='red.300'
-                _hover={{ bg: 'whiteAlpha.50' }}
-                height='28px'
-                disabled={isSaving}
-              >
-                Disable Git Sync
-              </Button>
-            )}
-          </Box>
-          <HStack justify='flex-end' gap={2}>
+      <AppDialogFooter justify='space-between'>
+        <Box>
+          {credentials && (
             <Button
               size='xs'
               variant='ghost'
-              onClick={onClose}
+              onClick={handleDeleteConfig}
+              color='red.300'
               _hover={{ bg: 'whiteAlpha.50' }}
               height='28px'
+              disabled={isSaving}
             >
-              Cancel
+              Disable Git Sync
             </Button>
-            <Button
-              type='submit'
-              form='git-sync-form'
-              size='xs'
-              bg='blue.500'
-              _hover={{ bg: 'blue.600' }}
-              disabled={
-                isSaving ||
-                !formState.repoUrl ||
-                !formState.configPaths.some(field => field.value.trim()) ||
-                (formState.authMethod === 'token' && !formState.gitToken)
-              }
-              height='28px'
-            >
-              Save Settings
-            </Button>
-          </HStack>
-        </Flex>
-      </Dialog.Footer>
+          )}
+        </Box>
+        <HStack gap={2}>
+          <DialogCancelButton onClick={onClose} />
+          <Button
+            type='submit'
+            form='git-sync-form'
+            size='xs'
+            bg='blue.500'
+            _hover={{ bg: 'blue.600' }}
+            disabled={
+              isSaving ||
+              !formState.repoUrl ||
+              !formState.configPaths.some(field => field.value.trim()) ||
+              (formState.authMethod === 'token' && !formState.gitToken)
+            }
+            height='28px'
+          >
+            Save Settings
+          </Button>
+        </HStack>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

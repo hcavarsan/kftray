@@ -83,7 +83,7 @@ export const WithTooltip = ({
   content: string
   children: ReactNode
 }) => (
-  <Tooltip content={content} portalled contentProps={{ zIndex: 100 }}>
+  <Tooltip content={content}>
     <Box display='inline-flex'>{children}</Box>
   </Tooltip>
 )

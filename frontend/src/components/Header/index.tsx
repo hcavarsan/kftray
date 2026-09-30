@@ -149,12 +149,7 @@ function Header({ search, setSearch }: HeaderProps) {
             _hover={{ color: 'whiteAlpha.700' }}
             mb={0.5}
           >
-            <Tooltip
-              content='Move Window Position'
-              open={tooltipOpen}
-              portalled={true}
-              contentProps={{ zIndex: 100 }}
-            >
+            <Tooltip content='Move Window Position' open={tooltipOpen}>
               <Box
                 as={GripVertical}
                 width='22px'
@@ -165,11 +160,7 @@ function Header({ search, setSearch }: HeaderProps) {
             </Tooltip>
           </Box>
 
-          <Tooltip
-            content={`Kftray v${version}`}
-            portalled={true}
-            contentProps={{ zIndex: 100 }}
-          >
+          <Tooltip content={`Kftray v${version}`}>
             <Image
               src={logo}
               alt='Kftray Logo'
@@ -223,11 +214,7 @@ function Header({ search, setSearch }: HeaderProps) {
       </Box>
 
       <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
-        <Tooltip
-          content={isPinned ? 'Unpin Window' : 'Pin Window'}
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
+        <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
           <Button
             variant='ghost'
             size='sm'
@@ -250,8 +237,6 @@ function Header({ search, setSearch }: HeaderProps) {
 
         <Tooltip
           content={trayMode === 'window' ? 'Minimize Window' : 'Hide Window'}
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
         >
           <Button
             variant='ghost'
@@ -269,11 +254,7 @@ function Header({ search, setSearch }: HeaderProps) {
           </Button>
         </Tooltip>
 
-        <Tooltip
-          content='Quit kftray'
-          portalled={true}
-          contentProps={{ zIndex: 100 }}
-        >
+        <Tooltip content='Quit kftray'>
           <Button
             variant='ghost'
             size='sm'

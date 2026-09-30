@@ -166,7 +166,7 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
               {entry.message}
             </Text>
           </Box>
-          <Tooltip content='Copied!' open={showCopied} portalled>
+          <Tooltip content='Copied!' open={showCopied}>
             <IconButton
               aria-label='Copy all'
               size='2xs'

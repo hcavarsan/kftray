@@ -14,7 +14,11 @@ import {
 import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { errorMessage } from '@/lib/errors'
@@ -245,44 +249,25 @@ export default function ShortcutModal({ onClose }: { onClose: () => void }) {
           </Stack>
         </Dialog.Body>
 
-        <Dialog.Footer
-          px={3}
-          py={2}
-          bg='app.panel'
-          borderTop='1px solid'
-          borderColor='app.hover'
-          flexShrink={0}
-        >
-          <Flex justify='space-between' align='center' width='100%'>
-            <Button
-              onClick={() => setEditing('new')}
-              variant='ghost'
-              size='xs'
-              _hover={{ bg: 'whiteAlpha.50' }}
-              color='gray.300'
-              height='28px'
-              fontSize='xs'
-              px={2}
-            >
-              <Plus size={10} />
-              <Text ml={1} fontSize='xs' fontWeight='normal'>
-                Add New Shortcut
-              </Text>
-            </Button>
+        <AppDialogFooter justify='space-between'>
+          <Button
+            onClick={() => setEditing('new')}
+            variant='ghost'
+            size='xs'
+            _hover={{ bg: 'whiteAlpha.50' }}
+            color='gray.300'
+            height='28px'
+            fontSize='xs'
+            px={2}
+          >
+            <Plus size={10} />
+            <Text ml={1} fontSize='xs' fontWeight='normal'>
+              Add New Shortcut
+            </Text>
+          </Button>
 
-            <Button
-              variant='ghost'
-              size='xs'
-              onClick={onClose}
-              _hover={{ bg: 'whiteAlpha.50' }}
-              color='gray.400'
-              height='28px'
-              fontSize='xs'
-            >
-              Close
-            </Button>
-          </Flex>
-        </Dialog.Footer>
+          <DialogCancelButton label='Close' onClick={onClose} />
+        </AppDialogFooter>
       </AppDialog>
 
       {editing && (

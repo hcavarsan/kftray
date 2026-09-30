@@ -47,11 +47,7 @@ export function ResourceRow({
           <Icon size={12} />
         </Box>
 
-        <Tooltip
-          content={resource.name}
-          portalled
-          positioning={{ placement: 'top' }}
-        >
+        <Tooltip content={resource.name} positioning={{ placement: 'top' }}>
           <Text
             fontSize='xs'
             fontWeight='500'
@@ -89,11 +85,7 @@ export function ResourceRow({
       </Flex>
 
       <Flex align='center' gap={1.5} fontSize='xs' color='whiteAlpha.500'>
-        <Tooltip
-          content={resource.context}
-          portalled
-          positioning={{ placement: 'top' }}
-        >
+        <Tooltip content={resource.context} positioning={{ placement: 'top' }}>
           <Text truncate maxWidth='120px' cursor='default'>
             {resource.context}
           </Text>
@@ -103,7 +95,6 @@ export function ResourceRow({
 
         <Tooltip
           content={resource.namespace}
-          portalled
           positioning={{ placement: 'top' }}
         >
           <Text truncate maxWidth='100px' cursor='default'>

@@ -5,7 +5,6 @@ import {
   Button,
   Dialog,
   Flex,
-  HStack,
   Spinner,
   Stack,
   Text,
@@ -15,7 +14,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
@@ -132,14 +135,7 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
   })
 
   return (
-    <AppDialog
-      title='Auto Import'
-      onClose={onClose}
-      maxWidth='400px'
-      headerPadding={1.5}
-      closable={false}
-      contentProps={{ mt: 70 }}
-    >
+    <AppDialog title='Auto Import' onClose={onClose} maxWidth='400px'>
       <Dialog.Body p={3}>
         <Stack gap={4}>
           <Stack gap={1.5}>
@@ -263,30 +259,21 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
               </Text>
             </Stack>
           </VStack>
-
-          <HStack justify='flex-end' gap={2} mt={2}>
-            <Button
-              size='xs'
-              variant='ghost'
-              onClick={onClose}
-              _hover={{ bg: 'whiteAlpha.50' }}
-              height='28px'
-            >
-              Cancel
-            </Button>
-            <Button
-              size='xs'
-              bg='blue.500'
-              _hover={{ bg: 'blue.600' }}
-              onClick={handleImport}
-              disabled={!selectedContext || importMutation.isPending}
-              height='28px'
-            >
-              Import
-            </Button>
-          </HStack>
         </Stack>
       </Dialog.Body>
+      <AppDialogFooter>
+        <DialogCancelButton onClick={onClose} />
+        <Button
+          size='xs'
+          bg='blue.500'
+          _hover={{ bg: 'blue.600' }}
+          onClick={handleImport}
+          disabled={!selectedContext || importMutation.isPending}
+          height='28px'
+        >
+          Import
+        </Button>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

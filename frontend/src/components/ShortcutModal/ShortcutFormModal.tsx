@@ -15,7 +15,11 @@ import { invoke } from '@tauri-apps/api/core'
 import ShortcutCapture from '@/components/ShortcutCapture'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, shortcutsQuery } from '@/hooks/useGlobalShortcuts'
 import type { Config } from '@/types'
@@ -263,16 +267,6 @@ export default function ShortcutFormModal({
                 borderColor='app.border'
                 borderRadius='md'
                 p={2}
-                css={{
-                  '&::-webkit-scrollbar': { width: '4px' },
-                  '&::-webkit-scrollbar-track': {
-                    background: 'transparent',
-                  },
-                  '&::-webkit-scrollbar-thumb': {
-                    background: 'var(--chakra-colors-app-divider)',
-                    borderRadius: '2px',
-                  },
-                }}
               >
                 {configs.length === 0 ? (
                   <Text
@@ -336,42 +330,23 @@ export default function ShortcutFormModal({
         </Stack>
       </Dialog.Body>
 
-      <Dialog.Footer
-        px={3}
-        py={2}
-        bg='app.panel'
-        borderTop='1px solid'
-        borderColor='app.hover'
-        flexShrink={0}
-      >
-        <Flex justify='flex-end' gap={2} width='100%'>
-          <Button
-            variant='ghost'
-            size='xs'
-            onClick={onClose}
-            _hover={{ bg: 'whiteAlpha.50' }}
-            color='gray.400'
-            height='28px'
-            fontSize='xs'
-          >
-            Cancel
-          </Button>
-          <Button
-            size='xs'
-            onClick={handleSave}
-            loading={save.isPending}
-            loadingText={shortcut ? 'Updating...' : 'Creating...'}
-            bg='blue.500'
-            color='white'
-            _hover={{ bg: 'blue.600' }}
-            _active={{ bg: 'blue.700' }}
-            height='28px'
-            fontSize='xs'
-          >
-            {shortcut ? 'Save Changes' : 'Add Shortcut'}
-          </Button>
-        </Flex>
-      </Dialog.Footer>
+      <AppDialogFooter>
+        <DialogCancelButton onClick={onClose} />
+        <Button
+          size='xs'
+          onClick={handleSave}
+          loading={save.isPending}
+          loadingText={shortcut ? 'Updating...' : 'Creating...'}
+          bg='blue.500'
+          color='white'
+          _hover={{ bg: 'blue.600' }}
+          _active={{ bg: 'blue.700' }}
+          height='28px'
+          fontSize='xs'
+        >
+          {shortcut ? 'Save Changes' : 'Add Shortcut'}
+        </Button>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

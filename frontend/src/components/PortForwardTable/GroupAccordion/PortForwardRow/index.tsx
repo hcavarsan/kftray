@@ -180,7 +180,6 @@ function PortForwardRowComponent({
               content={
                 <ConfigDetailsTooltip status={status} details={configDetails} />
               }
-              portalled
             >
               <Flex align='center' gap={1.5}>
                 <Checkbox
@@ -237,7 +236,7 @@ function PortForwardRowComponent({
               justifyContent='flex-end'
             >
               {config.is_running ? (
-                <Tooltip content='Open in browser' portalled>
+                <Tooltip content='Open in browser'>
                   <IconButton
                     size='2xs'
                     variant='ghost'
@@ -264,7 +263,6 @@ function PortForwardRowComponent({
                       </Text>
                     </Box>
                   }
-                  portalled
                 >
                   <IconButton
                     size='2xs'

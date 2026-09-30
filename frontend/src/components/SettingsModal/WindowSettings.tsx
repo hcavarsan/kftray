@@ -84,7 +84,7 @@ export function WindowSettings({
                 />
               </Button>
             </MenuTrigger>
-            <MenuContent portalled={false} minWidth='110px'>
+            <MenuContent minWidth='110px'>
               {APP_MODES.map(mode => (
                 <MenuItem
                   key={mode.id}
