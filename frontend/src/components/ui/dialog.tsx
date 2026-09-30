@@ -38,7 +38,7 @@ export function AppDialog({
       onEscapeKeyDown={event => {
         if (
           event.target instanceof Element &&
-          event.target.closest('[aria-expanded="true"]')
+          event.target.closest('[aria-haspopup][aria-expanded="true"]')
         ) {
           event.preventDefault()
         }
