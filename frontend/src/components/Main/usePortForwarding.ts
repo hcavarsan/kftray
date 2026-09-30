@@ -17,6 +17,7 @@ import type {
   PortForwardAction,
   PortForwardResponse,
   PortForwardToggleAction,
+  StoredConfig,
 } from '@/types'
 
 const CONCURRENCY_LIMIT = 8
@@ -44,7 +45,7 @@ async function runWithLimit<T>(
   )
 }
 
-function usesTcpForward(config: Config) {
+function usesTcpForward(config: StoredConfig) {
   switch (config.workload_type) {
     case 'expose':
       return true
@@ -176,7 +177,11 @@ export function usePortForwarding() {
   }, [configs, clearPending])
 
   const runForwardCommand = useCallback(
-    async (config: Config, action: PortForwardToggleAction, token?: number) => {
+    async (
+      config: StoredConfig,
+      action: PortForwardToggleAction,
+      token?: number,
+    ) => {
       if (token !== undefined) {
         inFlightRef.current.set(config.id, token)
       }
@@ -653,7 +658,7 @@ export function usePortForwarding() {
   )
 
   const saveConfig = async (
-    configToSave: Config,
+    configToSave: StoredConfig,
     isEdit: boolean,
   ): Promise<boolean> => {
     const runningConfig = isEdit
@@ -682,7 +687,7 @@ export function usePortForwarding() {
     let wasStopped = false
 
     try {
-      const updatedConfigToSave: Config = {
+      const updatedConfigToSave: StoredConfig = {
         ...configToSave,
         id: isEdit ? configToSave.id : 0,
       }

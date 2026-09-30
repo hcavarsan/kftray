@@ -21,7 +21,7 @@ import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
 import { useKubeContexts } from '@/hooks/useKube'
 import { selectFile } from '@/lib/nativeDialog'
-import type { Config, StringOption } from '@/types'
+import type { StoredConfig, StringOption } from '@/types'
 
 interface AutoImportModalProps {
   onClose: () => void
@@ -73,10 +73,13 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
 
   const importMutation = useMutation({
     mutationFn: async (contextName: string) => {
-      const configs = await invoke<Config[]>('get_services_with_annotations', {
-        contextName,
-        kubeconfigPath: kubeConfig,
-      })
+      const configs = await invoke<StoredConfig[]>(
+        'get_services_with_annotations',
+        {
+          contextName,
+          kubeconfigPath: kubeConfig,
+        },
+      )
       const json = JSON.stringify(
         configs.map(config => ({
           ...config,

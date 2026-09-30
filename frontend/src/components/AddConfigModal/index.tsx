@@ -29,7 +29,7 @@ import {
 } from '@/hooks/useKube'
 import { errorMessage } from '@/lib/errors'
 import { selectFile } from '@/lib/nativeDialog'
-import type { Config, ConfigViewResult } from '@/types'
+import type { ConfigViewResult, StoredConfig } from '@/types'
 
 import { ExposeFields } from './ExposeFields'
 import { Field, TextField } from './Field'
@@ -66,7 +66,7 @@ const emptyDraft: ConfigDraft = {
   target: '',
 }
 
-const toDraft = (config: Config | null): ConfigDraft => {
+const toDraft = (config: StoredConfig | null): ConfigDraft => {
   if (!config) {
     return { ...emptyDraft }
   }
@@ -77,7 +77,10 @@ const toDraft = (config: Config | null): ConfigDraft => {
   }
 }
 
-function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
+function toConfig(
+  draft: ConfigDraft,
+  initialConfig: StoredConfig | null,
+): StoredConfig {
   const base = {
     alias: draft.alias ?? '',
     auto_loopback_address: draft.auto_loopback_address ?? false,
@@ -88,7 +91,6 @@ function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
     http_logs_max_file_size: initialConfig?.http_logs_max_file_size,
     http_logs_retention_days: initialConfig?.http_logs_retention_days,
     id: initialConfig?.id ?? 0,
-    is_running: initialConfig?.is_running ?? false,
     kubeconfig: draft.kubeconfig ?? 'default',
     local_address: draft.local_address ?? '127.0.0.1',
     local_port: Number(draft.local_port),

@@ -7,7 +7,7 @@ import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
-import type { Config } from '@/types'
+import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
 import { usePortForwarding } from './usePortForwarding'
@@ -22,7 +22,7 @@ const SettingsModal = lazy(() => import('@/components/SettingsModal'))
 const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
 
 type ActiveModal =
-  | { type: 'config'; initialConfig: Config | null; isEdit: boolean }
+  | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
   | {
       type:
         | 'autoImport'
@@ -43,19 +43,14 @@ function Main() {
 
   const openConfig = useCallback(async (id: number, isEdit: boolean) => {
     try {
-      const config = await invoke<Config>('get_config_cmd', { id })
+      const config = await invoke<StoredConfig>('get_config_cmd', { id })
 
       setActiveModal({
         type: 'config',
         isEdit,
         initialConfig: isEdit
           ? config
-          : {
-              ...config,
-              id: 0,
-              alias: `${config.alias ?? ''}-copy`,
-              is_running: false,
-            },
+          : { ...config, id: 0, alias: `${config.alias ?? ''}-copy` },
       })
     } catch (error) {
       toaster.error({

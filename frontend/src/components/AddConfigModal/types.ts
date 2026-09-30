@@ -1,17 +1,17 @@
 import type {
   CertIssuerKind,
-  Config,
   ExposureType,
   Protocol,
+  StoredConfig,
   StringOption,
   WorkloadType,
 } from '@/types'
 
 export interface AddConfigModalProps {
-  initialConfig: Config | null
+  initialConfig: StoredConfig | null
   isEdit: boolean
   onClose: () => void
-  onSave: (config: Config) => Promise<boolean>
+  onSave: (config: StoredConfig) => Promise<boolean>
 }
 
 export interface ConfigDraft {

@@ -18,7 +18,6 @@ interface ConfigBase {
   alias?: string
   domain_enabled?: boolean
   kubeconfig?: string
-  is_running: boolean
   http_logs_enabled?: boolean
   http_logs_max_file_size?: number
   http_logs_retention_days?: number
@@ -56,7 +55,13 @@ interface ExposeConfig extends ConfigBase {
   ingress_annotations?: string
 }
 
-export type Config = ServiceConfig | PodConfig | ProxyConfig | ExposeConfig
+export type StoredConfig =
+  | ServiceConfig
+  | PodConfig
+  | ProxyConfig
+  | ExposeConfig
+
+export type Config = StoredConfig & { is_running: boolean }
 
 export interface ViewCondition {
   field: string
