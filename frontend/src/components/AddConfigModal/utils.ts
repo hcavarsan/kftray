@@ -1,20 +1,20 @@
-import type { Config, Facet } from '@/types'
+import type { Facet } from '@/types'
 
 import type { ConfigDraft, StringOption } from './types'
 
-export const trimConfigValues = (config: Config): Config => ({
-  ...config,
-  alias: config.alias.trim(),
-  context: config.context.trim(),
-  ingress_annotations: config.ingress_annotations?.trim(),
-  ingress_class: config.ingress_class?.trim(),
-  local_address: config.local_address.trim(),
-  namespace: config.namespace.trim(),
-  remote_address: config.remote_address.trim(),
-  service: config.service.trim(),
-  target: config.target.trim(),
-  kubeconfig: config.kubeconfig.trim(),
-  cert_issuer: config.cert_issuer?.trim(),
+export const trimConfigValues = (draft: ConfigDraft): ConfigDraft => ({
+  ...draft,
+  alias: draft.alias?.trim(),
+  cert_issuer: draft.cert_issuer?.trim(),
+  context: draft.context?.trim(),
+  ingress_annotations: draft.ingress_annotations?.trim(),
+  ingress_class: draft.ingress_class?.trim(),
+  kubeconfig: draft.kubeconfig?.trim(),
+  local_address: draft.local_address?.trim(),
+  namespace: draft.namespace?.trim(),
+  remote_address: draft.remote_address?.trim(),
+  service: draft.service?.trim(),
+  target: draft.target?.trim(),
 })
 
 const formatTag = (key: string, value: string) =>

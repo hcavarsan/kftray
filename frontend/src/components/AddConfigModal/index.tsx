@@ -78,15 +78,15 @@ const toDraft = (config: Config | null): ConfigDraft => {
 }
 
 function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
-  const remote_port = draft.remote_port ? Number(draft.remote_port) : undefined
-  return {
-    ...initialConfig,
-    ...emptyDraft,
-    ...draft,
+  const base = {
     alias: draft.alias ?? '',
     auto_loopback_address: draft.auto_loopback_address ?? false,
     context: draft.context ?? '',
     domain_enabled: draft.domain_enabled ?? false,
+    http_logs_auto_cleanup: initialConfig?.http_logs_auto_cleanup,
+    http_logs_enabled: initialConfig?.http_logs_enabled,
+    http_logs_max_file_size: initialConfig?.http_logs_max_file_size,
+    http_logs_retention_days: initialConfig?.http_logs_retention_days,
     id: initialConfig?.id ?? 0,
     is_running: initialConfig?.is_running ?? false,
     kubeconfig: draft.kubeconfig ?? 'default',
@@ -95,10 +95,30 @@ function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
     namespace: draft.namespace ?? '',
     protocol: draft.protocol ?? 'tcp',
     remote_address: draft.remote_address ?? '',
-    remote_port,
     service: draft.service ?? '',
+    tags: draft.tags,
     target: draft.target ?? '',
-    workload_type: draft.workload_type ?? 'service',
+  }
+  const remote_port = draft.remote_port ? Number(draft.remote_port) : undefined
+
+  switch (draft.workload_type ?? 'service') {
+    case 'pod':
+      return { ...base, remote_port, workload_type: 'pod' }
+    case 'proxy':
+      return { ...base, remote_port, workload_type: 'proxy' }
+    case 'expose':
+      return {
+        ...base,
+        cert_issuer: draft.cert_issuer,
+        cert_issuer_kind: draft.cert_issuer_kind,
+        cert_manager_enabled: draft.cert_manager_enabled,
+        exposure_type: draft.exposure_type,
+        ingress_annotations: draft.ingress_annotations,
+        ingress_class: draft.ingress_class,
+        workload_type: 'expose',
+      }
+    case 'service':
+      return { ...base, remote_port, workload_type: 'service' }
   }
 }
 
@@ -175,7 +195,7 @@ function AddConfigModal({
     }
     setIsSaving(true)
     try {
-      if (await onSave(trimConfigValues(toConfig(draft, initialConfig)))) {
+      if (await onSave(toConfig(trimConfigValues(draft), initialConfig))) {
         onClose()
       }
     } finally {

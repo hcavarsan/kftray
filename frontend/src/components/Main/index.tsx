@@ -53,7 +53,7 @@ function Main() {
           : {
               ...config,
               id: 0,
-              alias: `${config.alias}-copy`,
+              alias: `${config.alias ?? ''}-copy`,
               is_running: false,
             },
       })

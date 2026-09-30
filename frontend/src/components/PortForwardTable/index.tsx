@@ -78,17 +78,19 @@ function PortForwardTable({
     return configs
       .filter(
         config =>
-          config.alias.toLowerCase().includes(searchLower) ||
-          config.context.toLowerCase().includes(searchLower) ||
-          config.remote_address?.toLowerCase().includes(searchLower) ||
-          config.local_port.toString().includes(searchLower) ||
+          (config.alias ?? '').toLowerCase().includes(searchLower) ||
+          (config.context ?? '').toLowerCase().includes(searchLower) ||
+          (config.workload_type === 'proxy' &&
+            config.remote_address.toLowerCase().includes(searchLower)) ||
+          String(config.local_port ?? '').includes(searchLower) ||
           Object.entries(config.tags ?? {}).some(([key, value]) =>
             `${key}=${value}`.toLowerCase().includes(searchLower),
           ),
       )
       .sort(
         (a, b) =>
-          a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+          (a.alias ?? '').localeCompare(b.alias ?? '') ||
+          (a.context ?? '').localeCompare(b.context ?? ''),
       )
   }, [configs, search])
 

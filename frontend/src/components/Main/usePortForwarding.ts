@@ -195,19 +195,15 @@ export function usePortForwarding() {
               failure.stderr || 'Failed to start port forwarding.',
             )
           }
-        } else if (tcp) {
-          await invoke('stop_port_forward_cmd', {
-            serviceName: config.service,
-            configId: config.id.toString(),
-          })
-        } else {
+        } else if (config.workload_type === 'proxy') {
           await invoke('stop_proxy_forward_cmd', {
             configId: config.id.toString(),
-            namespace: config.namespace,
-            serviceName: config.service,
-            localPort: config.local_port,
-            remoteAddress: config.remote_address,
-            protocol: 'tcp',
+            namespace: config.namespace ?? '',
+            serviceName: '',
+          })
+        } else {
+          await invoke('stop_port_forward_cmd', {
+            configId: config.id.toString(),
           })
         }
         // A later reservation already owns this id: apply nothing here and

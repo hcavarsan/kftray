@@ -1,37 +1,62 @@
-type WorkloadType = 'service' | 'pod' | 'proxy' | 'expose'
+export type WorkloadType = 'service' | 'pod' | 'proxy' | 'expose'
 
 export type Protocol = 'tcp' | 'udp'
 
-type ExposureType = 'cluster' | 'public'
+export type ExposureType = 'cluster' | 'public'
 
-type CertIssuerKind = 'ClusterIssuer' | 'Issuer'
+export type CertIssuerKind = 'ClusterIssuer' | 'Issuer'
 
-export interface Config {
+interface ConfigBase {
   id: number
-  service: string
-  namespace: string
-  local_port: number
-  local_address: string
-  auto_loopback_address: boolean
-  domain_enabled: boolean
+  namespace?: string
+  local_port?: number
   remote_port?: number
-  context: string
-  alias: string
-  remote_address: string
-  workload_type: WorkloadType
-  target: string
-  protocol: Protocol
-  kubeconfig: string
+  context?: string
+  protocol?: Protocol
+  local_address?: string
+  auto_loopback_address?: boolean
+  alias?: string
+  domain_enabled?: boolean
+  kubeconfig?: string
   is_running: boolean
   http_logs_enabled?: boolean
+  http_logs_max_file_size?: number
+  http_logs_retention_days?: number
+  http_logs_auto_cleanup?: boolean
+  tags?: Record<string, string>
+  service?: string
+  target?: string
+  remote_address?: string
+}
+
+interface ServiceConfig extends ConfigBase {
+  workload_type: 'service'
+  service: string
+}
+
+interface PodConfig extends ConfigBase {
+  workload_type: 'pod'
+  target: string
+}
+
+interface ProxyConfig extends ConfigBase {
+  workload_type: 'proxy'
+  remote_address: string
+}
+
+interface ExposeConfig extends ConfigBase {
+  workload_type: 'expose'
+  alias: string
+  local_port: number
   exposure_type?: ExposureType
   cert_manager_enabled?: boolean
   cert_issuer?: string
   cert_issuer_kind?: CertIssuerKind
   ingress_class?: string
   ingress_annotations?: string
-  tags?: Record<string, string>
 }
+
+export type Config = ServiceConfig | PodConfig | ProxyConfig | ExposeConfig
 
 export interface ViewCondition {
   field: string

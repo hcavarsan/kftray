@@ -18,7 +18,7 @@ import {
 import type { Protocol } from '@/types'
 
 interface ActionsMenuProps {
-  protocol: Protocol
+  protocol: Protocol | undefined
   isPending: boolean
   httpLogsEnabled: boolean | undefined
   onEdit: () => void
