@@ -13,7 +13,7 @@ export function RepositoryFields({
 }: RepositoryFieldsProps) {
   return (
     <Stack gap={2}>
-      <Text fontSize='xs' color='gray.400'>
+      <Text fontSize='xs' color='fg.muted'>
         GitHub Repository URL
       </Text>
       <Input
@@ -22,12 +22,12 @@ export function RepositoryFields({
           onRepoUrlChange(e.target.value)
         }
         placeholder='https://github.com/username/repo'
-        bg='app.panel'
-        borderColor='app.border'
+        bg='bg.surface'
+        borderColor='border'
         position='relative'
         _hover={{
-          borderColor: 'app.divider',
-          bg: 'app.panel',
+          borderColor: 'border.strong',
+          bg: 'bg.surface',
           zIndex: 2,
         }}
         height='30px'

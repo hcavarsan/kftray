@@ -21,18 +21,18 @@ export function KubeconfigControl({
 
   return (
     <HStack gap={2}>
-      <Text color='gray.400' fontSize='2xs'>
+      <Text color='fg.muted' fontSize='2xs'>
         Kubeconfig:
       </Text>
       <Tooltip content={kubeconfig}>
         <Button
-          bg='app.hover'
+          bg='bg.hover'
           height='20px'
           onClick={browse}
           px={2}
           size='xs'
           variant='ghost'
-          _hover={{ bg: 'app.active' }}
+          _hover={{ bg: 'bg.active' }}
         >
           <Text fontSize='2xs' maxW='120px' truncate>
             {kubeconfig}

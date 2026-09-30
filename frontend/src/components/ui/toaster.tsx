@@ -58,26 +58,26 @@ export function Toaster() {
             maxWidth='calc(100vw - 16px)'
             py='2'
             px='3'
-            bg='gray.900'
+            bg='bg.raised'
             borderRadius='lg'
             boxShadow='dark-lg'
             border='1px solid'
-            borderColor='gray.800'
+            borderColor='border'
             css={{ pointerEvents: 'auto' }}
           >
             {toast.type === 'loading' ? (
-              <Spinner size='xs' color='gray.500' />
+              <Spinner size='xs' color='fg.subtle' />
             ) : (
               <Toast.Indicator />
             )}
             <Stack gap='0' flex='1' maxWidth='100%'>
               {toast.title && (
-                <Toast.Title fontSize='xs' fontWeight='normal' color='gray.200'>
+                <Toast.Title fontSize='xs' fontWeight='normal' color='fg'>
                   {toast.title}
                 </Toast.Title>
               )}
               {toast.description && (
-                <Toast.Description fontSize='xs' color='gray.300'>
+                <Toast.Description fontSize='xs' color='fg.secondary'>
                   {toast.description}
                 </Toast.Description>
               )}
@@ -85,16 +85,16 @@ export function Toaster() {
             {toast.action && (
               <Toast.ActionTrigger
                 fontSize='xs'
-                color='gray.300'
-                _hover={{ color: 'gray.300' }}
+                color='fg.secondary'
+                _hover={{ color: 'fg.secondary' }}
                 ml='2'
               >
                 {toast.action.label}
               </Toast.ActionTrigger>
             )}
             <Toast.CloseTrigger
-              color='gray.600'
-              _hover={{ color: 'gray.400' }}
+              color='fg.faint'
+              _hover={{ color: 'fg.muted' }}
               ml='1.5'
               fontSize='sm'
             >

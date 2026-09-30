@@ -20,11 +20,11 @@ import {
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'up-to-date' | 'error'
 
 const STATUS_COLOR: Record<UpdateStatus, string> = {
-  idle: 'gray.500',
-  checking: 'blue.400',
-  available: 'green.400',
-  'up-to-date': 'gray.400',
-  error: 'red.400',
+  idle: 'fg.subtle',
+  checking: 'accent.fg',
+  available: 'success.fg',
+  'up-to-date': 'fg.muted',
+  error: 'danger.fg',
 }
 
 const STATUS_LABEL: Record<Exclude<UpdateStatus, 'idle'>, string> = {
@@ -167,7 +167,7 @@ export function UpdateSettings({
             borderRadius='full'
             bg={STATUS_COLOR[status]}
           />
-          <Text fontSize='10px' color='whiteAlpha.500'>
+          <Text fontSize='10px' color='fg.subtle'>
             {status === 'idle'
               ? `Last: ${lastCheckLabel}`
               : STATUS_LABEL[status]}

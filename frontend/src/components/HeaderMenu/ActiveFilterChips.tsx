@@ -62,16 +62,16 @@ export function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
             ps={1.5}
             pe={0.5}
             borderRadius='sm'
-            bg='blue.500/10'
+            bg='accent.subtle'
             border='1px solid'
-            borderColor='blue.500/25'
+            borderColor='accent.muted'
             fontSize='10px'
             lineHeight='1'
           >
-            <Text as='span' color='whiteAlpha.600'>
+            <Text as='span' color='fg.subtle'>
               {label.name}
             </Text>
-            <Text as='span' color='app.accentText' truncate maxW='120px'>
+            <Text as='span' color='accent.fg' truncate maxW='120px'>
               {label.value}
             </Text>
             <chakra.button
@@ -83,10 +83,13 @@ export function ActiveFilterChips({ view, setView }: ActiveFilterChipsProps) {
               w='14px'
               h='14px'
               borderRadius='sm'
-              color='whiteAlpha.500'
+              color='fg.subtle'
               cursor='pointer'
-              _hover={{ bg: 'blue.500/25', color: 'white' }}
-              _focusVisible={{ outline: '1px solid', outlineColor: 'blue.500' }}
+              _hover={{ bg: 'accent.muted', color: 'fg' }}
+              _focusVisible={{
+                outline: '1px solid',
+                outlineColor: 'accent.focusRing',
+              }}
               onClick={() => remove(chip)}
             >
               <X size={9} />

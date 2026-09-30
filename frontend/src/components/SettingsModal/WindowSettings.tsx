@@ -59,12 +59,12 @@ export function WindowSettings({
                 height='22px'
                 px={2}
                 justifyContent='space-between'
-                bg='app.bg'
+                bg='bg.canvas'
                 border='1px solid'
-                borderColor='app.border'
-                _hover={{ borderColor: 'app.borderStrong' }}
-                _expanded={{ borderColor: 'blue.400' }}
-                color='white'
+                borderColor='border'
+                _hover={{ borderColor: 'border.emphasized' }}
+                _expanded={{ borderColor: 'accent.focusRing' }}
+                color='fg'
                 fontSize='xs'
                 fontWeight='normal'
               >
@@ -73,7 +73,7 @@ export function WindowSettings({
                   as={ChevronDown}
                   width='12px'
                   height='12px'
-                  color='whiteAlpha.500'
+                  color='fg.subtle'
                 />
               </Button>
             </MenuTrigger>

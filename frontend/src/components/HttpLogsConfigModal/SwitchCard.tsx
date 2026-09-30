@@ -20,10 +20,10 @@ export function SwitchCard({
   return (
     <Box {...cardProps}>
       <Flex direction='column' gap={2}>
-        <Text fontSize='sm' fontWeight='500' color='white'>
+        <Text fontSize='sm' fontWeight='500' color='fg'>
           {title}
         </Text>
-        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+        <Text fontSize='xs' color='fg.subtle' lineHeight='1.3'>
           {description}
         </Text>
         <Box alignSelf='flex-start'>

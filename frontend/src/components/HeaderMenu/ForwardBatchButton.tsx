@@ -35,15 +35,15 @@ export function ForwardBatchButton({
           variant='ghost'
           disabled={disabled}
           onClick={onClick}
-          _hover={{ bg: isPending ? undefined : 'whiteAlpha.100' }}
+          _hover={{ bg: isPending ? undefined : 'bg.hover' }}
           _disabled={{ cursor: 'not-allowed' }}
           height='26px'
           minWidth='90px'
-          bg='whiteAlpha.50'
+          bg='bg.faint'
           px={2}
           borderRadius='md'
           border='1px solid'
-          borderColor='app.border'
+          borderColor='border'
         >
           <Box
             as={isPending ? Loader2 : icon}
@@ -71,10 +71,10 @@ export function ForwardBatchButton({
             cursor='pointer'
             bg='transparent'
             border='none'
-            _hover={{ bg: 'red.700' }}
+            _hover={{ bg: 'danger.emphasized' }}
             onClick={() => onCancel()}
           >
-            <Box as={X} width='10px' height='10px' color='red.300' />
+            <Box as={X} width='10px' height='10px' color='danger.fg' />
           </chakra.button>
         </Tooltip>
       )}

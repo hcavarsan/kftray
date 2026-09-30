@@ -111,7 +111,7 @@ export function Header({ search, setSearch }: HeaderProps) {
       display='flex'
       alignItems='center'
       justifyContent='space-between'
-      bg='app.panel'
+      bg='bg.surface'
       borderRadius='lg'
       borderBottomRadius='none'
       width='100%'
@@ -119,7 +119,7 @@ export function Header({ search, setSearch }: HeaderProps) {
       py={3}
       borderBottom='none'
       border='1px solid'
-      borderColor='app.border'
+      borderColor='border'
       position='relative'
       zIndex={10}
     >
@@ -131,7 +131,7 @@ export function Header({ search, setSearch }: HeaderProps) {
             onMouseEnter={() => setTooltipOpen(true)}
             onMouseLeave={() => setTooltipOpen(false)}
             cursor='move'
-            _hover={{ color: 'whiteAlpha.700' }}
+            _hover={{ color: 'fg.muted' }}
             mb={0.5}
           >
             <Tooltip content='Move Window Position' open={tooltipOpen}>
@@ -139,7 +139,7 @@ export function Header({ search, setSearch }: HeaderProps) {
                 as={GripVertical}
                 width='22px'
                 height='22px'
-                color='whiteAlpha.500'
+                color='fg.subtle'
                 data-drag
               />
             </Tooltip>
@@ -169,7 +169,7 @@ export function Header({ search, setSearch }: HeaderProps) {
             transform='translateY(-50%)'
             width='14px'
             height='14px'
-            color='whiteAlpha.500'
+            color='fg.subtle'
           />
           <Input
             value={search}
@@ -177,22 +177,22 @@ export function Header({ search, setSearch }: HeaderProps) {
             placeholder='Search...'
             size='sm'
             pl={8}
-            bg='app.raised'
+            bg='bg.raised'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
             _hover={{
-              borderColor: 'app.borderStrong',
+              borderColor: 'border.emphasized',
             }}
             _focus={{
-              borderColor: 'blue.400',
+              borderColor: 'accent.focusRing',
               boxShadow: 'none',
             }}
             height='28px'
             fontSize='13px'
             width='100%'
-            color='whiteAlpha.900'
+            color='fg'
             _placeholder={{
-              color: 'whiteAlpha.400',
+              color: 'fg.faint',
             }}
           />
         </Box>
@@ -208,14 +208,14 @@ export function Header({ search, setSearch }: HeaderProps) {
             width='28px'
             minWidth='28px'
             p={0}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
             <Box
               as={isPinned ? Pin : PinOff}
               width='16px'
               height='16px'
-              color='whiteAlpha.700'
+              color='fg.muted'
             />
           </Button>
         </Tooltip>
@@ -232,10 +232,10 @@ export function Header({ search, setSearch }: HeaderProps) {
             minWidth='28px'
             p={0}
             ml={-1.5}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
-            <Box as={Minus} width='15px' height='15px' color='whiteAlpha.700' />
+            <Box as={Minus} width='15px' height='15px' color='fg.muted' />
           </Button>
         </Tooltip>
 
@@ -249,10 +249,10 @@ export function Header({ search, setSearch }: HeaderProps) {
             minWidth='28px'
             p={0}
             ml={-1.5}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _active={{ bg: 'whiteAlpha.200' }}
+            _hover={{ bg: 'bg.hover' }}
+            _active={{ bg: 'bg.active' }}
           >
-            <Box as={X} width='15px' height='15px' color='whiteAlpha.700' />
+            <Box as={X} width='15px' height='15px' color='fg.muted' />
           </Button>
         </Tooltip>
       </Box>

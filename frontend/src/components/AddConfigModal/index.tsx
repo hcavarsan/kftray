@@ -281,7 +281,7 @@ export function AddConfigModal({
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />
         <Button
-          bg='blue.500'
+          bg='accent.solid'
           disabled={
             Boolean(duplicateTagError) || Object.keys(errors).length > 0
           }
@@ -290,7 +290,7 @@ export function AddConfigModal({
           loadingText='Saving...'
           onClick={handleSave}
           size='xs'
-          _hover={{ bg: 'blue.600' }}
+          _hover={{ bg: 'accent.solidHover' }}
         >
           {isEdit ? 'Save Changes' : 'Add Config'}
         </Button>

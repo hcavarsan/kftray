@@ -1,8 +1,8 @@
 export const cardProps = {
-  bg: 'app.panel',
+  bg: 'bg.surface',
   p: 2.5,
   borderRadius: 'md',
   border: '1px solid',
-  borderColor: 'app.border',
+  borderColor: 'border',
   height: 'fit-content',
 }

@@ -28,7 +28,7 @@ interface ExposeFieldsProps {
 const Hint = ({ content }: { content: string }) => (
   <Tooltip content={content}>
     <span style={{ alignItems: 'center', display: 'inline-flex' }}>
-      <Info color='gray' size={10} />
+      <Info color='var(--chakra-colors-fg-subtle)' size={10} />
     </span>
   </Tooltip>
 )
@@ -96,7 +96,7 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
               }}
               size='xs'
             >
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Enable HTTPS (cert-manager)
               </Text>
             </Checkbox>

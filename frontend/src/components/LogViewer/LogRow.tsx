@@ -57,7 +57,7 @@ function HighlightedText({
             as='mark'
             key={key}
             bg='search.match'
-            color='white'
+            color='fg'
             px={0.5}
             borderRadius='2px'
           >
@@ -112,22 +112,22 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
   return (
     <Box
       mt={2}
-      bg='app.panel'
+      bg='bg.surface'
       borderRadius='4px'
       border='1px solid'
-      borderColor='app.border'
+      borderColor='border'
       borderLeft='2px solid'
-      borderLeftColor={levelColors?.border ?? 'app.border'}
+      borderLeftColor={levelColors?.border ?? 'border'}
       fontSize='11px'
       fontFamily='mono'
     >
       <Flex direction='column' gap={2}>
         {entry.timestamp && (
           <Box>
-            <Text color='whiteAlpha.500' display='inline' fontSize='10px'>
+            <Text color='fg.subtle' display='inline' fontSize='10px'>
               Timestamp:{' '}
             </Text>
-            <Text color='whiteAlpha.900' display='inline'>
+            <Text color='fg' display='inline'>
               {entry.timestamp}
             </Text>
           </Box>
@@ -135,7 +135,7 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
 
         {entry.level && (
           <Box>
-            <Text color='whiteAlpha.500' display='inline' fontSize='10px'>
+            <Text color='fg.subtle' display='inline' fontSize='10px'>
               Level:{' '}
             </Text>
             <Text
@@ -150,10 +150,10 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
 
         {entry.module && (
           <Box>
-            <Text color='whiteAlpha.500' display='inline' fontSize='10px'>
+            <Text color='fg.subtle' display='inline' fontSize='10px'>
               Module:{' '}
             </Text>
-            <Text color='cyan.300' display='inline' wordBreak='break-all'>
+            <Text color='log.module.fg' display='inline' wordBreak='break-all'>
               {entry.module}
             </Text>
           </Box>
@@ -161,10 +161,10 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
 
         <Flex align='flex-start' justify='space-between'>
           <Box flex={1} pr={2}>
-            <Text color='whiteAlpha.500' display='inline' fontSize='10px'>
+            <Text color='fg.subtle' display='inline' fontSize='10px'>
               Message:{' '}
             </Text>
-            <Text color='whiteAlpha.900' display='inline' wordBreak='break-all'>
+            <Text color='fg' display='inline' wordBreak='break-all'>
               {entry.message}
             </Text>
           </Box>
@@ -176,8 +176,8 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
               onClick={handleCopyAll}
               minW='20px'
               h='20px'
-              color='whiteAlpha.500'
-              _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.800' }}
+              color='fg.subtle'
+              _hover={{ bg: 'bg.hover', color: 'fg.secondary' }}
             >
               <Copy size={11} />
             </IconButton>
@@ -228,14 +228,14 @@ function LogRowComponent({
       px={2}
       py={1}
       borderBottom='1px solid'
-      borderBottomColor='app.hover'
-      bg={isExpanded ? 'white/2' : 'transparent'}
-      _hover={{ bg: 'app.faint' }}
+      borderBottomColor='border.subtle'
+      bg={isExpanded ? 'bg.faint' : 'transparent'}
+      _hover={{ bg: 'bg.faint' }}
       transition='background 0.1s'
       overflow='hidden'
     >
       <Flex align='center' gap={2} cursor='pointer' onClick={onToggle} h='28px'>
-        <Box color='whiteAlpha.400' flexShrink={0}>
+        <Box color='fg.faint' flexShrink={0}>
           {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </Box>
 
@@ -243,7 +243,7 @@ function LogRowComponent({
           <Text
             fontSize='11px'
             fontFamily='mono'
-            color='whiteAlpha.500'
+            color='fg.subtle'
             flexShrink={0}
             minW='60px'
           >
@@ -261,7 +261,7 @@ function LogRowComponent({
           <Text
             fontSize='11px'
             fontFamily='mono'
-            color='cyan.300'
+            color='log.module.fg'
             flexShrink={0}
             maxW='180px'
             overflow='hidden'
@@ -275,7 +275,7 @@ function LogRowComponent({
         <Text
           fontSize='11px'
           fontFamily='mono'
-          color={entry.is_parsed ? 'whiteAlpha.800' : 'whiteAlpha.500'}
+          color={entry.is_parsed ? 'fg.secondary' : 'fg.subtle'}
           flex={1}
           overflow='hidden'
           textOverflow='ellipsis'

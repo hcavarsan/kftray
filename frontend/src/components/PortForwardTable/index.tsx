@@ -222,11 +222,11 @@ export function PortForwardTable({
         css={{
           flex: 1,
           overflowY: 'auto',
-          backgroundColor: 'app.panel',
+          backgroundColor: 'bg.surface',
           borderRadius: 'var(--border-radius)',
           padding: '4px',
           border: '1px solid',
-          borderColor: 'app.border',
+          borderColor: 'border',
         }}
       >
         {groups.length === 0 && configs.length > 0 && (
@@ -238,7 +238,7 @@ export function PortForwardTable({
             height='100%'
             minHeight='120px'
           >
-            <Text fontSize='xs' color='whiteAlpha.600'>
+            <Text fontSize='xs' color='fg.subtle'>
               No configs match your search or filters
             </Text>
             <Button
@@ -247,10 +247,10 @@ export function PortForwardTable({
               height='24px'
               px={2}
               fontSize='11px'
-              bg='whiteAlpha.50'
+              bg='bg.faint'
               border='1px solid'
-              borderColor='app.border'
-              _hover={{ bg: 'whiteAlpha.100' }}
+              borderColor='border'
+              _hover={{ bg: 'bg.hover' }}
               onClick={() => {
                 setSearch('')
                 if (view?.filters.length) {

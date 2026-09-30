@@ -245,7 +245,7 @@ function PortForwardRowComponent({
                       <Text fontSize='xs' fontWeight='medium'>
                         Status: {status.status}
                       </Text>
-                      <Text fontSize='xs' color='gray.400'>
+                      <Text fontSize='xs' color='fg.muted'>
                         Pod: {activePod} (click to copy)
                       </Text>
                     </Box>

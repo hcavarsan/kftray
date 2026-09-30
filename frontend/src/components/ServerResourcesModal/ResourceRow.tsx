@@ -35,15 +35,15 @@ export function ResourceRow({
 
   return (
     <Box
-      bg='app.panel'
+      bg='bg.surface'
       p={2}
       borderRadius='md'
       border='1px solid'
-      borderColor='white/4'
-      _hover={{ borderColor: 'app.border' }}
+      borderColor='border.subtle'
+      _hover={{ borderColor: 'border' }}
     >
       <Flex align='center' gap={2} mb={1.5}>
-        <Box color='whiteAlpha.500' flexShrink={0}>
+        <Box color='fg.subtle' flexShrink={0}>
           <Icon size={12} />
         </Box>
 
@@ -51,7 +51,7 @@ export function ResourceRow({
           <Text
             fontSize='xs'
             fontWeight='500'
-            color='white'
+            color='fg'
             flex='1'
             truncate
             cursor='default'
@@ -78,20 +78,20 @@ export function ResourceRow({
           flexShrink={0}
           px={1}
           opacity={0.5}
-          _hover={{ opacity: 1, color: 'red.400' }}
+          _hover={{ opacity: 1, color: 'danger.fg' }}
         >
           {isDeleting ? <Spinner size='xs' /> : <Trash2 size={11} />}
         </Button>
       </Flex>
 
-      <Flex align='center' gap={1.5} fontSize='xs' color='whiteAlpha.500'>
+      <Flex align='center' gap={1.5} fontSize='xs' color='fg.subtle'>
         <Tooltip content={resource.context} positioning={{ placement: 'top' }}>
           <Text truncate maxWidth='120px' cursor='default'>
             {resource.context}
           </Text>
         </Tooltip>
 
-        <Text color='whiteAlpha.300'>/</Text>
+        <Text color='fg.faint'>/</Text>
 
         <Tooltip
           content={resource.namespace}
@@ -102,13 +102,13 @@ export function ResourceRow({
           </Text>
         </Tooltip>
 
-        <Text color='whiteAlpha.300' flexShrink={0}>
+        <Text color='fg.faint' flexShrink={0}>
           ·
         </Text>
 
         <Text flexShrink={0}>{resource.resource_type}</Text>
 
-        <Text color='whiteAlpha.300' flexShrink={0}>
+        <Text color='fg.faint' flexShrink={0}>
           ·
         </Text>
 

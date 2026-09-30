@@ -47,8 +47,8 @@ export function BulkDeleteButton({
           onClick={() =>
             setIdsToDelete(selectedConfigs.map(config => config.id))
           }
-          bg='red.500'
-          _hover={{ bg: 'red.600' }}
+          bg='danger.solid'
+          _hover={{ bg: 'danger.emphasized' }}
         >
           <Box as={Trash2} width='12px' height='12px' />
         </FooterActionButton>

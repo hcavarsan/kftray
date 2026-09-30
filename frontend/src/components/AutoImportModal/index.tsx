@@ -122,8 +122,8 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
   const kubeconfigButtonProps = (active: boolean) => ({
     size: 'xs' as const,
     variant: active ? ('solid' as const) : ('ghost' as const),
-    bg: active ? 'whiteAlpha.100' : 'transparent',
-    _hover: { bg: active ? 'whiteAlpha.200' : 'whiteAlpha.50' },
+    bg: active ? 'bg.hover' : 'transparent',
+    _hover: { bg: active ? 'bg.active' : 'bg.faint' },
     height: '22px',
   })
 
@@ -133,7 +133,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
         <Stack gap={4}>
           <Stack gap={1.5}>
             <Flex align='center' justify='space-between'>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Kubeconfig *
               </Text>
               <Flex gap={2}>
@@ -154,19 +154,19 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
 
             {!isDefaultKubeconfig && (
               <Flex
-                bg='app.panel'
+                bg='bg.surface'
                 border='1px solid'
-                borderColor='app.border'
+                borderColor='border'
                 borderRadius='md'
                 height='35px'
                 align='center'
                 justify='space-between'
                 px={2}
-                _hover={{ borderColor: 'app.borderStrong' }}
+                _hover={{ borderColor: 'border.emphasized' }}
               >
                 <Text
                   fontSize='xs'
-                  color='gray.300'
+                  color='fg.secondary'
                   truncate
                   maxW='250px'
                   title={kubeConfig}
@@ -177,8 +177,8 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
                   size='xs'
                   variant='ghost'
                   onClick={handleSetKubeConfig}
-                  bg='whiteAlpha.50'
-                  _hover={{ bg: 'whiteAlpha.100' }}
+                  bg='bg.faint'
+                  _hover={{ bg: 'bg.hover' }}
                   height='22px'
                   minW='70px'
                 >
@@ -189,12 +189,12 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
           </Stack>
 
           <Stack gap={1.5}>
-            <Text fontSize='xs' color='gray.400'>
+            <Text fontSize='xs' color='fg.muted'>
               Context *
             </Text>
             {contextQuery.isLoading ? (
               <Flex justify='center' py={2}>
-                <Spinner size='sm' color='blue.400' />
+                <Spinner size='sm' color='accent.fg' />
               </Flex>
             ) : (
               <ReactSelect<StringOption>
@@ -206,7 +206,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
               />
             )}
             {contextQuery.isError && (
-              <Text color='red.300' fontSize='xs'>
+              <Text color='danger.fg' fontSize='xs'>
                 Please select a valid kubeconfig file
               </Text>
             )}
@@ -217,7 +217,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
               checked={aliasAsDomain}
               onCheckedChange={e => setAliasAsDomain(e.checked === true)}
             >
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Enable alias as domain for all configurations
               </Text>
             </Checkbox>
@@ -227,26 +227,26 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
               checked={enableAutoLoopback}
               onCheckedChange={e => setEnableAutoLoopback(e.checked === true)}
             >
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 Auto select address for all configurations
               </Text>
             </Checkbox>
           </Stack>
 
           <VStack align='start' gap={2.5} mt={2}>
-            <Text fontSize='xs' color='gray.300'>
+            <Text fontSize='xs' color='fg.secondary'>
               Services must have:
             </Text>
             <Stack gap={1.5}>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 • Annotation{' '}
-                <Text as='span' color='blue.300' fontFamily='mono'>
+                <Text as='span' color='accent.fg' fontFamily='mono'>
                   kftray.app/enabled: true
                 </Text>
               </Text>
-              <Text fontSize='xs' color='gray.400'>
+              <Text fontSize='xs' color='fg.muted'>
                 • Config format:{' '}
-                <Text as='span' color='blue.300' fontFamily='mono'>
+                <Text as='span' color='accent.fg' fontFamily='mono'>
                   alias-localPort-targetPort
                 </Text>
               </Text>
@@ -258,8 +258,8 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
         <DialogCancelButton onClick={onClose} />
         <Button
           size='xs'
-          bg='blue.500'
-          _hover={{ bg: 'blue.600' }}
+          bg='accent.solid'
+          _hover={{ bg: 'accent.solidHover' }}
           onClick={handleImport}
           disabled={!selectedContext || importMutation.isPending}
           height='28px'

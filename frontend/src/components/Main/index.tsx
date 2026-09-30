@@ -120,7 +120,7 @@ export function Main() {
       maxHeight='100%'
       maxW='100%'
       overflow='hidden'
-      bg='app.bg'
+      bg='bg.canvas'
       borderRadius='lg'
     >
       <VStack
@@ -136,7 +136,7 @@ export function Main() {
           height='100%'
           position='relative'
           overflow='hidden'
-          bg='app.bg'
+          bg='bg.canvas'
         >
           <Box
             position='absolute'

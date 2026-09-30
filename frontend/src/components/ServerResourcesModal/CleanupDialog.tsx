@@ -41,10 +41,10 @@ export function CleanupDialog({
       maxWidth='420px'
     >
       <Dialog.Body p={3}>
-        <Text fontSize='xs' color='whiteAlpha.700' lineHeight='1.5' mb={3}>
+        <Text fontSize='xs' color='fg.muted' lineHeight='1.5' mb={3}>
           Delete {count} {noun} {scope}?
           {mode === 'all' && (
-            <Text as='span' color='orange.400' fontWeight='500'>
+            <Text as='span' color='warning.fg' fontWeight='500'>
               {' '}
               This will also stop active port forwards.
             </Text>
@@ -53,10 +53,10 @@ export function CleanupDialog({
 
         {count > 0 && (
           <Box
-            bg='app.deep'
+            bg='bg.deep'
             borderRadius='md'
             border='1px solid'
-            borderColor='app.hover'
+            borderColor='border.subtle'
             maxHeight='200px'
             overflowY='auto'
           >
@@ -66,17 +66,17 @@ export function CleanupDialog({
                 px={2}
                 py={1.5}
                 borderBottom='1px solid'
-                borderColor='app.faint'
+                borderColor='border.subtle'
                 _last={{ borderBottom: 'none' }}
               >
-                <Text fontSize='xs' color='whiteAlpha.800' truncate>
+                <Text fontSize='xs' color='fg.secondary' truncate>
                   {resource.name}
                 </Text>
-                <Flex gap={1} fontSize='10px' color='whiteAlpha.500' mt={0.5}>
+                <Flex gap={1} fontSize='10px' color='fg.subtle' mt={0.5}>
                   <Text>{resource.resource_type}</Text>
-                  <Text color='whiteAlpha.300'>·</Text>
+                  <Text color='fg.faint'>·</Text>
                   <Text truncate>{resource.context}</Text>
-                  <Text color='whiteAlpha.300'>/</Text>
+                  <Text color='fg.faint'>/</Text>
                   <Text truncate>{resource.namespace}</Text>
                 </Flex>
               </Box>

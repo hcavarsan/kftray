@@ -44,19 +44,19 @@ const contextSelectStyles: typeof baseContextStyles = {
   ...baseContextStyles,
   control: (base, state) => ({
     ...baseContextStyles.control?.(base, state),
-    background: 'var(--chakra-colors-app-bg)',
+    background: 'var(--chakra-colors-bg-canvas)',
     cursor: 'pointer',
   }),
   menuList: base => ({ ...base, padding: 0, maxHeight: '150px' }),
   option: (base, state) => ({
     ...baseContextStyles.option?.(base, state),
-    color: 'white',
+    color: 'var(--chakra-colors-fg)',
     padding: '6px 10px',
     cursor: 'pointer',
   }),
   placeholder: (base, state) => ({
     ...baseContextStyles.placeholder?.(base, state),
-    color: 'var(--chakra-colors-app-text-disabled)',
+    color: 'var(--chakra-colors-fg-subtle)',
   }),
   indicatorSeparator: () => ({ display: 'none' }),
   dropdownIndicator: base => ({ ...base, padding: '0 6px' }),
@@ -176,8 +176,8 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
           px={3}
           py={2}
           borderBottom='1px solid'
-          borderColor='app.hover'
-          bg='app.bg'
+          borderColor='border.subtle'
+          bg='bg.canvas'
         >
           <Flex align='center' gap={3}>
             <Box flex='1'>
@@ -192,13 +192,13 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
               />
             </Box>
             {isAll && isFetching && (
-              <Text fontSize='10px' color='whiteAlpha.500' flexShrink={0}>
+              <Text fontSize='10px' color='fg.subtle' flexShrink={0}>
                 {settledCount}/{targets.length}
               </Text>
             )}
             {!isFetching && resources.length > 0 && (
               <Flex align='center' gap={2} flexShrink={0}>
-                <Text fontSize='xs' color='whiteAlpha.500'>
+                <Text fontSize='xs' color='fg.subtle'>
                   {resources.length}
                 </Text>
                 {orphaned.length > 0 && (
@@ -207,9 +207,9 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
                       width='5px'
                       height='5px'
                       borderRadius='full'
-                      bg='red.400'
+                      bg='danger.solid'
                     />
-                    <Text fontSize='xs' color='red.400'>
+                    <Text fontSize='xs' color='danger.fg'>
                       {orphaned.length}
                     </Text>
                   </Flex>
@@ -247,8 +247,8 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
                   disabled={busy}
                   height='28px'
                   px={2}
-                  color='whiteAlpha.600'
-                  _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
+                  color='fg.subtle'
+                  _hover={{ bg: 'bg.faint', color: 'danger.fg' }}
                 >
                   <Trash2 size={12} />
                 </Button>
@@ -266,7 +266,7 @@ export function ServerResourcesModal({ onClose }: ServerResourcesModalProps) {
                 disabled={isFetching || !selected}
                 height='28px'
                 px={2}
-                _hover={{ bg: 'whiteAlpha.50' }}
+                _hover={{ bg: 'bg.faint' }}
               >
                 <Box
                   as={RefreshCw}

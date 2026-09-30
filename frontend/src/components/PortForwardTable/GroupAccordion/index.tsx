@@ -112,7 +112,7 @@ function GroupAccordionComponent({
               css={{
                 width: '40px',
                 height: '3px',
-                backgroundColor: 'app.active',
+                backgroundColor: 'bg.active',
                 borderRadius: '2px',
               }}
             >
@@ -123,10 +123,10 @@ function GroupAccordionComponent({
                   transition: 'all 0.2s ease-in-out',
                   backgroundColor:
                     groupProgressValue === 100
-                      ? 'blue.500'
+                      ? 'accent.solid'
                       : groupProgressValue > 0
-                        ? 'app.accent'
-                        : 'app.divider',
+                        ? 'accent.fg'
+                        : 'border.strong',
                 }}
               />
             </ProgressRoot>
@@ -138,7 +138,7 @@ function GroupAccordionComponent({
           width='100%'
           px={1}
           py={0.5}
-          bg='app.panel/50'
+          bg='bg.surface/50'
           borderRadius='md'
           border='none'
         >

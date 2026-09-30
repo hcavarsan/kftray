@@ -19,7 +19,7 @@ export function ConfigDetailsTooltip({
       <Text fontSize='xs' fontWeight='medium'>
         Status: {status.status}
       </Text>
-      <Box borderTop='1px solid' borderColor='app.active' pt={1} mt={1}>
+      <Box borderTop='1px solid' borderColor='border.emphasized' pt={1} mt={1}>
         {details.map(detail => (
           <Text fontSize='xs' key={detail.label}>
             <strong>{detail.label}:</strong> {detail.value}

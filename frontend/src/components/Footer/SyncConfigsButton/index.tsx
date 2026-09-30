@@ -49,7 +49,7 @@ export function SyncConfigsButton() {
         disabled={!credentials || syncStatus.isSyncing}
         minWidth='70px'
         px={2}
-        _active={{ bg: 'whiteAlpha.200' }}
+        _active={{ bg: 'bg.active' }}
       >
         <Box display='flex' alignItems='center' gap={1}>
           {syncStatus.isSyncing ? (

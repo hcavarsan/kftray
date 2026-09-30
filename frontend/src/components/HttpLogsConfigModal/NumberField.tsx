@@ -9,14 +9,14 @@ const numberInputProps = {
   size: 'xs',
   width: '60px',
   height: '24px',
-  bg: 'app.bg',
+  bg: 'bg.canvas',
   border: '1px solid',
-  borderColor: 'app.border',
-  _hover: { borderColor: 'app.borderStrong' },
-  _focus: { borderColor: 'blue.400', boxShadow: 'none' },
-  _invalid: { borderColor: 'red.400' },
-  color: 'white',
-  _placeholder: { color: 'whiteAlpha.500' },
+  borderColor: 'border',
+  _hover: { borderColor: 'border.emphasized' },
+  _focus: { borderColor: 'accent.focusRing', boxShadow: 'none' },
+  _invalid: { borderColor: 'danger.fg' },
+  color: 'fg',
+  _placeholder: { color: 'fg.subtle' },
   textAlign: 'center',
   fontSize: 'xs',
 } as const
@@ -47,10 +47,10 @@ export function NumberField({
   return (
     <Field.Root {...cardProps} invalid={!!error}>
       <Flex direction='column' gap={2}>
-        <Field.Label fontSize='sm' fontWeight='500' color='white'>
+        <Field.Label fontSize='sm' fontWeight='500' color='fg'>
           {label}
         </Field.Label>
-        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+        <Text fontSize='xs' color='fg.subtle' lineHeight='1.3'>
           {description}
         </Text>
         <Flex align='center' gap={1}>
@@ -62,7 +62,7 @@ export function NumberField({
             min={min}
             max={max}
           />
-          <Text fontSize='xs' color='whiteAlpha.600'>
+          <Text fontSize='xs' color='fg.subtle'>
             {unit}
           </Text>
         </Flex>

@@ -178,11 +178,11 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
                 }
                 size='xs'
               >
-                <Text fontSize='xs' color='gray.400'>
+                <Text fontSize='xs' color='fg.muted'>
                   Flush existing configs before sync
                 </Text>
               </Checkbox>
-              <Text fontSize='10px' color='gray.500' ml={5} lineHeight='1.3'>
+              <Text fontSize='10px' color='fg.subtle' ml={5} lineHeight='1.3'>
                 When enabled, all local configs will be deleted before importing
                 from GitHub
               </Text>
@@ -205,8 +205,8 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
               size='xs'
               variant='ghost'
               onClick={handleDeleteConfig}
-              color='red.300'
-              _hover={{ bg: 'whiteAlpha.50' }}
+              color='danger.fg'
+              _hover={{ bg: 'bg.faint' }}
               height='28px'
               disabled={isSaving}
             >
@@ -220,8 +220,8 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
             type='submit'
             form='git-sync-form'
             size='xs'
-            bg='blue.500'
-            _hover={{ bg: 'blue.600' }}
+            bg='accent.solid'
+            _hover={{ bg: 'accent.solidHover' }}
             disabled={
               isSaving ||
               !formState.repoUrl ||

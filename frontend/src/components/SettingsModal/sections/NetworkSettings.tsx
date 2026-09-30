@@ -49,7 +49,7 @@ export function NetworkSettings({
       <SettingCard
         title='Network Monitor'
         description='Monitor connectivity and reconnect port forwards when network is restored.'
-        statusColor={networkMonitorRunning ? 'green.400' : 'gray.500'}
+        statusColor={networkMonitorRunning ? 'success.fg' : 'fg.subtle'}
         statusTitle={networkMonitorRunning ? 'Running' : 'Stopped'}
       >
         <SettingRow label='Enabled:'>

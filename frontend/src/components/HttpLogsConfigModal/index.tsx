@@ -178,8 +178,8 @@ export function HttpLogsConfigModal({
     <AppDialog
       title={
         <Flex align='center' gap={2}>
-          <Box as={FileText} width='14px' height='14px' color='blue.400' />
-          <Text as='span' fontWeight='600' color='white'>
+          <Box as={FileText} width='14px' height='14px' color='accent.fg' />
+          <Text as='span' fontWeight='600' color='fg'>
             HTTP Logs Configuration
           </Text>
         </Flex>
@@ -190,7 +190,7 @@ export function HttpLogsConfigModal({
       <Dialog.Body px={4} py={3}>
         {!draft ? (
           <Box py={6} textAlign='center'>
-            <Text color={configQuery.isError ? 'red.300' : 'whiteAlpha.600'}>
+            <Text color={configQuery.isError ? 'danger.fg' : 'fg.subtle'}>
               {configQuery.isError
                 ? `Failed to load configuration: ${errorMessage(configQuery.error)}`
                 : 'Loading configuration...'}
@@ -253,10 +253,10 @@ export function HttpLogsConfigModal({
           loading={saveMutation.isPending}
           loadingText='Saving...'
           disabled={!draft}
-          bg='blue.500'
-          color='white'
-          _hover={{ bg: 'blue.600' }}
-          _active={{ bg: 'blue.700' }}
+          bg='accent.solid'
+          color='fg'
+          _hover={{ bg: 'accent.solidHover' }}
+          _active={{ bg: 'accent.solidActive' }}
           height='28px'
           fontSize='xs'
         >

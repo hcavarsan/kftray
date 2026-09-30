@@ -9,12 +9,12 @@ export function FooterActionButton(props: ComponentProps<typeof Button>) {
       variant='ghost'
       height='32px'
       minWidth='32px'
-      bg='whiteAlpha.50'
+      bg='bg.faint'
       px={1.5}
       borderRadius='md'
       border='1px solid'
-      borderColor='app.border'
-      _hover={{ bg: 'whiteAlpha.100' }}
+      borderColor='border'
+      _hover={{ bg: 'bg.hover' }}
       {...props}
     />
   )

@@ -7,14 +7,14 @@ import { LogFilterDropdown } from './LogFilterDropdown'
 import type { LogFilterAccent, ModuleFilterDropdownProps } from './types'
 
 const MODULE_ACCENT: LogFilterAccent = {
-  activeBg: 'cyan.400/10',
-  activeColor: 'cyan.300',
-  activeBorder: 'cyan.400/20',
-  hoverBg: 'cyan.400/15',
-  hoverBorder: 'cyan.400/30',
-  badgeBg: 'cyan.300',
-  badgeColor: 'black',
-  checkedBg: 'cyan.300',
+  activeBg: 'log.module.subtle',
+  activeColor: 'log.module.fg',
+  activeBorder: 'log.module.muted',
+  hoverBg: 'log.module.muted',
+  hoverBorder: 'log.module.emphasized',
+  badgeBg: 'log.module.solid',
+  badgeColor: 'log.module.contrast',
+  checkedBg: 'log.module.solid',
 }
 
 const formatModuleName = (module: string): string => {
@@ -38,7 +38,7 @@ const renderModule = (module: string) => (
   <Text
     fontSize='10px'
     fontFamily='mono'
-    color='cyan.300'
+    color='log.module.fg'
     overflow='hidden'
     textOverflow='ellipsis'
     whiteSpace='nowrap'

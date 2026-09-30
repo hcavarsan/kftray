@@ -44,7 +44,7 @@ function Chip({
         borderRadius='2px'
         cursor='pointer'
         opacity={0.7}
-        _hover={{ opacity: 1, bg: 'app.shade' }}
+        _hover={{ opacity: 1, bg: 'bg.shade' }}
         onClick={e => {
           e.stopPropagation()
           onRemove()
@@ -109,9 +109,9 @@ function FilterChipsComponent({
           <Chip
             key={`module-${module}`}
             label={displayName}
-            bg='cyan.400/10'
-            color='cyan.300'
-            borderColor='cyan.400/20'
+            bg='log.module.subtle'
+            color='log.module.fg'
+            borderColor='log.module.muted'
             onRemove={() => onRemoveModule(module)}
           />
         )
@@ -133,10 +133,10 @@ function FilterChipsComponent({
         <Text
           as='button'
           fontSize='10px'
-          color='whiteAlpha.400'
+          color='fg.faint'
           cursor='pointer'
           ml={1}
-          _hover={{ color: 'whiteAlpha.700', textDecoration: 'underline' }}
+          _hover={{ color: 'fg.muted', textDecoration: 'underline' }}
           onClick={onClearAll}
         >
           Clear all

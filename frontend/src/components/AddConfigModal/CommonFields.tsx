@@ -20,7 +20,7 @@ const workloadTypeOptions: StringOption[] = [
 
 function ErrorText({ error, label }: { error: unknown; label: string }) {
   return error ? (
-    <Text color='red.300' fontSize='xs'>
+    <Text color='danger.fg' fontSize='xs'>
       {label}
     </Text>
   ) : null
@@ -69,7 +69,7 @@ export function CommonFields({
                   <span
                     style={{ display: 'inline-flex', alignItems: 'center' }}
                   >
-                    <Info size={10} color='var(--chakra-colors-app-muted)' />
+                    <Info size={10} color='var(--chakra-colors-fg-subtle)' />
                   </span>
                 </Tooltip>
               ) : undefined
@@ -94,7 +94,7 @@ export function CommonFields({
               }
               size='xs'
             >
-              <Text color='gray.400' fontSize='xs'>
+              <Text color='fg.muted' fontSize='xs'>
                 Enable alias as domain
               </Text>
             </Checkbox>

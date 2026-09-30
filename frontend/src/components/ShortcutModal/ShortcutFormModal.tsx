@@ -183,13 +183,13 @@ export function ShortcutFormModal({
       <AppDialogBody overflowX='hidden'>
         <Stack gap={2.5}>
           <Box
-            bg='app.panel'
+            bg='bg.surface'
             p={2}
             borderRadius='md'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
           >
-            <Text fontSize='xs' color='gray.400' mb={1}>
+            <Text fontSize='xs' color='fg.muted' mb={1}>
               Action Type
             </Text>
             <Wrap gap={1.5}>
@@ -202,12 +202,12 @@ export function ShortcutFormModal({
                       size='2xs'
                       variant={selected ? 'solid' : 'outline'}
                       onClick={() => selectAction(action.actionType)}
-                      bg={selected ? 'blue.500' : 'transparent'}
-                      color={selected ? 'white' : 'whiteAlpha.700'}
-                      borderColor='app.borderStrong'
+                      bg={selected ? 'accent.solid' : 'transparent'}
+                      color={selected ? 'fg' : 'fg.muted'}
+                      borderColor='border.emphasized'
                       _hover={{
-                        borderColor: 'white/30',
-                        bg: selected ? 'blue.600' : 'whiteAlpha.100',
+                        borderColor: 'border.strong',
+                        bg: selected ? 'accent.solidHover' : 'bg.hover',
                       }}
                       height='20px'
                       fontSize='xs'
@@ -222,13 +222,13 @@ export function ShortcutFormModal({
           </Box>
 
           <Box
-            bg='app.panel'
+            bg='bg.surface'
             p={2}
             borderRadius='md'
             border='1px solid'
-            borderColor='app.border'
+            borderColor='border'
           >
-            <Text fontSize='xs' color='gray.400' mb={1}>
+            <Text fontSize='xs' color='fg.muted' mb={1}>
               Keyboard Shortcut
             </Text>
             <ShortcutCapture
@@ -242,29 +242,29 @@ export function ShortcutFormModal({
 
           {selectedAction?.requiresConfig && (
             <Box
-              bg='app.panel'
+              bg='bg.surface'
               p={2}
               borderRadius='md'
               border='1px solid'
-              borderColor='app.border'
+              borderColor='border'
             >
-              <Text fontSize='xs' color='gray.400' mb={1}>
+              <Text fontSize='xs' color='fg.muted' mb={1}>
                 Select Configurations
               </Text>
               <Box
                 maxHeight='140px'
                 overflowY='auto'
                 overflowX='hidden'
-                bg='app.bg'
+                bg='bg.canvas'
                 border='1px solid'
-                borderColor='app.border'
+                borderColor='border'
                 borderRadius='md'
                 p={2}
               >
                 {configs.length === 0 ? (
                   <Text
                     fontSize='xs'
-                    color='gray.400'
+                    color='fg.muted'
                     textAlign='center'
                     lineHeight='1.3'
                   >
@@ -275,12 +275,12 @@ export function ShortcutFormModal({
                     {configs.map(config => (
                       <Box
                         key={config.id}
-                        bg='app.faint'
+                        bg='bg.faint'
                         border='1px solid'
-                        borderColor='app.hover'
+                        borderColor='border.subtle'
                         borderRadius='sm'
                         p={2}
-                        _hover={{ bg: 'app.hover' }}
+                        _hover={{ bg: 'bg.hover' }}
                       >
                         <Flex align='center' gap={2}>
                           <Checkbox
@@ -291,16 +291,12 @@ export function ShortcutFormModal({
                             size='sm'
                           />
                           <Box flex={1}>
-                            <Text
-                              fontSize='xs'
-                              color='gray.100'
-                              fontWeight='medium'
-                            >
+                            <Text fontSize='xs' color='fg' fontWeight='medium'>
                               {config.alias}
                             </Text>
                             <Text
                               fontSize='xs'
-                              color='gray.400'
+                              color='fg.muted'
                               lineHeight='1.3'
                             >
                               {config.context} / {config.namespace}
@@ -313,7 +309,7 @@ export function ShortcutFormModal({
                 )}
               </Box>
               {draft.configIds.length > 0 && (
-                <Text fontSize='xs' color='gray.400' mt={1} lineHeight='1.3'>
+                <Text fontSize='xs' color='fg.muted' mt={1} lineHeight='1.3'>
                   {draft.configIds.length} configuration
                   {draft.configIds.length !== 1 ? 's' : ''} selected
                 </Text>
@@ -330,10 +326,10 @@ export function ShortcutFormModal({
           onClick={handleSave}
           loading={save.isPending}
           loadingText={shortcut ? 'Updating...' : 'Creating...'}
-          bg='blue.500'
-          color='white'
-          _hover={{ bg: 'blue.600' }}
-          _active={{ bg: 'blue.700' }}
+          bg='accent.solid'
+          color='fg'
+          _hover={{ bg: 'accent.solidHover' }}
+          _active={{ bg: 'accent.solidActive' }}
           height='28px'
           fontSize='xs'
         >

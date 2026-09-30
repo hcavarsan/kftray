@@ -32,7 +32,7 @@ export function ConfigPathsField({
   return (
     <Stack gap={2}>
       <Flex justify='space-between' align='center'>
-        <Text fontSize='xs' color='gray.400'>
+        <Text fontSize='xs' color='fg.muted'>
           Config Path(s)
         </Text>
         <IconButton
@@ -40,8 +40,8 @@ export function ConfigPathsField({
           size='xs'
           variant='ghost'
           onClick={onAdd}
-          color='gray.400'
-          _hover={{ bg: 'whiteAlpha.100' }}
+          color='fg.muted'
+          _hover={{ bg: 'bg.hover' }}
         >
           <Box as={Plus} width='12px' height='12px' />
         </IconButton>
@@ -54,11 +54,11 @@ export function ConfigPathsField({
               onChange(field.id, e.target.value)
             }
             placeholder='path/to/config.json'
-            bg='app.panel'
-            borderColor='app.border'
+            bg='bg.surface'
+            borderColor='border'
             _hover={{
-              borderColor: 'app.divider',
-              bg: 'app.panel',
+              borderColor: 'border.strong',
+              bg: 'bg.surface',
             }}
             height='30px'
             fontSize='12px'
@@ -68,8 +68,8 @@ export function ConfigPathsField({
             size='xs'
             variant='ghost'
             onClick={() => onRemove(field.id)}
-            color='gray.500'
-            _hover={{ bg: 'whiteAlpha.100' }}
+            color='fg.subtle'
+            _hover={{ bg: 'bg.hover' }}
             disabled={configPaths.length === 1 && !field.value}
           >
             <Box as={X} width='12px' height='12px' />

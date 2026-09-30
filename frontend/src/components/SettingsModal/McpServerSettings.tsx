@@ -32,8 +32,8 @@ export function McpServerSettings({
         title='MCP Server'
         description='Enable MCP server for AI assistants to manage port forwards via Model Context Protocol.'
         icon={Server}
-        iconColor='purple.400'
-        statusColor={running ? 'green.400' : 'gray.500'}
+        iconColor='accent.secondary'
+        statusColor={running ? 'success.fg' : 'fg.subtle'}
         statusTitle={running ? 'Running' : 'Stopped'}
       >
         <SettingRow label='Enabled:'>

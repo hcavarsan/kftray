@@ -43,12 +43,12 @@ export function Footer({
       alignItems='center'
       justifyContent='space-between'
       width='100%'
-      bg='app.panel'
+      bg='bg.surface'
       px={3}
       py={2}
       borderRadius='lg'
       border='1px solid'
-      borderColor='app.border'
+      borderColor='border'
       position='relative'
       mt='-1px'
       height='50px'

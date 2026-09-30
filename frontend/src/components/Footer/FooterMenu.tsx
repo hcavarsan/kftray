@@ -188,7 +188,7 @@ export function FooterMenu({
             <Box fontSize='11px'>Server Resources</Box>
           </MenuItem>
 
-          <MenuSeparator borderColor='app.border' my={1} />
+          <MenuSeparator borderColor='border' my={1} />
 
           <MenuItem value='settings' onClick={onOpenSettings}>
             <Box as={Settings} width='12px' height='12px' />

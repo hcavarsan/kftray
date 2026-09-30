@@ -40,14 +40,15 @@ export function HelperResultDialog({
       <Dialog.Body p={3}>
         <Box
           p={3}
-          bg={result.success ? 'status.success.bg' : 'status.danger.bg'}
+          bg={result.success ? 'success.subtle' : 'danger.subtle'}
           borderRadius='md'
           border='1px solid'
-          borderColor={
-            result.success ? 'status.success.border' : 'status.danger.border'
-          }
+          borderColor={result.success ? 'success.border' : 'danger.muted'}
         >
-          <Box fontSize='xs' color={result.success ? 'green.300' : 'red.300'}>
+          <Box
+            fontSize='xs'
+            color={result.success ? 'success.fg' : 'danger.fg'}
+          >
             {result.message}
           </Box>
         </Box>

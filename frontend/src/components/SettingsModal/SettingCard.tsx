@@ -46,7 +46,7 @@ export function SettingCard({
           {Icon && (
             <Box as={Icon} width='10px' height='10px' color={iconColor} />
           )}
-          <Text fontSize='sm' fontWeight='500' color='white'>
+          <Text fontSize='sm' fontWeight='500' color='fg'>
             {title}
           </Text>
           {statusColor && (
@@ -61,15 +61,15 @@ export function SettingCard({
         </Flex>
         {action}
       </Flex>
-      <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
+      <Text fontSize='xs' color='fg.subtle' lineHeight='1.3' flex='1'>
         {description}
       </Text>
       {note && (
-        <Text fontSize='xs' color='red.300' lineHeight='1.3' mt={1}>
+        <Text fontSize='xs' color='danger.fg' lineHeight='1.3' mt={1}>
           {note}
         </Text>
       )}
-      <Box borderTop='1px solid' borderColor='app.subtle' mt={3} pt={3}>
+      <Box borderTop='1px solid' borderColor='border.subtle' mt={3} pt={3}>
         {children}
       </Box>
     </Box>
@@ -85,7 +85,7 @@ export function SettingRow({
 }) {
   return (
     <Flex align='center' justify='flex-end' gap={2}>
-      <Text fontSize='xs' color='whiteAlpha.500'>
+      <Text fontSize='xs' color='fg.subtle'>
         {label}
       </Text>
       {children}
@@ -97,9 +97,9 @@ export const compactInputProps = {
   layerStyle: 'field' as const,
   size: 'xs' as const,
   height: '22px',
-  bg: 'app.bg',
+  bg: 'bg.canvas',
   textAlign: 'center' as const,
-  _placeholder: { color: 'whiteAlpha.500' },
+  _placeholder: { color: 'fg.subtle' },
 }
 
 export const compactActionButtonProps = {
@@ -107,9 +107,9 @@ export const compactActionButtonProps = {
   variant: 'outline' as const,
   height: '18px',
   fontSize: '10px',
-  color: 'whiteAlpha.600',
-  borderColor: 'app.active',
-  _hover: { borderColor: 'app.divider', bg: 'whiteAlpha.50' },
+  color: 'fg.subtle',
+  borderColor: 'border.emphasized',
+  _hover: { borderColor: 'border.strong', bg: 'bg.faint' },
   px: 1.5,
 }
 
