@@ -50,22 +50,6 @@ export default defineConfig({
         main: resolve(import.meta.dirname, 'index.html'),
         logs: resolve(import.meta.dirname, 'logs.html'),
       },
-      output: {
-        codeSplitting: {
-          groups: [
-            {
-              name: 'chakra-ui',
-              test: /node_modules[\\/](@chakra-ui|@emotion|@ark-ui|@zag-js)/,
-            },
-            {
-              name: 'react-vendor',
-              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
-            },
-            { name: 'tauri', test: /node_modules[\\/]@tauri-apps/ },
-            { name: 'vendor', test: /node_modules/ },
-          ],
-        },
-      },
     },
   },
 })
