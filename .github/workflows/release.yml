@@ -910,73 +910,75 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Authenticate with crates.io
-        id: crates-io-auth
+      - name: Authenticate with crates.io (kftray-commons)
+        id: crates-io-auth-commons
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      - name: Publish crates to crates.io
+      - name: Publish kftray-commons
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-commons.outputs.token }}
         run: |
-          publish_crate() {
-            local crate_path="$1"
-            local crate_name
-            crate_name=$(basename "$crate_path")
-            local max_retries=3
-            local retry_delay=30
+          ./hacks/publish-crate.sh crates/kftray-commons
+          echo "Waiting 60s to avoid rate limiting..."
+          sleep 60
 
-            echo "Publishing $crate_name..."
-            cd "$crate_path"
+      - name: Authenticate with crates.io (kftray-helper)
+        id: crates-io-auth-helper
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-            for attempt in $(seq 1 "$max_retries"); do
-              echo "Attempt $attempt/$max_retries for $crate_name"
+      - name: Publish kftray-helper
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-helper.outputs.token }}
+        run: |
+          ./hacks/publish-crate.sh crates/kftray-helper
+          echo "Waiting 60s to avoid rate limiting..."
+          sleep 60
 
-              if cargo publish; then
-                echo "Successfully published $crate_name"
-                cd - > /dev/null
-                return 0
-              fi
+      - name: Authenticate with crates.io (kftray-http-logs)
+        id: crates-io-auth-http-logs
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-              local exit_code=$?
-              if [ "$exit_code" -eq 0 ]; then
-                cd - > /dev/null
-                return 0
-              fi
+      - name: Publish kftray-http-logs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-http-logs.outputs.token }}
+        run: |
+          ./hacks/publish-crate.sh crates/kftray-http-logs
+          echo "Waiting 60s to avoid rate limiting..."
+          sleep 60
 
-              if cargo publish --dry-run 2>&1 | grep -q "already uploaded\|already exists"; then
-                echo "$crate_name already published, skipping"
-                cd - > /dev/null
-                return 0
-              fi
+      - name: Authenticate with crates.io (kftray-portforward)
+        id: crates-io-auth-portforward
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-              if [ "$attempt" -lt "$max_retries" ]; then
-                echo "Retrying $crate_name in ${retry_delay}s... (attempt $((attempt + 1))/$max_retries)"
-                sleep "$retry_delay"
-                retry_delay=$((retry_delay * 2))
-              else
-                echo "Failed to publish $crate_name after $max_retries attempts"
-                cd - > /dev/null
-                return 1
-              fi
-            done
-          }
-          crates=(
-            "crates/kftray-commons"
-            "crates/kftray-helper"
-            "crates/kftray-http-logs"
-            "crates/kftray-portforward"
-            "crates/kftray-network-monitor"
-            "crates/kftui"
-          )
+      - name: Publish kftray-portforward
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-portforward.outputs.token }}
+        run: |
+          ./hacks/publish-crate.sh crates/kftray-portforward
+          echo "Waiting 60s to avoid rate limiting..."
+          sleep 60
 
-          for crate in "${crates[@]}"; do
-            publish_crate "$crate"
-            if [ "$crate" != "crates/kftui" ]; then
-              echo "Waiting 60s to avoid rate limiting..."
-              sleep 60
-            fi
-          done
+      - name: Authenticate with crates.io (kftray-network-monitor)
+        id: crates-io-auth-network-monitor
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
+      - name: Publish kftray-network-monitor
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-network-monitor.outputs.token }}
+        run: |
+          ./hacks/publish-crate.sh crates/kftray-network-monitor
+          echo "Waiting 60s to avoid rate limiting..."
+          sleep 60
+
+      - name: Authenticate with crates.io (kftui)
+        id: crates-io-auth-kftui
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish kftui
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth-kftui.outputs.token }}
+        run: |
+          ./hacks/publish-crate.sh crates/kftui
           echo "All crates published successfully!"
 
   publish-linux-packages:
