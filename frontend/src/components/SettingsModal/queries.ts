@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
-import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
+import type { LogSettings } from '@/components/LogViewer'
 
 import type { AppMode, McpStatus, SslSettingsData } from './types'
 
@@ -54,11 +54,6 @@ const mcpStatusQuery = queryOptions({
   queryFn: () => invoke<McpStatus>('get_mcp_server_status'),
   gcTime: 0,
   meta: { errorToast: windowLoadToast },
-})
-
-export const logFilesQuery = queryOptions({
-  queryKey: ['log-files'],
-  queryFn: () => invoke<LogFileInfo[]>('list_log_files'),
 })
 
 export const SETTINGS_QUERIES = [

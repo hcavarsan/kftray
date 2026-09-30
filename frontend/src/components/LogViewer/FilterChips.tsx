@@ -5,6 +5,7 @@ import { Box, Flex, Text } from '@chakra-ui/react'
 
 import { LEVEL_COLORS } from './constants'
 import type { FilterChipsProps } from './types'
+import { formatModuleName } from './utils/formatModuleName'
 
 function Chip({
   label,
@@ -90,19 +91,6 @@ function FilterChipsComponent({
       })}
 
       {selectedModules.map(module => {
-        const formatModuleName = (mod: string): string => {
-          const formatted = mod
-            .replace(/^kftray_portforward::/, '')
-            .replace(/^kftray_tauri::/, '')
-            .replace(/^kftray_/, '')
-          const segments = formatted.split('::')
-
-          if (segments.length > 2) {
-            return `… ${segments.slice(-2).join(' › ')}`
-          }
-
-          return segments.join(' › ')
-        }
         const displayName = formatModuleName(module)
 
         return (

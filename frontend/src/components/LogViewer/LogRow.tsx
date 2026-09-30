@@ -2,9 +2,9 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Copy } from 'lucide-react'
 
 import { Box, Flex, IconButton, Text } from '@chakra-ui/react'
-import { useMutation } from '@tanstack/react-query'
 
 import { Tooltip } from '@/components/ui/tooltip'
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 
 import { LEVEL_COLORS } from './constants'
 import type { LogLevel, LogRowProps } from './types'
@@ -81,17 +81,7 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
     }
   }, [])
 
-  const { mutate: copyText } = useMutation({
-    mutationFn: (text: string) => navigator.clipboard.writeText(text),
-    onSuccess: () => {
-      clearTimeout(copyFeedbackTimeoutRef.current)
-      setShowCopied(true)
-      copyFeedbackTimeoutRef.current = setTimeout(() => {
-        setShowCopied(false)
-      }, 1500)
-    },
-    meta: { errorToast: { title: 'Error' } },
-  })
+  const { mutate: copyText } = useCopyToClipboard()
 
   const handleCopyAll = useCallback(() => {
     const parts = []
@@ -106,7 +96,15 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
       parts.push(`Module: ${entry.module}`)
     }
     parts.push(`Message: ${entry.message}`)
-    copyText(parts.join('\n'))
+    copyText(parts.join('\n'), {
+      onSuccess: () => {
+        clearTimeout(copyFeedbackTimeoutRef.current)
+        setShowCopied(true)
+        copyFeedbackTimeoutRef.current = setTimeout(() => {
+          setShowCopied(false)
+        }, 1500)
+      },
+    })
   }, [copyText, entry])
 
   return (

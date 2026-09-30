@@ -23,8 +23,7 @@ node_modules
 *.sw?
 */target/*
 target/*
-frontend/dist/*
-!frontend/dist/.gitkeep
+frontend/dist/
 crates/kftray-tauri/bin/*
 !crates/kftray-tauri/bin/.gitkeep
 bin/*

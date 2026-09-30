@@ -22,7 +22,7 @@ run = "pnpm --filter @kftray/ui run build:analyze"
 
 [tasks.tauri]
 description = "Run tauri CLI directly"
-run = "cargo build --bin kftray-helper --release && tauri"
+run = "cargo build --bin kftray-helper --release && pnpm tauri"
 
 [tasks."test:server"]
 description = "Run Docker proxy tests"

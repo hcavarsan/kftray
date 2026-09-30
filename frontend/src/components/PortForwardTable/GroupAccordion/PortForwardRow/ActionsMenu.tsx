@@ -92,6 +92,7 @@ export function ActionsMenu({
             <MenuItem
               className='menu-item'
               value='http-logs'
+              disabled={isPending}
               onClick={onToggleHttpLogs}
             >
               <FileIcon size={12} />
@@ -103,6 +104,7 @@ export function ActionsMenu({
               <MenuItem
                 className='menu-item'
                 value='open-http-logs'
+                disabled={isPending}
                 onClick={onInspectLogs}
               >
                 <FileIcon size={12} />
@@ -114,6 +116,7 @@ export function ActionsMenu({
             <MenuItem
               className='menu-item'
               value='http-logs-config'
+              disabled={isPending}
               onClick={onOpenHttpLogsConfig}
             >
               <SettingsIcon size={12} />

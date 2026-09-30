@@ -1,0 +1,17 @@
+engine biome(1.0)
+language css
+
+or {
+  CssColor() as $value,
+  CssFunction(name = $name) as $value where {
+    $name <: r"(?i)(?:rgba?|hsla?)"
+  },
+  CssDashedIdentifier() as $value where {
+    $value <: r"--chakra-colors-(?:gray|white-alpha|black-alpha|white|black|red|orange|yellow|green|teal|blue|cyan|purple|pink)(?:-.*)?"
+  }
+} where {
+  register_diagnostic(
+    span = $value,
+    message = "Use a semantic color token from components/ui/provider.tsx instead of a raw color value."
+  )
+}

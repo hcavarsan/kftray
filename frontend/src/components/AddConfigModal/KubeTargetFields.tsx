@@ -1,10 +1,14 @@
-import CreatableSelect from 'react-select/creatable'
-
 import { Grid } from '@chakra-ui/react'
 
 import { selectStyles } from '@/components/ui/select-styles'
 
-import { Field, LocalAddressField, ProtocolField, TextField } from './Field'
+import {
+  Field,
+  FieldCreatableSelect,
+  LocalAddressField,
+  ProtocolField,
+  TextField,
+} from './Field'
 import type { ConfigDraft, PortOption, StringOption } from './types'
 
 interface KubeTargetFieldsProps {
@@ -41,7 +45,7 @@ export function KubeTargetFields({
           error={isPod ? errors.target : errors.service}
           label={isPod ? 'Pod Label' : 'Service'}
         >
-          <CreatableSelect<StringOption>
+          <FieldCreatableSelect<StringOption>
             formatCreateLabel={value => `Use "${value}"`}
             isLoading={isLoading}
             noOptionsMessage={() => noOptionsMessage}
@@ -67,7 +71,7 @@ export function KubeTargetFields({
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <Field error={portError ?? errors.remote_port} label='Target Port *'>
-          <CreatableSelect<PortOption>
+          <FieldCreatableSelect<PortOption>
             formatCreateLabel={value => `Use port ${value}`}
             isDisabled={!draft.context || !draft.namespace}
             isLoading={portsLoading}

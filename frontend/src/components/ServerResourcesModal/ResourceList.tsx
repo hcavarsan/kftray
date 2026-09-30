@@ -10,8 +10,11 @@ interface ResourceListProps {
   isAll: boolean
   isFetching: boolean
   error: Error | null | undefined
+  failedContexts: string[]
+  allFailed: boolean
   resources: FlatResource[]
   deletingKey: string | undefined
+  deleteDisabled: boolean
   onDelete: (resource: FlatResource) => void
 }
 
@@ -20,10 +23,19 @@ export function ResourceList({
   isAll,
   isFetching,
   error,
+  failedContexts,
+  allFailed,
   resources,
   deletingKey,
+  deleteDisabled,
   onDelete,
 }: ResourceListProps) {
+  const failedNotice = failedContexts.length > 0 && (
+    <Text fontSize='xs' color='danger.fg' textAlign='center' mb={2}>
+      Failed to load: {failedContexts.join(', ')}
+    </Text>
+  )
+
   if (!hasSelection) {
     return (
       <Flex align='center' justify='center' height='100%' minHeight='200px'>
@@ -52,11 +64,12 @@ export function ResourceList({
       </Flex>
     )
   }
-  if (error) {
+  if (error || allFailed) {
     return (
       <Flex align='center' justify='center' height='100%' minHeight='200px'>
         <Text fontSize='xs' color='danger.fg' textAlign='center'>
-          Failed to load resources: {errorMessage(error)}
+          Failed to load resources:{' '}
+          {error ? errorMessage(error) : failedContexts.join(', ')}
         </Text>
       </Flex>
     )
@@ -70,6 +83,7 @@ export function ResourceList({
         height='100%'
         minHeight='200px'
       >
+        {failedNotice}
         <Text fontSize='xs' color='fg.subtle' mb={1}>
           No resources
         </Text>
@@ -82,11 +96,13 @@ export function ResourceList({
 
   return (
     <Stack gap={2}>
+      {failedNotice}
       {resources.map(resource => (
         <ResourceRow
           key={resource.key}
           resource={resource}
           isDeleting={deletingKey === resource.key}
+          disabled={deleteDisabled}
           onDelete={onDelete}
         />
       ))}

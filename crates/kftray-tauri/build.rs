@@ -94,6 +94,10 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", helper_bin.display());
+    let frontend_dist = Path::new(&manifest_dir).join("../../frontend/dist");
+    fs::create_dir_all(&frontend_dist).expect("Failed to create frontend dist directory");
+    println!("cargo:rerun-if-changed={}", frontend_dist.display());
+
     tauri_build::build();
 }
 

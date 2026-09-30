@@ -201,6 +201,7 @@ export function Header({ search, setSearch }: HeaderProps) {
       <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
         <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
           <Button
+            aria-label={isPinned ? 'Unpin Window' : 'Pin Window'}
             variant='ghost'
             size='sm'
             onClick={() => pinMutation.mutate(!isPinned)}
@@ -224,6 +225,9 @@ export function Header({ search, setSearch }: HeaderProps) {
           content={trayMode === 'window' ? 'Minimize Window' : 'Hide Window'}
         >
           <Button
+            aria-label={
+              trayMode === 'window' ? 'Minimize Window' : 'Hide Window'
+            }
             variant='ghost'
             size='sm'
             onClick={() => hideMutation.mutate()}
@@ -241,6 +245,7 @@ export function Header({ search, setSearch }: HeaderProps) {
 
         <Tooltip content='Quit kftray'>
           <Button
+            aria-label='Quit kftray'
             variant='ghost'
             size='sm'
             onClick={() => exitMutation.mutate()}

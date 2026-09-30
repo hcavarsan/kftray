@@ -26,16 +26,16 @@ export function usePendingActions(configs: Config[]): PendingActions {
   const [registry] = useState(() =>
     createReservationRegistry(setPendingConfigActions),
   )
-  const { pendingConfigActionsRef, clearPending } = registry
+  const { clearPending } = registry
 
   useEffect(() => {
     for (const { id, token } of settledTimedOutReservations(
-      pendingConfigActionsRef.current,
+      pendingConfigActions,
       configs,
     )) {
       clearPending(id, token)
     }
-  }, [configs, pendingConfigActionsRef, clearPending])
+  }, [configs, pendingConfigActions, clearPending])
 
   return { pendingConfigActions, ...registry }
 }

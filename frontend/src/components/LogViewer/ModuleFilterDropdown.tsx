@@ -5,6 +5,7 @@ import { Text } from '@chakra-ui/react'
 
 import { LogFilterDropdown } from './LogFilterDropdown'
 import type { LogFilterAccent, ModuleFilterDropdownProps } from './types'
+import { formatModuleName } from './utils/formatModuleName'
 
 const MODULE_ACCENT: LogFilterAccent = {
   activeBg: 'log.module.subtle',
@@ -15,23 +16,6 @@ const MODULE_ACCENT: LogFilterAccent = {
   badgeBg: 'log.module.solid',
   badgeColor: 'log.module.contrast',
   checkedBg: 'log.module.solid',
-}
-
-const formatModuleName = (module: string): string => {
-  let formatted = module
-    .replace(/^kftray_portforward::/, '')
-    .replace(/^kftray_tauri::/, '')
-    .replace(/^kftray_/, '')
-
-  const segments = formatted.split('::')
-
-  if (segments.length > 3) {
-    formatted = `… ${segments.slice(-3).join(' › ')}`
-  } else {
-    formatted = segments.join(' › ')
-  }
-
-  return formatted
 }
 
 const renderModule = (module: string) => (

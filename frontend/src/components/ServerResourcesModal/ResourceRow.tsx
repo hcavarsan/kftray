@@ -16,6 +16,7 @@ import type { FlatResource } from './types'
 interface ResourceRowProps {
   resource: FlatResource
   isDeleting: boolean
+  disabled: boolean
   onDelete: (resource: FlatResource) => void
 }
 
@@ -29,6 +30,7 @@ const RESOURCE_ICONS: Record<string, typeof Server> = {
 export function ResourceRow({
   resource,
   isDeleting,
+  disabled,
   onDelete,
 }: ResourceRowProps) {
   const Icon = RESOURCE_ICONS[resource.resource_type] ?? Server
@@ -74,7 +76,7 @@ export function ResourceRow({
           size='2xs'
           variant='ghost'
           onClick={() => onDelete(resource)}
-          disabled={isDeleting}
+          disabled={isDeleting || disabled}
           flexShrink={0}
           px={1}
           opacity={0.5}

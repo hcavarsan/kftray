@@ -117,7 +117,6 @@ interface UseSettingsSaveOptions {
 
 function buildPlans(
   draft: SettingsDraft,
-  baseline: SettingsDraft,
   loaded: LoadedSections,
 ): SectionPlan[] {
   const mcpPort = parseInt(draft.mcpPort, 10)
@@ -125,18 +124,25 @@ function buildPlans(
   return [
     {
       section: 'General',
-      keys: ['disconnectTimeout', 'networkMonitor', 'autoUpdateEnabled'],
-      write: async () => {
-        await invoke('update_disconnect_timeout', {
+      keys: ['disconnectTimeout'],
+      write: () =>
+        invoke('update_disconnect_timeout', {
           minutes: parseInt(draft.disconnectTimeout, 10),
-        })
-        await invoke('update_network_monitor', {
-          enabled: draft.networkMonitor,
-        })
-        await invoke('update_auto_update_enabled', {
+        }),
+    },
+    {
+      section: 'General',
+      keys: ['networkMonitor'],
+      write: () =>
+        invoke('update_network_monitor', { enabled: draft.networkMonitor }),
+    },
+    {
+      section: 'General',
+      keys: ['autoUpdateEnabled'],
+      write: () =>
+        invoke('update_auto_update_enabled', {
           enabled: draft.autoUpdateEnabled,
-        })
-      },
+        }),
     },
     {
       section: 'SSL',
@@ -169,17 +175,15 @@ function buildPlans(
     },
     {
       section: 'MCP Server',
-      keys: Number.isNaN(mcpPort) ? ['mcpEnabled'] : ['mcpPort', 'mcpEnabled'],
-      write: async () => {
-        if (!Number.isNaN(mcpPort) && draft.mcpPort !== baseline.mcpPort) {
-          await invoke('update_mcp_server_port', { port: mcpPort })
-        }
-        if (draft.mcpEnabled !== baseline.mcpEnabled) {
-          await invoke('update_mcp_server_enabled', {
-            enabled: draft.mcpEnabled,
-          })
-        }
-      },
+      skip: Number.isNaN(mcpPort),
+      keys: ['mcpPort'],
+      write: () => invoke('update_mcp_server_port', { port: mcpPort }),
+    },
+    {
+      section: 'MCP Server',
+      keys: ['mcpEnabled'],
+      write: () =>
+        invoke('update_mcp_server_enabled', { enabled: draft.mcpEnabled }),
     },
   ]
 }
@@ -197,11 +201,7 @@ export function useSettingsSave({
     mutationFn: async () => {
       const failures: SectionFailure[] = []
 
-      for (const { section, keys, write, skip } of buildPlans(
-        draft,
-        baseline,
-        loaded,
-      )) {
+      for (const { section, keys, write, skip } of buildPlans(draft, loaded)) {
         if (skip || keys.every(key => draft[key] === baseline[key])) {
           continue
         }
@@ -213,7 +213,9 @@ export function useSettingsSave({
             ...Object.fromEntries(keys.map(key => [key, draft[key]])),
           }))
         } catch (error) {
-          failures.push({ section, error })
+          if (!failures.some(failure => failure.section === section)) {
+            failures.push({ section, error })
+          }
         }
       }
 

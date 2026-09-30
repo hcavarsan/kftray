@@ -7,6 +7,56 @@ import {
   settledTimedOutReservations,
 } from './reservationRegistry'
 import { makeConfig } from './testFixtures'
+import { usePendingActions } from './usePendingActions'
+
+const harness = vi.hoisted(() => ({
+  states: [] as { value: unknown }[],
+  stateIndex: 0,
+  effectDeps: [] as (readonly unknown[] | undefined)[],
+  effectIndex: 0,
+  queued: [] as (() => void)[],
+}))
+
+vi.mock('react', () => ({
+  useState: (init: unknown) => {
+    const index = harness.stateIndex++
+
+    harness.states[index] ??= {
+      value: typeof init === 'function' ? (init as () => unknown)() : init,
+    }
+    const slot = harness.states[index]
+
+    return [
+      slot.value,
+      (next: unknown) => {
+        slot.value = next
+      },
+    ]
+  },
+  useEffect: (callback: () => void, deps: readonly unknown[]) => {
+    const index = harness.effectIndex++
+    const previous = harness.effectDeps[index]
+
+    harness.effectDeps[index] = deps
+    if (!previous || deps.some((dep, n) => !Object.is(dep, previous[n]))) {
+      harness.queued.push(callback)
+    }
+  },
+}))
+
+const renderPendingActions = (
+  configs: Parameters<typeof usePendingActions>[0],
+) => {
+  harness.stateIndex = 0
+  harness.effectIndex = 0
+  const actions = usePendingActions(configs)
+
+  for (const effect of harness.queued.splice(0)) {
+    effect()
+  }
+
+  return actions
+}
 
 describe('reservation registry', () => {
   it('hands out a distinct token per reservation', () => {
@@ -132,5 +182,28 @@ describe('markTimedOut', () => {
     ])
 
     expect(markTimedOut(pending, [1], new Map([[1, 5]]))).toBe(false)
+  })
+})
+
+describe('usePendingActions', () => {
+  it('releases a reservation that times out after the snapshot already matches', () => {
+    harness.states.length = 0
+    harness.effectDeps.length = 0
+    const configs = [makeConfig(1, true)]
+    let actions = renderPendingActions(configs)
+    const token = actions.markPending(1, 'starting')
+
+    actions = renderPendingActions(configs)
+    expect(actions.pendingConfigActionsRef.current.has(1)).toBe(true)
+
+    markTimedOut(
+      actions.pendingConfigActionsRef.current,
+      [1],
+      new Map([[1, token]]),
+    )
+    actions.publishPending()
+    actions = renderPendingActions(configs)
+
+    expect(actions.pendingConfigActionsRef.current.has(1)).toBe(false)
   })
 })

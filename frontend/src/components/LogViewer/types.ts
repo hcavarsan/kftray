@@ -1,6 +1,6 @@
 export type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
-export interface LogEntry {
+export interface RawLogEntry {
   id: number
   raw: string
   timestamp: string | null
@@ -10,6 +10,9 @@ export interface LogEntry {
   module: string | null
   message: string
   is_parsed: boolean
+}
+
+export interface LogEntry extends RawLogEntry {
   searchable: string
 }
 

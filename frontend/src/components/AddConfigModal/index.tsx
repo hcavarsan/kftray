@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { type FormEvent, useMemo, useState } from 'react'
 
 import { Stack } from '@chakra-ui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -28,7 +28,14 @@ import { KubeTargetFields } from './KubeTargetFields'
 import { ProxyFields } from './ProxyFields'
 import { TagsField } from './TagsField'
 import type { AddConfigModalProps, ConfigDraft, PortOption } from './types'
-import { tagSuggestions, trimConfigValues, validateDraft } from './utils'
+import {
+  applyDraftChange,
+  tagSuggestions,
+  trimConfigValues,
+  validateDraft,
+} from './utils'
+
+const FORM_ID = 'add-config-form'
 
 const emptyDraft: ConfigDraft = {
   alias: '',
@@ -96,19 +103,22 @@ function toConfig(
         service: '',
         workload_type: 'proxy',
       }
-    case 'expose':
+    case 'expose': {
+      const isPublic = draft.exposure_type === 'public'
       return {
         ...base,
-        ...(draft.exposure_type === 'public' && {
+        ...(isPublic && {
           cert_issuer: draft.cert_issuer,
           cert_issuer_kind: draft.cert_issuer_kind,
           cert_manager_enabled: draft.cert_manager_enabled,
           ingress_annotations: draft.ingress_annotations,
           ingress_class: draft.ingress_class,
         }),
+        domain_enabled: isPublic && base.domain_enabled,
         exposure_type: draft.exposure_type,
         workload_type: 'expose',
       }
+    }
     case 'service':
       return {
         ...base,
@@ -138,7 +148,7 @@ export function AddConfigModal({
   )
   const kubeconfig = draft.kubeconfig ?? DEFAULT_KUBECONFIG
   const update = (next: Partial<ConfigDraft>) =>
-    setDraft(current => ({ ...current, ...next }))
+    setDraft(current => applyDraftChange(current, next))
   const scope = {
     kubeconfig,
     context: draft.context,
@@ -195,6 +205,13 @@ export function AddConfigModal({
     }
     saveMutation.mutate(toConfig(trimConfigValues(draft), initialConfig))
   }
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (document.activeElement?.getAttribute('aria-expanded') === 'true') {
+      return
+    }
+    handleSave()
+  }
   const workloadType = draft.workload_type
   const resourceOptions =
     workloadType === 'pod'
@@ -222,61 +239,71 @@ export function AddConfigModal({
       }
     >
       <AppDialogBody>
-        <Stack gap={2}>
-          <CommonFields
-            contextQuery={contextQuery}
-            draft={draft}
-            errors={shownErrors}
-            namespaceQuery={namespaceQuery}
-            onContextFocusChange={setContextFocused}
-            onUpdate={update}
-          />
-          <TagsField
-            error={duplicateTagError ?? shownErrors.tags}
-            onChange={tags => update({ tags })}
-            onDuplicate={setDuplicateTagError}
-            options={tagOptionsQuery.data ?? []}
-            tags={draft.tags}
-          />
-          {workloadType === 'expose' && (
-            <ExposeFields
+        <form id={FORM_ID} onSubmit={handleSubmit}>
+          <Stack gap={2}>
+            <CommonFields
+              contextQuery={contextQuery}
               draft={draft}
               errors={shownErrors}
+              namespaceQuery={namespaceQuery}
+              onContextFocusChange={setContextFocused}
               onUpdate={update}
             />
-          )}
-          {workloadType === 'proxy' && (
-            <ProxyFields draft={draft} errors={shownErrors} onUpdate={update} />
-          )}
-          {workloadType !== 'expose' && workloadType !== 'proxy' && (
-            <KubeTargetFields
-              draft={draft}
-              errors={
-                resourceQuery.error
-                  ? {
-                      ...shownErrors,
-                      [workloadType === 'pod' ? 'target' : 'service']:
-                        workloadType === 'pod'
-                          ? 'Error fetching pods'
-                          : 'Error fetching services',
-                    }
-                  : shownErrors
-              }
-              isLoading={resourceQuery.isLoading}
-              noOptionsMessage={
-                resourceQuery.error ? 'Type name manually' : 'No results found'
-              }
-              onUpdate={update}
-              options={resourceOptions}
-              portError={portQuery.error ? 'Error fetching ports' : undefined}
-              portOptions={portOptions}
-              portsLoading={portQuery.isLoading}
-              portsMessage={
-                portQuery.error ? 'Type port number manually' : 'No ports found'
-              }
+            <TagsField
+              error={duplicateTagError ?? shownErrors.tags}
+              onChange={tags => update({ tags })}
+              onDuplicate={setDuplicateTagError}
+              options={tagOptionsQuery.data ?? []}
+              tags={draft.tags}
             />
-          )}
-        </Stack>
+            {workloadType === 'expose' && (
+              <ExposeFields
+                draft={draft}
+                errors={shownErrors}
+                onUpdate={update}
+              />
+            )}
+            {workloadType === 'proxy' && (
+              <ProxyFields
+                draft={draft}
+                errors={shownErrors}
+                onUpdate={update}
+              />
+            )}
+            {workloadType !== 'expose' && workloadType !== 'proxy' && (
+              <KubeTargetFields
+                draft={draft}
+                errors={
+                  resourceQuery.error
+                    ? {
+                        ...shownErrors,
+                        [workloadType === 'pod' ? 'target' : 'service']:
+                          workloadType === 'pod'
+                            ? 'Error fetching pods'
+                            : 'Error fetching services',
+                      }
+                    : shownErrors
+                }
+                isLoading={resourceQuery.isLoading}
+                noOptionsMessage={
+                  resourceQuery.error
+                    ? 'Type name manually'
+                    : 'No results found'
+                }
+                onUpdate={update}
+                options={resourceOptions}
+                portError={portQuery.error ? 'Error fetching ports' : undefined}
+                portOptions={portOptions}
+                portsLoading={portQuery.isLoading}
+                portsMessage={
+                  portQuery.error
+                    ? 'Type port number manually'
+                    : 'No ports found'
+                }
+              />
+            )}
+          </Stack>
+        </form>
       </AppDialogBody>
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />
@@ -285,11 +312,12 @@ export function AddConfigModal({
           disabled={
             Boolean(duplicateTagError) || Object.keys(errors).length > 0
           }
+          form={FORM_ID}
           height='28px'
           loading={saveMutation.isPending}
           loadingText='Saving...'
-          onClick={handleSave}
           size='xs'
+          type='submit'
           _hover={{ bg: 'accent.solidHover' }}
         >
           {isEdit ? 'Save Changes' : 'Add Config'}

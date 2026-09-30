@@ -17,20 +17,16 @@ export const toaster = createToaster({
   offsets: { top: '5px', right: '5px', bottom: '5px', left: '5px' },
 })
 export function Toaster() {
-  const toastRef = useRef<HTMLDivElement>(null)
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
     const handleMouseDown = (event: MouseEvent) => {
-      if (!toastRef.current) {
-        return
-      }
+      const target = event.target
       clearTimeout(dismissTimeoutRef.current)
       dismissTimeoutRef.current = setTimeout(() => {
         if (
-          toastRef.current &&
-          event.target instanceof Node &&
-          !toastRef.current.contains(event.target)
+          target instanceof Element &&
+          !target.closest('[data-scope=toast]')
         ) {
           toaster.dismiss()
         }
@@ -53,7 +49,6 @@ export function Toaster() {
       >
         {toast => (
           <Toast.Root
-            ref={toastRef}
             width={{ base: '240px', md: '260px' }}
             maxWidth='calc(100vw - 16px)'
             py='2'

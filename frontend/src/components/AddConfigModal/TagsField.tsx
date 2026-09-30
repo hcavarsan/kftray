@@ -1,8 +1,6 @@
-import CreatableSelect from 'react-select/creatable'
-
 import { selectStyles } from '@/components/ui/select-styles'
 
-import { Field } from './Field'
+import { Field, FieldCreatableSelect } from './Field'
 import type { StringOption } from './types'
 import { duplicateTagKey, optionsToTags, tagsToOptions } from './utils'
 
@@ -23,7 +21,7 @@ export function TagsField({
 }: TagsFieldProps) {
   return (
     <Field error={error} label='Tags'>
-      <CreatableSelect<StringOption, true>
+      <FieldCreatableSelect<StringOption, true>
         formatCreateLabel={value => `Add "${value}"`}
         isMulti
         onChange={values => {

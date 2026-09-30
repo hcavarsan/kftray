@@ -40,9 +40,9 @@ const GitSyncContext = createContext<GitSyncContextValue | null>(null)
 
 const credentialsQueryKey = ['git-sync-credentials']
 
-const importMutationKey = ['git-import']
+const syncMutationKey = ['git-sync']
 
-const importScope = { id: 'git-import' }
+const syncScope = { id: 'git-sync' }
 
 export function GitSyncProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -56,8 +56,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     })
 
   const { mutateAsync: syncAsync, isPending: isSyncing } = useMutation({
-    mutationKey: importMutationKey,
-    scope: importScope,
+    mutationKey: syncMutationKey,
+    scope: syncScope,
     mutationFn: (creds: GitConfig) => gitService.importConfigs(creds),
     onSuccess: () => {
       setLastSyncTime(Date.now())
@@ -69,8 +69,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
   })
 
   const saveMutation = useMutation({
-    mutationKey: importMutationKey,
-    scope: importScope,
+    mutationKey: syncMutationKey,
+    scope: syncScope,
     mutationFn: async (creds: GitConfig) => {
       await gitService.importConfigs(creds)
       await gitService.saveCredentials(creds)
@@ -86,6 +86,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
   })
 
   const deleteMutation = useMutation({
+    mutationKey: syncMutationKey,
+    scope: syncScope,
     mutationFn: () => gitService.deleteCredentials(),
     onSuccess: () => {
       queryClient.setQueryData(credentialsQueryKey, null)
@@ -109,10 +111,17 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     }
 
     const intervalId = setInterval(() => {
-      if (queryClient.isMutating({ mutationKey: importMutationKey }) > 0) {
+      const current = queryClient.getQueryData<GitConfig | null>(
+        credentialsQueryKey,
+      )
+
+      if (
+        !current ||
+        queryClient.isMutating({ mutationKey: syncMutationKey })
+      ) {
         return
       }
-      syncAsync(credentials).catch(() => undefined)
+      syncAsync(current).catch(() => undefined)
     }, interval * 60000)
 
     return () => clearInterval(intervalId)

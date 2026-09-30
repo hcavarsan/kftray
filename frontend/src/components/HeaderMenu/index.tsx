@@ -132,27 +132,11 @@ export function HeaderMenu({
     >
       <Group display='flex' alignItems='center' gap={3}>
         <Checkbox
-          ml={2}
-          size='sm'
+          ml='9px'
+          size='xs'
           checked={isSelectAllChecked}
           onCheckedChange={handleCheckboxChange}
-          css={{
-            '& input': {
-              width: '10px',
-              height: '10px',
-              background: 'bg.raised',
-              border: '1px solid',
-              borderColor: 'border.emphasized',
-              borderRadius: '3px',
-              '&:hover': {
-                borderColor: 'border.strong',
-              },
-            },
-            '& input:checked': {
-              background: 'accent.solid',
-              borderColor: 'accent.solid',
-            },
-          }}
+          inputProps={{ 'aria-label': 'Select all visible configurations' }}
         />
 
         <Group display='flex' alignItems='center' gap={2}>

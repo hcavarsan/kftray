@@ -28,15 +28,5 @@ export async function startForward(config: StoredConfig) {
 }
 
 export async function stopForward(config: StoredConfig) {
-  if (config.workload_type === 'proxy') {
-    await invoke('stop_proxy_forward_cmd', {
-      configId: config.id.toString(),
-      namespace: config.namespace ?? '',
-      serviceName: '',
-    })
-  } else {
-    await invoke('stop_port_forward_cmd', {
-      configId: config.id.toString(),
-    })
-  }
+  await invoke('stop_port_forward_cmd', { configId: config.id.toString() })
 }

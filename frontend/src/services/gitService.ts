@@ -7,7 +7,6 @@ export interface GitConfig {
   configPaths: string[]
   authMethod: AuthMethod
   token?: string
-  isPrivate?: boolean
   pollingInterval: number
   flush?: boolean
 }
@@ -22,27 +21,20 @@ const ACCOUNT_NAME = 'github_config'
 
 export const gitService = {
   async getCredentials(): Promise<GitConfig | null> {
-    try {
-      const credentialsString = await invoke<string>('get_key', {
-        service: SERVICE_NAME,
-        name: ACCOUNT_NAME,
-      })
+    const credentialsString = await invoke<string | null>('get_key', {
+      service: SERVICE_NAME,
+      name: ACCOUNT_NAME,
+    })
 
-      if (!credentialsString) {
-        return null
-      }
-      const { configPath, configPaths, ...stored }: StoredGitConfig =
-        JSON.parse(credentialsString)
+    if (!credentialsString) {
+      return null
+    }
+    const { configPath, configPaths, ...stored }: StoredGitConfig =
+      JSON.parse(credentialsString)
 
-      return {
-        ...stored,
-        configPaths: configPaths ?? (configPath ? [configPath] : []),
-      }
-    } catch (error) {
-      if (String(error).includes('No matching entry')) {
-        return null
-      }
-      throw error
+    return {
+      ...stored,
+      configPaths: configPaths ?? (configPath ? [configPath] : []),
     }
   },
 

@@ -5,19 +5,9 @@ import { Box, Flex, Menu, Portal, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
+import { formatBytes } from '@/lib/format'
 
 import type { LogFileSelectorProps } from './types'
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 function formatAge(days: number): string {
   if (days === 0) {
@@ -111,7 +101,7 @@ function LogFileSelectorComponent({
                 : selectedFileInfo?.created_at || 'Select'}
             </Text>
             <Text fontSize='10px' color='fg.subtle'>
-              ({selectedFileInfo ? formatFileSize(selectedFileInfo.size) : ''})
+              ({selectedFileInfo ? formatBytes(selectedFileInfo.size) : ''})
             </Text>
             <ChevronDown size={12} />
           </Flex>
@@ -179,7 +169,7 @@ function LogFileSelectorComponent({
                         {file.is_current ? 'Current Session' : file.created_at}
                       </Text>
                       <Text fontSize='10px' color='fg.faint'>
-                        {formatFileSize(file.size)}
+                        {formatBytes(file.size)}
                       </Text>
                       {!file.is_current && (
                         <Text fontSize='10px' color='fg.faint'>

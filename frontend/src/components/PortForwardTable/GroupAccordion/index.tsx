@@ -87,6 +87,9 @@ function GroupAccordionComponent({
                   handleCheckboxChange(group, e.checked === true)
                 }
                 disabled={false}
+                inputProps={{
+                  'aria-label': `Select all configurations in ${group.label}`,
+                }}
               />
             </Box>
             <span className='context-tag'>{group.label}</span>
