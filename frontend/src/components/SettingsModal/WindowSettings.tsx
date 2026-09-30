@@ -12,7 +12,6 @@ import {
   MenuTrigger,
 } from '@/components/ui/menu'
 import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
 
 import {
   compactActionButtonProps,
@@ -41,10 +40,10 @@ export function WindowSettings({
     setIsResettingPosition(true)
     try {
       await invoke('reset_window_position_cmd')
-    } catch (error) {
+    } catch {
       toaster.error({
-        title: 'Failed to reset window position',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to reset window position',
         duration: 3000,
       })
     } finally {

@@ -114,6 +114,7 @@ function PortForwardRowComponent({
       toaster.error({
         title: 'Error opening log file',
         description: errorMessage(error),
+        duration: 1000,
       })
     }
   }
@@ -197,7 +198,7 @@ function PortForwardRowComponent({
                   aria-label='Info'
                   onClick={() => void handleCopyConfigDetails()}
                   className='icon-button'
-                  style={{ color: status.color }}
+                  color={status.color}
                 >
                   <Box as={Info} width='12px' height='12px' />
                 </IconButton>

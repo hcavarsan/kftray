@@ -45,21 +45,75 @@ const inRange = (value: string, min: number, max: number) => {
   return !Number.isNaN(parsed) && parsed >= min && parsed <= max
 }
 
-function validationError(draft: SettingsDraft): string | null {
+type SettingsSection = 'General' | 'SSL' | 'Logs' | 'Window' | 'MCP Server'
+
+interface ToastCopy {
+  title: string
+  description: string
+  duration: number
+}
+
+const SECTION_FAILURES: Record<SettingsSection, (error: unknown) => ToastCopy> =
+  {
+    General: () => ({
+      title: 'Error',
+      description: 'Failed to save settings',
+      duration: 3000,
+    }),
+    SSL: () => ({
+      title: 'SSL Settings Error',
+      description: 'Failed to save SSL settings, but other settings were saved',
+      duration: 4000,
+    }),
+    Logs: () => ({
+      title: 'Log Settings Error',
+      description: 'Failed to save log settings, but other settings were saved',
+      duration: 4000,
+    }),
+    Window: error => ({
+      title: 'Window Settings Error',
+      description: `Failed to apply window settings: ${errorMessage(error)}`,
+      duration: 4000,
+    }),
+    'MCP Server': error => ({
+      title: 'MCP Server Error',
+      description: `Failed to apply MCP server settings: ${errorMessage(error)}`,
+      duration: 4000,
+    }),
+  }
+
+function validationError(
+  draft: SettingsDraft,
+): Pick<ToastCopy, 'title' | 'description'> | null {
   if (!inRange(draft.disconnectTimeout, 0, Number.MAX_SAFE_INTEGER)) {
-    return 'Please enter a valid number (0 or greater) for timeout'
+    return {
+      title: 'Invalid Input',
+      description: 'Please enter a valid number (0 or greater) for timeout',
+    }
   }
   if (!inRange(draft.sslCertValidityDays, 1, 3650)) {
-    return 'Certificate validity must be between 1 and 3650 days'
+    return {
+      title: 'Invalid Input',
+      description: 'Certificate validity must be between 1 and 3650 days',
+    }
   }
   if (!inRange(draft.logRetentionCount, 1, 100)) {
-    return 'Log retention count must be between 1 and 100'
+    return {
+      title: 'Invalid Input',
+      description: 'Log retention count must be between 1 and 100',
+    }
   }
   if (!inRange(draft.logRetentionDays, 1, 365)) {
-    return 'Log retention days must be between 1 and 365'
+    return {
+      title: 'Invalid Input',
+      description: 'Log retention days must be between 1 and 365',
+    }
   }
   if (draft.mcpEnabled && !inRange(draft.mcpPort, 1, 65535)) {
-    return 'MCP server port must be between 1 and 65535'
+    return {
+      title: 'Invalid Port',
+      description: 'MCP server port must be between 1 and 65535',
+    }
   }
 
   return null
@@ -147,8 +201,7 @@ function SettingsForm({
 
     if (invalid) {
       toaster.error({
-        title: 'Invalid Input',
-        description: invalid,
+        ...invalid,
         duration: 3000,
       })
 
@@ -156,7 +209,7 @@ function SettingsForm({
     }
 
     const mcpPort = parseInt(draft.mcpPort, 10)
-    const writes: [string, () => Promise<void>][] = [
+    const writes: [SettingsSection, () => Promise<void>][] = [
       [
         'General',
         async () => {
@@ -215,13 +268,13 @@ function SettingsForm({
     ]
 
     setIsSaving(true)
-    const failures: string[] = []
+    const failures: { section: SettingsSection; error: unknown }[] = []
 
     for (const [section, write] of writes) {
       try {
         await write()
       } catch (error) {
-        failures.push(`${section}: ${errorMessage(error)}`)
+        failures.push({ section, error })
       }
     }
 
@@ -231,11 +284,19 @@ function SettingsForm({
     setIsSaving(false)
 
     if (failures.length > 0) {
-      toaster.error({
-        title: 'Some settings were not saved',
-        description: failures.join('\n'),
-        duration: 6000,
-      })
+      toaster.error(
+        failures.length === 1
+          ? SECTION_FAILURES[failures[0].section](failures[0].error)
+          : {
+              title: 'Some settings were not saved',
+              description: failures
+                .map(
+                  ({ section, error }) => `${section}: ${errorMessage(error)}`,
+                )
+                .join('\n'),
+              duration: 6000,
+            },
+      )
 
       return
     }

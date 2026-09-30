@@ -27,6 +27,7 @@ export function useSetHttpLogsEnabled(configId: number) {
       toaster.error({
         title: 'Error toggling HTTP logs',
         description: errorMessage(error),
+        duration: 1000,
       })
     },
   })

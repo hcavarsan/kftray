@@ -12,6 +12,8 @@ interface AppDialogProps {
   headerExtra?: ReactNode
   maxWidth?: string
   height?: string
+  headerPadding?: number
+  closable?: boolean
   closeDisabled?: boolean
   role?: ComponentProps<typeof Dialog.Root>['role']
   placement?: ComponentProps<typeof Dialog.Root>['placement']
@@ -25,6 +27,8 @@ export function AppDialog({
   headerExtra,
   maxWidth = '600px',
   height,
+  headerPadding = 3,
+  closable = true,
   closeDisabled = false,
   role,
   placement,
@@ -36,6 +40,7 @@ export function AppDialog({
       role={role}
       placement={placement}
       onOpenChange={({ open }) => !open && !closeDisabled && onClose()}
+      onFocusOutside={event => event.preventDefault()}
     >
       <Dialog.Backdrop
         bg='transparent'
@@ -58,26 +63,28 @@ export function AppDialog({
           flexDirection='column'
           {...contentProps}
         >
+          {closable && (
+            <Dialog.CloseTrigger top='2' insetEnd='2' marginTop='-4px' asChild>
+              <CloseButton size='sm' />
+            </Dialog.CloseTrigger>
+          )}
           <Dialog.Header
-            p={3}
+            p={headerPadding}
             bg='app.panel'
             borderBottom='1px solid'
             borderColor='app.hover'
             flexShrink={0}
           >
-            <Flex align='center' gap={2} width='100%'>
+            <Flex align='center' justify='space-between' gap={2} width='100%'>
               <Dialog.Title
-                flex='1'
                 fontSize='sm'
+                lineHeight='20px'
                 fontWeight='medium'
                 color='gray.100'
               >
                 {title}
               </Dialog.Title>
               {headerExtra}
-              <Dialog.CloseTrigger position='static' asChild>
-                <CloseButton size='2xs' />
-              </Dialog.CloseTrigger>
             </Flex>
           </Dialog.Header>
 
@@ -113,6 +120,8 @@ export function ConfirmDialog({
       role='alertdialog'
       placement='center'
       maxWidth='400px'
+      headerPadding={1.5}
+      closable={false}
     >
       <Dialog.Body p={3}>
         <Text fontSize='xs' color='gray.400'>
@@ -123,7 +132,7 @@ export function ConfirmDialog({
         p={3}
         borderTop='1px solid'
         borderColor='app.hover'
-        bg='app.panel'
+        bg='app.bg'
       >
         <Flex justify='flex-end' gap={2} width='100%'>
           <Button

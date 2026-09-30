@@ -85,8 +85,12 @@ function LogViewerPage() {
         duration: 2000,
       })
     },
-    onError: error => {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
+    onError: () => {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to clear logs',
+        duration: 3000,
+      })
     },
   })
   const deleteLogFileMutation = useMutation({
@@ -103,7 +107,11 @@ function LogViewerPage() {
       })
     },
     onError: error => {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
+      toaster.error({
+        title: 'Error',
+        description: errorMessage(error),
+        duration: 3000,
+      })
     },
   })
 
@@ -157,8 +165,12 @@ function LogViewerPage() {
         description: 'Diagnostic report has been downloaded',
         duration: 3000,
       })
-    } catch (error) {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
+    } catch {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to generate report',
+        duration: 3000,
+      })
     } finally {
       setIsExporting(false)
     }
@@ -166,8 +178,12 @@ function LogViewerPage() {
   const handleOpenFolder = useCallback(async () => {
     try {
       await invoke('open_log_directory')
-    } catch (error) {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
+    } catch {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to open log directory',
+        duration: 3000,
+      })
     }
   }, [])
   const handleCopyLogs = useCallback(async () => {
@@ -180,8 +196,12 @@ function LogViewerPage() {
         description: 'Logs copied to clipboard',
         duration: 2000,
       })
-    } catch (error) {
-      toaster.error({ title: 'Error', description: errorMessage(error) })
+    } catch {
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to copy logs',
+        duration: 3000,
+      })
     }
   }, [entries])
   const handleClose = useCallback(async () => {

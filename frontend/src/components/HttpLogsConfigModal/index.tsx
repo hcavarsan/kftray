@@ -111,7 +111,15 @@ export default function HttpLogsConfigModal({
     queryKey,
     queryFn: () =>
       invoke<HttpLogsConfig>('get_http_logs_config_cmd', { configId }),
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to load HTTP logs configuration',
+        duration: 3000,
+      },
+    },
   })
+
   const [edits, setEdits] = useState<Partial<Draft>>({})
   const [errors, setErrors] = useState<DraftErrors>({})
 
@@ -141,21 +149,27 @@ export default function HttpLogsConfigModal({
       onSaved?.()
       onClose()
     },
-    onError: error => {
+    onError: () => {
       toaster.error({
-        title: 'Failed to save HTTP logs configuration',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to save HTTP logs configuration',
         duration: 3000,
       })
     },
   })
 
   const handleSave = () => {
-    if (!draft) {
+    if (!configQuery.data || !draft) {
       return
     }
-    const mb = parseInRange(draft.maxFileSizeMb, 1, 100)
-    const days = parseInRange(draft.retentionDays, 1, 365)
+    const mb =
+      edits.maxFileSizeMb === undefined
+        ? configQuery.data.max_file_size / MB
+        : parseInRange(edits.maxFileSizeMb, 1, 100)
+    const days =
+      edits.retentionDays === undefined
+        ? configQuery.data.retention_days
+        : parseInRange(edits.retentionDays, 1, 365)
     const nextErrors: DraftErrors = {
       ...(mb === null && {
         maxFileSizeMb: 'Enter a whole number from 1 to 100',
@@ -167,18 +181,27 @@ export default function HttpLogsConfigModal({
 
     setErrors(nextErrors)
     if (mb === null || days === null) {
+      toaster.error({
+        title: 'Invalid settings',
+        description: 'Please fix highlighted fields before saving',
+        duration: 3000,
+      })
+
       return
     }
     saveMutation.mutate({
       config_id: configId,
       enabled: draft.enabled,
       auto_cleanup: draft.auto_cleanup,
-      max_file_size: mb * MB,
+      max_file_size: Math.round(mb * MB),
       retention_days: days,
     })
   }
 
-  const fileSizeMb = draft && parseInRange(draft.maxFileSizeMb, 1, 100)
+  const fileSizeMb =
+    edits.maxFileSizeMb === undefined
+      ? null
+      : parseInRange(edits.maxFileSizeMb, 1, 100)
 
   return (
     <AppDialog

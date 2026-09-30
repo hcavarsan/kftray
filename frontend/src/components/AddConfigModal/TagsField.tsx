@@ -1,9 +1,8 @@
 import CreatableSelect from 'react-select/creatable'
 
-import { Text } from '@chakra-ui/react'
-
 import { selectStyles } from '@/components/ui/select-styles'
 
+import { Field } from './Field'
 import type { StringOption } from './types'
 import { duplicateTagKey, optionsToTags, tagsToOptions } from './utils'
 
@@ -23,10 +22,7 @@ export function TagsField({
   tags,
 }: TagsFieldProps) {
   return (
-    <>
-      <Text fontSize='xs' color='gray.400'>
-        Tags
-      </Text>
+    <Field error={error} label='Tags'>
       <CreatableSelect<StringOption, true>
         formatCreateLabel={value => `Add "${value}"`}
         isMulti
@@ -46,11 +42,6 @@ export function TagsField({
         styles={selectStyles<StringOption, true>()}
         value={tagsToOptions(tags)}
       />
-      {error && (
-        <Text color='red.300' fontSize='xs'>
-          {error}
-        </Text>
-      )}
-    </>
+    </Field>
   )
 }

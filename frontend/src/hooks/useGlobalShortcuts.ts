@@ -8,7 +8,6 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { useTauriEvent } from '@/hooks/useTauriEvent'
-import { errorMessage } from '@/lib/errors'
 
 export interface Shortcut {
   id: number
@@ -53,10 +52,10 @@ export function useGlobalShortcuts() {
         description: 'Shortcut deleted successfully',
         duration: 3000,
       }),
-    onError: error =>
+    onError: () =>
       toaster.error({
-        title: 'Failed to delete shortcut',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to delete shortcut',
         duration: 3000,
       }),
     onSettled: () =>
@@ -65,17 +64,17 @@ export function useGlobalShortcuts() {
 
   const fixPermissions = useMutation({
     mutationFn: () => invoke<string>('try_fix_platform_permissions'),
-    onSuccess: message =>
+    onSuccess: () =>
       toaster.success({
-        title: 'Permission Fix Applied',
-        description: `${message} Please logout and login again for changes to take effect.`,
+        title: 'Permission Fix Started',
+        description: 'Please logout and login again for changes to take effect',
         duration: 5000,
       }),
-    onError: error =>
+    onError: () =>
       toaster.error({
         title: 'Permission Fix Failed',
-        description: errorMessage(error),
-        duration: 4000,
+        description: 'Failed to fix input group permissions',
+        duration: 3000,
       }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: platformStatusQuery.queryKey }),

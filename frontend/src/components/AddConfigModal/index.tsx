@@ -60,7 +60,6 @@ const emptyDraft: ConfigDraft = {
   local_address: '127.0.0.1',
   local_port: '',
   namespace: '',
-  protocol: 'tcp',
   remote_address: '',
   remote_port: '',
   service: '',
@@ -79,7 +78,7 @@ const toDraft = (config: Config | null): ConfigDraft => {
 }
 
 function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
-  const remote_port = Number(draft.remote_port)
+  const remote_port = draft.remote_port ? Number(draft.remote_port) : undefined
   return {
     ...initialConfig,
     ...emptyDraft,
@@ -96,17 +95,17 @@ function toConfig(draft: ConfigDraft, initialConfig: Config | null): Config {
     namespace: draft.namespace ?? '',
     protocol: draft.protocol ?? 'tcp',
     remote_address: draft.remote_address ?? '',
-    remote_port: Number.isNaN(remote_port) ? undefined : remote_port,
+    remote_port,
     service: draft.service ?? '',
     target: draft.target ?? '',
     workload_type: draft.workload_type ?? 'service',
   }
 }
 
-function ErrorText({ error }: { error: unknown }) {
+function ErrorText({ error, label }: { error: unknown; label: string }) {
   return error ? (
     <Text color='red.300' fontSize='xs'>
-      {String(error)}
+      {label}
     </Text>
   ) : null
 }
@@ -202,6 +201,7 @@ function AddConfigModal({
       onClose={onClose}
       maxWidth='600px'
       height='96vh'
+      closable={false}
       headerExtra={
         <HStack gap={2}>
           <Text color='gray.400' fontSize='2xs'>
@@ -238,28 +238,60 @@ function AddConfigModal({
       }
     >
       <Dialog.Body overflowY='auto' p={3}>
-        <Stack gap={3}>
+        <Stack gap={2}>
           <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-            <TextField
-              error={workloadType === 'expose' ? shownErrors.alias : undefined}
-              hint={
-                workloadType === 'expose' ? (
-                  <Tooltip
-                    content='Service name in cluster or public domain.'
-                    portalled
-                  >
-                    <span>
-                      <Info color='gray' size={10} />
-                    </span>
-                  </Tooltip>
-                ) : undefined
-              }
-              label={workloadType === 'expose' ? 'Domain *' : 'Alias'}
-              name='alias'
-              onChange={alias => update({ alias })}
-              placeholder={workloadType === 'expose' ? 'myapp.example.com' : ''}
-              value={draft.alias ?? ''}
-            />
+            <Stack gap={1.5}>
+              <TextField
+                error={
+                  workloadType === 'expose' ? shownErrors.alias : undefined
+                }
+                hint={
+                  workloadType === 'expose' ? (
+                    <Tooltip
+                      content={
+                        draft.exposure_type === 'public'
+                          ? 'Full domain for public access (e.g., myapp.example.com). The Kubernetes service will be named using the first part before the dot (e.g., "myapp").'
+                          : `Service name in cluster (accessible as ${draft.alias || 'name'}.${draft.namespace || 'namespace'}.svc.cluster.local)`
+                      }
+                      portalled
+                    >
+                      <span
+                        style={{ display: 'inline-flex', alignItems: 'center' }}
+                      >
+                        <Info
+                          size={10}
+                          color='var(--chakra-colors-app-muted)'
+                        />
+                      </span>
+                    </Tooltip>
+                  ) : undefined
+                }
+                label={workloadType === 'expose' ? 'Domain *' : 'Alias'}
+                name='alias'
+                onChange={alias => update({ alias })}
+                placeholder={
+                  workloadType === 'expose'
+                    ? draft.exposure_type === 'public'
+                      ? 'myapp.example.com'
+                      : 'my-service'
+                    : ''
+                }
+                value={draft.alias ?? ''}
+              />
+              {workloadType !== 'expose' && (
+                <Checkbox
+                  checked={draft.domain_enabled ?? false}
+                  onCheckedChange={event =>
+                    update({ domain_enabled: event.checked === true })
+                  }
+                  size='xs'
+                >
+                  <Text color='gray.400' fontSize='xs'>
+                    Enable alias as domain
+                  </Text>
+                </Checkbox>
+              )}
+            </Stack>
             <Field error={shownErrors.context} label='Context *'>
               <Select<StringOption>
                 isLoading={contextQuery.isLoading}
@@ -284,24 +316,14 @@ function AddConfigModal({
                     : null
                 }
               />
-              <ErrorText error={contextQuery.error} />
+              <ErrorText
+                error={contextQuery.error}
+                label='Error fetching contexts'
+              />
             </Field>
           </Grid>
-          {workloadType !== 'expose' && (
-            <Checkbox
-              checked={draft.domain_enabled ?? false}
-              onCheckedChange={event =>
-                update({ domain_enabled: event.checked === true })
-              }
-              size='xs'
-            >
-              <Text color='gray.400' fontSize='xs'>
-                Enable alias as domain
-              </Text>
-            </Checkbox>
-          )}
           <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-            <Field error={shownErrors.workload_type} label='Workload Type *'>
+            <Field error={shownErrors.workload_type} label='Workload Type'>
               <Select<StringOption>
                 onChange={option =>
                   update({
@@ -359,7 +381,10 @@ function AddConfigModal({
                     : null
                 }
               />
-              <ErrorText error={namespaceQuery.error} />
+              <ErrorText
+                error={namespaceQuery.error}
+                label='Error fetching namespaces'
+              />
             </Field>
           </Grid>
           <TagsField
@@ -379,17 +404,27 @@ function AddConfigModal({
           {workloadType === 'proxy' && (
             <ProxyFields draft={draft} errors={shownErrors} onUpdate={update} />
           )}
-          {(workloadType === 'service' || workloadType === 'pod') && (
+          {workloadType !== 'expose' && workloadType !== 'proxy' && (
             <KubeTargetFields
               draft={draft}
-              errors={shownErrors}
+              errors={
+                resourceQuery.error
+                  ? {
+                      ...shownErrors,
+                      [workloadType === 'pod' ? 'target' : 'service']:
+                        workloadType === 'pod'
+                          ? 'Error fetching pods'
+                          : 'Error fetching services',
+                    }
+                  : shownErrors
+              }
               isLoading={resourceQuery.isLoading}
               noOptionsMessage={
                 resourceQuery.error ? 'Type name manually' : 'No results found'
               }
               onUpdate={update}
               options={resourceOptions}
-              portError={portQuery.error ? String(portQuery.error) : undefined}
+              portError={portQuery.error ? 'Error fetching ports' : undefined}
               portOptions={portOptions}
               portsLoading={portQuery.isLoading}
               portsMessage={

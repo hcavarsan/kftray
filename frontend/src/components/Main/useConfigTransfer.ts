@@ -15,7 +15,11 @@ export function useConfigTransfer() {
 
   const exportConfigs = async () => {
     try {
-      const json = await invoke<string>('export_configs_cmd')
+      const json = await invoke('export_configs_cmd')
+
+      if (typeof json !== 'string') {
+        throw new Error('The exported config is not a string')
+      }
       const exported = await withNativeDialog(async () => {
         const filePath = await save({
           defaultPath: 'configs.json',
@@ -64,10 +68,10 @@ export function useConfigTransfer() {
         description: 'Configuration imported successfully.',
         duration: 1000,
       })
-    } catch (error) {
+    } catch {
       toaster.error({
-        title: 'Failed to import configs',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to import configurations.',
         duration: 1000,
       })
     }

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -41,7 +41,7 @@ function Main() {
 
   const closeModal = () => setActiveModal(null)
 
-  const openConfig = async (id: number, isEdit: boolean) => {
+  const openConfig = useCallback(async (id: number, isEdit: boolean) => {
     try {
       const config = await invoke<Config>('get_config_cmd', { id })
 
@@ -63,19 +63,33 @@ function Main() {
         description: errorMessage(error),
       })
     }
-  }
+  }, [])
 
-  const deleteConfigs = async (ids: number[]) => {
-    const deleted = await forwarding.deleteConfigs(ids)
+  const editConfig = useCallback(
+    (id: number) => openConfig(id, true),
+    [openConfig],
+  )
 
-    if (deleted) {
-      setSelectedConfigs(prev =>
-        prev.filter(config => !ids.includes(config.id)),
-      )
-    }
+  const duplicateConfig = useCallback(
+    (id: number) => openConfig(id, false),
+    [openConfig],
+  )
 
-    return deleted
-  }
+  const forwardingDelete = forwarding.deleteConfigs
+  const deleteConfigs = useCallback(
+    async (ids: number[]) => {
+      const deleted = await forwardingDelete(ids)
+
+      if (deleted) {
+        setSelectedConfigs(prev =>
+          prev.filter(config => !ids.includes(config.id)),
+        )
+      }
+
+      return deleted
+    },
+    [forwardingDelete],
+  )
 
   return (
     <Box
@@ -122,8 +136,8 @@ function Main() {
               isStopping={forwarding.isStopping}
               pendingConfigActions={forwarding.pendingConfigActions}
               toggleConfigForward={forwarding.toggleConfigForward}
-              handleEditConfig={id => openConfig(id, true)}
-              handleDuplicateConfig={id => openConfig(id, false)}
+              handleEditConfig={editConfig}
+              handleDuplicateConfig={duplicateConfig}
               stopSelectedPortForwarding={() =>
                 forwarding.stopSelectedPortForwarding(selectedConfigs)
               }

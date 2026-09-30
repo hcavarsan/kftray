@@ -3,7 +3,12 @@ import { RefreshCw, Trash2 } from 'lucide-react'
 import Select from 'react-select'
 
 import { Box, Dialog, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
@@ -11,7 +16,7 @@ import { AppDialog } from '@/components/ui/dialog'
 import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useConfigs } from '@/hooks/useConfigs'
+import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { errorMessage } from '@/lib/errors'
 
 import { CleanupDialog } from './CleanupDialog'
@@ -62,7 +67,17 @@ export default function ServerResourcesModal({
   onClose,
 }: ServerResourcesModalProps) {
   const queryClient = useQueryClient()
-  const { data: configs } = useConfigs()
+  const { data: configs } = useQuery({
+    queryKey: ['configs', 'server-resources'],
+    queryFn: fetchConfigsWithState,
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to load contexts',
+        duration: 3000,
+      },
+    },
+  })
   const [selectedValue, setSelectedValue] = useState<string | null>(null)
   const [cleanupMode, setCleanupMode] = useState<CleanupMode | null>(null)
 
@@ -115,6 +130,15 @@ export default function ServerResourcesModal({
         return isAll ? withTimeout(request, CONTEXT_TIMEOUT_MS) : request
       },
       retry: false,
+      meta: isAll
+        ? undefined
+        : {
+            errorToast: {
+              title: 'Error',
+              description: 'Failed to load resources',
+              duration: 3000,
+            },
+          },
     })),
   })
 
@@ -157,8 +181,8 @@ export default function ServerResourcesModal({
     },
     onError: error => {
       toaster.error({
-        title: 'Failed to delete resource',
-        description: errorMessage(error),
+        title: 'Error',
+        description: `Failed to delete: ${errorMessage(error)}`,
         duration: 3000,
       })
     },
@@ -201,8 +225,8 @@ export default function ServerResourcesModal({
     },
     onError: error => {
       toaster.error({
-        title: 'Cleanup failed',
-        description: errorMessage(error),
+        title: 'Error',
+        description: `Cleanup failed: ${errorMessage(error)}`,
         duration: 3000,
       })
     },

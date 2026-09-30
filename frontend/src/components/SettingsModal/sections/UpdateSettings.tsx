@@ -9,7 +9,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
-import { errorMessage } from '@/lib/errors'
 
 import { settingsQuery } from '../queries'
 import {
@@ -85,11 +84,11 @@ export function UpdateSettings({
           duration: 3000,
         })
       }
-    } catch (error) {
+    } catch {
       setStatus('error')
       toaster.error({
         title: 'Update Check Failed',
-        description: errorMessage(error),
+        description: 'Failed to check for updates. Please try again later.',
         duration: 4000,
       })
     } finally {
@@ -107,10 +106,10 @@ export function UpdateSettings({
     })
     try {
       await invoke('install_update_silent')
-    } catch (error) {
+    } catch {
       toaster.error({
         title: 'Update Failed',
-        description: errorMessage(error),
+        description: 'Failed to install the update. Please try again later.',
         duration: 4000,
       })
       setIsUpdating(false)

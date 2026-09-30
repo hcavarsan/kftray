@@ -1,17 +1,7 @@
-import Select from 'react-select'
+import { Grid } from '@chakra-ui/react'
 
-import { Grid, Text } from '@chakra-ui/react'
-
-import { Checkbox } from '@/components/ui/checkbox'
-import { selectStyles } from '@/components/ui/select-styles'
-
-import { Field, TextField } from './Field'
-import type { ConfigDraft, StringOption } from './types'
-
-const protocolOptions: StringOption[] = [
-  { value: 'tcp', label: 'TCP' },
-  { value: 'udp', label: 'UDP' },
-]
+import { LocalAddressField, ProtocolField, TextField } from './Field'
+import type { ConfigDraft } from './types'
 
 interface ProxyFieldsProps {
   draft: ConfigDraft
@@ -25,24 +15,16 @@ export function ProxyFields({ draft, errors, onUpdate }: ProxyFieldsProps) {
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <TextField
           error={errors.remote_address}
-          label='Remote Address *'
+          label='Remote Address'
           name='remote_address'
           onChange={remote_address => onUpdate({ remote_address })}
           value={draft.remote_address ?? ''}
         />
-        <Field error={errors.protocol} label='Protocol *'>
-          <Select<StringOption>
-            onChange={option =>
-              onUpdate({ protocol: option?.value === 'udp' ? 'udp' : 'tcp' })
-            }
-            options={protocolOptions}
-            styles={selectStyles<StringOption>()}
-            value={
-              protocolOptions.find(option => option.value === draft.protocol) ??
-              null
-            }
-          />
-        </Field>
+        <ProtocolField
+          draft={draft}
+          error={errors.protocol}
+          onUpdate={onUpdate}
+        />
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <TextField
@@ -62,34 +44,9 @@ export function ProxyFields({ draft, errors, onUpdate }: ProxyFieldsProps) {
           value={draft.local_port ?? ''}
         />
       </Grid>
-      <TextField
-        disabled={draft.auto_loopback_address}
-        label='Local Address (Optional)'
-        name='local_address'
-        onChange={local_address => onUpdate({ local_address })}
-        placeholder={
-          draft.auto_loopback_address ? '127.0.0.x' : 'e.g., 127.0.0.1'
-        }
-        value={
-          draft.auto_loopback_address
-            ? ''
-            : (draft.local_address ?? '127.0.0.1')
-        }
-      />
-      <Checkbox
-        checked={draft.auto_loopback_address ?? false}
-        onCheckedChange={event =>
-          onUpdate({
-            auto_loopback_address: event.checked === true,
-            local_address: event.checked === true ? '' : '127.0.0.1',
-          })
-        }
-        size='xs'
-      >
-        <Text fontSize='xs' color='gray.400'>
-          Auto select address
-        </Text>
-      </Checkbox>
+      <Grid templateColumns='repeat(2, 1fr)' gap={3}>
+        <LocalAddressField draft={draft} onUpdate={onUpdate} />
+      </Grid>
     </>
   )
 }

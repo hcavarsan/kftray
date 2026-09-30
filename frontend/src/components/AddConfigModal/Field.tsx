@@ -1,6 +1,23 @@
 import type { ReactNode } from 'react'
+import Select from 'react-select'
 
 import { Flex, Input, Stack, Text } from '@chakra-ui/react'
+
+import { Checkbox } from '@/components/ui/checkbox'
+import { selectStyles } from '@/components/ui/select-styles'
+
+import type { ConfigDraft, StringOption } from './types'
+
+const protocolOptions: StringOption[] = [
+  { value: 'tcp', label: 'TCP' },
+  { value: 'udp', label: 'UDP' },
+]
+
+interface DraftFieldProps {
+  draft: ConfigDraft
+  error?: string
+  onUpdate: (update: Partial<ConfigDraft>) => void
+}
 
 interface FieldProps {
   children?: ReactNode
@@ -66,5 +83,58 @@ export function TextField({
         _hover={{ borderColor: 'app.borderStrong' }}
       />
     </Field>
+  )
+}
+
+export function ProtocolField({ draft, error, onUpdate }: DraftFieldProps) {
+  return (
+    <Field error={error} label='Protocol *'>
+      <Select<StringOption>
+        onChange={option =>
+          onUpdate({ protocol: option?.value === 'udp' ? 'udp' : 'tcp' })
+        }
+        options={protocolOptions}
+        styles={selectStyles<StringOption>()}
+        value={
+          protocolOptions.find(option => option.value === draft.protocol) ??
+          null
+        }
+      />
+    </Field>
+  )
+}
+
+export function LocalAddressField({ draft, onUpdate }: DraftFieldProps) {
+  return (
+    <Stack gap={1.5}>
+      <TextField
+        disabled={draft.auto_loopback_address}
+        label='Local Address (Optional)'
+        name='local_address'
+        onChange={local_address => onUpdate({ local_address })}
+        placeholder={
+          draft.auto_loopback_address ? '127.0.0.x' : 'e.g., 127.0.0.1'
+        }
+        value={
+          draft.auto_loopback_address
+            ? ''
+            : (draft.local_address ?? '127.0.0.1')
+        }
+      />
+      <Checkbox
+        checked={draft.auto_loopback_address ?? false}
+        onCheckedChange={event =>
+          onUpdate({
+            auto_loopback_address: event.checked === true,
+            local_address: event.checked === true ? '' : '127.0.0.1',
+          })
+        }
+        size='xs'
+      >
+        <Text fontSize='xs' color='gray.400'>
+          Auto select address
+        </Text>
+      </Checkbox>
+    </Stack>
   )
 }

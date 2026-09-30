@@ -5,28 +5,21 @@ import { Box, Button, Spinner, Text } from '@chakra-ui/react'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
-import { errorMessage } from '@/lib/errors'
 
 function SyncConfigsButton() {
   const { credentials, syncStatus, lastSync, nextSync, syncConfigs } =
     useGitSync()
 
-  const handleClick = async () => {
-    try {
-      await syncConfigs()
-      toaster.success({
-        title: 'Success',
-        description: 'Configs synced successfully',
-        duration: 1000,
-      })
-    } catch (error) {
-      toaster.error({
-        title: 'Sync failed',
-        description: errorMessage(error),
-        duration: 2000,
-      })
-    }
-  }
+  const handleClick = () =>
+    syncConfigs().then(
+      () =>
+        toaster.success({
+          title: 'Success',
+          description: 'Configs synced successfully',
+          duration: 1000,
+        }),
+      () => undefined,
+    )
 
   const tooltipContent = (
     <Box fontSize='xs' lineHeight='tight'>

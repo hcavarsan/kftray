@@ -2,12 +2,13 @@ import type { GroupBase, StylesConfig } from 'react-select'
 
 const token = (name: string) => `var(--chakra-colors-app-${name})`
 
-const centered = {
-  margin: 0,
-  position: 'absolute',
-  top: '45%',
-  transform: 'translateY(-50%)',
-} as const
+const centered = (top: string) =>
+  ({
+    margin: 0,
+    position: 'absolute',
+    top,
+    transform: 'translateY(-50%)',
+  }) as const
 
 export function selectStyles<Option, IsMulti extends boolean = false>(
   height = 30,
@@ -38,7 +39,7 @@ export function selectStyles<Option, IsMulti extends boolean = false>(
     }),
     singleValue: base => ({
       ...base,
-      ...centered,
+      ...centered('45%'),
       color: 'white',
       fontSize: '12px',
     }),
@@ -51,15 +52,18 @@ export function selectStyles<Option, IsMulti extends boolean = false>(
     }),
     valueContainer: (base, state) => ({
       ...base,
-      padding: state.isMulti ? '2px 8px' : '0 8px',
-      gap: '4px',
+      ...(state.isMulti
+        ? { padding: '2px 8px', gap: '4px' }
+        : { padding: '0 8px', height: `${height}px` }),
     }),
     placeholder: (base, state) => ({
       ...base,
-      ...(!state.isMulti && centered),
+      ...(!state.isMulti && centered('40%')),
       color: token('placeholder'),
       fontSize: '12px',
     }),
+    indicatorsContainer: (base, state) =>
+      state.isMulti ? base : { ...base, height: `${height}px` },
     dropdownIndicator: base => ({ ...base, padding: '0 4px' }),
     clearIndicator: base => ({ ...base, padding: '0 4px' }),
     multiValue: base => ({

@@ -11,10 +11,11 @@ import {
   Wrap,
   WrapItem,
 } from '@chakra-ui/react'
+import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
 import { AppDialog } from '@/components/ui/dialog'
-import { useConfigs } from '@/hooks/useConfigs'
+import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { errorMessage } from '@/lib/errors'
 
@@ -23,9 +24,20 @@ import ShortcutFormModal from './ShortcutFormModal'
 
 export default function ShortcutModal({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Shortcut | 'new' | null>(null)
-  const { data: configs = [] } = useConfigs()
+  const { data: configs = [] } = useQuery({
+    queryKey: ['configs', 'shortcuts'],
+    queryFn: fetchConfigsWithState,
+    meta: {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to load configurations',
+        duration: 3000,
+      },
+    },
+  })
   const { shortcuts, platformStatus, deleteShortcut, fixPermissions } =
     useGlobalShortcuts()
+
   const shortcutList = shortcuts.data ?? []
 
   return (

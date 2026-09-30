@@ -219,6 +219,7 @@ function Footer({
           }
           onClose={closeHelperActionDialog}
           maxWidth='400px'
+          headerPadding={1.5}
         >
           <Dialog.Body p={3}>
             <Box

@@ -20,7 +20,6 @@ import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
 import { useKubeContexts } from '@/hooks/useKube'
-import { errorMessage } from '@/lib/errors'
 import { selectFile } from '@/lib/nativeDialog'
 import type { Config, StringOption } from '@/types'
 
@@ -41,7 +40,9 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
   const [aliasAsDomain, setAliasAsDomain] = useState(false)
   const [enableAutoLoopback, setEnableAutoLoopback] = useState(false)
 
-  const contextQuery = useKubeContexts(kubeConfig)
+  const contextQuery = useKubeContexts(kubeConfig, true, {
+    errorToast: { title: 'Error fetching contexts', duration: 1000 },
+  })
   const contextOptions = contextQuery.data?.map(context => ({
     label: context.name,
     value: context.name,
@@ -60,11 +61,11 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
       if (path) {
         changeKubeconfig(path)
       }
-    } catch (error) {
+    } catch {
       changeKubeconfig(DEFAULT_KUBECONFIG)
       toaster.error({
-        title: 'Failed to select kubeconfig file',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to select kubeconfig file.',
         duration: 1000,
       })
     }
@@ -96,14 +97,28 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
       })
       onClose()
     },
-    onError: error => {
+    onError: () => {
       toaster.error({
-        title: 'Failed to import configs',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to import configs.',
         duration: 1000,
       })
     },
   })
+
+  const handleImport = () => {
+    if (!selectedContext) {
+      toaster.error({
+        title: 'Error',
+        description: 'Please select a context.',
+        duration: 1000,
+      })
+
+      return
+    }
+
+    importMutation.mutate(selectedContext.value)
+  }
 
   const kubeconfigButtonProps = (active: boolean) => ({
     size: 'xs' as const,
@@ -114,7 +129,14 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
   })
 
   return (
-    <AppDialog title='Auto Import' onClose={onClose} maxWidth='400px'>
+    <AppDialog
+      title='Auto Import'
+      onClose={onClose}
+      maxWidth='400px'
+      headerPadding={1.5}
+      closable={false}
+      contentProps={{ mt: 70 }}
+    >
       <Dialog.Body p={3}>
         <Stack gap={4}>
           <Stack gap={1.5}>
@@ -193,8 +215,7 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
             )}
             {contextQuery.isError && (
               <Text color='red.300' fontSize='xs'>
-                Please select a valid kubeconfig file:{' '}
-                {errorMessage(contextQuery.error)}
+                Please select a valid kubeconfig file
               </Text>
             )}
           </Stack>
@@ -254,9 +275,7 @@ export default function AutoImportModal({ onClose }: AutoImportModalProps) {
               size='xs'
               bg='blue.500'
               _hover={{ bg: 'blue.600' }}
-              onClick={() =>
-                selectedContext && importMutation.mutate(selectedContext.value)
-              }
+              onClick={handleImport}
               disabled={!selectedContext || importMutation.isPending}
               height='28px'
             >

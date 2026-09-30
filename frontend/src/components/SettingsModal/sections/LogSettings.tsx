@@ -77,10 +77,10 @@ export function LogSettings({
   const openLogsWindow = async () => {
     try {
       await invoke('open_log_viewer_window_cmd')
-    } catch (error) {
+    } catch {
       toaster.error({
-        title: 'Failed to open log viewer',
-        description: errorMessage(error),
+        title: 'Error',
+        description: 'Failed to open log viewer',
         duration: 3000,
       })
     }

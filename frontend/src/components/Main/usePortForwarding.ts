@@ -136,7 +136,10 @@ export function usePortForwarding() {
   // or replaced.
   const applyConfigs = useCallback(
     async (update: (current: Config[]) => Config[]) => {
-      await queryClient.cancelQueries({ queryKey: configsQuery.queryKey })
+      await queryClient.cancelQueries({
+        queryKey: configsQuery.queryKey,
+        exact: true,
+      })
       queryClient.setQueryData(configsQuery.queryKey, current =>
         current ? update(current) : current,
       )
@@ -636,10 +639,10 @@ export function usePortForwarding() {
         })
 
         return true
-      } catch (error) {
+      } catch {
         toaster.error({
-          title: 'Failed to delete configurations',
-          description: errorMessage(error),
+          title: 'Error',
+          description: 'Failed to delete configurations.',
           duration: 1000,
         })
 
@@ -736,11 +739,20 @@ export function usePortForwarding() {
 
         return true
       }
-      if (!wasStopped || !runningConfig) {
+      if (!wasStopped) {
         toaster.error({
           title: 'Error',
-          description: `Failed to ${verb} configuration. ${message}`,
+          description: `Failed to ${verb} configuration.`,
           duration: 1000,
+        })
+
+        return false
+      }
+      if (!runningConfig) {
+        toaster.error({
+          title: 'Error',
+          description: `The forward was stopped but the save failed. ${message}`,
+          duration: 2000,
         })
 
         return false

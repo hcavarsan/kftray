@@ -18,7 +18,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { AppDialog } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, shortcutsQuery } from '@/hooks/useGlobalShortcuts'
-import { errorMessage } from '@/lib/errors'
 import type { Config } from '@/types'
 
 import {
@@ -40,7 +39,14 @@ interface ShortcutDraft {
   configIds: number[]
 }
 
-class ShortcutInputError extends Error {}
+class ShortcutFormError extends Error {
+  title: string
+
+  constructor(title: string, message: string) {
+    super(message)
+    this.title = title
+  }
+}
 
 export default function ShortcutFormModal({
   shortcut,
@@ -61,21 +67,28 @@ export default function ShortcutFormModal({
   const save = useMutation({
     mutationFn: async () => {
       if (!selectedAction) {
-        throw new ShortcutInputError(
+        throw new ShortcutFormError(
+          'Invalid Input',
           'Please set a shortcut key and select an action',
         )
       }
       const normalized = await invoke<string>('normalize_shortcut_key', {
         shortcutStr: draft.shortcutKey,
       }).catch(() => {
-        throw new ShortcutInputError('Please enter a valid shortcut format')
+        throw new ShortcutFormError(
+          'Invalid Shortcut',
+          'Please enter a valid shortcut format',
+        )
       })
       const isValid = await invoke<boolean>('validate_shortcut_key', {
         shortcutKey: normalized,
-      })
+      }).catch(() => false)
 
       if (!isValid) {
-        throw new ShortcutInputError('The shortcut format is not valid')
+        throw new ShortcutFormError(
+          'Invalid Shortcut',
+          'The shortcut format is not valid',
+        )
       }
 
       const request = {
@@ -94,7 +107,8 @@ export default function ShortcutFormModal({
         const id = await invoke<number>('create_shortcut', { request })
 
         if (!id) {
-          throw new Error(
+          throw new ShortcutFormError(
+            'Creation Failed',
             'Failed to create shortcut. It may conflict with another shortcut.',
           )
         }
@@ -112,14 +126,15 @@ export default function ShortcutFormModal({
       onClose()
     },
     onError: error =>
-      toaster.error({
-        title:
-          error instanceof ShortcutInputError
-            ? 'Invalid Shortcut'
-            : 'Failed to save shortcut',
-        description: errorMessage(error),
-        duration: 3000,
-      }),
+      toaster.error(
+        error instanceof ShortcutFormError
+          ? { title: error.title, description: error.message, duration: 3000 }
+          : {
+              title: 'Error',
+              description: 'Failed to save shortcut',
+              duration: 3000,
+            },
+      ),
   })
 
   const handleSave = () => {

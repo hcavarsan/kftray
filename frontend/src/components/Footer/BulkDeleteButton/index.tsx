@@ -37,7 +37,16 @@ function BulkDeleteButton({
   }
 
   const handleConfirmDelete = async () => {
-    if (state.isDeleting || !state.configsToDelete.length) {
+    if (state.isDeleting) {
+      return
+    }
+    if (!state.configsToDelete.length) {
+      toaster.error({
+        title: 'Error',
+        description: 'No configurations selected for deletion.',
+        duration: 1000,
+      })
+
       return
     }
 

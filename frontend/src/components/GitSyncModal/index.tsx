@@ -133,7 +133,7 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       onClose()
     } catch (error) {
       toaster.error({
-        title: 'Error disabling git sync',
+        title: 'Error saving settings',
         description: errorMessage(error),
         duration: 1000,
       })
@@ -160,6 +160,8 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       onClose={onClose}
       maxWidth='400px'
       height='95vh'
+      headerPadding={1.5}
+      closable={false}
     >
       <Box
         flex='1'

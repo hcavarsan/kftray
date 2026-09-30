@@ -10,7 +10,9 @@ import {
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
+import { errorMessage } from '@/lib/errors'
 import type { GitConfig } from '@/services/gitService'
 import { gitService } from '@/services/gitService'
 
@@ -46,11 +48,22 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       staleTime: Number.POSITIVE_INFINITY,
     })
 
-  const syncMutation = useMutation({
+  const {
+    mutate: sync,
+    mutateAsync: syncAsync,
+    isPending: isSyncing,
+  } = useMutation({
     mutationFn: (creds: GitConfig) => gitService.importConfigs(creds),
     onSuccess: () => {
       setLastSyncTime(Date.now())
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+    },
+    onError: error => {
+      toaster.error({
+        title: 'Sync Failed',
+        description: errorMessage(error),
+        duration: 3000,
+      })
     },
     retry: 2,
     retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
@@ -82,8 +95,8 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       throw new Error('No git credentials found')
     }
 
-    await syncMutation.mutateAsync(credentials)
-  }, [credentials, syncMutation])
+    await syncAsync(credentials)
+  }, [credentials, syncAsync])
 
   useEffect(() => {
     const interval = credentials?.pollingInterval ?? 0
@@ -92,12 +105,10 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const intervalId = setInterval(() => {
-      syncMutation.mutate(credentials)
-    }, interval * 60000)
+    const intervalId = setInterval(() => sync(credentials), interval * 60000)
 
     return () => clearInterval(intervalId)
-  }, [credentials, syncMutation])
+  }, [credentials, sync])
 
   const saveCredentials = useCallback(
     async (creds: GitConfig) => {
@@ -118,7 +129,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       isSaving: saveMutation.isPending || deleteMutation.isPending,
       syncStatus: {
         lastSyncTime,
-        isSyncing: syncMutation.isPending,
+        isSyncing,
       },
       lastSync: lastSyncTime
         ? new Date(lastSyncTime).toLocaleTimeString()
@@ -138,7 +149,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       isLoadingCredentials,
       saveMutation.isPending,
       deleteMutation.isPending,
-      syncMutation.isPending,
+      isSyncing,
       lastSyncTime,
       saveCredentials,
       deleteCredentials,
