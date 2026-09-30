@@ -39,33 +39,41 @@ impl From<CustomError> for InvokeError {
     }
 }
 
+fn scoped_account(name: &str, config_override: Option<&str>) -> String {
+    match config_override {
+        Some(dir) => format!("{name}@{dir}"),
+        None => name.to_owned(),
+    }
+}
+
+fn scoped_entry(service: &str, name: &str) -> Result<Entry, CustomError> {
+    let config_override = std::env::var("KFTRAY_CONFIG").ok();
+    let account = scoped_account(name, config_override.as_deref());
+
+    Entry::new(service, &account).map_err(CustomError::from)
+}
+
 #[tauri::command]
 pub fn store_key(
     service: &str, name: &str, password: &str,
 ) -> std::result::Result<(), CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-
-    entry.set_password(password).map_err(CustomError::from)?;
-
-    Ok(())
+    scoped_entry(service, name)?
+        .set_password(password)
+        .map_err(CustomError::from)
 }
 
 #[tauri::command]
 pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-
-    let password = entry.get_password().map_err(CustomError::from)?;
-
-    Ok(password)
+    scoped_entry(service, name)?
+        .get_password()
+        .map_err(CustomError::from)
 }
 
 #[tauri::command]
 pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-
-    entry.delete_credential().map_err(CustomError::from)?;
-
-    Ok(())
+    scoped_entry(service, name)?
+        .delete_credential()
+        .map_err(CustomError::from)
 }
 
 // Removed credentials module - now handled in commons
@@ -131,6 +139,19 @@ mod tests {
 
         let result = delete_key("test_service", "test_name");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn keychain_account_is_scoped_only_for_custom_config_dirs() {
+        assert_eq!(scoped_account("github_config", None), "github_config");
+        assert_eq!(
+            scoped_account("github_config", Some("/tmp/kftray-a")),
+            "github_config@/tmp/kftray-a"
+        );
+        assert_ne!(
+            scoped_account("github_config", Some("/tmp/kftray-a")),
+            scoped_account("github_config", Some("/tmp/kftray-b"))
+        );
     }
 
     #[test]
