@@ -158,6 +158,16 @@ fn main() {
             runtime: runtime.clone(),
         })
         .setup(move |app| {
+            tauri::async_runtime::block_on(async {
+                if let Err(e) = kftray_commons::utils::db::init().await {
+                    error!("Failed to initialize database: {e}");
+                }
+
+                if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
+                    error!("Database migration failed during setup: {e}");
+                }
+            });
+
             let app_handle = app.app_handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = setup_shortcut_integration(app_handle).await {
@@ -177,14 +187,6 @@ fn main() {
                     kftray_commons::utils::config::clean_all_custom_hosts_entries().await
                 {
                     error!("Failed to clean custom hosts entries: {e}");
-                }
-
-                if let Err(e) = kftray_commons::utils::db::init().await {
-                    error!("Failed to initialize database: {e}");
-                }
-
-                if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
-                    error!("Database migration failed during setup: {e}");
                 }
             });
 
