@@ -48,6 +48,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install publishing test dependencies
         run: |
@@ -71,11 +73,19 @@ jobs:
         run: uv run --project hacks --with pytest python -m pytest hacks/tests/test_fix_updater_json.py
 
   rpm-builds:
-    name: RPM builds (${{ matrix.image }})
+    name: RPM builds (${{ matrix.distro }})
     strategy:
       fail-fast: false
       matrix:
-        image: ["fedora:43", "fedora:44", "opensuse/tumbleweed", "opensuse/leap:16.0"]
+        include:
+          - distro: fedora:43
+            image: fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
+          - distro: fedora:44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+          - distro: opensuse/tumbleweed
+            image: opensuse/tumbleweed:latest@sha256:24dd2916ee8976da70fab5410d913958042cd20b2013b5f474d737e7a92d0dbb
+          - distro: opensuse/leap:16.0
+            image: opensuse/leap:16.0@sha256:12891be67d896148576b6d2cef7126152fb20a4b062c78a87a82b30283b66375
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     timeout-minutes: 20
@@ -90,6 +100,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build RPM packages with the distribution's rpm macros
         run: bash hacks/obs/test-package-builds.sh rpm
@@ -99,6 +111,7 @@ jobs:
     needs: [checks, rpm-builds]
     if: github.event_name == 'workflow_dispatch' && inputs.version != ''
     runs-on: ubuntu-22.04
+    environment: release
     timeout-minutes: 150
     concurrency:
       group: obs-publishing
@@ -106,6 +119,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup and publish to OBS
         env:

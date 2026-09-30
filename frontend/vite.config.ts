@@ -15,12 +15,6 @@ export default defineConfig({
 
   plugins: [
     react(),
-    codecovVitePlugin({
-      enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
-      bundleName: 'kftray',
-      uploadToken: process.env.CODECOV_TOKEN,
-      gitService: 'github',
-    }),
     !!process.env.ANALYZE &&
       visualizer({
         open: true,
@@ -28,6 +22,13 @@ export default defineConfig({
         brotliSize: true,
         filename: 'dist/stats.html',
       }),
+    codecovVitePlugin({
+      enableBundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === 'true',
+      bundleName: 'kftray',
+      gitService: 'github',
+      oidc: { useGitHubOIDC: process.env.CODECOV_OIDC === 'true' },
+      telemetry: false,
+    }),
   ],
 
   clearScreen: false,

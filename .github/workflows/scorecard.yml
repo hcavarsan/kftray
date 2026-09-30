@@ -6,14 +6,21 @@ on:
   push:
     branches: ["main"]
 
-permissions: read-all
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analysis:
+    name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
-      id-token: write
+      contents: read
+      actions: read # read workflow runs for the Scorecard checks
+      security-events: write # upload the SARIF report to code scanning
+      id-token: write # publish results to the OpenSSF Scorecard API
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
