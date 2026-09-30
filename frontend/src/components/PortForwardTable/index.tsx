@@ -6,7 +6,11 @@ import { Box, Button, Flex, Text } from '@chakra-ui/react'
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import GroupAccordion from '@/components/PortForwardTable/GroupAccordion'
-import { useActivePods } from '@/components/PortForwardTable/useActivePods'
+import {
+  NO_PODS,
+  useActivePods,
+  useGroupActivePods,
+} from '@/components/PortForwardTable/useActivePods'
 import {
   ALL_GROUP_ID,
   useConfigView,
@@ -98,6 +102,7 @@ function PortForwardTable({
     configs,
     filteredConfigs,
   )
+  const groupPods = useGroupActivePods(groups, activePods)
   const groupBy = view?.group_by
   const visibleConfigs = useMemo(
     () => groups.flatMap(group => group.configs),
@@ -162,20 +167,19 @@ function PortForwardTable({
   )
 
   const handleSelectionChange = useCallback(
-    (id: number, isSelected: boolean) => {
+    (config: Config, isSelected: boolean) => {
       setSelectedConfigs(prev => {
         if (!isSelected) {
-          return prev.filter(c => c.id !== id)
+          return prev.filter(c => c.id !== config.id)
         }
-        if (prev.some(c => c.id === id)) {
+        if (prev.some(c => c.id === config.id)) {
           return prev
         }
-        const config = configs.find(c => c.id === id)
 
-        return config ? [...prev, config] : prev
+        return [...prev, config]
       })
     },
-    [configs, setSelectedConfigs],
+    [setSelectedConfigs],
   )
 
   return (
@@ -269,7 +273,7 @@ function PortForwardTable({
               key={group.id}
               group={group}
               selectedIds={selectedIds}
-              activePods={activePods}
+              activePods={groupPods.get(group.id) ?? NO_PODS}
               deleteConfigs={deleteConfigs}
               handleEditConfig={handleEditConfig}
               handleDuplicateConfig={handleDuplicateConfig}

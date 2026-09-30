@@ -73,7 +73,7 @@ interface PortForwardRowProps {
   deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => Promise<void>
   handleDuplicateConfig: (id: number) => Promise<void>
-  onSelectionChange: (id: number, isSelected: boolean) => void
+  onSelectionChange: (config: Config, isSelected: boolean) => void
   selected: boolean
   pendingAction: PendingConfigAction | null
   activePod: string | null
@@ -186,7 +186,7 @@ function PortForwardRowComponent({
                   size='xs'
                   checked={selected}
                   onCheckedChange={e =>
-                    onSelectionChange(config.id, e.checked === true)
+                    onSelectionChange(config, e.checked === true)
                   }
                   className='checkbox'
                 />

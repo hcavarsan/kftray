@@ -40,7 +40,7 @@ interface GroupAccordionProps {
   deleteConfigs: (ids: number[]) => Promise<boolean>
   handleEditConfig: (id: number) => Promise<void>
   handleDuplicateConfig: (id: number) => Promise<void>
-  handleSelectionChange: (id: number, isSelected: boolean) => void
+  handleSelectionChange: (config: Config, isSelected: boolean) => void
   handleCheckboxChange: (group: ResolvedGroup, isChecked: boolean) => void
   pendingConfigActions: Map<number, PendingConfigAction>
   toggleConfigForward: (
