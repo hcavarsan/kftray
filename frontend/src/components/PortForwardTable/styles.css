@@ -14,7 +14,6 @@
 .table-container {
   scrollbar-width: thin;
   scrollbar-color: var(--chakra-colors-bg-active) transparent;
-  scrollbar-gutter: stable both-edges;
   border: none;
   overflow-y: auto;
 }
