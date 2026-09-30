@@ -1,6 +1,7 @@
 import { RepeatIcon } from 'lucide-react'
 
 import { Box, Spinner, Text } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 
 import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import { toaster } from '@/components/ui/toaster'
@@ -11,16 +12,16 @@ function SyncConfigsButton() {
   const { credentials, syncStatus, lastSync, nextSync, syncConfigs } =
     useGitSync()
 
-  const handleClick = () =>
-    syncConfigs().then(
-      () =>
-        toaster.success({
-          title: 'Success',
-          description: 'Configs synced successfully',
-          duration: 1000,
-        }),
-      () => undefined,
-    )
+  const syncMutation = useMutation({
+    mutationFn: syncConfigs,
+    onSuccess: () => {
+      toaster.success({
+        title: 'Success',
+        description: 'Configs synced successfully',
+        duration: 1000,
+      })
+    },
+  })
 
   const tooltipContent = (
     <Box fontSize='xs' lineHeight='tight'>
@@ -44,7 +45,7 @@ function SyncConfigsButton() {
     <Tooltip content={tooltipContent} positioning={{ placement: 'top-start' }}>
       <FooterActionButton
         aria-label='Sync configs from git'
-        onClick={handleClick}
+        onClick={() => syncMutation.mutate()}
         disabled={!credentials || syncStatus.isSyncing}
         minWidth='70px'
         px={2}

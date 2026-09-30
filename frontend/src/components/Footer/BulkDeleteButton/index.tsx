@@ -2,12 +2,11 @@ import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 
 import { Box } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 
 import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import { ConfirmDialog } from '@/components/ui/dialog'
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { errorMessage } from '@/lib/errors'
 import type { Config } from '@/types'
 
 interface BulkDeleteButtonProps {
@@ -19,55 +18,16 @@ function BulkDeleteButton({
   selectedConfigs,
   deleteConfigs,
 }: BulkDeleteButtonProps) {
-  const [state, setState] = useState({
-    configsToDelete: [] as number[],
-    isDialogOpen: false,
-    isDeleting: false,
-  })
+  const [idsToDelete, setIdsToDelete] = useState<number[] | null>(null)
 
-  const handleDeleteClick = (selectedIds: number[]) => {
-    setState(prev => ({
-      ...prev,
-      configsToDelete: selectedIds,
-      isDialogOpen: true,
-    }))
-  }
-
-  const handleClose = () => {
-    setState(prev => ({ ...prev, isDialogOpen: false }))
-  }
-
-  const handleConfirmDelete = async () => {
-    if (state.isDeleting) {
-      return
-    }
-    if (!state.configsToDelete.length) {
-      toaster.error({
-        title: 'Error',
-        description: 'No configurations selected for deletion.',
-        duration: 1000,
-      })
-
-      return
-    }
-
-    setState(prev => ({ ...prev, isDeleting: true }))
-    try {
-      const deleted = await deleteConfigs(state.configsToDelete)
-
+  const deleteMutation = useMutation({
+    mutationFn: deleteConfigs,
+    onSuccess: deleted => {
       if (deleted) {
-        setState(prev => ({ ...prev, isDialogOpen: false }))
+        setIdsToDelete(null)
       }
-    } catch (error) {
-      toaster.error({
-        title: 'Error deleting configs',
-        description: errorMessage(error),
-        duration: 2000,
-      })
-    } finally {
-      setState(prev => ({ ...prev, isDeleting: false }))
-    }
-  }
+    },
+  })
 
   if (!selectedConfigs.length) {
     return null
@@ -85,7 +45,7 @@ function BulkDeleteButton({
         <FooterActionButton
           aria-label='Delete selected configs'
           onClick={() =>
-            handleDeleteClick(selectedConfigs.map(config => config.id))
+            setIdsToDelete(selectedConfigs.map(config => config.id))
           }
           bg='red.500'
           _hover={{ bg: 'red.600' }}
@@ -94,13 +54,13 @@ function BulkDeleteButton({
         </FooterActionButton>
       </Tooltip>
 
-      {state.isDialogOpen && (
+      {idsToDelete && (
         <ConfirmDialog
           title='Delete Config(s)'
           description='Are you sure you want to delete the selected config(s)? This action cannot be undone.'
-          isPending={state.isDeleting}
-          onConfirm={() => void handleConfirmDelete()}
-          onClose={handleClose}
+          isPending={deleteMutation.isPending}
+          onConfirm={() => deleteMutation.mutate(idsToDelete)}
+          onClose={() => setIdsToDelete(null)}
         />
       )}
     </Box>
