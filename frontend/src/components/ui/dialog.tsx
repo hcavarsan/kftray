@@ -97,6 +97,12 @@ export function AppDialog({
   )
 }
 
+export function AppDialogBody(props: ComponentProps<typeof Dialog.Body>) {
+  return (
+    <Dialog.Body p={3} flex='1' minHeight={0} overflowY='auto' {...props} />
+  )
+}
+
 export function AppDialogFooter({
   children,
   justify = 'flex-end',
