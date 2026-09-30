@@ -3,9 +3,38 @@ import type { ReactNode } from 'react'
 import {
   ChakraProvider,
   createSystem,
-  defaultConfig,
+  defaultBaseConfig,
   defineConfig,
 } from '@chakra-ui/react'
+import {
+  accordionSlotRecipe,
+  animationStyles,
+  badgeRecipe,
+  breakpoints,
+  buttonRecipe,
+  checkboxSlotRecipe,
+  checkmarkRecipe,
+  cssVarsPrefix,
+  cssVarsRoot,
+  dialogSlotRecipe,
+  fieldSlotRecipe,
+  inputRecipe,
+  keyframes,
+  layerStyles,
+  menuSlotRecipe,
+  progressSlotRecipe,
+  radioGroupSlotRecipe,
+  radiomarkRecipe,
+  semanticTokens,
+  sliderSlotRecipe,
+  spinnerRecipe,
+  switchSlotRecipe,
+  tableSlotRecipe,
+  textStyles,
+  toastSlotRecipe,
+  tokens,
+  tooltipSlotRecipe,
+} from '@chakra-ui/react/theme'
 import {
   QueryCache,
   QueryClient,
@@ -32,7 +61,43 @@ declare module '@tanstack/react-query' {
 const color = (value: string) => ({ value })
 
 const system = createSystem(
-  { ...defaultConfig, globalCss: {} },
+  defaultBaseConfig,
+  defineConfig({
+    preflight: true,
+    cssVarsPrefix,
+    cssVarsRoot,
+    theme: {
+      breakpoints,
+      keyframes,
+      tokens,
+      semanticTokens,
+      textStyles,
+      layerStyles,
+      animationStyles,
+      recipes: {
+        badge: badgeRecipe,
+        button: buttonRecipe,
+        checkmark: checkmarkRecipe,
+        input: inputRecipe,
+        radiomark: radiomarkRecipe,
+        spinner: spinnerRecipe,
+      },
+      slotRecipes: {
+        accordion: accordionSlotRecipe,
+        checkbox: checkboxSlotRecipe,
+        dialog: dialogSlotRecipe,
+        field: fieldSlotRecipe,
+        menu: menuSlotRecipe,
+        progress: progressSlotRecipe,
+        radioGroup: radioGroupSlotRecipe,
+        slider: sliderSlotRecipe,
+        switch: switchSlotRecipe,
+        table: tableSlotRecipe,
+        toast: toastSlotRecipe,
+        tooltip: tooltipSlotRecipe,
+      },
+    },
+  }),
   defineConfig({
     globalCss: {
       body: {
