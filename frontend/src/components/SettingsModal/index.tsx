@@ -1,27 +1,20 @@
 import { useState } from 'react'
 
-import { Box, Dialog, Spinner, Stack, Text } from '@chakra-ui/react'
-import { useQueries, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
+import { Box, Spinner, Stack, Text } from '@chakra-ui/react'
+import { useQueries } from '@tanstack/react-query'
 
 import type { LogSettings as LogSettingsData } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import {
   AppDialog,
+  AppDialogBody,
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 
 import { McpServerSettings } from './McpServerSettings'
-import {
-  appModeQuery,
-  logSettingsQuery,
-  mcpStatusQuery,
-  settingsQuery,
-  sslSettingsQuery,
-} from './queries'
+import { SETTINGS_QUERIES } from './queries'
 import { LogSettings } from './sections/LogSettings'
 import { NetworkSettings } from './sections/NetworkSettings'
 import { SslSettings } from './sections/SslSettings'
@@ -33,95 +26,8 @@ import {
   type SettingsDraft,
   type SslSettingsData,
 } from './types'
+import { type LoadedSections, useSettingsSave } from './useSettingsSave'
 import { WindowSettings } from './WindowSettings'
-
-const SETTINGS_QUERIES = [
-  settingsQuery,
-  sslSettingsQuery,
-  logSettingsQuery,
-  appModeQuery,
-  mcpStatusQuery,
-] as const
-
-const inRange = (value: string, min: number, max: number) => {
-  const parsed = parseInt(value, 10)
-
-  return !Number.isNaN(parsed) && parsed >= min && parsed <= max
-}
-
-type SettingsSection = 'General' | 'SSL' | 'Logs' | 'Window' | 'MCP Server'
-
-interface ToastCopy {
-  title: string
-  description: string
-  duration: number
-}
-
-const SECTION_FAILURES: Record<SettingsSection, (error: unknown) => ToastCopy> =
-  {
-    General: () => ({
-      title: 'Error',
-      description: 'Failed to save settings',
-      duration: 3000,
-    }),
-    SSL: () => ({
-      title: 'SSL Settings Error',
-      description: 'Failed to save SSL settings, but other settings were saved',
-      duration: 4000,
-    }),
-    Logs: () => ({
-      title: 'Log Settings Error',
-      description: 'Failed to save log settings, but other settings were saved',
-      duration: 4000,
-    }),
-    Window: error => ({
-      title: 'Window Settings Error',
-      description: `Failed to apply window settings: ${errorMessage(error)}`,
-      duration: 4000,
-    }),
-    'MCP Server': error => ({
-      title: 'MCP Server Error',
-      description: `Failed to apply MCP server settings: ${errorMessage(error)}`,
-      duration: 4000,
-    }),
-  }
-
-function validationError(
-  draft: SettingsDraft,
-): Pick<ToastCopy, 'title' | 'description'> | null {
-  if (!inRange(draft.disconnectTimeout, 0, Number.MAX_SAFE_INTEGER)) {
-    return {
-      title: 'Invalid Input',
-      description: 'Please enter a valid number (0 or greater) for timeout',
-    }
-  }
-  if (!inRange(draft.sslCertValidityDays, 1, 3650)) {
-    return {
-      title: 'Invalid Input',
-      description: 'Certificate validity must be between 1 and 3650 days',
-    }
-  }
-  if (!inRange(draft.logRetentionCount, 1, 100)) {
-    return {
-      title: 'Invalid Input',
-      description: 'Log retention count must be between 1 and 100',
-    }
-  }
-  if (!inRange(draft.logRetentionDays, 1, 365)) {
-    return {
-      title: 'Invalid Input',
-      description: 'Log retention days must be between 1 and 365',
-    }
-  }
-  if (draft.mcpEnabled && !inRange(draft.mcpPort, 1, 65535)) {
-    return {
-      title: 'Invalid Port',
-      description: 'MCP server port must be between 1 and 65535',
-    }
-  }
-
-  return null
-}
 
 interface SettingsFooterProps {
   onClose: () => void
@@ -154,8 +60,8 @@ function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
 
 interface SettingsFormProps {
   settings: Record<string, string>
-  ssl: SslSettingsData
-  log: LogSettingsData
+  ssl: SslSettingsData | undefined
+  log: LogSettingsData | undefined
   appMode: AppMode
   mcp: McpStatus
   onClose: () => void
@@ -169,145 +75,29 @@ function SettingsForm({
   mcp,
   onClose,
 }: SettingsFormProps) {
-  const queryClient = useQueryClient()
   const [initial] = useState(() =>
     buildSettingsDraft({ settings, ssl, log, appMode, mcp }),
   )
+  const [loaded] = useState<LoadedSections>(() => ({
+    ssl: ssl !== undefined,
+    log: log !== undefined,
+  }))
   const [draft, setDraft] = useState(initial)
-  const [isSaving, setIsSaving] = useState(false)
+  const { save, isSaving } = useSettingsSave({
+    draft,
+    initial,
+    loaded,
+    onClose,
+  })
 
   const update = <K extends keyof SettingsDraft>(
     key: K,
     value: SettingsDraft[K],
   ) => setDraft(prev => ({ ...prev, [key]: value }))
 
-  const saveSettings = async () => {
-    const invalid = validationError(draft)
-
-    if (invalid) {
-      toaster.error({
-        ...invalid,
-        duration: 3000,
-      })
-
-      return
-    }
-
-    const mcpPort = parseInt(draft.mcpPort, 10)
-    const writes: [SettingsSection, () => Promise<void>][] = [
-      [
-        'General',
-        async () => {
-          await invoke('update_disconnect_timeout', {
-            minutes: parseInt(draft.disconnectTimeout, 10),
-          })
-          await invoke('update_network_monitor', {
-            enabled: draft.networkMonitor,
-          })
-          await invoke('update_auto_update_enabled', {
-            enabled: draft.autoUpdateEnabled,
-          })
-        },
-      ],
-      [
-        'SSL',
-        () =>
-          invoke('set_ssl_settings', {
-            sslEnabled: draft.sslEnabled,
-            sslCertValidityDays: parseInt(draft.sslCertValidityDays, 10),
-            sslAutoRegenerate: true,
-            sslCaAutoInstall: true,
-          }),
-      ],
-      [
-        'Logs',
-        () =>
-          invoke('set_log_settings', {
-            settings: {
-              retention_count: parseInt(draft.logRetentionCount, 10),
-              retention_days: parseInt(draft.logRetentionDays, 10),
-            },
-          }),
-      ],
-      [
-        'Window',
-        async () => {
-          if (draft.appMode !== initial.appMode) {
-            await invoke('set_app_mode_cmd', { mode: draft.appMode })
-          }
-        },
-      ],
-      [
-        'MCP Server',
-        async () => {
-          if (!Number.isNaN(mcpPort) && draft.mcpPort !== initial.mcpPort) {
-            await invoke('update_mcp_server_port', { port: mcpPort })
-          }
-          if (draft.mcpEnabled !== initial.mcpEnabled) {
-            await invoke('update_mcp_server_enabled', {
-              enabled: draft.mcpEnabled,
-            })
-          }
-        },
-      ],
-    ]
-
-    setIsSaving(true)
-    const failures: { section: SettingsSection; error: unknown }[] = []
-
-    for (const [section, write] of writes) {
-      try {
-        await write()
-      } catch (error) {
-        failures.push({ section, error })
-      }
-    }
-
-    for (const query of SETTINGS_QUERIES) {
-      queryClient.invalidateQueries({ queryKey: query.queryKey })
-    }
-    setIsSaving(false)
-
-    if (failures.length > 0) {
-      toaster.error(
-        failures.length === 1
-          ? SECTION_FAILURES[failures[0].section](failures[0].error)
-          : {
-              title: 'Some settings were not saved',
-              description: failures
-                .map(
-                  ({ section, error }) => `${section}: ${errorMessage(error)}`,
-                )
-                .join('\n'),
-              duration: 6000,
-            },
-      )
-
-      return
-    }
-
-    const sslJustEnabled = !initial.sslEnabled && draft.sslEnabled
-
-    toaster.success(
-      sslJustEnabled
-        ? {
-            title: 'SSL/HTTPS Enabled Successfully',
-            description:
-              'SSL certificates have been generated and installed. You may need to restart your browser for SSL connections to work properly.',
-            duration: 8000,
-          }
-        : {
-            title: 'Settings Saved',
-            description: 'All settings have been saved successfully',
-            duration: 3000,
-          },
-    )
-    onClose()
-  }
-
   return (
     <>
-      <Dialog.Body p={3} overflowY='auto'>
+      <AppDialogBody>
         <Box display='grid' gridTemplateColumns='1fr 1fr' gap={2.5}>
           <NetworkSettings
             disconnectTimeout={draft.disconnectTimeout}
@@ -327,6 +117,7 @@ function SettingsForm({
             onSslCertValidityDaysChange={value =>
               update('sslCertValidityDays', value)
             }
+            disabled={!loaded.ssl}
           />
           <UpdateSettings
             autoUpdateEnabled={draft.autoUpdateEnabled}
@@ -340,6 +131,7 @@ function SettingsForm({
             onRetentionCountChange={value => update('logRetentionCount', value)}
             retentionDays={draft.logRetentionDays}
             onRetentionDaysChange={value => update('logRetentionDays', value)}
+            disabled={!loaded.log}
           />
           <WindowSettings
             appMode={draft.appMode}
@@ -353,12 +145,8 @@ function SettingsForm({
             onPortChange={value => update('mcpPort', value)}
           />
         </Box>
-      </Dialog.Body>
-      <SettingsFooter
-        onClose={onClose}
-        onSave={saveSettings}
-        isSaving={isSaving}
-      />
+      </AppDialogBody>
+      <SettingsFooter onClose={onClose} onSave={save} isSaving={isSaving} />
     </>
   )
 }
@@ -367,9 +155,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, ssl, log, appMode, mcp] = useQueries({
     queries: SETTINGS_QUERIES,
   })
-  const loadError = [settings, ssl, log, appMode, mcp].find(
-    query => query.error,
-  )?.error
+  const loadError = [settings, appMode, mcp].find(query => query.error)?.error
+  const sslSettled = ssl.status !== 'pending'
+  const logSettled = log.status !== 'pending'
 
   return (
     <AppDialog
@@ -378,7 +166,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       maxWidth='600px'
       height='92vh'
     >
-      {settings.data && ssl.data && log.data && appMode.data && mcp.data ? (
+      {settings.data && appMode.data && mcp.data && sslSettled && logSettled ? (
         <SettingsForm
           settings={settings.data}
           ssl={ssl.data}
@@ -389,7 +177,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         />
       ) : (
         <>
-          <Dialog.Body p={3}>
+          <AppDialogBody>
             <Stack align='center' justify='center' height='100%'>
               {loadError ? (
                 <Text fontSize='xs' color='red.300'>
@@ -399,7 +187,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <Spinner size='sm' color='whiteAlpha.600' />
               )}
             </Stack>
-          </Dialog.Body>
+          </AppDialogBody>
           <SettingsFooter onClose={onClose} />
         </>
       )}

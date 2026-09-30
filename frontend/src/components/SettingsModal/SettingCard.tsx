@@ -11,6 +11,7 @@ interface SettingCardProps {
   statusTitle?: string
   opacity?: number
   action?: ReactNode
+  note?: string
   children: ReactNode
 }
 
@@ -23,6 +24,7 @@ export function SettingCard({
   statusTitle,
   opacity,
   action,
+  note,
   children,
 }: SettingCardProps) {
   return (
@@ -62,6 +64,11 @@ export function SettingCard({
       <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
         {description}
       </Text>
+      {note && (
+        <Text fontSize='xs' color='red.300' lineHeight='1.3' mt={1}>
+          {note}
+        </Text>
+      )}
       <Box borderTop='1px solid' borderColor='app.subtle' mt={3} pt={3}>
         {children}
       </Box>
@@ -108,3 +115,6 @@ export const compactActionButtonProps = {
 
 export const isDigitsUpTo = (value: string, max: number) =>
   value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= max)
+
+export const LOAD_FAILED_NOTE =
+  'Failed to load current values. This section will not be saved.'
