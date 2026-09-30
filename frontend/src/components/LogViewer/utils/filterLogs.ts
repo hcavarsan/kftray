@@ -1,6 +1,6 @@
-import type { LogEntry, LogFilter } from '../types'
+import type { LogEntry, LogFilter, RawLogEntry } from '../types'
 
-export function normalizeLogEntries(entries: LogEntry[]): LogEntry[] {
+export function normalizeLogEntries(entries: RawLogEntry[]): LogEntry[] {
   return entries.map(entry => ({
     ...entry,
     searchable: [entry.raw, entry.message, entry.module ?? '']

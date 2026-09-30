@@ -2,20 +2,15 @@ import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import type {
   LogEntry,
-  LogFileInfo,
   LogFilter,
   LogInfo,
+  RawLogEntry,
 } from '@/components/LogViewer'
 import {
   AUTO_REFRESH_INTERVAL,
@@ -25,11 +20,13 @@ import {
   LogFileSelector,
   LogViewerList,
   LogViewerToolbar,
+  logFilesQuery,
   normalizeLogEntries,
 } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { errorMessage } from '@/lib/errors'
 
 interface LogData {
@@ -37,7 +34,9 @@ interface LogData {
   info: LogInfo
 }
 
-const logFilesQueryKey = ['log-files'] as const
+function fileNameFromPath(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
+}
 
 export function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -53,31 +52,29 @@ export function LogViewerPage() {
   const queryClient = useQueryClient()
   const appWindow = getCurrentWebviewWindow()
 
-  const logFilesQuery = useQuery({
-    queryKey: logFilesQueryKey,
-    queryFn: () => invoke<LogFileInfo[]>('list_log_files'),
-  })
+  const logFiles = useQuery(logFilesQuery)
   const logsQuery = useQuery({
     queryKey: ['logs', selectedFile],
     queryFn: async (): Promise<LogData> => {
-      const [info, entries] = await Promise.all([
-        invoke<LogInfo>('get_log_info', { filename: selectedFile }),
-        invoke<LogEntry[]>('get_log_contents_json', {
-          lines: DEFAULT_LOG_LINES,
-          filename: selectedFile,
-        }),
-      ])
+      const info = await invoke<LogInfo>('get_log_info', {
+        filename: selectedFile,
+      })
+      const entries = await invoke<RawLogEntry[]>('get_log_contents_json', {
+        lines: DEFAULT_LOG_LINES,
+        filename: selectedFile ?? fileNameFromPath(info.log_path),
+      })
 
       return { info, entries: normalizeLogEntries(entries) }
     },
-    placeholderData: keepPreviousData,
     refetchInterval:
       autoRefresh && selectedFile === null ? AUTO_REFRESH_INTERVAL : false,
   })
   const clearLogsMutation = useMutation({
     mutationFn: (filename: string | null) => invoke('clear_logs', { filename }),
-    onSuccess: async (_, filename) => {
+    onMutate: () => {
       setExpandedIds(new Set())
+    },
+    onSuccess: async (_, filename) => {
       await queryClient.invalidateQueries({ queryKey: ['logs', filename] })
       toaster.success({
         title: 'Logs Cleared',
@@ -96,7 +93,7 @@ export function LogViewerPage() {
   const deleteLogFileMutation = useMutation({
     mutationFn: (filename: string) => invoke('delete_log_file', { filename }),
     onSuccess: async (_, filename) => {
-      await queryClient.invalidateQueries({ queryKey: logFilesQueryKey })
+      await queryClient.invalidateQueries({ queryKey: logFilesQuery.queryKey })
       setSelectedFile(current => (current === filename ? null : current))
       toaster.success({
         title: 'File Deleted',
@@ -143,22 +140,9 @@ export function LogViewerPage() {
       },
     },
   })
-  const { mutate: copyLogs } = useMutation({
-    mutationFn: (text: string) => navigator.clipboard.writeText(text),
-    onSuccess: () => {
-      toaster.success({
-        title: 'Copied',
-        description: 'Logs copied to clipboard',
-        duration: 2000,
-      })
-    },
-    meta: {
-      errorToast: {
-        title: 'Error',
-        description: 'Failed to copy logs',
-        duration: 3000,
-      },
-    },
+  const { mutate: copyLogs } = useCopyToClipboard({
+    title: 'Copied',
+    description: () => 'Logs copied to clipboard',
   })
 
   const entries = logsQuery.data?.entries ?? []
@@ -257,13 +241,11 @@ export function LogViewerPage() {
       <Box px={3} py={2} bg='bg.surface' flexShrink={0}>
         <Flex align='center' gap={2} mb={2}>
           <LogFileSelector
-            logFiles={logFilesQuery.data ?? []}
+            logFiles={logFiles.data ?? []}
             selectedFile={selectedFile}
             onFileSelect={handleFileSelect}
             onDeleteFile={handleDeleteFile}
-            isLoading={
-              logFilesQuery.isLoading || deleteLogFileMutation.isPending
-            }
+            isLoading={logFiles.isLoading || deleteLogFileMutation.isPending}
           />
         </Flex>
         <LogViewerToolbar

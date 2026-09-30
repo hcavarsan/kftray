@@ -76,7 +76,7 @@ export function LogFilterDropdown<T extends string>({
   const hasSelection = selected.length > 0
 
   return (
-    <Menu.Root>
+    <Menu.Root closeOnSelect={false}>
       <Menu.Trigger asChild>
         <IconButton
           aria-label={ariaLabel}
