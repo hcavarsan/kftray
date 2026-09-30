@@ -179,16 +179,17 @@ mod tests {
 
     #[test]
     fn keychain_account_is_scoped_only_for_custom_config_dirs() {
-        let account = |dir: &str| scoped_account("github_config", Some(Path::new(dir)));
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("kftray-a");
 
         assert_eq!(scoped_account("github_config", None), "github_config");
         assert_eq!(
-            account("/nonexistent/kftray-a"),
-            "github_config@/nonexistent/kftray-a"
+            scoped_account("github_config", Some(&missing)),
+            format!("github_config@{}", missing.display())
         );
         assert_ne!(
-            account("/nonexistent/kftray-a"),
-            account("/nonexistent/kftray-b")
+            scoped_account("github_config", Some(&missing)),
+            scoped_account("github_config", Some(&temp.path().join("kftray-b")))
         );
     }
 
