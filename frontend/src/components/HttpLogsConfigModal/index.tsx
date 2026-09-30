@@ -15,7 +15,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
@@ -215,14 +219,6 @@ export default function HttpLogsConfigModal({
       }
       onClose={onClose}
       maxWidth='420px'
-      contentProps={{
-        boxShadow: 'dialog',
-        css: {
-          '&::-webkit-scrollbar': { display: 'none' },
-          msOverflowStyle: 'none',
-          scrollbarWidth: 'none',
-        },
-      }}
     >
       <Dialog.Body px={4} py={3}>
         {!draft ? (
@@ -345,43 +341,27 @@ export default function HttpLogsConfigModal({
         )}
       </Dialog.Body>
 
-      <Dialog.Footer
-        bg='app.panel'
-        px={4}
-        py={3}
-        borderTop='1px solid'
-        borderColor='app.border'
-      >
-        <Flex justify='flex-end' gap={2} width='100%'>
-          <Button
-            variant='ghost'
-            size='xs'
-            onClick={onClose}
-            disabled={saveMutation.isPending}
-            _hover={{ bg: 'whiteAlpha.100' }}
-            color='whiteAlpha.700'
-            height='28px'
-            fontSize='xs'
-          >
-            Cancel
-          </Button>
-          <Button
-            size='xs'
-            onClick={handleSave}
-            loading={saveMutation.isPending}
-            loadingText='Saving...'
-            disabled={!draft}
-            bg='blue.500'
-            color='white'
-            _hover={{ bg: 'blue.600' }}
-            _active={{ bg: 'blue.700' }}
-            height='28px'
-            fontSize='xs'
-          >
-            Save Settings
-          </Button>
-        </Flex>
-      </Dialog.Footer>
+      <AppDialogFooter>
+        <DialogCancelButton
+          onClick={onClose}
+          disabled={saveMutation.isPending}
+        />
+        <Button
+          size='xs'
+          onClick={handleSave}
+          loading={saveMutation.isPending}
+          loadingText='Saving...'
+          disabled={!draft}
+          bg='blue.500'
+          color='white'
+          _hover={{ bg: 'blue.600' }}
+          _active={{ bg: 'blue.700' }}
+          height='28px'
+          fontSize='xs'
+        >
+          Save Settings
+        </Button>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

@@ -237,11 +237,7 @@ function LogViewerPage() {
             </Text>
           )}
         </Flex>
-        <Tooltip
-          content='Close Window'
-          portalled
-          contentProps={{ zIndex: 100 }}
-        >
+        <Tooltip content='Close Window'>
           <Button
             size='xs'
             variant='ghost'

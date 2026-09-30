@@ -196,7 +196,7 @@ function LogFileSelectorComponent({
                       )}
                     </Flex>
                     {!file.is_current && onDeleteFile && (
-                      <Tooltip content='Delete' portalled>
+                      <Tooltip content='Delete'>
                         <Box
                           as='button'
                           p={0.5}

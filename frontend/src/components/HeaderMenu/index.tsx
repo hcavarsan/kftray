@@ -171,8 +171,6 @@ function HeaderMenu({
                   ? 'Start selected port forwards'
                   : 'Start all port forwards'
             }
-            portalled={true}
-            contentProps={{ zIndex: 100 }}
           >
             <Button
               size='xs'
@@ -232,7 +230,7 @@ function HeaderMenu({
           </Tooltip>
 
           {isInitiating && (
-            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+            <Tooltip content='Cancel'>
               <chakra.button
                 type='button'
                 aria-label='Cancel'
@@ -260,8 +258,6 @@ function HeaderMenu({
                   ? 'Stop selected port forwards'
                   : 'Stop all port forwards'
             }
-            portalled={true}
-            contentProps={{ zIndex: 100 }}
           >
             <Button
               size='xs'
@@ -313,7 +309,7 @@ function HeaderMenu({
           </Tooltip>
 
           {isStopping && (
-            <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+            <Tooltip content='Cancel'>
               <chakra.button
                 type='button'
                 aria-label='Cancel'

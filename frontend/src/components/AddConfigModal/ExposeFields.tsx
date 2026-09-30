@@ -26,7 +26,7 @@ interface ExposeFieldsProps {
 }
 
 const Hint = ({ content }: { content: string }) => (
-  <Tooltip content={content} portalled>
+  <Tooltip content={content}>
     <span style={{ alignItems: 'center', display: 'inline-flex' }}>
       <Info color='gray' size={10} />
     </span>

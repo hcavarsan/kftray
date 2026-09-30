@@ -12,7 +12,7 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import { AppDialog, AppDialogFooter } from '@/components/ui/dialog'
 import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -70,19 +70,6 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
       timer = window.setTimeout(() => reject(new Error('Timeout')), ms)
     }),
   ]).finally(() => clearTimeout(timer))
-}
-
-const bodyScrollbar = {
-  '&::-webkit-scrollbar': { width: '5px' },
-  '&::-webkit-scrollbar-track': { background: 'transparent' },
-  '&::-webkit-scrollbar-thumb': {
-    background: 'var(--chakra-colors-app-border-strong)',
-    borderRadius: '3px',
-  },
-  '&::-webkit-scrollbar-thumb:hover': {
-    background:
-      'color-mix(in srgb, var(--chakra-colors-white) 25%, transparent)',
-  },
 }
 
 export default function ServerResourcesModal({
@@ -394,76 +381,66 @@ export default function ServerResourcesModal({
           </Flex>
         </Box>
 
-        <Dialog.Body p={3} flex='1' overflowY='auto' css={bodyScrollbar}>
+        <Dialog.Body p={3} flex='1' overflowY='auto'>
           {renderBody()}
         </Dialog.Body>
 
-        <Dialog.Footer
-          px={3}
-          py={2}
-          bg='app.panel'
-          borderTop='1px solid'
-          borderColor='app.hover'
-        >
-          <Flex justify='space-between' align='center' width='100%'>
-            <Flex gap={1}>
-              {resources.length > 0 && (
-                <Tooltip content='Delete all resources' portalled>
-                  <Button
-                    aria-label='Delete all resources'
-                    size='xs'
-                    variant='ghost'
-                    onClick={() => setCleanupMode('all')}
-                    disabled={busy}
-                    height='26px'
-                    px={2}
-                    color='whiteAlpha.600'
-                    _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                </Tooltip>
-              )}
-            </Flex>
-
-            <Flex gap={2}>
-              <Tooltip content='Refresh' portalled>
+        <AppDialogFooter justify='space-between'>
+          <Flex gap={1}>
+            {resources.length > 0 && (
+              <Tooltip content='Delete all resources'>
                 <Button
-                  aria-label='Refresh'
+                  aria-label='Delete all resources'
                   size='xs'
                   variant='ghost'
-                  onClick={invalidateResources}
-                  disabled={isFetching || !selected}
-                  height='26px'
+                  onClick={() => setCleanupMode('all')}
+                  disabled={busy}
+                  height='28px'
                   px={2}
-                  _hover={{ bg: 'whiteAlpha.50' }}
+                  color='whiteAlpha.600'
+                  _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
                 >
-                  <Box
-                    as={RefreshCw}
-                    width='12px'
-                    height='12px'
-                    animation={
-                      isFetching ? 'spin 1s linear infinite' : undefined
-                    }
-                  />
+                  <Trash2 size={12} />
                 </Button>
               </Tooltip>
-
-              {orphaned.length > 0 && (
-                <Button
-                  size='xs'
-                  colorPalette='red'
-                  variant='surface'
-                  onClick={() => setCleanupMode('orphaned')}
-                  disabled={busy}
-                  height='26px'
-                >
-                  Clean {orphaned.length} Orphaned
-                </Button>
-              )}
-            </Flex>
+            )}
           </Flex>
-        </Dialog.Footer>
+
+          <Flex gap={2}>
+            <Tooltip content='Refresh'>
+              <Button
+                aria-label='Refresh'
+                size='xs'
+                variant='ghost'
+                onClick={invalidateResources}
+                disabled={isFetching || !selected}
+                height='28px'
+                px={2}
+                _hover={{ bg: 'whiteAlpha.50' }}
+              >
+                <Box
+                  as={RefreshCw}
+                  width='12px'
+                  height='12px'
+                  animation={isFetching ? 'spin 1s linear infinite' : undefined}
+                />
+              </Button>
+            </Tooltip>
+
+            {orphaned.length > 0 && (
+              <Button
+                size='xs'
+                colorPalette='red'
+                variant='surface'
+                onClick={() => setCleanupMode('orphaned')}
+                disabled={busy}
+                height='28px'
+              >
+                Clean {orphaned.length} Orphaned
+              </Button>
+            )}
+          </Flex>
+        </AppDialogFooter>
       </AppDialog>
 
       {cleanupMode && (

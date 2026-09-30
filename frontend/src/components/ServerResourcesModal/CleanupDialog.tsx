@@ -1,7 +1,11 @@
-import { Box, Dialog, Flex, HStack, Text } from '@chakra-ui/react'
+import { Box, Dialog, Flex, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 
 import type { CleanupMode, FlatResource } from './types'
 
@@ -55,14 +59,6 @@ export function CleanupDialog({
             borderColor='app.hover'
             maxHeight='200px'
             overflowY='auto'
-            css={{
-              '&::-webkit-scrollbar': { width: '4px' },
-              '&::-webkit-scrollbar-track': { background: 'transparent' },
-              '&::-webkit-scrollbar-thumb': {
-                background: 'var(--chakra-colors-app-border-strong)',
-                borderRadius: '2px',
-              },
-            }}
           >
             {resources.map(resource => (
               <Box
@@ -89,35 +85,19 @@ export function CleanupDialog({
         )}
       </Dialog.Body>
 
-      <Dialog.Footer
-        p={2}
-        borderTop='1px solid'
-        borderColor='app.hover'
-        bg='app.panel'
-      >
-        <HStack justify='flex-end' gap={2} width='100%'>
-          <Button
-            size='xs'
-            variant='ghost'
-            onClick={onClose}
-            disabled={isPending}
-            _hover={{ bg: 'app.hover' }}
-            height='28px'
-          >
-            Cancel
-          </Button>
-          <Button
-            size='xs'
-            colorPalette='red'
-            onClick={onConfirm}
-            loading={isPending}
-            loadingText='Deleting...'
-            height='28px'
-          >
-            Delete {count}
-          </Button>
-        </HStack>
-      </Dialog.Footer>
+      <AppDialogFooter>
+        <DialogCancelButton onClick={onClose} disabled={isPending} />
+        <Button
+          size='xs'
+          colorPalette='red'
+          onClick={onConfirm}
+          loading={isPending}
+          loadingText='Deleting...'
+          height='28px'
+        >
+          Delete {count}
+        </Button>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

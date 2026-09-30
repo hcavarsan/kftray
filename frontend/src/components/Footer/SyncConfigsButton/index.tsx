@@ -40,11 +40,7 @@ function SyncConfigsButton() {
   )
 
   return (
-    <Tooltip
-      content={tooltipContent}
-      portalled
-      positioning={{ placement: 'top-start' }}
-    >
+    <Tooltip content={tooltipContent} positioning={{ placement: 'top-start' }}>
       <Button
         aria-label='Sync configs from git'
         size='sm'

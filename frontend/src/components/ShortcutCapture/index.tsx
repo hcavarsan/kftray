@@ -79,6 +79,11 @@ export default function ShortcutCapture({
       if (event.repeat) {
         return
       }
+      if (event.key === 'Escape') {
+        setIsCapturing(false)
+        setCapturedKeys('')
+        return
+      }
 
       const modifiers = activeModifiers(event)
 
@@ -99,12 +104,12 @@ export default function ShortcutCapture({
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown, true)
-    document.addEventListener('keyup', handleKeyUp, true)
+    window.addEventListener('keydown', handleKeyDown, true)
+    window.addEventListener('keyup', handleKeyUp, true)
 
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true)
-      document.removeEventListener('keyup', handleKeyUp, true)
+      window.removeEventListener('keydown', handleKeyDown, true)
+      window.removeEventListener('keyup', handleKeyUp, true)
     }
   }, [isCapturing])
 

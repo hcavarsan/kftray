@@ -1,12 +1,16 @@
 import { useState } from 'react'
 
-import { Box, Dialog, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
+import { Box, Dialog, Spinner, Stack, Text } from '@chakra-ui/react'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import type { LogSettings as LogSettingsData } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 
@@ -127,43 +131,24 @@ interface SettingsFooterProps {
 
 function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
   return (
-    <Dialog.Footer
-      px={3}
-      py={2}
-      bg='app.panel'
-      borderTop='1px solid'
-      borderColor='app.hover'
-    >
-      <Flex justify='flex-end' gap={2} width='100%'>
-        <Button
-          variant='ghost'
-          size='xs'
-          onClick={onClose}
-          disabled={isSaving}
-          _hover={{ bg: 'whiteAlpha.50' }}
-          color='gray.400'
-          height='28px'
-          fontSize='xs'
-        >
-          Cancel
-        </Button>
-        <Button
-          size='xs'
-          onClick={onSave}
-          loading={isSaving}
-          loadingText='Saving...'
-          disabled={!onSave}
-          bg='blue.500'
-          color='white'
-          _hover={{ bg: 'blue.600' }}
-          _active={{ bg: 'blue.700' }}
-          height='28px'
-          fontSize='xs'
-        >
-          Save Settings
-        </Button>
-      </Flex>
-    </Dialog.Footer>
+    <AppDialogFooter>
+      <DialogCancelButton onClick={onClose} disabled={isSaving} />
+      <Button
+        size='xs'
+        onClick={onSave}
+        loading={isSaving}
+        loadingText='Saving...'
+        disabled={!onSave}
+        bg='blue.500'
+        color='white'
+        _hover={{ bg: 'blue.600' }}
+        _active={{ bg: 'blue.700' }}
+        height='28px'
+        fontSize='xs'
+      >
+        Save Settings
+      </Button>
+    </AppDialogFooter>
   )
 }
 
@@ -322,18 +307,7 @@ function SettingsForm({
 
   return (
     <>
-      <Dialog.Body
-        p={3}
-        overflowY='auto'
-        css={{
-          '&::-webkit-scrollbar': { width: '6px' },
-          '&::-webkit-scrollbar-track': { background: 'transparent' },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'var(--chakra-colors-app-divider)',
-            borderRadius: '3px',
-          },
-        }}
-      >
+      <Dialog.Body p={3} overflowY='auto'>
         <Box display='grid' gridTemplateColumns='1fr 1fr' gap={2.5}>
           <NetworkSettings
             disconnectTimeout={draft.disconnectTimeout}

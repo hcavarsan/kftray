@@ -1,22 +1,13 @@
-import type { RefAttributes, RefObject } from 'react'
+import type { RefAttributes } from 'react'
 
 import { Menu as ChakraMenu, Portal } from '@chakra-ui/react'
 
-interface MenuContentProps
-  extends ChakraMenu.ContentProps,
-    RefAttributes<HTMLDivElement> {
-  portalled?: boolean
-  portalRef?: RefObject<HTMLElement>
-}
-
 export function MenuContent({
-  portalled = true,
-  portalRef,
   ref,
   ...props
-}: MenuContentProps) {
+}: ChakraMenu.ContentProps & RefAttributes<HTMLDivElement>) {
   return (
-    <Portal disabled={!portalled} container={portalRef}>
+    <Portal>
       <ChakraMenu.Positioner>
         <ChakraMenu.Content ref={ref} {...props} />
       </ChakraMenu.Positioner>

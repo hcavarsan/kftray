@@ -3,20 +3,16 @@ import { Info } from 'lucide-react'
 import Select from 'react-select'
 import CreatableSelect from 'react-select/creatable'
 
-import {
-  Button,
-  Dialog,
-  Flex,
-  Grid,
-  HStack,
-  Stack,
-  Text,
-} from '@chakra-ui/react'
+import { Button, Dialog, Grid, HStack, Stack, Text } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import { selectStyles } from '@/components/ui/select-styles'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -223,13 +219,12 @@ function AddConfigModal({
       onClose={onClose}
       maxWidth='600px'
       height='96vh'
-      closable={false}
       headerExtra={
         <HStack gap={2}>
           <Text color='gray.400' fontSize='2xs'>
             Kubeconfig:
           </Text>
-          <Tooltip content={kubeconfig} portalled>
+          <Tooltip content={kubeconfig}>
             <Button
               bg='app.hover'
               height='20px'
@@ -275,7 +270,6 @@ function AddConfigModal({
                           ? 'Full domain for public access (e.g., myapp.example.com). The Kubernetes service will be named using the first part before the dot (e.g., "myapp").'
                           : `Service name in cluster (accessible as ${draft.alias || 'name'}.${draft.namespace || 'namespace'}.svc.cluster.local)`
                       }
-                      portalled
                     >
                       <span
                         style={{ display: 'inline-flex', alignItems: 'center' }}
@@ -456,38 +450,23 @@ function AddConfigModal({
           )}
         </Stack>
       </Dialog.Body>
-      <Dialog.Footer
-        bg='app.panel'
-        borderTop='1px solid'
-        borderColor='app.subtle'
-        p={2}
-      >
-        <Flex gap={2} justify='flex-end' width='100%'>
-          <Button
-            height='28px'
-            onClick={onClose}
-            size='xs'
-            variant='ghost'
-            _hover={{ bg: 'app.hover' }}
-          >
-            Cancel
-          </Button>
-          <Button
-            bg='blue.500'
-            disabled={
-              isSaving ||
-              Boolean(duplicateTagError) ||
-              Object.keys(errors).length > 0
-            }
-            height='28px'
-            onClick={handleSave}
-            size='xs'
-            _hover={{ bg: 'blue.600' }}
-          >
-            {isSaving ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Config'}
-          </Button>
-        </Flex>
-      </Dialog.Footer>
+      <AppDialogFooter>
+        <DialogCancelButton onClick={onClose} />
+        <Button
+          bg='blue.500'
+          disabled={
+            isSaving ||
+            Boolean(duplicateTagError) ||
+            Object.keys(errors).length > 0
+          }
+          height='28px'
+          onClick={handleSave}
+          size='xs'
+          _hover={{ bg: 'blue.600' }}
+        >
+          {isSaving ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Config'}
+        </Button>
+      </AppDialogFooter>
     </AppDialog>
   )
 }

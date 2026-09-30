@@ -76,9 +76,7 @@ function BulkDeleteButton({
     <Box>
       <Tooltip
         content='Delete Selected Configs'
-        portalled
         positioning={{
-          strategy: 'absolute',
           placement: 'top-end',
           offset: { mainAxis: 8, crossAxis: 0 },
         }}

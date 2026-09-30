@@ -20,7 +20,11 @@ import { invoke } from '@tauri-apps/api/core'
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
 import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
 import { Button } from '@/components/ui/button'
-import { AppDialog } from '@/components/ui/dialog'
+import {
+  AppDialog,
+  AppDialogFooter,
+  DialogCancelButton,
+} from '@/components/ui/dialog'
 import {
   MenuContent,
   MenuItem,
@@ -219,7 +223,6 @@ function Footer({
           }
           onClose={closeHelperActionDialog}
           maxWidth='400px'
-          headerPadding={1.5}
         >
           <Dialog.Body p={3}>
             <Box
@@ -244,21 +247,13 @@ function Footer({
                 {helperActionResult.message}
               </Box>
             </Box>
-
-            <Box display='flex' justifyContent='flex-end' mt={4}>
-              <Button
-                onClick={closeHelperActionDialog}
-                size='xs'
-                bg={helperActionResult.success ? 'green.600' : 'red.600'}
-                _hover={{
-                  bg: helperActionResult.success ? 'green.700' : 'red.700',
-                }}
-                height='28px'
-              >
-                Close
-              </Button>
-            </Box>
           </Dialog.Body>
+          <AppDialogFooter>
+            <DialogCancelButton
+              label='Close'
+              onClick={closeHelperActionDialog}
+            />
+          </AppDialogFooter>
         </AppDialog>
       )}
       <Box
@@ -301,9 +296,7 @@ function Footer({
 
           <Tooltip
             content='Add New Config'
-            portalled
             positioning={{
-              strategy: 'absolute',
               placement: 'top-end',
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
@@ -336,9 +329,7 @@ function Footer({
         <Group display='flex' alignItems='center' gap={2}>
           <Tooltip
             content='Manage Global Shortcuts'
-            portalled
             positioning={{
-              strategy: 'absolute',
               placement: 'top-end',
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
@@ -363,9 +354,7 @@ function Footer({
 
           <Tooltip
             content='Configure Git Sync'
-            portalled
             positioning={{
-              strategy: 'absolute',
               placement: 'top-end',
               offset: { mainAxis: 8, crossAxis: 0 },
             }}
