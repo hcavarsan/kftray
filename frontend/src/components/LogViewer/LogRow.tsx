@@ -188,6 +188,7 @@ function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
 
 function LogRowComponent({
   entry,
+  index,
   isExpanded,
   onToggle,
   onHeightChange,
@@ -206,7 +207,7 @@ function LogRowComponent({
       if (contentRef.current) {
         const height = contentRef.current.scrollHeight
 
-        onHeightChange(entry.id, height)
+        onHeightChange(index, height)
       }
     }
 
@@ -217,7 +218,7 @@ function LogRowComponent({
     observer.observe(contentRef.current)
 
     return () => observer.disconnect()
-  }, [isExpanded, entry.id, onHeightChange])
+  }, [isExpanded, index, onHeightChange])
 
   return (
     <Box

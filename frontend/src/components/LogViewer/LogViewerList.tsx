@@ -70,15 +70,7 @@ function LogViewerListComponent({
     return () => resizeObserver.disconnect()
   }, [])
 
-  const handleHeightChange = useCallback(
-    (id: number, height: number) => {
-      const index = entries.findIndex(entry => entry.id === id)
-      if (index !== -1) {
-        dynamicRowHeight.setRowHeight(index, height)
-      }
-    },
-    [dynamicRowHeight, entries],
-  )
+  const { setRowHeight } = dynamicRowHeight
 
   useEffect(() => {
     if (autoFollow && listRef && entries.length > 0) {
@@ -108,15 +100,16 @@ function LogViewerListComponent({
       return (
         <LogRow
           entry={entry}
+          index={index}
           isExpanded={isExpanded}
           onToggle={() => rowOnToggleExpand(entry.id)}
-          onHeightChange={handleHeightChange}
+          onHeightChange={setRowHeight}
           style={style}
           searchText={rowSearchText}
         />
       )
     },
-    [handleHeightChange],
+    [setRowHeight],
   )
 
   if (entries.length === 0) {

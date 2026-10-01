@@ -44,9 +44,10 @@ export interface LogFilter {
 
 export interface LogRowProps {
   entry: LogEntry
+  index: number
   isExpanded: boolean
   onToggle: () => void
-  onHeightChange?: (id: number, height: number) => void
+  onHeightChange?: (index: number, height: number) => void
   style: React.CSSProperties
   searchText?: string
 }
