@@ -83,7 +83,7 @@ jobs:
           - distro: fedora:44
             image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
           - distro: opensuse/tumbleweed
-            image: opensuse/tumbleweed:latest@sha256:24dd2916ee8976da70fab5410d913958042cd20b2013b5f474d737e7a92d0dbb
+            image: opensuse/tumbleweed:latest@sha256:102356d2e023b11f483110f332588d614d805e4a4d8b7f1d53163fa47dbd3d6e
           - distro: opensuse/leap:16.0
             image: opensuse/leap:16.0@sha256:12891be67d896148576b6d2cef7126152fb20a4b062c78a87a82b30283b66375
     runs-on: ubuntu-24.04
