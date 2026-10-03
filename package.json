@@ -27,8 +27,8 @@
     "knip": "knip"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@tauri-apps/cli": "^2.12.0",
-    "knip": "6.38.0"
+    "knip": "6.39.0"
   }
 }
