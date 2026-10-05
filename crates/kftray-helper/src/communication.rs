@@ -79,6 +79,7 @@ fn is_running_as_root() -> bool {
 pub(crate) struct InvokingUser {
     pub uid: u32,
     pub gid: u32,
+    #[cfg(target_os = "linux")]
     pub home: PathBuf,
 }
 
@@ -89,12 +90,6 @@ pub(crate) struct InvokingUser {
 /// trusting the environment or guessing `/home/<name>`.
 #[cfg(unix)]
 pub(crate) fn invoking_user() -> Option<InvokingUser> {
-    use std::ffi::{
-        CStr,
-        OsStr,
-    };
-    use std::os::unix::ffi::OsStrExt;
-
     if !is_running_as_root() {
         return None;
     }
@@ -121,11 +116,20 @@ pub(crate) fn invoking_user() -> Option<InvokingUser> {
             return None;
         }
 
-        let home = unsafe { CStr::from_ptr(pwd.pw_dir) };
         return Some(InvokingUser {
             uid,
             gid: pwd.pw_gid,
-            home: PathBuf::from(OsStr::from_bytes(home.to_bytes())),
+            #[cfg(target_os = "linux")]
+            home: {
+                use std::ffi::{
+                    CStr,
+                    OsStr,
+                };
+                use std::os::unix::ffi::OsStrExt;
+
+                let home = unsafe { CStr::from_ptr(pwd.pw_dir) };
+                PathBuf::from(OsStr::from_bytes(home.to_bytes()))
+            },
         });
     }
 }
