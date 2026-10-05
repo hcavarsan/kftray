@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText } from 'lucide-react'
+import { Eraser, FileText } from 'lucide-react'
 
 import { Box, Dialog, Flex, Grid, Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -44,6 +44,8 @@ type NumericField = 'maxFileSizeMb' | 'retentionDays'
 type DraftErrors = Partial<Record<NumericField, string>>
 
 const MB = 1024 * 1024
+
+const HTTP_LOG_SIZE_KEY = ['http-log-size']
 
 const toDraft = (config: HttpLogsConfig): Draft => ({
   enabled: config.enabled,
@@ -159,6 +161,21 @@ export function HttpLogsConfigModal({
     })
   }
 
+  const logSizeQuery = useQuery({
+    queryKey: HTTP_LOG_SIZE_KEY,
+    queryFn: () => invoke<number>('get_http_log_size'),
+  })
+  const logSize = logSizeQuery.data ?? 0
+
+  const pruneMutation = useMutation({
+    mutationFn: () => invoke('clear_http_logs'),
+    onSuccess: () => {
+      queryClient.setQueryData(HTTP_LOG_SIZE_KEY, 0)
+      toaster.success({ title: 'HTTP logs pruned', duration: 2000 })
+    },
+    meta: { errorToast: { title: 'Error clearing logs', duration: 2000 } },
+  })
+
   const fileSizeMb =
     edits.maxFileSizeMb === undefined
       ? null
@@ -232,26 +249,43 @@ export function HttpLogsConfigModal({
         )}
       </Dialog.Body>
 
-      <AppDialogFooter>
-        <DialogCancelButton
-          onClick={onClose}
-          disabled={saveMutation.isPending}
-        />
+      <AppDialogFooter justify='space-between'>
         <Button
           size='xs'
-          onClick={handleSave}
-          loading={saveMutation.isPending}
-          loadingText='Saving...'
-          disabled={!draft}
-          bg='accent.solid'
-          color='fg'
-          _hover={{ bg: 'accent.solidHover' }}
-          _active={{ bg: 'accent.solidActive' }}
+          variant='ghost'
           height='28px'
-          fontSize='xs'
+          gap={1.5}
+          color='fg.subtle'
+          _hover={{ bg: 'bg.faint', color: 'danger.fg' }}
+          onClick={() => pruneMutation.mutate()}
+          loading={pruneMutation.isPending}
+          disabled={logSize === 0 || logSizeQuery.isError}
+          title='Delete the HTTP log files of every config'
         >
-          Save Settings
+          <Eraser size={12} />
+          Prune all logs ({formatBytes(logSize)})
         </Button>
+        <Flex gap={2}>
+          <DialogCancelButton
+            onClick={onClose}
+            disabled={saveMutation.isPending}
+          />
+          <Button
+            size='xs'
+            onClick={handleSave}
+            loading={saveMutation.isPending}
+            loadingText='Saving...'
+            disabled={!draft}
+            bg='accent.solid'
+            color='fg'
+            _hover={{ bg: 'accent.solidHover' }}
+            _active={{ bg: 'accent.solidActive' }}
+            height='28px'
+            fontSize='xs'
+          >
+            Save Settings
+          </Button>
+        </Flex>
       </AppDialogFooter>
     </AppDialog>
   )

@@ -1,8 +1,8 @@
 import {
   Download,
-  Eraser,
   FolderSync,
   Menu as MenuIcon,
+  ScrollText,
   Server,
   Settings,
   Upload,
@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 
 import { Box } from '@chakra-ui/react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { FooterActionButton } from '@/components/Footer/FooterActionButton'
@@ -32,8 +32,6 @@ interface FooterMenuProps {
   onOpenSettings: () => void
 }
 
-const httpLogSizeQueryKey = ['http-log-size']
-
 export function FooterMenu({
   onImportConfigs,
   onExportConfigs,
@@ -43,32 +41,18 @@ export function FooterMenu({
   onOpenSettings,
 }: FooterMenuProps) {
   const { credentials } = useGitSync()
-  const queryClient = useQueryClient()
 
-  const {
-    data: logSize = 0,
-    refetch: refetchLogSize,
-    isError: hasLogSizeError,
-  } = useQuery({
-    queryKey: httpLogSizeQueryKey,
-    queryFn: () => invoke<number>('get_http_log_size'),
-  })
-
-  const clearLogsMutation = useMutation({
-    mutationFn: () => invoke('clear_http_logs'),
-    onSuccess: () => {
-      queryClient.setQueryData(httpLogSizeQueryKey, 0)
+  const openLogsMutation = useMutation({
+    mutationFn: () => invoke('open_log_viewer_window_cmd'),
+    meta: {
+      errorToast: { title: 'Failed to open log viewer', duration: 3000 },
     },
-    meta: { errorToast: { title: 'Error clearing logs', duration: 2000 } },
   })
 
   return (
     <MenuRoot>
       <MenuTrigger asChild>
-        <FooterActionButton
-          aria-label='Open configuration menu'
-          onClick={() => refetchLogSize()}
-        >
+        <FooterActionButton aria-label='Open configuration menu'>
           <Box as={MenuIcon} width='12px' height='12px' />
         </FooterActionButton>
       </MenuTrigger>
@@ -87,19 +71,6 @@ export function FooterMenu({
           <Box fontSize='11px'>Import Local File</Box>
         </MenuItem>
 
-        <MenuItem
-          value='clear-logs'
-          onClick={() => clearLogsMutation.mutate()}
-          disabled={
-            logSize === 0 || hasLogSizeError || clearLogsMutation.isPending
-          }
-        >
-          <Box as={Eraser} width='12px' height='12px' />
-          <Box fontSize='11px'>
-            Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
-          </Box>
-        </MenuItem>
-
         <MenuItem value='auto-import' onClick={onOpenAutoImport}>
           <Box as={FolderSync} width='12px' height='12px' />
           <Box fontSize='11px'>Auto Import</Box>
@@ -113,6 +84,11 @@ export function FooterMenu({
         <MenuItem value='server-resources' onClick={onOpenServerResources}>
           <Box as={Server} width='12px' height='12px' />
           <Box fontSize='11px'>Server Resources</Box>
+        </MenuItem>
+
+        <MenuItem value='log-viewer' onClick={() => openLogsMutation.mutate()}>
+          <Box as={ScrollText} width='12px' height='12px' />
+          <Box fontSize='11px'>Log Viewer</Box>
         </MenuItem>
 
         <MenuSeparator borderColor='border' my={1} />
