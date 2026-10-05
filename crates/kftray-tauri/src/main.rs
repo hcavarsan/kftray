@@ -412,6 +412,7 @@ fn main() {
             commands::window_state::set_app_mode_cmd,
             commands::window_state::reset_window_position_cmd,
             commands::config_state::get_config_states,
+            commands::helper::get_helper_status,
             commands::helper::install_helper,
             commands::helper::remove_helper,
             commands::helper::allocate_local_address_cmd,

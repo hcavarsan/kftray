@@ -156,6 +156,8 @@ interface ConfirmDialogProps {
   isPending: boolean
   onConfirm: () => void
   onClose: () => void
+  confirmLabel?: string
+  pendingLabel?: string
 }
 
 export function ConfirmDialog({
@@ -164,6 +166,8 @@ export function ConfirmDialog({
   isPending,
   onConfirm,
   onClose,
+  confirmLabel = 'Delete',
+  pendingLabel = 'Deleting...',
 }: ConfirmDialogProps) {
   return (
     <AppDialog
@@ -186,10 +190,10 @@ export function ConfirmDialog({
           height='28px'
           colorPalette='red'
           loading={isPending}
-          loadingText='Deleting...'
+          loadingText={pendingLabel}
           onClick={onConfirm}
         >
-          Delete
+          {confirmLabel}
         </Button>
       </AppDialogFooter>
     </AppDialog>

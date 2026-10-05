@@ -20,6 +20,7 @@ interface FooterProps {
   onOpenAutoImport: () => void
   onOpenShortcuts: () => void
   onOpenSettings: () => void
+  onOpenHelper: () => void
   onOpenServerResources: () => void
 }
 
@@ -33,6 +34,7 @@ export function Footer({
   onOpenAutoImport,
   onOpenShortcuts,
   onOpenSettings,
+  onOpenHelper,
   onOpenServerResources,
 }: FooterProps) {
   const { credentials } = useGitSync()
@@ -60,6 +62,7 @@ export function Footer({
           onOpenAutoImport={onOpenAutoImport}
           onOpenServerResources={onOpenServerResources}
           onOpenSettings={onOpenSettings}
+          onOpenHelper={onOpenHelper}
         />
 
         <Tooltip
