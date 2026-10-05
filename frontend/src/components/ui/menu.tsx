@@ -18,5 +18,4 @@ export function MenuContent({
 export const MenuRoot = ChakraMenu.Root
 export const MenuItem = ChakraMenu.Item
 export const MenuTrigger = ChakraMenu.Trigger
-export const MenuTriggerItem = ChakraMenu.TriggerItem
 export const MenuSeparator = ChakraMenu.Separator

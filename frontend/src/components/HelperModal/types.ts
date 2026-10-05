@@ -1,9 +1,9 @@
-export interface HelperAddress {
+interface HelperAddress {
   service: string
   address: string
 }
 
-export interface HelperHostEntry {
+interface HelperHostEntry {
   id: string
   ip: string
   hostname: string
