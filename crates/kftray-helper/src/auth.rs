@@ -221,7 +221,7 @@ fn peer_pid(socket_fd: std::os::fd::RawFd) -> Result<u32, HelperError> {
 #[cfg(unix)]
 fn get_authorized_user_uid() -> u32 {
     if let Some(user) = crate::communication::invoking_user() {
-        info!("Found authorized UID from elevating user: {}", user.uid);
+        info!("Authorizing the user who elevated the helper");
         return user.uid;
     }
 

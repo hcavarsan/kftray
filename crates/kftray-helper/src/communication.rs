@@ -112,7 +112,7 @@ pub(crate) fn invoking_user() -> Option<InvokingUser> {
             continue;
         }
         if rc != 0 || result.is_null() || pwd.pw_dir.is_null() {
-            warn!("Could not resolve password entry for elevating uid {uid}");
+            warn!("Could not resolve the password entry of the elevating user");
             return None;
         }
 
@@ -298,8 +298,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
             if let Some(user) = invoking_user() {
                 info!(
-                    "Using home directory of elevating user (uid {}): {}",
-                    user.uid,
+                    "Using home directory of elevating user: {}",
                     user.home.display()
                 );
                 return user.home.join(".kftray").join(SOCKET_FILENAME);
@@ -434,7 +433,7 @@ async fn start_unix_socket_server(
                     warn!("Failed to fix socket ownership: {e}");
                 }
                 Ok(()) => {
-                    info!("Set socket ownership to {}:{}", user.uid, user.gid);
+                    info!("Set socket ownership to the elevating user");
                 }
             }
         }
