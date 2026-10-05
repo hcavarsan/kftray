@@ -40,9 +40,9 @@ jobs:
         run: rustup toolchain install nightly --profile minimal --no-self-update
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          tool: cargo-fuzz@0.13.1
+          tool: cargo-fuzz@0.13.2
 
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

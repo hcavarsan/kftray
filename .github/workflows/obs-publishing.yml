@@ -83,9 +83,9 @@ jobs:
           - distro: fedora:44
             image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
           - distro: opensuse/tumbleweed
-            image: opensuse/tumbleweed:latest@sha256:24dd2916ee8976da70fab5410d913958042cd20b2013b5f474d737e7a92d0dbb
+            image: opensuse/tumbleweed:latest@sha256:d531cce8158ef9485bcd9defb061cca27b772d796343ab1d66583de6adc38f11
           - distro: opensuse/leap:16.0
-            image: opensuse/leap:16.0@sha256:12891be67d896148576b6d2cef7126152fb20a4b062c78a87a82b30283b66375
+            image: opensuse/leap:16.0@sha256:7f3aeccb6a613c0fc1690d3d3e5eb493fd477ee4587de20640017fc36d72f9b0
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     timeout-minutes: 20
