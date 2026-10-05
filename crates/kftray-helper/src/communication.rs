@@ -74,6 +74,62 @@ fn is_running_as_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
+/// The unprivileged user who elevated this process with `sudo` or `pkexec`.
+#[cfg(unix)]
+pub(crate) struct InvokingUser {
+    pub uid: u32,
+    pub gid: u32,
+    pub home: PathBuf,
+}
+
+/// Resolves the user who elevated this process to root.
+///
+/// `pkexec` resets `USER`/`HOME` to root's and exports only `PKEXEC_UID`, so
+/// the identity is recovered from the uid via the password database instead of
+/// trusting the environment or guessing `/home/<name>`.
+#[cfg(unix)]
+pub(crate) fn invoking_user() -> Option<InvokingUser> {
+    use std::ffi::{
+        CStr,
+        OsStr,
+    };
+    use std::os::unix::ffi::OsStrExt;
+
+    if !is_running_as_root() {
+        return None;
+    }
+
+    let uid = ["SUDO_UID", "PKEXEC_UID"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok()?.parse::<u32>().ok())
+        .filter(|&uid| uid != 0)?;
+
+    let mut buf_len = 4096;
+    loop {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let mut buf = vec![0 as libc::c_char; buf_len];
+        let rc =
+            unsafe { libc::getpwuid_r(uid, &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result) };
+
+        if rc == libc::ERANGE && buf_len < 1 << 20 {
+            buf_len *= 2;
+            continue;
+        }
+        if rc != 0 || result.is_null() || pwd.pw_dir.is_null() {
+            warn!("Could not resolve password entry for elevating uid {uid}");
+            return None;
+        }
+
+        let home = unsafe { CStr::from_ptr(pwd.pw_dir) };
+        return Some(InvokingUser {
+            uid,
+            gid: pwd.pw_gid,
+            home: PathBuf::from(OsStr::from_bytes(home.to_bytes())),
+        });
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn get_user_config_dir() -> Option<PathBuf> {
     if let Ok(socket_path) = std::env::var("SOCKET_PATH")
@@ -168,16 +224,9 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             }
 
             #[cfg(unix)]
-            if is_running_as_root()
-                && let (Ok(user_id), Ok(group_id)) =
-                    (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
-            {
+            if let Some(user) = invoking_user() {
                 info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::process::Command::new("chown")
-                    .arg(format!("{user_id}:{group_id}"))
-                    .arg(parent.as_os_str())
-                    .status()
-                {
+                if let Err(e) = std::os::unix::fs::chown(parent, Some(user.uid), Some(user.gid)) {
                     warn!("Failed to fix directory ownership: {e}");
                 }
             }
@@ -243,17 +292,13 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                 return path;
             }
 
-            if is_running_as_root()
-                && let Ok(sudo_user) = std::env::var("SUDO_USER")
-                && !sudo_user.is_empty()
-                && sudo_user != "root"
-            {
-                info!("Using SUDO_USER's home directory for: {}", sudo_user);
-                let user_home = format!("/home/{}", sudo_user);
-                let mut path = PathBuf::from(user_home);
-                path.push(".kftray");
-                path.push(SOCKET_FILENAME);
-                return path;
+            if let Some(user) = invoking_user() {
+                info!(
+                    "Using home directory of elevating user (uid {}): {}",
+                    user.uid,
+                    user.home.display()
+                );
+                return user.home.join(".kftray").join(SOCKET_FILENAME);
             }
 
             if let Ok(home) = std::env::var("HOME")
@@ -288,16 +333,9 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                 )));
             }
 
-            if is_running_as_root()
-                && let (Ok(user_id), Ok(group_id)) =
-                    (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
-            {
+            if let Some(user) = invoking_user() {
                 info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::process::Command::new("chown")
-                    .arg(format!("{}:{}", user_id, group_id))
-                    .arg(parent.as_os_str())
-                    .status()
-                {
+                if let Err(e) = std::os::unix::fs::chown(parent, Some(user.uid), Some(user.gid)) {
                     warn!("Failed to fix directory ownership: {}", e);
                 }
             }
@@ -385,21 +423,14 @@ async fn start_unix_socket_server(
             info!("Set socket permissions to 666 (rw-rw-rw-)");
         }
 
-        if is_running_as_root()
-            && let (Ok(user_id), Ok(group_id)) =
-                (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
-        {
+        if let Some(user) = invoking_user() {
             info!("Fixing socket ownership for user access");
-            match std::process::Command::new("chown")
-                .arg(format!("{user_id}:{group_id}"))
-                .arg(&socket_path)
-                .status()
-            {
+            match std::os::unix::fs::chown(&socket_path, Some(user.uid), Some(user.gid)) {
                 Err(e) => {
                     warn!("Failed to fix socket ownership: {e}");
                 }
-                _ => {
-                    info!("Set socket ownership to {user_id}:{group_id}");
+                Ok(()) => {
+                    info!("Set socket ownership to {}:{}", user.uid, user.gid);
                 }
             }
         }
