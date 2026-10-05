@@ -10,12 +10,10 @@ use std::{
         Read,
         Write,
     },
+    path::Path,
 };
 use std::{
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -432,16 +430,66 @@ fn grant_socket_access(socket_path: &Path) -> Result<(), HelperError> {
         )
     };
     if rc != 0 {
-        return Err(failed(
-            "set permissions on",
-            std::io::Error::last_os_error(),
-        ));
+        let err = std::io::Error::last_os_error();
+        // glibc before 2.32 rejects AT_SYMLINK_NOFOLLOW for fchmodat.
+        #[cfg(target_os = "linux")]
+        let err = match err.raw_os_error() {
+            Some(libc::EOPNOTSUPP) => chmod_socket_via_o_path(&c_path, 0o666).err(),
+            _ => Some(err),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let err = Some(err);
+
+        if let Some(err) = err {
+            return Err(failed("set permissions on", err));
+        }
     }
 
     if let Some(user) = invoking_user() {
         std::os::unix::fs::lchown(socket_path, Some(user.uid), Some(user.gid))
             .map_err(|e| failed("set ownership of", e))?;
         info!("Set socket ownership to the elevating user");
+    }
+
+    Ok(())
+}
+
+/// Sets the mode of the socket at `path` through an `O_PATH` handle, so a
+/// symlink swapped in after the check is not followed.
+#[cfg(target_os = "linux")]
+fn chmod_socket_via_o_path(path: &std::ffi::CStr, mode: libc::mode_t) -> std::io::Result<()> {
+    use std::os::fd::{
+        AsRawFd,
+        FromRawFd,
+        OwnedFd,
+    };
+
+    let raw = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if stat.st_mode & libc::S_IFMT != libc::S_IFSOCK {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path is not a socket",
+        ));
+    }
+
+    let proc_path = std::ffi::CString::new(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+        .map_err(std::io::Error::from)?;
+    if unsafe { libc::chmod(proc_path.as_ptr(), mode) } != 0 {
+        return Err(std::io::Error::last_os_error());
     }
 
     Ok(())
@@ -1867,6 +1915,41 @@ mod tests {
         if unsafe { libc::geteuid() } != 0 {
             assert!(check_socket_dir(&link).is_err());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_o_path_fallback_sets_the_socket_mode_but_not_through_a_symlink() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let c_path = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        let socket_path = dir.path().join("kftray-helper.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+        chmod_socket_via_o_path(&c_path(&socket_path), 0o666).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o666
+        );
+
+        let target = dir.path().join("target");
+        fs::write(&target, b"secret").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("swapped.sock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(chmod_socket_via_o_path(&c_path(&link), 0o666).is_err());
+        assert!(chmod_socket_via_o_path(&c_path(&target), 0o666).is_err());
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }
 
