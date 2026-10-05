@@ -1,6 +1,6 @@
 [package]
 name = "kftray-helper"
-version = "0.29.2"
+version = "0.29.3"
 authors = ["KFTray Contributors"]
 edition = "2024"
 description = "Privileged helper binary for KFTray"
@@ -24,5 +24,5 @@ windows-service = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
+[target."cfg(windows)".dependencies]
 windows = { workspace = true }

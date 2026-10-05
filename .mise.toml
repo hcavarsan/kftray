@@ -72,18 +72,13 @@ run = "cd hacks/kftray-utils && cargo run --bin bump_version minor && cd ../.. &
 description = "Bump major version"
 run = "cd hacks/kftray-utils && cargo run --bin bump_version major && cd ../.. && cargo update --workspace && git add . && git commit -m 'chore: bump version'"
 
-
 [tasks.precommit]
 description = "Run pre-commit checks (format, lint, test, sbom scan)"
 run = ["mise run format", "mise run lint", "mise run sbom:scan-all", "mise run test:back"]
 
 [tasks."precommit:hook"]
 description = "Run git pre-commit hook (format, check, git add)"
-run = [
-  "mise run format",
-  "cargo check --workspace --all-targets --all-features",
-  "git add -u"
-]
+run = ["mise run format", "cargo check --workspace --all-targets --all-features", "git add -u"]
 
 [tasks."generate-icons"]
 description = "Generate application icons"

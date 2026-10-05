@@ -92,8 +92,6 @@ leak-timeout = "100ms"
 # However sometimes extra non-standard files are required.
 # To address this, "archive.include" specifies additional paths that will be included in the archive.
 archive.include = [
-
-
   # Examples:
   #
   # { path = "application-data", relative-to = "target" },
@@ -103,6 +101,9 @@ archive.include = [
   # * the directory and its contents at "target/application-data" will be included recursively in the archive.
   # * the file "target/data-from-some-dependency/file.txt" will be included in the archive.
 ]
+
+[profile.ci]
+test-threads = "num-cpus"
 
 [profile.ci.junit]
 # Output a JUnit report into the given file inside 'store.dir/<profile-name>'.
@@ -128,6 +129,3 @@ store-failure-output = true
 
 # This profile is activated if MIRI_SYSROOT is set.
 [profile.default-miri]
-
-[profile.ci]
-test-threads = "num-cpus"

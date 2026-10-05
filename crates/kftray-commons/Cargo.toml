@@ -1,6 +1,6 @@
 [package]
 name = "kftray-commons"
-version = "0.29.2"
+version = "0.29.3"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray commons"
@@ -29,8 +29,8 @@ uuid = { workspace = true }
 [dev-dependencies]
 parking_lot = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
+[target."cfg(unix)".dependencies]
 libc = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
+[target."cfg(windows)".dependencies]
 windows = { workspace = true }
