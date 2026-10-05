@@ -20,12 +20,12 @@
   "dependencies": {
     "@chakra-ui/react": "^3.37.0",
     "@emotion/react": "^11.14.0",
-    "@tanstack/react-query": "^5.104.0",
-    "@tauri-apps/api": "2.12.0",
-    "@tauri-apps/plugin-dialog": "~2.8.0",
+    "@tanstack/react-query": "^5.104.1",
+    "@tauri-apps/api": "2.12.1",
+    "@tauri-apps/plugin-dialog": "~2.8.1",
     "@tauri-apps/plugin-fs": "~2.6.0",
     "@tauri-apps/plugin-shell": "~2.4.0",
-    "lucide-react": "1.48.0",
+    "lucide-react": "1.52.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-select": "^5.10.2",
@@ -33,15 +33,15 @@
   },
   "devDependencies": {
     "@codecov/vite-plugin": "2.0.1",
-    "@tauri-apps/cli": "2.12.0",
-    "@types/node": "^26.6.3",
+    "@tauri-apps/cli": "2.12.1",
+    "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "rollup-plugin-visualizer": "^7.1.1",
-    "taze": "^21.2.0",
+    "taze": "^21.3.0",
     "typescript": "7.0.2",
-    "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
   }
 }
