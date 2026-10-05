@@ -876,7 +876,7 @@ pub(crate) mod tests {
         async fn connect(&self, _reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
             if self
                 .remaining
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
                     |remaining| remaining.checked_sub(1),
