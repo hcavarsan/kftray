@@ -12,7 +12,10 @@ use std::{
     },
 };
 use std::{
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Arc,
     time::Duration,
 };
@@ -230,7 +233,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             #[cfg(unix)]
             if let Some(user) = invoking_user() {
                 info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::os::unix::fs::chown(parent, Some(user.uid), Some(user.gid)) {
+                if let Err(e) = std::os::unix::fs::lchown(parent, Some(user.uid), Some(user.gid)) {
                     warn!("Failed to fix directory ownership: {e}");
                 }
             }
@@ -338,7 +341,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
             if let Some(user) = invoking_user() {
                 info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::os::unix::fs::chown(parent, Some(user.uid), Some(user.gid)) {
+                if let Err(e) = std::os::unix::fs::lchown(parent, Some(user.uid), Some(user.gid)) {
                     warn!("Failed to fix directory ownership: {}", e);
                 }
             }
@@ -379,6 +382,71 @@ pub async fn start_communication_server(
     }
 }
 
+/// The socket lives in the invoking user's home while the helper runs as
+/// root, so a process of that user can swap paths between steps. A
+/// directory symlink owned by anyone but root is refused, so the socket is
+/// not bound in a location that user picked.
+#[cfg(unix)]
+fn check_socket_dir(dir: &Path) -> Result<(), HelperError> {
+    use std::os::unix::fs::MetadataExt;
+
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.file_type().is_symlink() && meta.uid() != 0 => {
+            Err(HelperError::Communication(format!(
+                "Refusing socket directory {} because it is a symlink not owned by root",
+                dir.display()
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Opens the socket to its user without following symlinks: a symlink
+/// swapped in after `bind` would otherwise turn root's chmod and chown into
+/// changes on any file it points to.
+#[cfg(unix)]
+fn grant_socket_access(socket_path: &Path) -> Result<(), HelperError> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::FileTypeExt;
+
+    let failed = |action: &str, e: std::io::Error| {
+        HelperError::Communication(format!("Failed to {action} {}: {e}", socket_path.display()))
+    };
+
+    let meta = fs::symlink_metadata(socket_path).map_err(|e| failed("inspect", e))?;
+    if !meta.file_type().is_socket() {
+        return Err(HelperError::Communication(format!(
+            "{} was replaced after the socket was bound",
+            socket_path.display()
+        )));
+    }
+
+    let c_path = std::ffi::CString::new(socket_path.as_os_str().as_bytes())
+        .map_err(|e| failed("encode", e.into()))?;
+    let rc = unsafe {
+        libc::fchmodat(
+            libc::AT_FDCWD,
+            c_path.as_ptr(),
+            0o666,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if rc != 0 {
+        return Err(failed(
+            "set permissions on",
+            std::io::Error::last_os_error(),
+        ));
+    }
+
+    if let Some(user) = invoking_user() {
+        std::os::unix::fs::lchown(socket_path, Some(user.uid), Some(user.gid))
+            .map_err(|e| failed("set ownership of", e))?;
+        info!("Set socket ownership to the elevating user");
+    }
+
+    Ok(())
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn start_unix_socket_server(
     socket_path: PathBuf, pool_manager: AddressPoolManager, network_manager: NetworkConfigManager,
@@ -394,6 +462,8 @@ async fn start_unix_socket_server(
     }
 
     if let Some(parent) = socket_path.parent() {
+        check_socket_dir(parent)?;
+
         if !parent.exists() {
             info!("Creating socket directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
@@ -417,31 +487,7 @@ async fn start_unix_socket_server(
     let listener = UnixListener::bind(&socket_path)
         .map_err(|e| HelperError::Communication(format!("Failed to bind Unix socket: {e}")))?;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-            warn!("Failed to set socket permissions: {e}");
-        } else {
-            info!("Set socket permissions to 666 (rw-rw-rw-)");
-        }
-
-        if let Some(user) = invoking_user() {
-            info!("Fixing socket ownership for user access");
-            match std::os::unix::fs::chown(&socket_path, Some(user.uid), Some(user.gid)) {
-                Err(e) => {
-                    warn!("Failed to fix socket ownership: {e}");
-                }
-                Ok(()) => {
-                    info!("Set socket ownership to the elevating user");
-                }
-            }
-        }
-
-        if socket_path.exists() {
-            info!("Socket file exists at: {}", socket_path.display());
-        }
-    }
+    grant_socket_access(&socket_path)?;
 
     info!(
         "Unix socket bound successfully at: {}",
@@ -1769,6 +1815,58 @@ mod tests {
             "the writer must block on a full send buffer once the cap stops the reader \
              consuming, not finish sending all {target} bytes unchecked: sent {written}"
         );
+    }
+
+    #[test]
+    fn socket_access_is_not_granted_through_a_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, b"secret").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("kftray-helper.sock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(grant_socket_access(&link).is_err());
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the symlink target must keep its permissions"
+        );
+    }
+
+    #[test]
+    fn socket_access_is_granted_on_the_bound_socket() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("kftray-helper.sock");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+
+        grant_socket_access(&socket_path).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o666
+        );
+    }
+
+    #[test]
+    fn a_socket_directory_symlinked_by_a_user_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join(".kftray");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(check_socket_dir(&real).is_ok());
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(check_socket_dir(&link).is_err());
+        }
     }
 }
 
