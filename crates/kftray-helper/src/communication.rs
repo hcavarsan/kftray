@@ -221,20 +221,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             && !parent.exists()
         {
             info!("Creating socket parent directory: {parent:?}");
-            if let Err(e) = fs::create_dir_all(parent) {
-                error!("Failed to create socket directory: {e}");
-                return Err(HelperError::Communication(format!(
-                    "Failed to create socket directory: {parent:?}, error: {e}"
-                )));
-            }
-
-            #[cfg(unix)]
-            if let Some(user) = invoking_user() {
-                info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::os::unix::fs::lchown(parent, Some(user.uid), Some(user.gid)) {
-                    warn!("Failed to fix directory ownership: {e}");
-                }
-            }
+            create_socket_dir(parent)?;
         }
 
         if let Some(parent) = socket_path.parent() {
@@ -328,21 +315,8 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
         if let Some(parent) = socket_path.parent()
             && !parent.exists()
         {
-            info!("Creating socket parent directory: {:?}", parent);
-            if let Err(e) = fs::create_dir_all(parent) {
-                error!("Failed to create socket directory: {}", e);
-                return Err(HelperError::Communication(format!(
-                    "Failed to create socket directory: {:?}, error: {}",
-                    parent, e
-                )));
-            }
-
-            if let Some(user) = invoking_user() {
-                info!("Fixing directory ownership for socket directory");
-                if let Err(e) = std::os::unix::fs::lchown(parent, Some(user.uid), Some(user.gid)) {
-                    warn!("Failed to fix directory ownership: {}", e);
-                }
-            }
+            info!("Creating socket parent directory: {parent:?}");
+            create_socket_dir(parent)?;
         }
 
         info!("Using socket path: {}", socket_path.display());
@@ -378,6 +352,54 @@ pub async fn start_communication_server(
     {
         Err(HelperError::UnsupportedPlatform)
     }
+}
+
+/// Creates the socket directory. When root creates it for the user who
+/// elevated the helper, it hands the directory over through a handle to the
+/// new directory, so a path the user swaps in cannot redirect the chown.
+#[cfg(unix)]
+fn create_socket_dir(dir: &Path) -> Result<(), HelperError> {
+    use std::os::unix::fs::{
+        DirBuilderExt,
+        MetadataExt,
+        OpenOptionsExt,
+    };
+
+    let fail = |e: std::io::Error| {
+        HelperError::Communication(format!(
+            "Failed to create socket directory {}: {e}",
+            dir.display()
+        ))
+    };
+
+    let Some(user) = invoking_user() else {
+        return fs::create_dir_all(dir).map_err(fail);
+    };
+
+    if let Some(ancestors) = dir.parent() {
+        fs::create_dir_all(ancestors).map_err(fail)?;
+    }
+    fs::DirBuilder::new()
+        .mode(0o755)
+        .create(dir)
+        .map_err(fail)?;
+
+    let handle = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(dir)
+        .map_err(fail)?;
+    let meta = handle.metadata().map_err(fail)?;
+    if !meta.is_dir() || meta.uid() != 0 {
+        return Err(fail(std::io::Error::other(
+            "it was replaced after it was created",
+        )));
+    }
+
+    if let Err(e) = std::os::unix::fs::fchown(&handle, Some(user.uid), Some(user.gid)) {
+        warn!("Failed to fix directory ownership: {e}");
+    }
+    Ok(())
 }
 
 /// Binds the helper socket at `socket_path` with mode 0666.
