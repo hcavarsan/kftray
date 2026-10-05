@@ -3490,6 +3490,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "sqlx",
