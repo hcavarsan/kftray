@@ -3,7 +3,10 @@ use std::io::{
     BufRead,
     BufReader,
 };
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use jiff::Zoned;
 use log::info;
@@ -82,80 +85,53 @@ impl Default for LogSettings {
     }
 }
 
+/// Parses a line written by `flexi_logger::detailed_format`:
+/// `[2026-10-04 21:26:01.616743 -03:00] INFO [module] file.rs:68: message`.
 fn parse_log_line(id: usize, line: &str) -> LogEntry {
-    if line.len() < 30 || !line.starts_with('[') {
-        return LogEntry::unparsed(id, line);
-    }
-
-    if line.get(11..12) != Some("]") || line.get(12..13) != Some("[") {
-        return LogEntry::unparsed(id, line);
-    }
-    let date = &line[1..11];
-
-    if line.get(21..22) != Some("]") || line.get(22..23) != Some("[") {
-        return LogEntry::unparsed(id, line);
-    }
-    let time = &line[13..21];
-
-    let level_end = match line[23..].find(']') {
-        Some(i) => 23 + i,
-        None => return LogEntry::unparsed(id, line),
-    };
-    let level = &line[23..level_end];
-
-    if !matches!(level, "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE") {
-        return LogEntry::unparsed(id, line);
-    }
-
-    let module_start = level_end + 2;
-    if line.get(level_end..module_start) != Some("][") {
-        return LogEntry::unparsed(id, line);
-    }
-
-    let module_end = match line[module_start..].find(']') {
-        Some(i) => module_start + i,
-        None => return LogEntry::unparsed(id, line),
-    };
-    let module = &line[module_start..module_end];
-
-    let message = line.get(module_end + 1..).unwrap_or("").trim();
-
-    LogEntry {
-        id,
-        raw: line.to_string(),
-        date: Some(date.to_string()),
-        time: Some(time.to_string()),
-        timestamp: Some(format!("{} {}", date, time)),
-        level: Some(level.to_string()),
-        module: Some(module.to_string()),
-        message: message.to_string(),
-        is_parsed: true,
-    }
+    parse_detailed_line(id, line).unwrap_or_else(|| LogEntry::unparsed(id, line))
 }
 
-fn get_log_dir(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_log_dir().ok()
+fn parse_detailed_line(id: usize, line: &str) -> Option<LogEntry> {
+    let (timestamp, rest) = line.strip_prefix('[')?.split_once("] ")?;
+    let date = timestamp.get(..10)?;
+    let time = timestamp.get(11..19)?;
+
+    let (level, rest) = rest.split_once(" [")?;
+    if !matches!(level, "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE") {
+        return None;
+    }
+
+    let (module, rest) = rest.split_once("] ")?;
+    let message = rest.split_once(": ").map_or(rest, |(_, message)| message);
+
+    Some(LogEntry {
+        id,
+        raw: line.to_string(),
+        timestamp: Some(timestamp.to_string()),
+        date: Some(date.to_string()),
+        time: Some(time.to_string()),
+        level: Some(level.to_string()),
+        module: Some(module.to_string()),
+        message: message.trim().to_string(),
+        is_parsed: true,
+    })
+}
+
+/// Where `init_file_logger` writes the app logs.
+pub(crate) fn log_dir() -> Result<PathBuf, String> {
+    kftray_commons::utils::config_dir::get_config_dir()
 }
 
 fn is_kftray_log_file(filename: &str) -> bool {
     filename.starts_with("kftray_") && filename.ends_with(".log")
 }
 
+/// Turns `kftray_2026-10-04_21-24-57_rCURRENT.log` (or a rotated `_r00001`
+/// file) into `2026-10-04 21:24:57`.
 fn parse_log_file_timestamp(filename: &str) -> Option<String> {
-    if !is_kftray_log_file(filename) {
-        return None;
-    }
-    let without_prefix = filename.strip_prefix("kftray_")?;
-    let without_suffix = without_prefix.strip_suffix(".log")?;
-    let formatted = without_suffix.replace('_', " ").replace('-', ":");
-    if formatted.len() >= 19 {
-        let date_part = &without_suffix[0..10];
-        let time_part = &without_suffix[11..];
-        let time_formatted = time_part.replace('-', ":");
-        Some(format!("{} {}", date_part, time_formatted))
-    } else {
-        None
-    }
+    let stamp = filename.strip_prefix("kftray_")?.get(..19)?;
+    let (date, time) = stamp.split_once('_')?;
+    Some(format!("{date} {}", time.replace('-', ":")))
 }
 
 fn calculate_age_days(timestamp: &str) -> u32 {
@@ -173,17 +149,17 @@ fn calculate_age_days(timestamp: &str) -> u32 {
     0
 }
 
-fn get_log_file_path(app: &AppHandle, filename: Option<&str>) -> Option<PathBuf> {
-    let log_dir = get_log_dir(app)?;
+fn get_log_file_path(filename: Option<&str>) -> Result<PathBuf, String> {
+    let log_dir = log_dir()?;
 
-    if let Some(name) = filename {
-        Some(log_dir.join(name))
-    } else {
-        find_current_log_file(&log_dir)
+    match filename {
+        Some(name) => Ok(log_dir.join(name)),
+        None => find_current_log_file(&log_dir)
+            .ok_or_else(|| format!("No log files found in {}", log_dir.display())),
     }
 }
 
-fn find_current_log_file(log_dir: &PathBuf) -> Option<PathBuf> {
+fn find_current_log_file(log_dir: &Path) -> Option<PathBuf> {
     let mut log_files: Vec<_> = fs::read_dir(log_dir)
         .ok()?
         .filter_map(|entry| entry.ok())
@@ -195,7 +171,7 @@ fn find_current_log_file(log_dir: &PathBuf) -> Option<PathBuf> {
     log_files.first().map(|entry| entry.path())
 }
 
-fn list_all_log_files(log_dir: &PathBuf) -> Vec<(PathBuf, String)> {
+fn list_all_log_files(log_dir: &Path) -> Vec<(PathBuf, String)> {
     fs::read_dir(log_dir)
         .ok()
         .map(|entries| {
@@ -215,9 +191,8 @@ fn list_all_log_files(log_dir: &PathBuf) -> Vec<(PathBuf, String)> {
 }
 
 #[tauri::command]
-pub async fn get_log_info(app: AppHandle, filename: Option<String>) -> Result<LogInfo, String> {
-    let log_path =
-        get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
+pub async fn get_log_info(filename: Option<String>) -> Result<LogInfo, String> {
+    let log_path = get_log_file_path(filename.as_deref())?;
 
     let exists = log_path.exists();
     let log_size = if exists {
@@ -235,10 +210,9 @@ pub async fn get_log_info(app: AppHandle, filename: Option<String>) -> Result<Lo
 
 #[tauri::command]
 pub async fn get_log_contents(
-    app: AppHandle, lines: Option<usize>, filename: Option<String>,
+    lines: Option<usize>, filename: Option<String>,
 ) -> Result<String, String> {
-    let log_path =
-        get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
+    let log_path = get_log_file_path(filename.as_deref())?;
 
     if !log_path.exists() {
         return Ok(String::new());
@@ -257,10 +231,9 @@ pub async fn get_log_contents(
 
 #[tauri::command]
 pub async fn get_log_contents_json(
-    app: AppHandle, lines: Option<usize>, filename: Option<String>,
+    lines: Option<usize>, filename: Option<String>,
 ) -> Result<Vec<LogEntry>, String> {
-    let log_path =
-        get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
+    let log_path = get_log_file_path(filename.as_deref())?;
 
     if !log_path.exists() {
         return Ok(Vec::new());
@@ -283,9 +256,8 @@ pub async fn get_log_contents_json(
 }
 
 #[tauri::command]
-pub async fn clear_logs(app: AppHandle, filename: Option<String>) -> Result<(), String> {
-    let log_path =
-        get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
+pub async fn clear_logs(filename: Option<String>) -> Result<(), String> {
+    let log_path = get_log_file_path(filename.as_deref())?;
 
     if log_path.exists() {
         fs::write(&log_path, "").map_err(|e| format!("Failed to clear logs: {e}"))?;
@@ -295,8 +267,8 @@ pub async fn clear_logs(app: AppHandle, filename: Option<String>) -> Result<(), 
 }
 
 #[tauri::command]
-pub async fn list_log_files(app: AppHandle) -> Result<Vec<LogFileInfo>, String> {
-    let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
+pub async fn list_log_files() -> Result<Vec<LogFileInfo>, String> {
+    let log_dir = log_dir()?;
 
     let current_log = find_current_log_file(&log_dir);
     let current_filename = current_log
@@ -334,15 +306,13 @@ pub async fn list_log_files(app: AppHandle) -> Result<Vec<LogFileInfo>, String> 
 }
 
 #[tauri::command]
-pub async fn cleanup_old_logs(app: AppHandle) -> Result<u32, String> {
+pub async fn cleanup_old_logs() -> Result<u32, String> {
     let settings = get_log_settings_internal().await?;
-    cleanup_logs_with_settings(&app, &settings).await
+    cleanup_logs_with_settings(&settings).await
 }
 
-async fn cleanup_logs_with_settings(
-    app: &AppHandle, settings: &LogSettings,
-) -> Result<u32, String> {
-    let log_dir = get_log_dir(app).ok_or("Could not determine log directory")?;
+async fn cleanup_logs_with_settings(settings: &LogSettings) -> Result<u32, String> {
+    let log_dir = log_dir()?;
 
     let current_log = find_current_log_file(&log_dir);
     let current_filename = current_log
@@ -384,10 +354,10 @@ async fn cleanup_logs_with_settings(
     Ok(deleted_count)
 }
 
-pub async fn cleanup_old_logs_on_startup(app: AppHandle) -> Result<u32, String> {
+pub async fn cleanup_old_logs_on_startup() -> Result<u32, String> {
     info!("Running log cleanup on startup");
     let settings = get_log_settings_internal().await?;
-    let deleted = cleanup_logs_with_settings(&app, &settings).await?;
+    let deleted = cleanup_logs_with_settings(&settings).await?;
     if deleted > 0 {
         info!("Cleaned up {} old log files on startup", deleted);
     }
@@ -395,8 +365,8 @@ pub async fn cleanup_old_logs_on_startup(app: AppHandle) -> Result<u32, String> 
 }
 
 #[tauri::command]
-pub async fn delete_log_file(app: AppHandle, filename: String) -> Result<(), String> {
-    let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
+pub async fn delete_log_file(filename: String) -> Result<(), String> {
+    let log_dir = log_dir()?;
 
     if filename.contains('/') || filename.contains('\\') || !is_kftray_log_file(&filename) {
         return Err("Invalid log filename".into());
@@ -506,9 +476,7 @@ pub struct EnvironmentInfo {
 pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String> {
     let diagnostics = run_diagnostics().await?;
 
-    let logs = get_log_contents(app.clone(), Some(200), None)
-        .await
-        .unwrap_or_default();
+    let logs = get_log_contents(Some(200), None).await.unwrap_or_default();
 
     let version = app.package_info().version.to_string();
 
@@ -539,8 +507,8 @@ pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String
 }
 
 #[tauri::command]
-pub async fn open_log_directory(app: AppHandle) -> Result<(), String> {
-    let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
+pub async fn open_log_directory() -> Result<(), String> {
+    let log_dir = log_dir()?;
 
     open::that(&log_dir).map_err(|e| format!("Failed to open log directory: {e}"))?;
 
@@ -627,4 +595,61 @@ pub fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
 
     info!("Logs window created successfully");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn format_with_app_logger(level: log::Level, message: &str) -> String {
+        let mut buf = Vec::new();
+        flexi_logger::detailed_format(
+            &mut buf,
+            &mut flexi_logger::DeferredNow::new(),
+            &log::Record::builder()
+                .args(format_args!("{message}"))
+                .level(level)
+                .module_path(Some("kftray_helper::client"))
+                .file(Some("crates/kftray-helper/src/client.rs"))
+                .line(Some(74))
+                .build(),
+        )
+        .unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn parses_lines_written_by_the_app_logger() {
+        let line = format_with_app_logger(log::Level::Error, "socket not available: retrying");
+        let entry = parse_log_line(7, &line);
+
+        assert!(entry.is_parsed, "unparsed: {line}");
+        assert_eq!(entry.level.as_deref(), Some("ERROR"));
+        assert_eq!(entry.module.as_deref(), Some("kftray_helper::client"));
+        assert_eq!(entry.message, "socket not available: retrying");
+        assert_eq!(entry.time.as_deref().map(str::len), Some(8));
+        assert_eq!(entry.date.as_deref().map(str::len), Some(10));
+    }
+
+    #[test]
+    fn continuation_lines_stay_unparsed() {
+        let entry = parse_log_line(0, "    at frame 3 [inline]");
+        assert!(!entry.is_parsed);
+        assert_eq!(entry.message, "    at frame 3 [inline]");
+    }
+
+    #[test]
+    fn reads_timestamps_from_current_and_rotated_file_names() {
+        for name in [
+            "kftray_2026-10-04_21-24-57_rCURRENT.log",
+            "kftray_2026-10-04_21-24-57_r00001.log",
+            "kftray_2026-10-04_21-24-57.log",
+        ] {
+            assert_eq!(
+                parse_log_file_timestamp(name).as_deref(),
+                Some("2026-10-04 21:24:57"),
+                "{name}"
+            );
+        }
+    }
 }
