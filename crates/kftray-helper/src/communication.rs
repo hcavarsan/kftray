@@ -380,119 +380,135 @@ pub async fn start_communication_server(
     }
 }
 
-/// The socket lives in the invoking user's home while the helper runs as
-/// root, so a process of that user can swap paths between steps. A
-/// directory symlink owned by anyone but root is refused, so the socket is
-/// not bound in a location that user picked.
+/// Binds the helper socket at `socket_path` with mode 0666.
+///
+/// While the helper runs as root, the socket's directory belongs to the user
+/// who elevated it, and that user can rename or replace any entry in it at
+/// any time, including the directory itself. So nothing is changed through a
+/// path in it: the socket is bound and opened up inside a new directory only
+/// root can write, then renamed into place through a handle to the socket's
+/// directory taken once at the start.
 #[cfg(unix)]
-fn check_socket_dir(dir: &Path) -> Result<(), HelperError> {
-    use std::os::unix::fs::MetadataExt;
-
-    match fs::symlink_metadata(dir) {
-        Ok(meta) if meta.file_type().is_symlink() && meta.uid() != 0 => {
-            Err(HelperError::Communication(format!(
-                "Refusing socket directory {} because it is a symlink not owned by root",
-                dir.display()
-            )))
-        }
-        _ => Ok(()),
-    }
+fn bind_helper_socket(socket_path: &Path) -> Result<UnixListener, HelperError> {
+    bind_helper_socket_with(socket_path, || {})
 }
 
-/// Opens the socket to its user without following symlinks: a symlink
-/// swapped in after `bind` would otherwise turn root's chmod and chown into
-/// changes on any file it points to.
 #[cfg(unix)]
-fn grant_socket_access(socket_path: &Path) -> Result<(), HelperError> {
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::FileTypeExt;
-
-    let failed = |action: &str, e: std::io::Error| {
-        HelperError::Communication(format!("Failed to {action} {}: {e}", socket_path.display()))
+fn bind_helper_socket_with(
+    socket_path: &Path, after_bind: impl FnOnce(),
+) -> Result<UnixListener, HelperError> {
+    use std::ffi::{
+        CStr,
+        CString,
+        OsStr,
     };
-
-    let meta = fs::symlink_metadata(socket_path).map_err(|e| failed("inspect", e))?;
-    if !meta.file_type().is_socket() {
-        return Err(HelperError::Communication(format!(
-            "{} was replaced after the socket was bound",
-            socket_path.display()
-        )));
-    }
-
-    let c_path = std::ffi::CString::new(socket_path.as_os_str().as_bytes())
-        .map_err(|e| failed("encode", e.into()))?;
-    let rc = unsafe {
-        libc::fchmodat(
-            libc::AT_FDCWD,
-            c_path.as_ptr(),
-            0o666,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    };
-    if rc != 0 {
-        let err = std::io::Error::last_os_error();
-        // glibc before 2.32 rejects AT_SYMLINK_NOFOLLOW for fchmodat.
-        #[cfg(target_os = "linux")]
-        let err = match err.raw_os_error() {
-            Some(libc::EOPNOTSUPP) => chmod_socket_via_o_path(&c_path, 0o666).err(),
-            _ => Some(err),
-        };
-        #[cfg(not(target_os = "linux"))]
-        let err = Some(err);
-
-        if let Some(err) = err {
-            return Err(failed("set permissions on", err));
-        }
-    }
-
-    if let Some(user) = invoking_user() {
-        std::os::unix::fs::lchown(socket_path, Some(user.uid), Some(user.gid))
-            .map_err(|e| failed("set ownership of", e))?;
-        info!("Set socket ownership to the elevating user");
-    }
-
-    Ok(())
-}
-
-/// Sets the mode of the socket at `path` through an `O_PATH` handle, so a
-/// symlink swapped in after the check is not followed.
-#[cfg(target_os = "linux")]
-fn chmod_socket_via_o_path(path: &std::ffi::CStr, mode: libc::mode_t) -> std::io::Result<()> {
     use std::os::fd::{
         AsRawFd,
         FromRawFd,
         OwnedFd,
     };
+    use std::os::unix::ffi::OsStrExt;
 
-    let raw = unsafe {
-        libc::open(
-            path.as_ptr(),
-            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
+    const STAGED: &CStr = c"s";
+
+    let fail = |action: &str, e: std::io::Error| {
+        HelperError::Communication(format!(
+            "Failed to {action} for socket {}: {e}",
+            socket_path.display()
+        ))
     };
-    if raw < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let check = |rc: libc::c_int, action: &str| match rc {
+        0 => Ok(()),
+        _ => Err(fail(action, std::io::Error::last_os_error())),
+    };
+    let open_dir = |at: libc::c_int, path: &CStr, extra: libc::c_int| {
+        let fd = unsafe {
+            libc::openat(
+                at,
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | extra,
+            )
+        };
+        if fd < 0 {
+            return Err(fail("open a directory", std::io::Error::last_os_error()));
+        }
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    };
 
-    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if stat.st_mode & libc::S_IFMT != libc::S_IFSOCK {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "path is not a socket",
-        ));
-    }
+    let name = socket_path
+        .file_name()
+        .and_then(|name| CString::new(name.as_bytes()).ok())
+        .ok_or_else(|| {
+            fail(
+                "read the file name",
+                std::io::ErrorKind::InvalidInput.into(),
+            )
+        })?;
+    let parent = match socket_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let parent_c = CString::new(parent.as_os_str().as_bytes())
+        .map_err(|e| fail("read the directory", e.into()))?;
+    let dir = open_dir(libc::AT_FDCWD, &parent_c, 0)?;
 
-    let proc_path = std::ffi::CString::new(format!("/proc/self/fd/{}", fd.as_raw_fd()))
-        .map_err(std::io::Error::from)?;
-    if unsafe { libc::chmod(proc_path.as_ptr(), mode) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let stage_name = CString::new(format!(".kftray-helper-{}-{nonce:x}", std::process::id()))
+        .map_err(|e| fail("name the staging directory", e.into()))?;
+    check(
+        unsafe { libc::mkdirat(dir.as_raw_fd(), stage_name.as_ptr(), 0o700) },
+        "create the staging directory",
+    )?;
 
-    Ok(())
+    let bind_staged = |stage: &OwnedFd| {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        check(
+            unsafe { libc::fstat(stage.as_raw_fd(), &mut st) },
+            "inspect the staging directory",
+        )?;
+        if st.st_uid != unsafe { libc::geteuid() } || st.st_mode & 0o077 != 0 {
+            return Err(fail(
+                "use the staging directory",
+                std::io::Error::other("it was replaced"),
+            ));
+        }
+
+        // A path, so a swapped directory can send the bind elsewhere. The
+        // socket is then missing from the staging handle and setup fails.
+        let bind_path = parent
+            .join(OsStr::from_bytes(stage_name.as_bytes()))
+            .join(OsStr::from_bytes(STAGED.to_bytes()));
+        let listener = UnixListener::bind(&bind_path).map_err(|e| fail("bind", e))?;
+        after_bind();
+
+        check(
+            unsafe { libc::fchmodat(stage.as_raw_fd(), STAGED.as_ptr(), 0o666, 0) },
+            "set the socket mode",
+        )?;
+        check(
+            unsafe {
+                libc::renameat(
+                    stage.as_raw_fd(),
+                    STAGED.as_ptr(),
+                    dir.as_raw_fd(),
+                    name.as_ptr(),
+                )
+            },
+            "move the socket into place",
+        )?;
+        Ok(listener)
+    };
+
+    let result = open_dir(dir.as_raw_fd(), &stage_name, libc::O_NOFOLLOW).and_then(|stage| {
+        let result = bind_staged(&stage);
+        unsafe { libc::unlinkat(stage.as_raw_fd(), STAGED.as_ptr(), 0) };
+        result
+    });
+    unsafe { libc::unlinkat(dir.as_raw_fd(), stage_name.as_ptr(), libc::AT_REMOVEDIR) };
+
+    result
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -502,16 +518,7 @@ async fn start_unix_socket_server(
 ) -> Result<(), HelperError> {
     info!("Starting Unix socket server on: {}", socket_path.display());
 
-    if socket_path.exists() {
-        info!("Removing existing socket file");
-        fs::remove_file(&socket_path).map_err(|e| {
-            HelperError::Communication(format!("Failed to remove existing socket: {e}"))
-        })?;
-    }
-
     if let Some(parent) = socket_path.parent() {
-        check_socket_dir(parent)?;
-
         if !parent.exists() {
             info!("Creating socket directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
@@ -532,10 +539,7 @@ async fn start_unix_socket_server(
         }
     }
 
-    let listener = UnixListener::bind(&socket_path)
-        .map_err(|e| HelperError::Communication(format!("Failed to bind Unix socket: {e}")))?;
-
-    grant_socket_access(&socket_path)?;
+    let listener = bind_helper_socket(&socket_path)?;
 
     info!(
         "Unix socket bound successfully at: {}",
@@ -1865,91 +1869,92 @@ mod tests {
         );
     }
 
-    #[test]
-    fn socket_access_is_not_granted_through_a_symlink() {
+    fn mode(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("target");
-        fs::write(&target, b"secret").unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
-        let link = dir.path().join("kftray-helper.sock");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+    }
 
-        assert!(grant_socket_access(&link).is_err());
-        assert_eq!(
-            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "the symlink target must keep its permissions"
-        );
+    fn victim_file(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, b"secret").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     #[test]
-    fn socket_access_is_granted_on_the_bound_socket() {
-        use std::os::unix::fs::PermissionsExt;
+    fn the_socket_replaces_a_stale_entry_without_touching_what_it_points_to() {
+        use std::os::unix::fs::FileTypeExt;
 
-        let dir = tempfile::tempdir().unwrap();
-        let socket_path = dir.path().join("kftray-helper.sock");
-        let _listener = UnixListener::bind(&socket_path).unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join(".kftray");
+        fs::create_dir(&dir).unwrap();
+        let victim = base.path().join("victim");
+        victim_file(&victim);
+        let socket_path = dir.join("kftray-helper.sock");
+        std::os::unix::fs::symlink(&victim, &socket_path).unwrap();
 
-        grant_socket_access(&socket_path).unwrap();
-        assert_eq!(
+        let _listener = bind_helper_socket(&socket_path).unwrap();
+
+        assert_eq!(mode(&victim), 0o600);
+        assert!(
             fs::symlink_metadata(&socket_path)
                 .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o666
+                .file_type()
+                .is_socket()
+        );
+        assert_eq!(mode(&socket_path), 0o666);
+        UnixStream::connect(&socket_path).expect("clients connect at the final path");
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "the staging directory is removed"
         );
     }
 
     #[test]
-    fn a_socket_directory_symlinked_by_a_user_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("real");
-        fs::create_dir(&real).unwrap();
-        let link = dir.path().join(".kftray");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
+    fn a_directory_swapped_after_bind_cannot_redirect_the_mode_change() {
+        use std::os::unix::fs::{
+            FileTypeExt,
+            MetadataExt,
+        };
 
-        assert!(check_socket_dir(&real).is_ok());
-        if unsafe { libc::geteuid() } != 0 {
-            assert!(check_socket_dir(&link).is_err());
-        }
-    }
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join(".kftray");
+        fs::create_dir(&dir).unwrap();
+        let socket_path = dir.join("kftray-helper.sock");
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn the_o_path_fallback_sets_the_socket_mode_but_not_through_a_symlink() {
-        use std::os::unix::ffi::OsStrExt;
-        use std::os::unix::fs::PermissionsExt;
+        // What the user swaps in: a directory whose entry with the socket's
+        // name is a hard link to a file they want root to open up.
+        let victim = base.path().join("victim");
+        victim_file(&victim);
+        let decoy = base.path().join("decoy");
+        fs::create_dir(&decoy).unwrap();
+        fs::hard_link(&victim, decoy.join("kftray-helper.sock")).unwrap();
+        let moved = base.path().join(".kftray-moved");
 
-        let c_path = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
-        let dir = tempfile::tempdir().unwrap();
+        let _listener = bind_helper_socket_with(&socket_path, || {
+            fs::rename(&dir, &moved).unwrap();
+            std::os::unix::fs::symlink(&decoy, &dir).unwrap();
+        })
+        .unwrap();
 
-        let socket_path = dir.path().join("kftray-helper.sock");
-        let _listener = UnixListener::bind(&socket_path).unwrap();
-        chmod_socket_via_o_path(&c_path(&socket_path), 0o666).unwrap();
+        assert_eq!(mode(&victim), 0o600, "the victim keeps its mode");
         assert_eq!(
-            fs::symlink_metadata(&socket_path)
+            fs::metadata(decoy.join("kftray-helper.sock"))
                 .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o666
+                .ino(),
+            fs::metadata(&victim).unwrap().ino(),
+            "the swapped-in directory is left alone"
         );
-
-        let target = dir.path().join("target");
-        fs::write(&target, b"secret").unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
-        let link = dir.path().join("swapped.sock");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-
-        assert!(chmod_socket_via_o_path(&c_path(&link), 0o666).is_err());
-        assert!(chmod_socket_via_o_path(&c_path(&target), 0o666).is_err());
-        assert_eq!(
-            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-            0o600
+        let placed = moved.join("kftray-helper.sock");
+        assert!(
+            fs::symlink_metadata(&placed)
+                .unwrap()
+                .file_type()
+                .is_socket()
         );
+        assert_eq!(mode(&placed), 0o666);
     }
 }
 
