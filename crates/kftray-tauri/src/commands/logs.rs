@@ -29,6 +29,9 @@ pub struct LogInfo {
     pub log_path: String,
     pub log_size: u64,
     pub exists: bool,
+    /// Changes whenever the file is written, even when a rewrite (such as
+    /// clearing it and logging again) brings it back to the same size.
+    pub version: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -192,20 +195,23 @@ fn list_all_log_files(log_dir: &Path) -> Vec<(PathBuf, String)> {
 
 #[tauri::command]
 pub async fn get_log_info(filename: Option<String>) -> Result<LogInfo, String> {
-    let log_path = get_log_file_path(filename.as_deref())?;
+    Ok(log_info(&get_log_file_path(filename.as_deref())?))
+}
 
-    let exists = log_path.exists();
-    let log_size = if exists {
-        fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
+fn log_info(path: &Path) -> LogInfo {
+    let metadata = fs::metadata(path).ok();
+    let log_size = metadata.as_ref().map_or(0, |m| m.len());
+    let modified_ns = metadata
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
 
-    Ok(LogInfo {
-        log_path: log_path.to_string_lossy().into(),
+    LogInfo {
+        log_path: path.to_string_lossy().into(),
         log_size,
-        exists,
-    })
+        exists: path.exists(),
+        version: format!("{log_size}:{modified_ns}"),
+    }
 }
 
 #[tauri::command]
@@ -651,5 +657,34 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn rewriting_a_log_to_the_same_size_changes_its_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kftray_2026-10-05_10-00-00_rCURRENT.log");
+        let first_write = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+
+        fs::write(&path, "[old] line\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(first_write)
+            .unwrap();
+        let before = log_info(&path);
+
+        fs::write(&path, "").unwrap();
+        fs::write(&path, "[new] line\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(first_write + std::time::Duration::from_millis(1))
+            .unwrap();
+        let after = log_info(&path);
+
+        assert_eq!(before.log_size, after.log_size);
+        assert_ne!(before.version, after.version);
     }
 }

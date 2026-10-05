@@ -39,7 +39,8 @@ export const ALL_LEVELS: LogLevel[] = [
   'TRACE',
 ]
 
-export const ROW_HEIGHT_COLLAPSED = 36
+/** 32px header plus the 1px bottom border of a collapsed `LogRow`. */
+export const ROW_HEIGHT_COLLAPSED = 33
 
 export const DEFAULT_LOG_LINES = 1000
 

@@ -34,9 +34,7 @@ interface LogData {
   info: LogInfo
 }
 
-function fileNameFromPath(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path
-}
+const NO_ENTRIES: LogEntry[] = []
 
 export function LogViewerPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -50,18 +48,29 @@ export function LogViewerPage() {
   const deferredSearchText = useDeferredValue(filter.searchText)
   const { levels, modules } = filter
   const queryClient = useQueryClient()
-  const appWindow = getCurrentWebviewWindow()
 
   const logFiles = useQuery(logFilesQuery)
   const logsQuery = useQuery({
     queryKey: ['logs', selectedFile],
-    queryFn: async (): Promise<LogData> => {
+    queryFn: async ({ queryKey }): Promise<LogData> => {
       const info = await invoke<LogInfo>('get_log_info', {
         filename: selectedFile,
       })
+      const previous = queryClient.getQueryData<LogData>(queryKey)
+
+      // Following polls every few seconds. Skip re-reading and re-parsing up
+      // to DEFAULT_LOG_LINES lines when the file has not been written since.
+      if (
+        previous &&
+        previous.info.log_path === info.log_path &&
+        previous.info.version === info.version
+      ) {
+        return previous
+      }
+
       const entries = await invoke<RawLogEntry[]>('get_log_contents_json', {
         lines: DEFAULT_LOG_LINES,
-        filename: selectedFile ?? fileNameFromPath(info.log_path),
+        filename: info.log_path.split(/[\\/]/).pop(),
       })
 
       return { info, entries: normalizeLogEntries(entries) }
@@ -75,7 +84,9 @@ export function LogViewerPage() {
       setExpandedIds(new Set())
     },
     onSuccess: async (_, filename) => {
-      await queryClient.invalidateQueries({ queryKey: ['logs', filename] })
+      // Drops the cached entries so the refetch cannot reuse them, even if
+      // the cleared file is written back to its old version before it runs.
+      await queryClient.resetQueries({ queryKey: ['logs', filename] })
       toaster.success({
         title: 'Logs Cleared',
         description: 'Log file has been cleared',
@@ -145,7 +156,7 @@ export function LogViewerPage() {
     description: () => 'Logs copied to clipboard',
   })
 
-  const entries = logsQuery.data?.entries ?? []
+  const entries = logsQuery.data?.entries ?? NO_ENTRIES
   const logInfo = logsQuery.data?.info
   const availableModules = useMemo(() => extractModules(entries), [entries])
   const filteredEntries = useMemo(
@@ -158,6 +169,9 @@ export function LogViewerPage() {
     [deferredSearchText, entries, levels, modules],
   )
 
+  const { mutate: deleteLogFile } = deleteLogFileMutation
+  const { mutate: clearLogs } = clearLogsMutation
+
   const handleFileSelect = useCallback((filename: string | null) => {
     setSelectedFile(filename)
     setExpandedIds(new Set())
@@ -165,33 +179,25 @@ export function LogViewerPage() {
       setAutoRefresh(false)
     }
   }, [])
-  const handleDeleteFile = useCallback(
-    (filename: string) => deleteLogFileMutation.mutate(filename),
-    [deleteLogFileMutation],
-  )
   const handleToggleExpand = useCallback((id: number) => {
     setExpandedIds(previousIds => {
       const nextIds = new Set(previousIds)
-      if (nextIds.has(id)) {
-        nextIds.delete(id)
-      } else {
+      if (!nextIds.delete(id)) {
         nextIds.add(id)
       }
       return nextIds
     })
   }, [])
-  const handleClear = useCallback(() => {
-    clearLogsMutation.mutate(selectedFile)
-  }, [clearLogsMutation, selectedFile])
+  const handleClear = useCallback(
+    () => clearLogs(selectedFile),
+    [clearLogs, selectedFile],
+  )
   const handleExport = useCallback(() => exportReport(), [exportReport])
   const handleOpenFolder = useCallback(() => openFolder(), [openFolder])
   const handleCopyLogs = useCallback(
     () => copyLogs(entries.map(entry => entry.raw).join('\n')),
     [copyLogs, entries],
   )
-  const handleClose = useCallback(async () => {
-    await appWindow.close()
-  }, [appWindow])
 
   return (
     <Box
@@ -226,7 +232,7 @@ export function LogViewerPage() {
           <Button
             size='xs'
             variant='ghost'
-            onClick={handleClose}
+            onClick={() => getCurrentWebviewWindow().close()}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -244,7 +250,7 @@ export function LogViewerPage() {
             logFiles={logFiles.data ?? []}
             selectedFile={selectedFile}
             onFileSelect={handleFileSelect}
-            onDeleteFile={handleDeleteFile}
+            onDeleteFile={deleteLogFile}
             isLoading={logFiles.isLoading || deleteLogFileMutation.isPending}
           />
         </Flex>

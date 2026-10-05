@@ -1,123 +1,77 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
-import type { ListImperativeAPI, RowComponentProps } from 'react-window'
-import { List, useDynamicRowHeight } from 'react-window'
+import { memo, useEffect } from 'react'
+import type { RowComponentProps } from 'react-window'
+import { List, useDynamicRowHeight, useListCallbackRef } from 'react-window'
 
 import { Box, Text } from '@chakra-ui/react'
 
 import { ROW_HEIGHT_COLLAPSED } from './constants'
 import { LogRow } from './LogRow'
-import type { LogViewerListProps } from './types'
+import type { LogEntry, LogViewerListProps } from './types'
 
 interface RowProps {
-  entries: LogViewerListProps['entries']
+  entries: LogEntry[]
   expandedIds: Set<number>
   onToggleExpand: (id: number) => void
-  searchText?: string
+  searchText: string
 }
+
+/**
+ * Only positions the row. The list re-renders every visible row whenever
+ * something above it changes height, so the expensive content lives in the
+ * memoized `LogRow`, which ignores position changes.
+ */
+function Row({
+  index,
+  style,
+  ariaAttributes,
+  entries,
+  expandedIds,
+  onToggleExpand,
+  searchText,
+}: RowComponentProps<RowProps>) {
+  const entry = entries[index]
+
+  return (
+    <div style={style} {...ariaAttributes}>
+      <LogRow
+        entry={entry}
+        isExpanded={expandedIds.has(entry.id)}
+        onToggle={onToggleExpand}
+        searchText={searchText}
+      />
+    </div>
+  )
+}
+
+const rowKey = (index: number, { entries }: RowProps) => entries[index].id
 
 function LogViewerListComponent({
   entries,
   expandedIds,
   onToggleExpand,
   searchText,
-  autoFollow = false,
+  autoFollow,
 }: LogViewerListProps) {
-  const [listRef, setListRef] = useState<ListImperativeAPI | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
-  const rowHeightKey = `${entries.map(entry => entry.id).join(',')}:${Array.from(
-    expandedIds,
-  )
-    .sort((left, right) => left - right)
-    .join(',')}`
-  const dynamicRowHeight = useDynamicRowHeight({
+  const [listRef, setListRef] = useListCallbackRef(null)
+  const lastId = entries.at(-1)?.id
+
+  // Measured heights are cached by row index, so they are dropped whenever
+  // the rows behind those indices change (new lines, filters).
+  const rowHeight = useDynamicRowHeight({
     defaultRowHeight: ROW_HEIGHT_COLLAPSED,
-    key: rowHeightKey,
+    key: `${entries.length}:${entries[0]?.id}:${lastId}`,
   })
 
-  useLayoutEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const { clientWidth, clientHeight } = containerRef.current
-
-        setDimensions(prev => {
-          if (prev.width !== clientWidth || prev.height !== clientHeight) {
-            return { width: clientWidth, height: clientHeight }
-          }
-
-          return prev
-        })
-      }
-    }
-
-    updateDimensions()
-
-    const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(updateDimensions)
-    })
-
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current)
-    }
-
-    return () => resizeObserver.disconnect()
-  }, [])
-
-  const { setRowHeight } = dynamicRowHeight
-
   useEffect(() => {
-    if (autoFollow && listRef && entries.length > 0) {
-      requestAnimationFrame(() => {
-        listRef.scrollToRow({ index: entries.length - 1, align: 'end' })
-      })
+    if (autoFollow && listRef && lastId !== undefined) {
+      listRef.scrollToRow({ index: entries.length - 1, align: 'end' })
     }
-  }, [autoFollow, entries.length, listRef])
-
-  const Row = useCallback(
-    ({
-      index,
-      style,
-      entries: rowEntries,
-      expandedIds: rowExpandedIds,
-      onToggleExpand: rowOnToggleExpand,
-      searchText: rowSearchText,
-    }: RowComponentProps<RowProps>) => {
-      const entry = rowEntries[index]
-
-      if (!entry) {
-        return null
-      }
-
-      const isExpanded = rowExpandedIds.has(entry.id)
-
-      return (
-        <LogRow
-          entry={entry}
-          index={index}
-          isExpanded={isExpanded}
-          onToggle={() => rowOnToggleExpand(entry.id)}
-          onHeightChange={setRowHeight}
-          style={style}
-          searchText={rowSearchText}
-        />
-      )
-    },
-    [setRowHeight],
-  )
+  }, [autoFollow, listRef, lastId, entries.length])
 
   if (entries.length === 0) {
     return (
       <Box
-        ref={containerRef}
         h='100%'
-        w='100%'
         display='flex'
         alignItems='center'
         justifyContent='center'
@@ -135,35 +89,16 @@ function LogViewerListComponent({
   }
 
   return (
-    <Box
-      ref={containerRef}
-      position='absolute'
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-    >
-      {dimensions.height > 0 && (
-        <List<RowProps>
-          listRef={setListRef}
-          rowCount={entries.length}
-          rowHeight={dynamicRowHeight}
-          overscanCount={10}
-          style={{
-            overflowX: 'hidden',
-            height: dimensions.height,
-            width: dimensions.width || '100%',
-          }}
-          rowComponent={Row}
-          rowProps={{
-            entries,
-            expandedIds,
-            onToggleExpand,
-            searchText,
-          }}
-        />
-      )}
-    </Box>
+    <List
+      listRef={setListRef}
+      rowCount={entries.length}
+      rowHeight={rowHeight}
+      rowKey={rowKey}
+      overscanCount={8}
+      rowComponent={Row}
+      rowProps={{ entries, expandedIds, onToggleExpand, searchText }}
+      style={{ height: '100%', overflowX: 'hidden' }}
+    />
   )
 }
 

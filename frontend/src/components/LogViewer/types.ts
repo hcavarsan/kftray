@@ -1,3 +1,5 @@
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
+
 export type LogLevel = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'TRACE'
 
 export interface RawLogEntry {
@@ -20,6 +22,8 @@ export interface LogInfo {
   log_path: string
   log_size: number
   exists: boolean
+  /** Changes on every write, including same-size rewrites. */
+  version: string
 }
 
 export interface LogFileInfo {
@@ -44,20 +48,17 @@ export interface LogFilter {
 
 export interface LogRowProps {
   entry: LogEntry
-  index: number
   isExpanded: boolean
-  onToggle: () => void
-  onHeightChange?: (index: number, height: number) => void
-  style: React.CSSProperties
-  searchText?: string
+  onToggle: (id: number) => void
+  searchText: string
 }
 
 export interface LogViewerListProps {
   entries: LogEntry[]
   expandedIds: Set<number>
   onToggleExpand: (id: number) => void
-  searchText?: string
-  autoFollow?: boolean
+  searchText: string
+  autoFollow: boolean
 }
 
 export interface LevelFilterDropdownProps {
@@ -85,13 +86,13 @@ export interface LogFilterAccent {
 export interface LogFilterDropdownProps<T extends string> {
   ariaLabel: string
   title: string
-  icon: React.ReactNode
+  icon: ReactNode
   accent: LogFilterAccent
   items: readonly T[]
   selected: T[]
   onChange: (selected: T[]) => void
-  renderItem: (item: T) => React.ReactNode
-  headerActions?: React.ReactNode
+  renderItem: (item: T) => ReactNode
+  headerActions?: ReactNode
   searchable?: boolean
   emptyLabel?: string
   minW?: string
@@ -121,7 +122,7 @@ export interface LogViewerToolbarProps {
   availableModules: string[]
   autoRefresh: boolean
   isFollowDisabled?: boolean
-  onFilterChange: (filter: LogFilter) => void
+  onFilterChange: Dispatch<SetStateAction<LogFilter>>
   onAutoRefreshChange: (enabled: boolean) => void
   onClear: () => void
   onExport: () => void

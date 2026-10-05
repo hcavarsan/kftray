@@ -31,52 +31,49 @@ function LogViewerToolbarComponent({
 }: LogViewerToolbarProps) {
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      onFilterChange({ ...filter, searchText: e.target.value })
+      const searchText = e.target.value
+      onFilterChange(prev => ({ ...prev, searchText }))
     },
-    [filter, onFilterChange],
+    [onFilterChange],
   )
 
   const handleLevelChange = useCallback(
-    (levels: LogLevel[]) => {
-      onFilterChange({ ...filter, levels })
-    },
-    [filter, onFilterChange],
+    (levels: LogLevel[]) => onFilterChange(prev => ({ ...prev, levels })),
+    [onFilterChange],
   )
 
   const handleModuleChange = useCallback(
-    (modules: string[]) => {
-      onFilterChange({ ...filter, modules })
-    },
-    [filter, onFilterChange],
+    (modules: string[]) => onFilterChange(prev => ({ ...prev, modules })),
+    [onFilterChange],
   )
 
   const handleRemoveLevel = useCallback(
-    (level: LogLevel) => {
-      onFilterChange({
-        ...filter,
-        levels: filter.levels.filter(l => l !== level),
-      })
-    },
-    [filter, onFilterChange],
+    (level: LogLevel) =>
+      onFilterChange(prev => ({
+        ...prev,
+        levels: prev.levels.filter(l => l !== level),
+      })),
+    [onFilterChange],
   )
 
   const handleRemoveModule = useCallback(
-    (module: string) => {
-      onFilterChange({
-        ...filter,
-        modules: filter.modules.filter(m => m !== module),
-      })
-    },
-    [filter, onFilterChange],
+    (module: string) =>
+      onFilterChange(prev => ({
+        ...prev,
+        modules: prev.modules.filter(m => m !== module),
+      })),
+    [onFilterChange],
   )
 
-  const handleClearSearch = useCallback(() => {
-    onFilterChange({ ...filter, searchText: '' })
-  }, [filter, onFilterChange])
+  const handleClearSearch = useCallback(
+    () => onFilterChange(prev => ({ ...prev, searchText: '' })),
+    [onFilterChange],
+  )
 
-  const handleClearAll = useCallback(() => {
-    onFilterChange({ levels: [], modules: [], searchText: '' })
-  }, [onFilterChange])
+  const handleClearAll = useCallback(
+    () => onFilterChange({ levels: [], modules: [], searchText: '' }),
+    [onFilterChange],
+  )
 
   return (
     <Box borderBottom='1px solid' borderBottomColor='border.subtle' pb={2}>

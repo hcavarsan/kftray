@@ -1,14 +1,15 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy } from 'lucide-react'
+import { memo, type ReactNode, useEffect, useRef, useState } from 'react'
+import { Check, ChevronRight, Copy } from 'lucide-react'
 
 import { Box, Flex, IconButton, Text } from '@chakra-ui/react'
 
-import { Tooltip } from '@/components/ui/tooltip'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 
 import { LEVEL_COLORS } from './constants'
-import type { LogLevel, LogRowProps } from './types'
+import type { LogEntry, LogLevel, LogRowProps } from './types'
 import { highlightText } from './utils/filterLogs'
+
+const EXPAND_TRANSITION = '180ms cubic-bezier(0.2, 0, 0, 1)'
 
 function LevelBadge({ level }: { level: LogLevel }) {
   const colors = LEVEL_COLORS[level]
@@ -28,6 +29,7 @@ function LevelBadge({ level }: { level: LogLevel }) {
       minW='44px'
       textAlign='center'
       letterSpacing='0.02em'
+      flexShrink={0}
     >
       {level}
     </Box>
@@ -39,204 +41,202 @@ function HighlightedText({
   searchText,
 }: {
   text: string
-  searchText?: string
+  searchText: string
 }) {
-  if (!searchText?.trim()) {
-    return <>{text}</>
+  if (!searchText.trim()) {
+    return text
   }
 
-  const segments = highlightText(text, searchText)
+  return highlightText(text, searchText).map((segment, index) =>
+    segment.isMatch ? (
+      <Box
+        as='mark'
+        // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and never reorder
+        key={index}
+        bg='search.match'
+        color='fg'
+        px={0.5}
+        borderRadius='2px'
+      >
+        {segment.text}
+      </Box>
+    ) : (
+      // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and never reorder
+      <span key={index}>{segment.text}</span>
+    ),
+  )
+}
 
+function DetailField({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
   return (
     <>
-      {segments.map((segment, index) => {
-        const key = `${segment.isMatch}-${segment.text}-${index}`
-
-        return segment.isMatch ? (
-          <Box
-            as='mark'
-            key={key}
-            bg='search.match'
-            color='fg'
-            px={0.5}
-            borderRadius='2px'
-          >
-            {segment.text}
-          </Box>
-        ) : (
-          <span key={key}>{segment.text}</span>
-        )
-      })}
+      <Text color='fg.subtle' fontSize='10px' lineHeight='18px'>
+        {label}
+      </Text>
+      <Box color='fg' minW={0} lineHeight='18px'>
+        {children}
+      </Box>
     </>
   )
 }
 
-function ExpandedDetails({ entry }: { entry: LogRowProps['entry'] }) {
+function ExpandedDetails({ entry }: { entry: LogEntry }) {
   const levelColors = entry.level ? LEVEL_COLORS[entry.level] : null
-  const [showCopied, setShowCopied] = useState(false)
-  const copyFeedbackTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
-  useEffect(() => {
-    return () => {
-      clearTimeout(copyFeedbackTimeoutRef.current)
-    }
-  }, [])
-
+  const [copied, setCopied] = useState(false)
+  const copiedTimeout = useRef<number>(undefined)
   const { mutate: copyText } = useCopyToClipboard()
 
-  const handleCopyAll = useCallback(() => {
-    const parts = []
+  useEffect(() => () => clearTimeout(copiedTimeout.current), [])
 
-    if (entry.timestamp) {
-      parts.push(`Timestamp: ${entry.timestamp}`)
-    }
-    if (entry.level) {
-      parts.push(`Level: ${entry.level}`)
-    }
-    if (entry.module) {
-      parts.push(`Module: ${entry.module}`)
-    }
-    parts.push(`Message: ${entry.message}`)
-    copyText(parts.join('\n'), {
+  const copyEntry = () => {
+    const text = entry.is_parsed
+      ? [
+          `Timestamp: ${entry.timestamp}`,
+          `Level: ${entry.level}`,
+          `Module: ${entry.module}`,
+          `Message: ${entry.message}`,
+        ].join('\n')
+      : entry.raw
+
+    copyText(text, {
       onSuccess: () => {
-        clearTimeout(copyFeedbackTimeoutRef.current)
-        setShowCopied(true)
-        copyFeedbackTimeoutRef.current = setTimeout(() => {
-          setShowCopied(false)
-        }, 1500)
+        clearTimeout(copiedTimeout.current)
+        copiedTimeout.current = window.setTimeout(() => setCopied(false), 1500)
       },
     })
-  }, [copyText, entry])
+  }
 
   return (
     <Box
-      mt={2}
+      position='relative'
+      ml='28px'
+      mr={3}
+      mt={0.5}
+      mb={3}
+      px={3.5}
+      py={3}
+      pr={10}
       bg='bg.surface'
-      borderRadius='4px'
+      borderRadius='6px'
       border='1px solid'
-      borderColor='border'
+      borderColor='border.subtle'
       borderLeft='2px solid'
       borderLeftColor={levelColors?.border ?? 'border'}
       fontSize='11px'
       fontFamily='mono'
     >
-      <Flex direction='column' gap={2}>
+      <Box
+        display='grid'
+        gridTemplateColumns='max-content minmax(0, 1fr)'
+        columnGap={4}
+        rowGap={1.5}
+      >
         {entry.timestamp && (
-          <Box>
-            <Text color='fg.subtle' display='inline' fontSize='10px'>
-              Timestamp:{' '}
-            </Text>
-            <Text color='fg' display='inline'>
-              {entry.timestamp}
-            </Text>
-          </Box>
+          <DetailField label='Timestamp'>{entry.timestamp}</DetailField>
         )}
-
         {entry.level && (
-          <Box>
-            <Text color='fg.subtle' display='inline' fontSize='10px'>
-              Level:{' '}
-            </Text>
-            <Text
-              color={levelColors?.text}
-              display='inline'
-              fontWeight='medium'
-            >
+          <DetailField label='Level'>
+            <Text as='span' color={levelColors?.text} fontWeight='medium'>
               {entry.level}
             </Text>
-          </Box>
+          </DetailField>
         )}
-
         {entry.module && (
-          <Box>
-            <Text color='fg.subtle' display='inline' fontSize='10px'>
-              Module:{' '}
-            </Text>
-            <Text color='log.module.fg' display='inline' wordBreak='break-all'>
+          <DetailField label='Module'>
+            <Text as='span' color='log.module.fg' wordBreak='break-all'>
               {entry.module}
             </Text>
-          </Box>
+          </DetailField>
         )}
+        <DetailField label='Message'>
+          <Text as='span' whiteSpace='pre-wrap' overflowWrap='anywhere'>
+            {entry.message}
+          </Text>
+        </DetailField>
+      </Box>
 
-        <Flex align='flex-start' justify='space-between'>
-          <Box flex={1} pr={2}>
-            <Text color='fg.subtle' display='inline' fontSize='10px'>
-              Message:{' '}
-            </Text>
-            <Text color='fg' display='inline' wordBreak='break-all'>
-              {entry.message}
-            </Text>
-          </Box>
-          <Tooltip content='Copied!' open={showCopied}>
-            <IconButton
-              aria-label='Copy all'
-              size='2xs'
-              variant='ghost'
-              onClick={handleCopyAll}
-              minW='20px'
-              h='20px'
-              color='fg.subtle'
-              _hover={{ bg: 'bg.hover', color: 'fg.secondary' }}
-            >
-              <Copy size={11} />
-            </IconButton>
-          </Tooltip>
-        </Flex>
-      </Flex>
+      <IconButton
+        aria-label={copied ? 'Copied' : 'Copy entry'}
+        title={copied ? 'Copied' : 'Copy entry'}
+        position='absolute'
+        top={2}
+        right={2}
+        size='2xs'
+        variant='ghost'
+        minW='22px'
+        h='22px'
+        color={copied ? 'success.fg' : 'fg.subtle'}
+        _hover={{ bg: 'bg.hover', color: copied ? 'success.fg' : 'fg' }}
+        onClick={copyEntry}
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </IconButton>
     </Box>
   )
 }
 
 function LogRowComponent({
   entry,
-  index,
   isExpanded,
   onToggle,
-  onHeightChange,
-  style,
   searchText,
 }: LogRowProps) {
   const levelColors = entry.level ? LEVEL_COLORS[entry.level] : null
-  const contentRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!isExpanded || !onHeightChange || !contentRef.current) {
-      return
-    }
+  // Details mount on first expand and stay mounted so collapsing can animate.
+  const [hasDetails, setHasDetails] = useState(isExpanded)
 
-    const measureHeight = () => {
-      if (contentRef.current) {
-        const height = contentRef.current.scrollHeight
-
-        onHeightChange(index, height)
-      }
-    }
-
-    measureHeight()
-
-    const observer = new ResizeObserver(measureHeight)
-
-    observer.observe(contentRef.current)
-
-    return () => observer.disconnect()
-  }, [isExpanded, index, onHeightChange])
+  if (isExpanded && !hasDetails) {
+    setHasDetails(true)
+  }
 
   return (
     <Box
-      ref={contentRef}
-      style={style}
-      px={2}
-      py={1}
       borderBottom='1px solid'
       borderBottomColor='border.subtle'
       bg={isExpanded ? 'bg.faint' : 'transparent'}
-      _hover={{ bg: 'bg.faint' }}
-      transition='background 0.1s'
-      overflow='hidden'
+      transition='background-color 120ms'
     >
-      <Flex align='center' gap={2} cursor='pointer' onClick={onToggle} h='28px'>
-        <Box color='fg.faint' flexShrink={0}>
-          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </Box>
+      <Flex
+        role='button'
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        align='center'
+        gap={2}
+        h='32px'
+        px={2}
+        cursor='pointer'
+        userSelect='none'
+        _hover={{ bg: 'bg.faint' }}
+        _focusVisible={{
+          outline: '1px solid',
+          outlineColor: 'accent.focusRing',
+          outlineOffset: '-1px',
+        }}
+        onClick={() => onToggle(entry.id)}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onToggle(entry.id)
+          }
+        }}
+      >
+        <Box
+          as={ChevronRight}
+          width='12px'
+          height='12px'
+          color='fg.faint'
+          flexShrink={0}
+          transform={isExpanded ? 'rotate(90deg)' : undefined}
+          transition={`transform ${EXPAND_TRANSITION}`}
+          _motionReduce={{ transition: 'none' }}
+        />
 
         {entry.time && (
           <Text
@@ -250,11 +250,7 @@ function LogRowComponent({
           </Text>
         )}
 
-        {entry.level && (
-          <Box flexShrink={0}>
-            <LevelBadge level={entry.level} />
-          </Box>
-        )}
+        {entry.level && <LevelBadge level={entry.level} />}
 
         {entry.module && (
           <Text
@@ -263,9 +259,7 @@ function LogRowComponent({
             color='log.module.fg'
             flexShrink={0}
             maxW='180px'
-            overflow='hidden'
-            textOverflow='ellipsis'
-            whiteSpace='nowrap'
+            truncate
           >
             <HighlightedText text={entry.module} searchText={searchText} />
           </Text>
@@ -276,9 +270,7 @@ function LogRowComponent({
           fontFamily='mono'
           color={entry.is_parsed ? 'fg.secondary' : 'fg.subtle'}
           flex={1}
-          overflow='hidden'
-          textOverflow='ellipsis'
-          whiteSpace='nowrap'
+          truncate
         >
           <HighlightedText text={entry.message} searchText={searchText} />
         </Text>
@@ -294,7 +286,17 @@ function LogRowComponent({
         )}
       </Flex>
 
-      {isExpanded && <ExpandedDetails entry={entry} />}
+      <Box
+        display='grid'
+        gridTemplateRows={isExpanded ? '1fr' : '0fr'}
+        transition={`grid-template-rows ${EXPAND_TRANSITION}`}
+        _motionReduce={{ transition: 'none' }}
+        inert={!isExpanded}
+      >
+        <Box overflow='hidden' minH={0}>
+          {hasDetails && <ExpandedDetails entry={entry} />}
+        </Box>
+      </Box>
     </Box>
   )
 }
