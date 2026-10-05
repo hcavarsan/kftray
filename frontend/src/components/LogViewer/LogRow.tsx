@@ -106,6 +106,7 @@ function ExpandedDetails({ entry }: { entry: LogEntry }) {
 
     copyText(text, {
       onSuccess: () => {
+        setCopied(true)
         clearTimeout(copiedTimeout.current)
         copiedTimeout.current = window.setTimeout(() => setCopied(false), 1500)
       },
