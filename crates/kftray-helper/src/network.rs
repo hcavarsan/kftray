@@ -124,6 +124,9 @@ impl NetworkConfigManager {
         }
     }
 
+    /// Callers must already hold `self.lock`: this reads the platform list
+    /// directly instead of through `list_loopback_addresses`, which takes the
+    /// lock itself and would deadlock the non-reentrant mutex.
     async fn is_address_configured(&self, address: &str) -> Result<bool, HelperError> {
         #[cfg(target_os = "macos")]
         {
@@ -173,13 +176,13 @@ impl NetworkConfigManager {
 
         #[cfg(target_os = "linux")]
         {
-            let addresses = self.list_loopback_addresses().await?;
+            let addresses = self.list_loopback_linux().await?;
             Ok(addresses.contains(&address.to_string()))
         }
 
         #[cfg(target_os = "windows")]
         {
-            let addresses = self.list_loopback_addresses().await?;
+            let addresses = self.list_loopback_windows().await?;
             Ok(addresses.contains(&address.to_string()))
         }
 
@@ -408,8 +411,10 @@ impl NetworkConfigManager {
 
     #[cfg(target_os = "linux")]
     async fn add_loopback_linux(&self, address: &str) -> Result<(), HelperError> {
+        // `replace` rather than `add`: an address left on `lo` by a helper
+        // that died before removing it must not make re-allocation fail.
         let output = Command::new("/sbin/ip")
-            .args(["addr", "add", &format!("{}/32", address), "dev", "lo"])
+            .args(["addr", "replace", &format!("{}/32", address), "dev", "lo"])
             .output()
             .map_err(|e| {
                 HelperError::NetworkConfig(format!("Failed to add loopback address: {}", e))
@@ -570,5 +575,43 @@ impl NetworkConfigManager {
         }
 
         Ok(addresses)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Removing an address checks whether it is configured while already
+    /// holding the manager lock; that check re-entering the lock deadlocked
+    /// every later network request after the first removal.
+    ///
+    /// The address is picked from those absent on `lo`, so removal is a
+    /// no-op and the test never touches the host's interfaces, even as root.
+    #[tokio::test]
+    async fn removing_an_unconfigured_address_does_not_deadlock_later_requests() {
+        let manager = NetworkConfigManager::new().unwrap();
+
+        let configured = manager.list_loopback_linux().await.unwrap();
+        let address = (2..=254)
+            .map(|octet| format!("127.0.0.{octet}"))
+            .rev()
+            .find(|address| !configured.contains(address))
+            .expect("a free 127.0.0.x address");
+
+        let removal = tokio::time::timeout(
+            Duration::from_secs(5),
+            manager.remove_loopback_address(&address),
+        )
+        .await
+        .expect("removal must not deadlock on the manager lock");
+        assert!(removal.is_ok(), "unconfigured address: {removal:?}");
+
+        tokio::time::timeout(Duration::from_secs(5), manager.list_loopback_addresses())
+            .await
+            .expect("lock must be released after removal")
+            .unwrap();
     }
 }

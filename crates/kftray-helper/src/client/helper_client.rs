@@ -85,13 +85,13 @@ impl HelperClient {
     }
 
     pub fn ensure_helper_uninstalled(&self) -> Result<(), HelperError> {
-        if !self.is_helper_available() {
-            info!("Helper is not running, nothing to uninstall");
-            return Ok(());
+        // Removal is not gated on the helper answering: a service that is
+        // installed but stopped or crashed must still be removable, and each
+        // platform's uninstall treats "nothing installed" as done.
+        if self.is_helper_available() {
+            info!("Attempting to stop the helper service...");
+            let _ = self.stop_service();
         }
-
-        info!("Attempting to stop the helper service...");
-        let _ = self.stop_service();
 
         let helper_path = binary_finder::find_helper_binary()?;
         info!("Found helper binary at {}", helper_path.display());

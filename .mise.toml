@@ -1,8 +1,8 @@
 [tools]
 node = "26"
-pnpm = "12.8.1"
-syft = "1.52.0"
-grype = "0.119.0"
+pnpm = "12.9.1"
+syft = "1.54.0"
+grype = "0.120.0"
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
@@ -126,24 +126,24 @@ fi
 
 echo "Installing sbomasm..."
 mkdir -p ~/.local/bin
-# Checksums from: https://github.com/interlynk-io/sbomasm/releases/tag/v2.0.1
-SBOMASM_VERSION="2.0.1"
+# Checksums from: https://github.com/interlynk-io/sbomasm/releases/tag/v2.1.1
+SBOMASM_VERSION="2.1.1"
 OS=$(uname -s)
 ARCH=$(uname -m)
 
 if [ "$ARCH" = "x86_64" ]; then
   SBOMASM_ARCH="x86_64"
   if [ "$OS" = "Darwin" ]; then
-    EXPECTED_SHA="ae71861d7f6a10e9313ed291b60fd9dabd39d21725607d241264f523a016dc96"
+    EXPECTED_SHA="3ca7812b8289fd3a882e1870dc016508bee06e81f804c535210e0c1f43cffff9"
   else
-    EXPECTED_SHA="c2c026100b5407fe29fb04f2b4af3a999c53599d8718ff3e03fe276854be5c97"
+    EXPECTED_SHA="643595183bb2f79fc123bee2fa7525f0e6585cb3806c38df1a8e758d66631a31"
   fi
 elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
   SBOMASM_ARCH="arm64"
   if [ "$OS" = "Darwin" ]; then
-    EXPECTED_SHA="a7499558b6189bcbcd98bcfb43abd16f1377505332fba2236449718b27366df3"
+    EXPECTED_SHA="cde3f4fd7e78617b0a337eaa246137ba0c613ff800efbad03ca5907cc02d6920"
   else
-    EXPECTED_SHA="ae90f7f275a5480b2631c34cdb01b88bec67f0f5443ce99d59442153fe2a6982"
+    EXPECTED_SHA="2af1103251f3227bc78e4e8df53305aa1cd4e83a4e5d9cbd7cf6ebf42c15ede6"
   fi
 else
   echo "ERROR: Unsupported architecture: $ARCH" >&2

@@ -607,9 +607,13 @@ fn is_valid_installation_id(value: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric())
 }
 
+/// File name of the configuration database; its presence marks a directory
+/// as holding kftray configuration rather than only helper runtime files.
+pub const DB_FILE_NAME: &str = "configs.db";
+
 pub fn get_db_file_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
-    config_path.push("configs.db");
+    config_path.push(DB_FILE_NAME);
     Ok(config_path)
 }
 

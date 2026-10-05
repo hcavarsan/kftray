@@ -122,14 +122,26 @@ pub fn uninstall_service(service_name: &str) -> Result<(), HelperError> {
             HelperError::PlatformService(format!("Failed to connect to service manager: {:?}", e))
         })?;
 
-        let service = manager
-            .open_service(
-                service_name,
-                ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS,
-            )
-            .map_err(|e| {
-                HelperError::PlatformService(format!("Failed to open service: {:?}", e))
-            })?;
+        // The service already being gone is the end state this call asks
+        // for, so a stopped or half-removed install can always be cleaned up.
+        const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
+        let service = match manager.open_service(
+            service_name,
+            ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS,
+        ) {
+            Ok(service) => service,
+            Err(windows_service::Error::Winapi(e))
+                if e.raw_os_error() == Some(ERROR_SERVICE_DOES_NOT_EXIST) =>
+            {
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(HelperError::PlatformService(format!(
+                    "Failed to open service: {:?}",
+                    e
+                )));
+            }
+        };
 
         let status = service.query_status().map_err(|e| {
             HelperError::PlatformService(format!("Failed to query service status: {:?}", e))

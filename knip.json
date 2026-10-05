@@ -7,7 +7,6 @@
       "ignoreBinaries": ["rustup"]
     },
     "frontend": {
-      "entry": ["src/logs.tsx"],
       "project": ["src/**/*.{ts,tsx}!"]
     }
   }

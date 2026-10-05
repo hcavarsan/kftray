@@ -24,6 +24,9 @@ const AutoImportModal = lazy(() =>
 const GitSyncModal = lazy(() =>
   import('@/components/GitSyncModal').then(m => ({ default: m.GitSyncModal })),
 )
+const HelperModal = lazy(() =>
+  import('@/components/HelperModal').then(m => ({ default: m.HelperModal })),
+)
 const ServerResourcesModal = lazy(() =>
   import('@/components/ServerResourcesModal').then(m => ({
     default: m.ServerResourcesModal,
@@ -46,6 +49,7 @@ type ActiveModal =
       type:
         | 'autoImport'
         | 'gitSync'
+        | 'helper'
         | 'serverResources'
         | 'settings'
         | 'shortcuts'
@@ -196,6 +200,7 @@ export function Main() {
               onOpenAutoImport={() => setActiveModal({ type: 'autoImport' })}
               onOpenShortcuts={() => setActiveModal({ type: 'shortcuts' })}
               onOpenSettings={() => setActiveModal({ type: 'settings' })}
+              onOpenHelper={() => setActiveModal({ type: 'helper' })}
               onOpenServerResources={() =>
                 setActiveModal({ type: 'serverResources' })
               }
@@ -225,6 +230,9 @@ export function Main() {
           )}
           {activeModal?.type === 'serverResources' && (
             <ServerResourcesModal onClose={closeModal} />
+          )}
+          {activeModal?.type === 'helper' && (
+            <HelperModal onClose={closeModal} />
           )}
           {activeModal?.type === 'settings' && (
             <SettingsModal onClose={closeModal} />

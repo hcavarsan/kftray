@@ -1,11 +1,10 @@
 import type { LogEntry, LogFilter, RawLogEntry } from '../types'
 
+/** `raw` holds the timestamp, level, module and message of every line. */
 export function normalizeLogEntries(entries: RawLogEntry[]): LogEntry[] {
   return entries.map(entry => ({
     ...entry,
-    searchable: [entry.raw, entry.message, entry.module ?? '']
-      .join('\n')
-      .toLowerCase(),
+    searchable: entry.raw.toLowerCase(),
   }))
 }
 

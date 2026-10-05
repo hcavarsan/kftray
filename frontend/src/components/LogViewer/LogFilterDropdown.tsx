@@ -21,6 +21,7 @@ interface LogFilterActionProps {
 export function LogFilterAction({ label, onClick }: LogFilterActionProps) {
   return (
     <Text
+      as='button'
       fontSize='9px'
       color='accent.fg'
       cursor='pointer'

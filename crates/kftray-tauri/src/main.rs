@@ -66,13 +66,7 @@ fn set_default_env(key: &str, value: &str) {
 }
 
 fn init_file_logger() -> anyhow::Result<()> {
-    use kftray_commons::utils::config_dir::get_app_log_path;
-
-    let log_path = get_app_log_path().map_err(|e| anyhow::anyhow!(e))?;
-    let log_dir = log_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("log path has no parent directory"))?
-        .to_path_buf();
+    let log_dir = commands::logs::log_dir().map_err(|e| anyhow::anyhow!(e))?;
     let basename = format!(
         "kftray_{}",
         jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -194,11 +188,8 @@ fn main() {
                 alert_multiple_configs(app_handle_clone2).await;
             });
 
-            let app_handle_logs = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    crate::commands::logs::cleanup_old_logs_on_startup(app_handle_logs).await
-                {
+                if let Err(e) = crate::commands::logs::cleanup_old_logs_on_startup().await {
                     log::warn!("Failed to cleanup old logs on startup: {e}");
                 }
             });
@@ -412,6 +403,7 @@ fn main() {
             commands::window_state::set_app_mode_cmd,
             commands::window_state::reset_window_position_cmd,
             commands::config_state::get_config_states,
+            commands::helper::get_helper_status,
             commands::helper::install_helper,
             commands::helper::remove_helper,
             commands::helper::allocate_local_address_cmd,

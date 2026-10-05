@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText } from 'lucide-react'
+import { Eraser, FileText } from 'lucide-react'
 
 import { Box, Dialog, Flex, Grid, Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import {
   AppDialog,
   AppDialogFooter,
+  ConfirmDialog,
   DialogCancelButton,
 } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
@@ -44,6 +45,8 @@ type NumericField = 'maxFileSizeMb' | 'retentionDays'
 type DraftErrors = Partial<Record<NumericField, string>>
 
 const MB = 1024 * 1024
+
+const HTTP_LOG_SIZE_KEY = ['http-log-size']
 
 const toDraft = (config: HttpLogsConfig): Draft => ({
   enabled: config.enabled,
@@ -159,100 +162,153 @@ export function HttpLogsConfigModal({
     })
   }
 
+  const logSizeQuery = useQuery({
+    queryKey: HTTP_LOG_SIZE_KEY,
+    queryFn: () => invoke<number>('get_http_log_size'),
+  })
+  const logSize = logSizeQuery.data ?? 0
+
+  const [confirmPrune, setConfirmPrune] = useState(false)
+  const pruneMutation = useMutation({
+    mutationFn: () => invoke('clear_http_logs'),
+    onSuccess: () => {
+      toaster.success({ title: 'HTTP logs pruned', duration: 2000 })
+    },
+    // Clearing can delete some files before it fails, so the size is read
+    // again either way.
+    onSettled: () => {
+      setConfirmPrune(false)
+      return queryClient.invalidateQueries({ queryKey: HTTP_LOG_SIZE_KEY })
+    },
+    meta: { errorToast: { title: 'Error clearing logs', duration: 2000 } },
+  })
+
   const fileSizeMb =
     edits.maxFileSizeMb === undefined
       ? null
       : parseInRange(edits.maxFileSizeMb, 1, 100)
 
   return (
-    <AppDialog
-      title={
-        <Flex align='center' gap={2}>
-          <Box as={FileText} width='14px' height='14px' color='accent.fg' />
-          <Text as='span' fontWeight='600' color='fg'>
-            HTTP Logs Configuration
-          </Text>
-        </Flex>
-      }
-      onClose={onClose}
-      maxWidth='420px'
-    >
-      <Dialog.Body px={4} py={3}>
-        {!draft ? (
-          <Box py={6} textAlign='center'>
-            <Text color={configQuery.isError ? 'danger.fg' : 'fg.subtle'}>
-              {configQuery.isError
-                ? `Failed to load configuration: ${errorMessage(configQuery.error)}`
-                : 'Loading configuration...'}
+    <>
+      <AppDialog
+        title={
+          <Flex align='center' gap={2}>
+            <Box as={FileText} width='14px' height='14px' color='accent.fg' />
+            <Text as='span' fontWeight='600' color='fg'>
+              HTTP Logs Configuration
             </Text>
-          </Box>
-        ) : (
-          <Stack gap={3}>
-            <Grid templateColumns='1fr 1fr' gap={3}>
-              <SwitchCard
-                title='Enable HTTP Logs'
-                description='Enable HTTP request/response logging for this configuration'
-                checked={draft.enabled}
-                onCheckedChange={enabled => update({ enabled })}
-              />
-              <SwitchCard
-                title='Automatic Cleanup'
-                description='Automatically remove old log files based on retention period'
-                checked={draft.auto_cleanup}
-                onCheckedChange={auto_cleanup => update({ auto_cleanup })}
-              />
-              <NumberField
-                label='Maximum File Size'
-                description={`Maximum file size before rotation. Current: ${formatBytes(
-                  fileSizeMb
-                    ? fileSizeMb * MB
-                    : (configQuery.data?.max_file_size ?? 0),
-                )}`}
-                value={draft.maxFileSizeMb}
-                onChange={value => updateNumber('maxFileSizeMb', value)}
-                placeholder='10'
-                min={1}
-                max={100}
-                unit='MB'
-                error={errors.maxFileSizeMb}
-              />
-              <NumberField
-                label='Retention Period'
-                description='Days to keep log files before cleanup'
-                value={draft.retentionDays}
-                onChange={value => updateNumber('retentionDays', value)}
-                placeholder='7'
-                min={1}
-                max={365}
-                unit='days'
-                error={errors.retentionDays}
-              />
-            </Grid>
-          </Stack>
-        )}
-      </Dialog.Body>
+          </Flex>
+        }
+        onClose={onClose}
+        maxWidth='420px'
+      >
+        <Dialog.Body px={4} py={3}>
+          {!draft ? (
+            <Box py={6} textAlign='center'>
+              <Text color={configQuery.isError ? 'danger.fg' : 'fg.subtle'}>
+                {configQuery.isError
+                  ? `Failed to load configuration: ${errorMessage(configQuery.error)}`
+                  : 'Loading configuration...'}
+              </Text>
+            </Box>
+          ) : (
+            <Stack gap={3}>
+              <Grid templateColumns='1fr 1fr' gap={3}>
+                <SwitchCard
+                  title='Enable HTTP Logs'
+                  description='Enable HTTP request/response logging for this configuration'
+                  checked={draft.enabled}
+                  onCheckedChange={enabled => update({ enabled })}
+                />
+                <SwitchCard
+                  title='Automatic Cleanup'
+                  description='Automatically remove old log files based on retention period'
+                  checked={draft.auto_cleanup}
+                  onCheckedChange={auto_cleanup => update({ auto_cleanup })}
+                />
+                <NumberField
+                  label='Maximum File Size'
+                  description={`Maximum file size before rotation. Current: ${formatBytes(
+                    fileSizeMb
+                      ? fileSizeMb * MB
+                      : (configQuery.data?.max_file_size ?? 0),
+                  )}`}
+                  value={draft.maxFileSizeMb}
+                  onChange={value => updateNumber('maxFileSizeMb', value)}
+                  placeholder='10'
+                  min={1}
+                  max={100}
+                  unit='MB'
+                  error={errors.maxFileSizeMb}
+                />
+                <NumberField
+                  label='Retention Period'
+                  description='Days to keep log files before cleanup'
+                  value={draft.retentionDays}
+                  onChange={value => updateNumber('retentionDays', value)}
+                  placeholder='7'
+                  min={1}
+                  max={365}
+                  unit='days'
+                  error={errors.retentionDays}
+                />
+              </Grid>
+            </Stack>
+          )}
+        </Dialog.Body>
 
-      <AppDialogFooter>
-        <DialogCancelButton
-          onClick={onClose}
-          disabled={saveMutation.isPending}
+        <AppDialogFooter justify='space-between'>
+          <Button
+            size='xs'
+            variant='ghost'
+            height='28px'
+            gap={1.5}
+            color='fg.subtle'
+            _hover={{ bg: 'bg.faint', color: 'danger.fg' }}
+            onClick={() => setConfirmPrune(true)}
+            disabled={
+              logSize === 0 || logSizeQuery.isError || pruneMutation.isPending
+            }
+            title='Delete the HTTP log files of every config'
+          >
+            <Eraser size={12} />
+            Prune all logs ({formatBytes(logSize)})
+          </Button>
+          <Flex gap={2}>
+            <DialogCancelButton
+              onClick={onClose}
+              disabled={saveMutation.isPending}
+            />
+            <Button
+              size='xs'
+              onClick={handleSave}
+              loading={saveMutation.isPending}
+              loadingText='Saving...'
+              disabled={!draft}
+              bg='accent.solid'
+              color='fg'
+              _hover={{ bg: 'accent.solidHover' }}
+              _active={{ bg: 'accent.solidActive' }}
+              height='28px'
+              fontSize='xs'
+            >
+              Save Settings
+            </Button>
+          </Flex>
+        </AppDialogFooter>
+      </AppDialog>
+
+      {confirmPrune && (
+        <ConfirmDialog
+          title='Prune all HTTP logs'
+          description={`This deletes ${formatBytes(logSize)} of HTTP logs from every config, not only this one.`}
+          isPending={pruneMutation.isPending}
+          confirmLabel='Prune'
+          pendingLabel='Pruning...'
+          onConfirm={() => pruneMutation.mutate()}
+          onClose={() => setConfirmPrune(false)}
         />
-        <Button
-          size='xs'
-          onClick={handleSave}
-          loading={saveMutation.isPending}
-          loadingText='Saving...'
-          disabled={!draft}
-          bg='accent.solid'
-          color='fg'
-          _hover={{ bg: 'accent.solidHover' }}
-          _active={{ bg: 'accent.solidActive' }}
-          height='28px'
-          fontSize='xs'
-        >
-          Save Settings
-        </Button>
-      </AppDialogFooter>
-    </AppDialog>
+      )}
+    </>
   )
 }
