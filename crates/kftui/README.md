@@ -242,7 +242,7 @@ Press `L` to configure HTTP logging behavior:
 | `i` | Import configurations |
 | `e` | Export configurations |
 | `d` | Delete selected configurations |
-| `a` | Select all configurations |
+| `a` | Select all configurations (only the ones shown while a `/` search is active) |
 | `Space` | Toggle individual selection |
 | `Tab` | Switch between interface components |
 | `←/→` | Navigate menu items |
