@@ -45,6 +45,7 @@ In a few simple steps, you can configure your first port forward:
 - With rows selected, the toolbar shows **Start Selected** and **Stop Selected**. These act only on selected rows that the current search and filters show. **Start All** starts the shown configurations. **Stop All** stops every running configuration, shown or not.
 - During a bulk action, the cancel button discards queued operations. Operations already in progress finish normally. Failed configurations are reported without blocking the rest of the batch.
 - Stop All also stops expose tunnels. Stopping a configuration cancels its recovery before releasing its listeners and Kubernetes resources.
+- If you leave **Local Port** blank, kftray picks a free port when you save and stores it. An empty alias is set to `<workload type>-<protocol>-<local port>`. When you edit a running configuration, kftray stops it, saves it and restarts it on the stored port.
 
 ## App mode
 

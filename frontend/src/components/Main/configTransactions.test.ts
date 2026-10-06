@@ -133,10 +133,22 @@ describe('deleteConfigsTransaction', () => {
   })
 })
 
+const mockConfigStore = (overrides: Partial<StoredConfig> = {}) => {
+  let stored: unknown
+
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === 'update_config_cmd' && args && 'config' in args) {
+      stored = { ...(args.config as object), ...overrides }
+    }
+
+    return command === 'get_config_cmd' ? stored : undefined
+  })
+}
+
 describe('saveConfigTransaction', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    vi.mocked(invoke).mockResolvedValue(undefined)
+    mockConfigStore()
   })
 
   it('reserves an edited config for the whole save even when no restart is needed', async () => {
@@ -155,7 +167,7 @@ describe('saveConfigTransaction', () => {
       saveConfigTransaction(deps, makeConfig(1), true),
     ).resolves.toBe(true)
 
-    expect(reservationDuringUpdate).toEqual(['saving'])
+    expect(reservationDuringUpdate).toEqual(['saving', 'saving'])
     expect(runForwardCommand).not.toHaveBeenCalled()
     expect(registry.isBusy(1)).toBe(false)
   })
@@ -200,5 +212,33 @@ describe('saveConfigTransaction', () => {
       { ...edited, is_running: true },
       makeConfig(2),
     ])
+  })
+
+  it('restarts and caches the config the backend saved', async () => {
+    const running = makeConfig(1, true)
+    const { deps, runForwardCommand, applyConfigs } = setup([running])
+    const saved: StoredConfig = {
+      ...running,
+      local_port: 43210,
+      alias: 'service-tcp-43210',
+    }
+
+    mockConfigStore({ local_port: saved.local_port, alias: saved.alias })
+
+    await expect(
+      saveConfigTransaction(
+        deps,
+        { ...running, local_port: 0, alias: '' },
+        true,
+      ),
+    ).resolves.toBe(true)
+
+    expect(runForwardCommand.mock.calls[1].slice(0, 2)).toEqual([
+      saved,
+      'starting',
+    ])
+    const update = applyConfigs.mock.calls[0][0]
+
+    expect(update([running])).toEqual([{ ...saved, is_running: true }])
   })
 })
