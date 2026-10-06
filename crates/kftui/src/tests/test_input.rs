@@ -1,5 +1,9 @@
 use crossterm::event::KeyCode;
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::config::{
+    insert_config_with_mode,
+    read_configs_with_mode,
+};
 use kftray_commons::utils::db_mode::DatabaseMode;
 
 use crate::tests::test_logger_state;
@@ -361,6 +365,87 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(app.state, AppState::Normal);
+    }
+
+    async fn app_with_saved_configs(aliases: &[&str]) -> App {
+        let mut app = App::new(test_logger_state());
+        for alias in aliases {
+            let config = Config {
+                alias: Some(alias.to_string()),
+                service: Some(alias.to_string()),
+                namespace: "default".to_string(),
+                protocol: "tcp".to_string(),
+                ..Config::default()
+            };
+            let id = insert_config_with_mode(config.clone(), DatabaseMode::Memory)
+                .await
+                .unwrap();
+            app.stopped_configs.push(Config {
+                id: Some(id),
+                ..config
+            });
+        }
+        app.active_table = ActiveTable::Stopped;
+        app
+    }
+
+    async fn confirm_delete(app: &mut App) -> Vec<String> {
+        show_delete_confirmation(app);
+        assert_eq!(app.state, AppState::ShowDeleteConfirmation);
+        app.selected_delete_button = DeleteButton::Confirm;
+        handle_delete_confirmation_input(app, KeyCode::Enter, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let mut remaining: Vec<String> = read_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|config| config.alias)
+            .collect();
+        remaining.sort();
+        remaining
+    }
+
+    #[tokio::test]
+    async fn delete_while_searching_removes_the_marked_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = app_with_saved_configs(&["alpha", "beta", "gamma"]).await;
+        app.search_query = "gamma".to_string();
+        app.update_filtered_configs();
+        app.table_state_stopped.select(Some(0));
+        toggle_row_selection(&mut app);
+
+        let remaining = confirm_delete(&mut app).await;
+
+        assert_eq!(remaining, ["alpha", "beta"]);
+    }
+
+    #[tokio::test]
+    async fn select_all_while_searching_only_deletes_matching_configs() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = app_with_saved_configs(&["db", "api-dev", "api-prod"]).await;
+        app.search_query = "api".to_string();
+        app.update_filtered_configs();
+        toggle_select_all(&mut app);
+
+        let remaining = confirm_delete(&mut app).await;
+
+        assert_eq!(remaining, ["db"]);
+    }
+
+    #[test]
+    fn select_all_while_searching_toggles_off_after_refresh() {
+        let mut app = setup_app();
+        app.active_table = ActiveTable::Stopped;
+        app.search_query = "alias-2".to_string();
+        app.update_filtered_configs();
+
+        toggle_select_all(&mut app);
+        assert_eq!(app.selected_rows_stopped, [0].into());
+
+        app.update_filtered_configs();
+        toggle_select_all(&mut app);
+        assert!(app.selected_rows_stopped.is_empty());
     }
 
     #[tokio::test]

@@ -1047,8 +1047,22 @@ impl App {
 
 pub fn toggle_select_all(app: &mut App) {
     let (selected_rows, configs) = match app.active_table {
-        ActiveTable::Stopped => (&mut app.selected_rows_stopped, &app.stopped_configs),
-        ActiveTable::Running => (&mut app.selected_rows_running, &app.running_configs),
+        ActiveTable::Stopped => (
+            &mut app.selected_rows_stopped,
+            if app.search_query.is_empty() {
+                &app.stopped_configs
+            } else {
+                &app.filtered_stopped_configs
+            },
+        ),
+        ActiveTable::Running => (
+            &mut app.selected_rows_running,
+            if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            },
+        ),
     };
 
     if selected_rows.len() == configs.len() {
@@ -1966,10 +1980,15 @@ pub async fn handle_delete_confirmation_input(
         }
         KeyCode::Enter => {
             if app.selected_delete_button == DeleteButton::Confirm {
+                let configs = if app.search_query.is_empty() {
+                    &app.stopped_configs
+                } else {
+                    &app.filtered_stopped_configs
+                };
                 let ids_to_delete: Vec<i64> = app
                     .selected_rows_stopped
                     .iter()
-                    .filter_map(|&row| app.stopped_configs.get(row).and_then(|config| config.id))
+                    .filter_map(|&row| configs.get(row).and_then(|config| config.id))
                     .collect();
 
                 // Clean up timeout tracking for these configs to prevent memory leaks
