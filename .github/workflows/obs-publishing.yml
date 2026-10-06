@@ -106,9 +106,44 @@ jobs:
       - name: Build RPM packages with the distribution's rpm macros
         run: bash hacks/obs/test-package-builds.sh rpm
 
+  deb-builds:
+    name: Debian builds (${{ matrix.distro }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu:22.04
+            image: ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
+          - distro: ubuntu:24.04
+            image: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+          - distro: ubuntu:26.04
+            image: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+          - distro: debian:12
+            image: debian:12@sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858
+          - distro: debian:13
+            image: debian:13@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get -o Acquire::Retries=3 update
+          apt-get install -y --no-install-recommends ca-certificates git build-essential pkg-config debhelper libdbus-1-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Debian packages with the distribution's debhelper
+        run: bash hacks/obs/test-package-builds.sh deb
+
   publish:
     name: Publish ${{ inputs.version }} to OBS
-    needs: [checks, rpm-builds]
+    needs: [checks, rpm-builds, deb-builds]
     if: github.event_name == 'workflow_dispatch' && inputs.version != ''
     runs-on: ubuntu-22.04
     environment: release

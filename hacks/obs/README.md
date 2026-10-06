@@ -40,9 +40,11 @@ packaging. Set `OBS_TEST_APPIMAGE` and `OBS_TEST_NEWER_APPIMAGE` to local AppIma
 to test their exact bytes on the corresponding target system. Pass `deb` or `rpm`
 to build only that format; `bash hacks/obs/test-package-builds.sh rpm` runs on a
 Fedora or openSUSE host with rpm-build, gcc, a static glibc, dbus development
-headers, and cpio, exercising the distribution's own rpm macros. CI runs these
-checks from `.github/workflows/obs-publishing.yml` when the publishing files
-change, including the RPM builds inside Fedora and openSUSE containers.
+headers, and cpio, exercising the distribution's own rpm macros. `bash
+hacks/obs/test-package-builds.sh deb` does the same for debhelper on a Debian or
+Ubuntu host. CI runs these checks from `.github/workflows/obs-publishing.yml`
+when the publishing files change, building the RPMs and Debian packages inside a
+container for every distribution in `distros.conf`.
 
 ## Publishing
 
