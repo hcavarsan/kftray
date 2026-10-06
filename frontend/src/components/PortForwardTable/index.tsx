@@ -200,6 +200,7 @@ export function PortForwardTable({
           <Header search={search} setSearch={setSearch} />
           <HeaderMenu
             configs={visibleConfigs}
+            allConfigs={configs}
             selectedConfigs={selectedConfigs}
             setSelectedConfigs={setSelectedConfigs}
             initiatePortForwarding={initiatePortForwarding}

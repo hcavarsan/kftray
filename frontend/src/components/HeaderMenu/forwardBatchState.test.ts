@@ -9,7 +9,7 @@ describe('forwardBatchState', () => {
     const hidden = makeConfig(1)
     const visible = [makeConfig(2), makeConfig(3, true)]
 
-    const state = forwardBatchState(visible, [hidden])
+    const state = forwardBatchState(visible, [hidden], [hidden, ...visible])
 
     expect(state.selected).toEqual([])
     expect(state.startSelected).toBe(false)
@@ -22,7 +22,10 @@ describe('forwardBatchState', () => {
     const visible = [makeConfig(2, true), makeConfig(3)]
     const selected = [makeConfig(1), makeConfig(2, false)]
 
-    const state = forwardBatchState(visible, selected)
+    const state = forwardBatchState(visible, selected, [
+      selected[0],
+      ...visible,
+    ])
 
     expect(state.selected).toEqual([visible[0]])
     expect(state.startSelected).toBe(false)
@@ -34,7 +37,7 @@ describe('forwardBatchState', () => {
   it('uses the selected actions when a visible selection can start and stop', () => {
     const visible = [makeConfig(1), makeConfig(2, true), makeConfig(3)]
 
-    const state = forwardBatchState(visible, [visible[0], visible[1]])
+    const state = forwardBatchState(visible, [visible[0], visible[1]], visible)
 
     expect(state.selected).toEqual([visible[0], visible[1]])
     expect(state.startSelected).toBe(true)
@@ -43,9 +46,22 @@ describe('forwardBatchState', () => {
     expect(state.stopDisabled).toBe(false)
   })
 
-  it('disables the all actions when nothing visible can change', () => {
-    const running = forwardBatchState([makeConfig(1, true)], [])
-    const stopped = forwardBatchState([makeConfig(1)], [])
+  it('keeps Stop All enabled for a running config hidden by a filter', () => {
+    const hidden = makeConfig(1, true)
+    const visible = [makeConfig(2)]
+
+    const state = forwardBatchState(visible, [hidden], [hidden, ...visible])
+
+    expect(state.stopSelected).toBe(false)
+    expect(state.stopDisabled).toBe(false)
+    expect(state.startDisabled).toBe(false)
+  })
+
+  it('disables the all actions when nothing can change', () => {
+    const runningConfigs = [makeConfig(1, true)]
+    const stoppedConfigs = [makeConfig(1)]
+    const running = forwardBatchState(runningConfigs, [], runningConfigs)
+    const stopped = forwardBatchState(stoppedConfigs, [], stoppedConfigs)
 
     expect(running.startDisabled).toBe(true)
     expect(running.stopDisabled).toBe(false)

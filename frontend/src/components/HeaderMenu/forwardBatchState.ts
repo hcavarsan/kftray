@@ -11,6 +11,7 @@ export interface ForwardBatchState {
 export function forwardBatchState(
   configs: Config[],
   selectedConfigs: Config[],
+  allConfigs: Config[],
 ): ForwardBatchState {
   const selectedIds = new Set(selectedConfigs.map(config => config.id))
   const selected = configs.filter(config => selectedIds.has(config.id))
@@ -32,6 +33,6 @@ export function forwardBatchState(
     startSelected,
     stopSelected,
     startDisabled: configs.every(config => config.is_running),
-    stopDisabled: configs.every(config => !config.is_running),
+    stopDisabled: allConfigs.every(config => !config.is_running),
   }
 }

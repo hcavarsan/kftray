@@ -16,6 +16,7 @@ import type { Config, ConfigView, Facet } from '@/types'
 
 interface HeaderMenuProps {
   configs: Config[]
+  allConfigs: Config[]
   selectedConfigs: Config[]
   initiatePortForwarding: (configs: Config[]) => void
   startSelectedPortForwarding: (configs: Config[]) => void
@@ -36,6 +37,7 @@ interface HeaderMenuProps {
 
 export function HeaderMenu({
   configs,
+  allConfigs,
   selectedConfigs,
   initiatePortForwarding,
   startSelectedPortForwarding,
@@ -68,8 +70,8 @@ export function HeaderMenu({
     [configs, selectedIds],
   )
   const batch = useMemo(
-    () => forwardBatchState(configs, selectedConfigs),
-    [configs, selectedConfigs],
+    () => forwardBatchState(configs, selectedConfigs, allConfigs),
+    [configs, selectedConfigs, allConfigs],
   )
 
   const handleCheckboxChange = ({
