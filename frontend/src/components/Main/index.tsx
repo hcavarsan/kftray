@@ -154,8 +154,8 @@ export function Main() {
             <PortForwardTable
               configs={forwarding.configs}
               initiatePortForwarding={forwarding.initiatePortForwarding}
-              startSelectedPortForwarding={() =>
-                forwarding.startSelectedPortForwarding(selectedConfigs)
+              startSelectedPortForwarding={
+                forwarding.startSelectedPortForwarding
               }
               isInitiating={forwarding.isInitiating}
               isStopping={forwarding.isStopping}
@@ -163,9 +163,7 @@ export function Main() {
               toggleConfigForward={forwarding.toggleConfigForward}
               handleEditConfig={editConfig}
               handleDuplicateConfig={duplicateConfig}
-              stopSelectedPortForwarding={() =>
-                forwarding.stopSelectedPortForwarding(selectedConfigs)
-              }
+              stopSelectedPortForwarding={forwarding.stopSelectedPortForwarding}
               stopAllPortForwarding={forwarding.stopAllPortForwarding}
               abortStartOperation={forwarding.abortStartOperation}
               abortStopOperation={forwarding.abortStopOperation}

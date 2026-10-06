@@ -38,8 +38,8 @@ interface TableProps {
     action: PortForwardToggleAction,
   ) => Promise<void>
   initiatePortForwarding: (configs: Config[]) => Promise<void>
-  startSelectedPortForwarding: () => Promise<void>
-  stopSelectedPortForwarding: () => Promise<void>
+  startSelectedPortForwarding: (configs: Config[]) => Promise<void>
+  stopSelectedPortForwarding: (configs: Config[]) => Promise<void>
   stopAllPortForwarding: () => Promise<void>
   abortStartOperation: () => void
   abortStopOperation: () => void
@@ -200,6 +200,7 @@ export function PortForwardTable({
           <Header search={search} setSearch={setSearch} />
           <HeaderMenu
             configs={visibleConfigs}
+            allConfigs={configs}
             selectedConfigs={selectedConfigs}
             setSelectedConfigs={setSelectedConfigs}
             initiatePortForwarding={initiatePortForwarding}
