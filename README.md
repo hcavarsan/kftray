@@ -189,7 +189,7 @@ Both tools share the same JSON configuration format. Here's a example:
 ]
 ```
 
-`tags` is optional. Both apps can group and filter configs by context, namespace, kubeconfig, workload type, protocol or any tag key, and kftui can auto-start only matching configs with `--filter tag:env=dev`.
+`tags` is optional. Both apps can group and filter configs by context, namespace, kubeconfig, workload type, protocol or any tag key, and kftui can auto-start only matching configs with `--filter tag:env=dev`. The MCP server's `create_config` and `update_config` tools take the same `tags` map, and `list_configs` takes `filters` in the `--filter` syntax, e.g. `["tag:env=dev"]`.
 
 You can import configs from:
 
