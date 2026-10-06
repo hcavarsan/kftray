@@ -462,16 +462,14 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
         format!("Failed to update MCP server port: {e}")
     })?;
 
-    // If server is running, restart it with new port
-    if crate::mcp::is_running().await {
-        if let Err(e) = crate::mcp::stop().await {
-            error!("Failed to stop MCP server: {e}");
-            return Err(format!("Failed to stop MCP server: {e}"));
-        }
-        if let Err(e) = crate::mcp::start(port).await {
-            error!("Failed to start MCP server: {e}");
-            return Err(format!("Failed to start MCP server: {e}"));
-        }
+    let enabled = get_mcp_server_enabled().await.map_err(|e| {
+        error!("Failed to read MCP server enabled: {e}");
+        format!("Failed to read MCP server enabled: {e}")
+    })?;
+
+    if enabled && let Err(e) = crate::mcp::start(port).await {
+        error!("Failed to start MCP server: {e}");
+        return Err(format!("Failed to start MCP server: {e}"));
     }
 
     info!("Successfully updated MCP server port to {port}");
@@ -501,5 +499,48 @@ mod tests {
             truncate_for_display(path.clone(), cut),
             format!("{}...", &path[..cut - 1])
         );
+    }
+
+    async fn use_test_db() -> kftray_commons::test_utils::TestDb {
+        let db = kftray_commons::test_utils::test_db().await;
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .unwrap();
+        kftray_commons::utils::db::set_db_pool(std::sync::Arc::new(pool));
+        db
+    }
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[tokio::test]
+    async fn changing_the_port_starts_an_enabled_mcp_server_that_failed_to_bind() {
+        let _db = use_test_db().await;
+        let _mcp = crate::mcp::TEST_LOCK.lock().await;
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        set_mcp_server_port(taken.local_addr().unwrap().port())
+            .await
+            .unwrap();
+
+        assert!(update_mcp_server_enabled(true).await.is_err());
+        assert!(!crate::mcp::is_running().await);
+
+        let port = free_port();
+        update_mcp_server_port(port).await.unwrap();
+
+        assert!(crate::mcp::is_running().await);
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("MCP server should accept connections on the new port");
+        crate::mcp::stop().await.unwrap();
     }
 }

@@ -15,6 +15,7 @@ use log::{
     error,
     info,
 };
+use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -41,7 +42,9 @@ pub async fn is_running() -> bool {
 
 /// Start the MCP server on the specified port
 pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use std::time::Duration;
+    if port == 0 {
+        return Err("MCP server port cannot be 0".into());
+    }
 
     // Check if already running
     {
@@ -62,35 +65,19 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
+    let listener = TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("cannot listen on {addr}: {e}"))?;
+
     info!("Starting MCP server on http://{}", addr);
 
     let handle = tokio::spawn(async move {
-        if let Err(e) = kftray_mcp::server::start_server(addr).await {
+        if let Err(e) = kftray_mcp::server::serve(listener).await {
             error!("MCP server error: {}", e);
         }
     });
 
-    let mut state = MCP_SERVER.write().await;
-    *state = Some(McpServerState { handle, port });
-
-    // Wait briefly for server to start, then verify it's running
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Perform health check with retries
-    let mut healthy = false;
-    for _ in 0..5 {
-        if health_check(port).await {
-            healthy = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    if healthy {
-        info!("MCP server started successfully on port {}", port);
-    } else {
-        info!("MCP server started on port {} (health check pending)", port);
-    }
+    *MCP_SERVER.write().await = Some(McpServerState { handle, port });
 
     Ok(())
 }
@@ -129,17 +116,30 @@ pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send
     Ok(())
 }
 
-/// Check if the MCP server is healthy by attempting to connect to the port
-pub async fn health_check(port: u16) -> bool {
-    use std::time::Duration;
+#[cfg(test)]
+pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    use tokio::net::TcpStream;
-    use tokio::time::timeout;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let addr = format!("127.0.0.1:{}", port);
+    #[tokio::test]
+    async fn start_fails_when_the_port_is_already_taken() {
+        let _mcp = TEST_LOCK.lock().await;
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
 
-    matches!(
-        timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await,
-        Ok(Ok(_))
-    )
+        let err = start(port)
+            .await
+            .expect_err("start should fail on a busy port");
+
+        assert!(err.to_string().contains(&port.to_string()), "{err}");
+    }
+
+    #[tokio::test]
+    async fn start_rejects_port_zero() {
+        let _mcp = TEST_LOCK.lock().await;
+        assert!(start(0).await.is_err());
+        assert!(!is_running().await);
+    }
 }
