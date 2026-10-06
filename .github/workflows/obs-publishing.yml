@@ -79,13 +79,13 @@ jobs:
       matrix:
         include:
           - distro: fedora:43
-            image: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
+            image: fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
           - distro: fedora:44
-            image: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
           - distro: opensuse/tumbleweed
             image: opensuse/tumbleweed:latest@sha256:d531cce8158ef9485bcd9defb061cca27b772d796343ab1d66583de6adc38f11
           - distro: opensuse/leap:16.0
-            image: opensuse/leap:16.1@sha256:b4baa5259d4dde9704c45f29c7cd318e64ab309c9b9d675361f018f2b5009c3e
+            image: opensuse/leap:16.0@sha256:7f3aeccb6a613c0fc1690d3d3e5eb493fd477ee4587de20640017fc36d72f9b0
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     timeout-minutes: 20
