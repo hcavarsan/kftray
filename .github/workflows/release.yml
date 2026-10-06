@@ -503,11 +503,11 @@ jobs:
 
       - name: Build kftui (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         env:
           AWS_LC_SYS_PREBUILT_NASM: "1"
           RUST_TARGET: ${{ matrix.rust_target }}
-        run: cargo build --release --bin kftui --target "$RUST_TARGET"
+        run: cargo build --release --bin kftui --target $env:RUST_TARGET
 
       - name: Build kftui
         if: matrix.os != 'windows-latest'
