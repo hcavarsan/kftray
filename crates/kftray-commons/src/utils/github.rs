@@ -27,18 +27,22 @@ pub struct GitHubRepository;
 
 impl GitHubRepository {
     pub async fn import_configs(config: GitHubConfig, mode: DatabaseMode) -> GitHubResult<()> {
+        let config_content = Self::fetch_config_content(&config)?;
+
+        Self::process_config_content(&config_content, config.flush_existing, mode).await
+    }
+
+    pub fn fetch_config_content(config: &GitHubConfig) -> GitHubResult<String> {
         if config.config_paths.is_empty() {
             return Err("At least one config path must be provided".to_string());
         }
 
-        let config_content = Self::clone_and_read_config(
+        Self::clone_and_read_config(
             &config.repo_url,
             &config.config_paths,
             config.use_system_credentials,
-            config.github_token,
-        )?;
-
-        Self::process_config_content(&config_content, config.flush_existing, mode).await
+            config.github_token.clone(),
+        )
     }
 
     fn clone_and_read_config(

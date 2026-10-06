@@ -1,4 +1,5 @@
 pub mod test_app;
+pub mod test_cli_config;
 pub mod test_cli_runner;
 pub mod test_config_view;
 pub mod test_draw;
