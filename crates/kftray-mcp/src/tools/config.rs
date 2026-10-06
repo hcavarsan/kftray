@@ -3,7 +3,13 @@
 //! These tools allow LLMs to manage port-forward configurations: listing,
 //! creating, updating, deleting, and importing/exporting configurations.
 
+use std::collections::BTreeMap;
+
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::config_view::{
+    Condition,
+    ConfigView,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -25,6 +31,12 @@ use crate::tools::McpTool;
 
 pub struct ListConfigsTool;
 
+#[derive(Debug, Default, Deserialize)]
+struct ListConfigsArgs {
+    #[serde(default)]
+    filters: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ConfigSummary {
     id: i64,
@@ -36,6 +48,8 @@ struct ConfigSummary {
     remote_port: Option<u16>,
     protocol: String,
     workload_type: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    tags: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,17 +61,45 @@ struct ListConfigsResponse {
 #[async_trait::async_trait]
 impl McpTool for ListConfigsTool {
     fn definition(&self) -> Tool {
-        Tool::new(
+        Tool::with_schema(
             "list_configs",
-            "List all saved port-forward configurations. Returns a summary of each configuration including ID, alias, service, namespace, and ports.",
+            "List saved port-forward configurations. Returns a summary of each configuration including ID, alias, service, namespace, ports and tags. Pass filters to only list matching configurations.",
+            json!({
+                "filters": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Conditions that must all match, in the same syntax as kftui --filter: '<field>=<value>[,<value>...]' or '<field>' for 'field is set'. Fields are context, namespace, kubeconfig, workload_type, protocol and tag:<key>, e.g. ['tag:team=payments', 'namespace=api,web', 'tag:pinned']."
+                }
+            }),
+            None,
         )
     }
 
-    async fn execute(&self, _arguments: Option<Value>) -> CallToolResult {
+    async fn execute(&self, arguments: Option<Value>) -> CallToolResult {
+        let args: ListConfigsArgs = match arguments {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(a) => a,
+                Err(e) => return CallToolResult::error(format!("Invalid arguments: {e}")),
+            },
+            None => ListConfigsArgs::default(),
+        };
+
+        let mut view = ConfigView {
+            group_by: None,
+            filters: Vec::with_capacity(args.filters.len()),
+        };
+        for filter in &args.filters {
+            match filter.parse::<Condition>() {
+                Ok(condition) => view.filters.push(condition),
+                Err(e) => return CallToolResult::error(format!("Invalid filter '{filter}': {e}")),
+            }
+        }
+
         match kftray_commons::config::get_configs().await {
             Ok(configs) => {
                 let summaries: Vec<ConfigSummary> = configs
                     .into_iter()
+                    .filter(|c| view.matches(c))
                     .filter_map(|c| {
                         c.id.map(|id| ConfigSummary {
                             id,
@@ -69,6 +111,7 @@ impl McpTool for ListConfigsTool {
                             remote_port: c.remote_port,
                             protocol: c.protocol,
                             workload_type: c.workload_type,
+                            tags: c.tags,
                         })
                     })
                     .collect();
@@ -154,6 +197,7 @@ struct CreateConfigArgs {
     remote_address: Option<String>,
     local_address: Option<String>,
     domain_enabled: Option<bool>,
+    tags: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,6 +267,11 @@ impl McpTool for CreateConfigTool {
                 "domain_enabled": {
                     "type": "boolean",
                     "description": "Whether to enable domain name resolution"
+                },
+                "tags": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Optional tags for grouping and filtering, e.g. {\"team\": \"payments\", \"pinned\": \"\"}. An empty value makes a key-only tag. Keys may only contain lowercase letters, digits, '.', '_', '-' and '/'."
                 }
             }),
             Some(vec![
@@ -289,7 +338,7 @@ impl McpTool for CreateConfigTool {
             cert_issuer_kind: None,
             ingress_class: None,
             ingress_annotations: None,
-            tags: Default::default(),
+            tags: args.tags.unwrap_or_default(),
         };
 
         match kftray_commons::config::insert_config(config).await {
@@ -331,6 +380,7 @@ struct UpdateConfigArgs {
     remote_address: Option<String>,
     local_address: Option<String>,
     domain_enabled: Option<bool>,
+    tags: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -403,6 +453,11 @@ impl McpTool for UpdateConfigTool {
                 "domain_enabled": {
                     "type": "boolean",
                     "description": "Whether to enable domain name resolution"
+                },
+                "tags": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Replaces all tags of the configuration, e.g. {\"team\": \"payments\", \"pinned\": \"\"}. An empty object removes every tag."
                 }
             }),
             Some(vec!["config_id".to_string()]),
@@ -463,6 +518,9 @@ impl McpTool for UpdateConfigTool {
         }
         if args.domain_enabled.is_some() {
             config.domain_enabled = args.domain_enabled;
+        }
+        if let Some(tags) = args.tags {
+            config.tags = tags;
         }
 
         match kftray_commons::config::update_config(config).await {
