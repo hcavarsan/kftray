@@ -1628,6 +1628,8 @@ pub async fn handle_common_hotkeys(
             if !app.search_query.is_empty() {
                 app.search_query.clear();
                 app.update_filtered_configs();
+                app.selected_rows_stopped.clear();
+                app.selected_rows_running.clear();
             }
             Ok(true)
         }

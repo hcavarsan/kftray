@@ -25,6 +25,7 @@ use crate::tui::input::{
     handle_menu_input,
     handle_normal_input,
     handle_running_table_input,
+    handle_search_input,
     handle_stopped_table_input,
     select_first_row,
     show_delete_confirmation,
@@ -446,6 +447,26 @@ mod tests {
         app.update_filtered_configs();
         toggle_select_all(&mut app);
         assert!(app.selected_rows_stopped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reopening_search_drops_rows_marked_in_the_filtered_list() {
+        let mut app = setup_app();
+        app.active_table = ActiveTable::Stopped;
+        app.active_component = ActiveComponent::StoppedTable;
+        app.search_query = "alias-2".to_string();
+        app.update_filtered_configs();
+        app.table_state_stopped.select(Some(0));
+        toggle_row_selection(&mut app);
+
+        handle_normal_input(&mut app, KeyCode::Char('/'), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        handle_search_input(&mut app, KeyCode::Enter).unwrap();
+        show_delete_confirmation(&mut app);
+
+        assert!(app.selected_rows_stopped.is_empty());
+        assert_eq!(app.state, AppState::Normal);
     }
 
     #[tokio::test]
