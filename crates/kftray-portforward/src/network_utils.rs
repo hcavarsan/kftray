@@ -139,13 +139,26 @@ async fn configure_loopback_with_helper(addr: &str) -> Result<()> {
     );
 
     match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
-        Ok(_) => {
-            debug!(
-                "Successfully configured loopback address with helper: {}",
-                addr
-            );
-            Ok(())
-        }
+        Ok(response) => match response.result {
+            kftray_helper::messages::RequestResult::Success => {
+                debug!(
+                    "Successfully configured loopback address with helper: {}",
+                    addr
+                );
+                Ok(())
+            }
+            kftray_helper::messages::RequestResult::Error(e) => {
+                error!("Helper failed to add loopback address: {}", e);
+                Err(anyhow!(
+                    "Helper failed to configure loopback address: {}",
+                    e
+                ))
+            }
+            other => Err(anyhow!(
+                "Unexpected helper response to loopback add: {:?}",
+                other
+            )),
+        },
         Err(e) => {
             error!("Helper failed to add loopback address: {}", e);
             Err(anyhow!(
@@ -176,13 +189,23 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
     );
 
     match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
-        Ok(_) => {
-            debug!(
-                "Successfully removed loopback address with helper: {}",
-                addr
-            );
-            Ok(())
-        }
+        Ok(response) => match response.result {
+            kftray_helper::messages::RequestResult::Success => {
+                debug!(
+                    "Successfully removed loopback address with helper: {}",
+                    addr
+                );
+                Ok(())
+            }
+            kftray_helper::messages::RequestResult::Error(e) => {
+                error!("Helper failed to remove loopback address: {}", e);
+                Err(anyhow!("Helper failed to remove loopback address: {}", e))
+            }
+            other => Err(anyhow!(
+                "Unexpected helper response to loopback removal: {:?}",
+                other
+            )),
+        },
         Err(e) => {
             error!("Helper failed to remove loopback address: {}", e);
             Err(anyhow!("Helper failed to remove loopback address: {}", e))
@@ -835,6 +858,85 @@ mod tests {
         assert!(!helper_is_unavailable(
             "Helper failed to remove loopback address: Communication error: Failed to write request: Broken pipe (os error 32)"
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn serve_one_helper_reply(
+        reply: fn(String) -> kftray_helper::messages::HelperResponse,
+    ) -> (
+        tempfile::TempDir,
+        kftray_commons::test_utils::EnvVarGuard,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::Write;
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("kftray-helper.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let env =
+            kftray_commons::test_utils::EnvVarGuard::set("SOCKET_PATH", socket.to_str().unwrap());
+
+        let server = std::thread::spawn(move || {
+            drop(listener.accept().unwrap());
+            let (mut stream, _) = listener.accept().unwrap();
+            let request: kftray_helper::messages::HelperRequest =
+                serde_json::Deserializer::from_reader(&mut stream)
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .unwrap();
+            let response = reply(request.request_id);
+            stream
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+        });
+
+        (dir, env, server)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn helper_error(request_id: String) -> kftray_helper::messages::HelperResponse {
+        kftray_helper::messages::HelperResponse::error(
+            request_id,
+            "Error: RTNETLINK answers: Operation not permitted",
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_helper_error_reply_to_remove_is_not_a_removal() {
+        let (_dir, _env, server) = serve_one_helper_reply(helper_error);
+
+        let outcome = remove_loopback_with_helper("127.0.0.200").await;
+        server.join().unwrap();
+
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("Operation not permitted"), "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_helper_error_reply_to_add_is_not_a_configuration() {
+        let (_dir, _env, server) = serve_one_helper_reply(helper_error);
+
+        let outcome = configure_loopback_with_helper("127.0.0.200").await;
+        server.join().unwrap();
+
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("Operation not permitted"), "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_helper_success_reply_to_remove_is_a_removal() {
+        let (_dir, _env, server) =
+            serve_one_helper_reply(kftray_helper::messages::HelperResponse::success);
+
+        let outcome = remove_loopback_with_helper("127.0.0.200").await;
+        server.join().unwrap();
+
+        assert!(outcome.is_ok(), "{outcome:?}");
     }
 
     #[cfg(target_os = "windows")]
