@@ -66,7 +66,16 @@ pub async fn get_services_with_annotation(
             continue;
         }
 
-        let selected_pods = list_pods_for_named_target_ports(&pods, &service).await?;
+        let selected_pods = match list_pods_for_named_target_ports(&pods, &service).await {
+            Ok(pods) => pods,
+            Err(e) => {
+                warn!(
+                    "Could not list pods of service '{service_name}' in namespace \
+                     '{namespace}' to resolve its named target ports: {e}"
+                );
+                Vec::new()
+            }
+        };
         let ports = extract_ports_from_service(&service, &selected_pods);
         let annotations_hashmap: HashMap<String, String> = annotations.into_iter().collect();
         results.push((service_name, annotations_hashmap, ports));
@@ -111,8 +120,8 @@ pub fn extract_ports_from_service(service: &Service, pods: &[Pod]) -> HashMap<St
                     Some(number) => number,
                     None => {
                         warn!(
-                            "Skipping port '{}' of service '{}': no selected pod declares a \
-                             container port named '{name}'",
+                            "Skipping port '{}' of service '{}': the selected pods do not all \
+                             declare a container port named '{name}' with the same number",
                             port.name.as_deref().unwrap_or_default(),
                             service.metadata.name.as_deref().unwrap_or_default(),
                         );
@@ -131,13 +140,17 @@ pub fn extract_ports_from_service(service: &Service, pods: &[Pod]) -> HashMap<St
 }
 
 fn resolve_named_port(pods: &[Pod], name: &str) -> Option<i32> {
-    pods.iter()
-        .filter_map(|pod| pod.spec.as_ref())
-        .flat_map(|spec| &spec.containers)
-        .filter_map(|container| container.ports.as_ref())
-        .flatten()
-        .find(|port| port.name.as_deref() == Some(name))
-        .map(|port| port.container_port)
+    let mut numbers = pods.iter().map(|pod| {
+        pod.spec
+            .iter()
+            .flat_map(|spec| &spec.containers)
+            .filter_map(|container| container.ports.as_ref())
+            .flatten()
+            .find(|port| port.name.as_deref() == Some(name))
+            .map(|port| port.container_port)
+    });
+    let first = numbers.next()??;
+    numbers.all(|number| number == Some(first)).then_some(first)
 }
 
 pub fn list_contexts(kubeconfig: &Kubeconfig) -> Vec<String> {
@@ -205,6 +218,16 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
 mod tests {
     use super::*;
 
+    fn list_body<K: k8s_openapi::ListableResource + serde::Serialize>(
+        items: Vec<K>,
+    ) -> kube::client::Body {
+        let list = k8s_openapi::List::<K> {
+            items,
+            metadata: Default::default(),
+        };
+        kube::client::Body::from(serde_json::to_vec(&list).unwrap())
+    }
+
     #[test]
     fn test_extract_ports_from_service() {
         let mut service = k8s_openapi::api::core::v1::Service::default();
@@ -253,33 +276,32 @@ mod tests {
 
         service.spec = Some(spec.clone());
 
-        let pods = vec![
+        fn pod(containers: Vec<(&str, Option<i32>)>) -> k8s_openapi::api::core::v1::Pod {
             k8s_openapi::api::core::v1::Pod {
                 spec: Some(k8s_openapi::api::core::v1::PodSpec {
-                    containers: vec![k8s_openapi::api::core::v1::Container {
-                        name: "sidecar".to_string(),
-                        ports: None,
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            k8s_openapi::api::core::v1::Pod {
-                spec: Some(k8s_openapi::api::core::v1::PodSpec {
-                    containers: vec![k8s_openapi::api::core::v1::Container {
-                        name: "app".to_string(),
-                        ports: Some(vec![k8s_openapi::api::core::v1::ContainerPort {
-                            name: Some("web".to_string()),
-                            container_port: 3000,
+                    containers: containers
+                        .into_iter()
+                        .map(|(name, web_port)| k8s_openapi::api::core::v1::Container {
+                            name: name.to_string(),
+                            ports: web_port.map(|container_port| {
+                                vec![k8s_openapi::api::core::v1::ContainerPort {
+                                    name: Some("web".to_string()),
+                                    container_port,
+                                    ..Default::default()
+                                }]
+                            }),
                             ..Default::default()
-                        }]),
-                        ..Default::default()
-                    }],
+                        })
+                        .collect(),
                     ..Default::default()
                 }),
                 ..Default::default()
-            },
+            }
+        }
+
+        let pods = vec![
+            pod(vec![("sidecar", None), ("app", Some(3000))]),
+            pod(vec![("app", Some(3000))]),
         ];
 
         let ports = extract_ports_from_service(&service, &pods);
@@ -295,6 +317,17 @@ mod tests {
         let ports = extract_ports_from_service(&service, &[]);
         assert_eq!(ports.get("named-port"), None);
         assert_eq!(ports.get("http"), Some(&8080));
+
+        let mut disagreeing = pods.clone();
+        disagreeing.push(pod(vec![("app", Some(4000))]));
+        let ports = extract_ports_from_service(&service, &disagreeing);
+        assert_eq!(ports.get("named-port"), None);
+        assert_eq!(ports.get("http"), Some(&8080));
+
+        let mut missing = pods.clone();
+        missing.push(pod(vec![("app", None)]));
+        let ports = extract_ports_from_service(&service, &missing);
+        assert_eq!(ports.get("named-port"), None);
 
         service.spec = None;
         let ports = extract_ports_from_service(&service, &pods);
@@ -343,20 +376,8 @@ mod tests {
             ServiceSpec,
         };
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-        use k8s_openapi::{
-            List,
-            ListableResource,
-        };
         use kube::client::Body;
         use tower_test::mock;
-
-        fn list_body<K: ListableResource + serde::Serialize>(items: Vec<K>) -> Body {
-            let list = List::<K> {
-                items,
-                metadata: Default::default(),
-            };
-            Body::from(serde_json::to_vec(&list).unwrap())
-        }
 
         let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "default");
@@ -448,6 +469,88 @@ mod tests {
         assert_eq!(name, "web");
         assert_eq!(ports.get("http"), Some(&8080));
         assert_eq!(ports.get("metrics"), None);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_services_with_annotation_keeps_services_when_pod_list_fails() {
+        use http::{
+            Request,
+            Response,
+        };
+        use k8s_openapi::api::core::v1::{
+            ServicePort,
+            ServiceSpec,
+        };
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+        use kube::client::Body;
+        use tower_test::mock;
+
+        fn service(name: &str, target_port: IntOrString) -> Service {
+            Service {
+                metadata: ObjectMeta {
+                    name: Some(name.to_string()),
+                    namespace: Some("apps".to_string()),
+                    annotations: Some(
+                        [("kftray.app/enabled".to_string(), "true".to_string())].into(),
+                    ),
+                    ..Default::default()
+                },
+                spec: Some(ServiceSpec {
+                    selector: Some([("app".to_string(), name.to_string())].into()),
+                    ports: Some(vec![ServicePort {
+                        name: Some("http".to_string()),
+                        port: 80,
+                        target_port: Some(target_port),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        }
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = Client::new(mock_service, "default");
+
+        let server = tokio::spawn(async move {
+            let (_request, send) = handle.next_request().await.unwrap();
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(list_body(vec![
+                        service("web", IntOrString::String("http".to_string())),
+                        service("api", IntOrString::Int(9000)),
+                    ]))
+                    .unwrap(),
+            );
+
+            let (request, send) = handle.next_request().await.unwrap();
+            assert!(request.uri().path().ends_with("/namespaces/apps/pods"));
+            let status = serde_json::json!({
+                "kind": "Status",
+                "apiVersion": "v1",
+                "status": "Failure",
+                "message": "pods is forbidden",
+                "reason": "Forbidden",
+                "code": 403
+            });
+            send.send_response(
+                Response::builder()
+                    .status(403)
+                    .body(Body::from(serde_json::to_vec(&status).unwrap()))
+                    .unwrap(),
+            );
+        });
+
+        let services = get_services_with_annotation(client, "apps", "kftray.app/configs")
+            .await
+            .expect("a failed pod list must not drop the namespace");
+
+        let names: Vec<_> = services.iter().map(|(name, _, _)| name.as_str()).collect();
+        assert_eq!(names, ["web", "api"]);
+        assert!(services[0].2.is_empty());
+        assert_eq!(services[1].2.get("http"), Some(&9000));
         server.await.unwrap();
     }
 

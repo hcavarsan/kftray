@@ -129,7 +129,7 @@ spec:
 
 The annotation format is `alias-local_port-remote_port`. Multiple configurations are separated by commas.
 
-`remote_port` can also be a Service port name. kftray forwards to that port's `targetPort` on the pod. A named `targetPort` is resolved from the container ports of the pods the Service selects. If none of those pods declares that name, the port is skipped and a warning is logged.
+`remote_port` can also be a Service port name. kftray forwards to that port's `targetPort` on the pod. A named `targetPort` is resolved from the container ports of the pods the Service selects. The port is skipped and a warning is logged when those pods don't all declare that name with the same number, or when kftray can't list them.
 
 ### Auto-Discovery via TUI
 
