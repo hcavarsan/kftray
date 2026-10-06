@@ -83,3 +83,36 @@ impl NetworkMonitorController {
         *self.state.is_running.lock().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use kftray_commons::test_utils::{
+        EnvVarGuard,
+        test_db,
+    };
+
+    use super::NetworkMonitorController;
+
+    #[tokio::test]
+    async fn stop_ends_every_monitor_loop() {
+        let _db = test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+
+        let metrics = tokio::runtime::Handle::current().metrics();
+        let baseline = metrics.num_alive_tasks();
+        let controller = NetworkMonitorController::new();
+
+        for _ in 0..3 {
+            controller.start().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(metrics.num_alive_tasks() > baseline);
+
+            controller.stop().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert_eq!(metrics.num_alive_tasks(), baseline);
+        }
+    }
+}

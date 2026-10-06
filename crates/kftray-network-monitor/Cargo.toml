@@ -14,3 +14,6 @@ kftray-commons = { workspace = true }
 kftray-portforward = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

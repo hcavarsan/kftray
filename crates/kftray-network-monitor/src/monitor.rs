@@ -63,13 +63,7 @@ impl NetworkMonitor {
             );
         }
 
-        let monitor = Arc::new(self);
-        let background_monitor = monitor.clone();
-        tokio::spawn(async move {
-            background_monitor.run_background_monitor().await;
-        });
-
-        monitor.run_main_loop().await;
+        tokio::join!(self.run_background_monitor(), self.run_main_loop());
     }
 
     async fn run_main_loop(&self) {

@@ -3544,6 +3544,7 @@ dependencies = [
  "kftray-commons",
  "kftray-portforward",
  "log",
+ "tempfile",
  "tokio",
 ]
 
