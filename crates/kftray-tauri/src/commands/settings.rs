@@ -218,6 +218,14 @@ fn get_command_path(cmd: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+pub(crate) fn truncate_for_display(value: String, max_bytes: usize) -> String {
+    if value.len() > max_bytes {
+        format!("{}...", &value[..value.floor_char_boundary(max_bytes)])
+    } else {
+        value
+    }
+}
+
 #[tauri::command]
 pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
     let mut checks = Vec::new();
@@ -252,13 +260,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
         },
         value: path
             .clone()
-            .map(|p| {
-                if p.len() > 60 {
-                    format!("{}...", &p[..60])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate_for_display(p, 60))
             .unwrap_or_else(|_| "<not set>".into()),
         hint: if path.is_err() {
             "PATH is required to find CLI tools".into()
@@ -474,4 +476,30 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
 
     info!("Successfully updated MCP server port to {port}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_for_display_keeps_short_values() {
+        assert_eq!(truncate_for_display("/usr/bin".into(), 60), "/usr/bin");
+    }
+
+    #[test]
+    fn truncate_for_display_cuts_ascii_at_the_limit() {
+        assert_eq!(truncate_for_display("abcdef".into(), 4), "abcd...");
+    }
+
+    #[test]
+    fn truncate_for_display_does_not_split_a_multibyte_character() {
+        let path = format!("{}/home/joão/.local/bin:/usr/bin", "x".repeat(50));
+        let cut = path.find('ã').unwrap() + 1;
+
+        assert_eq!(
+            truncate_for_display(path.clone(), cut),
+            format!("{}...", &path[..cut - 1])
+        );
+    }
 }

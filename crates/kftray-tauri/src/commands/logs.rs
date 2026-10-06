@@ -22,6 +22,7 @@ use tauri::WebviewWindowBuilder;
 use super::settings::{
     DiagnosticsReport,
     run_diagnostics,
+    truncate_for_display,
 };
 
 #[derive(Serialize)]
@@ -496,13 +497,9 @@ pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String
         diagnostics,
         environment: EnvironmentInfo {
             home: std::env::var("HOME").ok(),
-            path: std::env::var("PATH").ok().map(|p| {
-                if p.len() > 200 {
-                    format!("{}...", &p[..200])
-                } else {
-                    p
-                }
-            }),
+            path: std::env::var("PATH")
+                .ok()
+                .map(|p| truncate_for_display(p, 200)),
             kubeconfig: std::env::var("KUBECONFIG").ok(),
             shell: std::env::var("SHELL").ok(),
         },
