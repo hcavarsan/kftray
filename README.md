@@ -122,7 +122,7 @@ The terminal interface for those who prefer staying in the console.
 
 ## Linux Packages
 
-Every release publishes `kftray` and `kftui` packages for Debian, Ubuntu, Fedora, and openSUSE through the [openSUSE Build Service](https://build.opensuse.org/project/show/home:hencavarsan:kftray). Add the repository once, then install either package with your package manager; updates arrive with the regular system upgrade. The commands below install `kftui`; replace it with `kftray` for the desktop app.
+Every release publishes `kftray` and `kftui` packages for Debian, Ubuntu, Fedora, openSUSE, and Arch Linux through the [openSUSE Build Service](https://build.opensuse.org/project/show/home:hencavarsan:kftray). Add the repository once, then install either package with your package manager; updates arrive with the regular system upgrade. The commands below install `kftui`; replace it with `kftray` for the desktop app.
 
 **Debian and Ubuntu** – replace `Debian_12` with `Debian_13`, `Ubuntu_22.04`, `Ubuntu_24.04`, or `Ubuntu_26.04`:
 
@@ -149,7 +149,17 @@ sudo zypper --gpg-auto-import-keys refresh
 sudo zypper install kftui
 ```
 
-Packages are signed with the project key of `home:hencavarsan:kftray`; the `.repo` files reference it and the apt source pins it with `signed-by`.
+**Arch Linux** (x86_64 only):
+
+```bash
+curl -fsSL https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Arch/x86_64/home_hencavarsan_kftray_Arch.key -o /tmp/kftray.key
+sudo pacman-key --add /tmp/kftray.key
+sudo pacman-key --lsign-key "$(gpg --with-colons --show-keys /tmp/kftray.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+printf '\n[home_hencavarsan_kftray_Arch]\nServer = https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Arch/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu kftui
+```
+
+Packages are signed with the project key of `home:hencavarsan:kftray`; the `.repo` files reference it, the apt source pins it with `signed-by`, and pacman trusts it after `pacman-key --lsign-key`.
 
 ## kftray-server - Proxy Relay
 

@@ -218,7 +218,7 @@ run_publisher() {
 check_uploaded_package() {
     local scenario="$1" package="$2" uploaded="$OBS_TEST_CASE/upload/$2" file glibc architecture expected_file
     if [ "$scenario" = metadata ]; then
-        for file in _service "$package.spec" "$package.dsc"; do
+        for file in _service "$package.spec" "$package.dsc" PKGBUILD; do
             [ -f "$uploaded/$file" ] || fail "missing uploaded $package/$file" || return 1
         done
         return 0
@@ -270,7 +270,11 @@ check_uploaded_package() {
             done
         done
     fi
-    for file in "${package}_0.9.0.orig.tar.gz" PKGBUILD debian-changelog; do
+    local orig_sha256
+    orig_sha256=$(sha256sum "$uploaded/${package}_1.2.3.orig.tar.gz" | cut -d' ' -f1)
+    grep -Fxq 'pkgver=1.2.3' "$uploaded/PKGBUILD" || fail "$package PKGBUILD does not build the released version" || return 1
+    grep -Fxq "sha256sums=('$orig_sha256')" "$uploaded/PKGBUILD" || fail "$package PKGBUILD checksum does not match the uploaded source archive" || return 1
+    for file in "${package}_0.9.0.orig.tar.gz" debian-changelog; do
         [ ! -f "$uploaded/$file" ] || fail "obsolete file $file retained in $package" || return 1
     done
 }
@@ -380,7 +384,7 @@ run_case() (
         archives)
             [ ! -e "$OBS_TEST_CASE/auth" ] || fail "Authorization header sent without a token" || return 1
             grep -q '^meta prj -F ' "$OBS_TEST_CASE/operations" || fail "drifted project metadata was not updated" || return 1
-            for expected_file in Debian_13 Fedora_44 openSUSE_Leap_16.0; do
+            for expected_file in Debian_13 Fedora_44 openSUSE_Leap_16.0 Arch; do
                 grep -Fq "<repository name=\"$expected_file\">" "$OBS_TEST_CASE/project-meta.xml" || fail "missing $expected_file in project metadata" || return 1
             done
             ! grep -Fq 'Ubuntu_20.04' "$OBS_TEST_CASE/project-meta.xml" || fail "obsolete Ubuntu 20.04 target retained" || return 1

@@ -1,0 +1,17 @@
+pkgname=kftui
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc="Kubernetes port-forwarding CLI manager"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hcavarsan/kftray"
+license=('GPL-3.0-only')
+depends=('dbus' 'gcc-libs' 'glibc' 'zlib')
+options=('!debug')
+source=("kftui_${pkgver}.orig.tar.gz")
+sha256sums=('{{SHA256_ORIG}}')
+
+package() {
+    local machine=amd64
+    [ "$CARCH" = aarch64 ] && machine=arm64
+    install -Dm755 "kftui-${pkgver}/kftui_linux_${machine}" "${pkgdir}/usr/bin/kftui"
+}

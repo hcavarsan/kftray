@@ -73,6 +73,13 @@
 			"enabled": false
 		},
 		{
+			"description": "Package build images must match hacks/obs/distros.conf, so only refresh digests",
+			"matchFileNames": [".github/workflows/obs-publishing.yml"],
+			"matchDatasources": ["docker"],
+			"matchUpdateTypes": ["major", "minor", "patch"],
+			"enabled": false
+		},
+		{
 			"matchPackageNames": [
 				"kube",
 				"k8s-openapi",

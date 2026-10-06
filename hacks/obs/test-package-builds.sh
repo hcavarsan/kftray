@@ -84,4 +84,31 @@ for package in kftui kftray; do
         fi
         printf 'PASS: %s RPM build and payload\n' "$package"
     fi
+
+    if [[ " $formats " == *" arch "* ]]; then
+        arch_dir="$BUILD_TEST_DIR/arch-$package"
+        mkdir -p "$arch_dir/root"
+        cp "$BUILD_TEST_DIR/rpm/SOURCES/${package}_1.2.3.orig.tar.gz" "$arch_dir/"
+        orig_sha256=$(sha256sum "$arch_dir/${package}_1.2.3.orig.tar.gz" | cut -d' ' -f1)
+        sed -e 's/{{VERSION}}/1.2.3/g' -e "s/{{SHA256_ORIG}}/$orig_sha256/g" \
+            "$SCRIPT_DIR/$package/templates/PKGBUILD" > "$arch_dir/PKGBUILD"
+        if ! (cd "$arch_dir" && PKGDEST="$arch_dir" makepkg --noconfirm) > "$BUILD_TEST_DIR/arch-$package.log" 2>&1; then
+            cat "$BUILD_TEST_DIR/arch-$package.log" >&2
+            exit 1
+        fi
+        arch_packages=("$arch_dir"/*.pkg.tar.*)
+        if [ "${#arch_packages[@]}" -ne 1 ] || [ ! -f "${arch_packages[0]}" ]; then
+            printf 'Expected exactly one %s Arch package, found: %s\n' "$package" "${arch_packages[*]}" >&2
+            exit 1
+        fi
+        bsdtar -xf "${arch_packages[0]}" -C "$arch_dir/root"
+        if [ "$package" = kftray ]; then
+            cmp "$expected_appimage" "$arch_dir/root/usr/bin/kftray"
+            grep -qx 'depend = fuse3' "$arch_dir/root/.PKGINFO"
+        else
+            grep -qx 'depend = dbus' "$arch_dir/root/.PKGINFO"
+            "$arch_dir/root/usr/bin/kftui"
+        fi
+        printf 'PASS: %s Arch build, payload and dependencies\n' "$package"
+    fi
 done

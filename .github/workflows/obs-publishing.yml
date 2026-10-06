@@ -79,13 +79,13 @@ jobs:
       matrix:
         include:
           - distro: fedora:43
-            image: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
+            image: fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
           - distro: fedora:44
-            image: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
           - distro: opensuse/tumbleweed
             image: opensuse/tumbleweed:latest@sha256:d531cce8158ef9485bcd9defb061cca27b772d796343ab1d66583de6adc38f11
           - distro: opensuse/leap:16.0
-            image: opensuse/leap:16.1@sha256:b4baa5259d4dde9704c45f29c7cd318e64ab309c9b9d675361f018f2b5009c3e
+            image: opensuse/leap:16.0@sha256:7f3aeccb6a613c0fc1690d3d3e5eb493fd477ee4587de20640017fc36d72f9b0
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     timeout-minutes: 20
@@ -106,9 +106,68 @@ jobs:
       - name: Build RPM packages with the distribution's rpm macros
         run: bash hacks/obs/test-package-builds.sh rpm
 
+  deb-builds:
+    name: Debian builds (${{ matrix.distro }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu:22.04
+            image: ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
+          - distro: ubuntu:24.04
+            image: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+          - distro: ubuntu:26.04
+            image: ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
+          - distro: debian:12
+            image: debian:12@sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858
+          - distro: debian:13
+            image: debian:13@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get -o Acquire::Retries=3 update
+          apt-get install -y --no-install-recommends ca-certificates git build-essential pkg-config debhelper libdbus-1-dev
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Debian packages with the distribution's debhelper
+        run: bash hacks/obs/test-package-builds.sh deb
+
+  arch-builds:
+    name: Arch builds (${{ matrix.distro }})
+    strategy:
+      matrix:
+        include:
+          - distro: archlinux
+            image: archlinux:base-devel@sha256:996c3a1d6b0d87b01242f6fcd8cfa3ad3eece1a67ab5c8f108e20af1d7b97bdd
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --needed --noconfirm git dbus fuse3
+          useradd --create-home builder
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Arch packages with makepkg
+        run: runuser -u builder -- bash hacks/obs/test-package-builds.sh arch
+
   publish:
     name: Publish ${{ inputs.version }} to OBS
-    needs: [checks, rpm-builds]
+    needs: [checks, rpm-builds, deb-builds, arch-builds]
     if: github.event_name == 'workflow_dispatch' && inputs.version != ''
     runs-on: ubuntu-22.04
     environment: release
