@@ -141,9 +141,33 @@ jobs:
       - name: Build Debian packages with the distribution's debhelper
         run: bash hacks/obs/test-package-builds.sh deb
 
+  arch-builds:
+    name: Arch builds (${{ matrix.distro }})
+    strategy:
+      matrix:
+        include:
+          - distro: archlinux
+            image: archlinux:base-devel@sha256:996c3a1d6b0d87b01242f6fcd8cfa3ad3eece1a67ab5c8f108e20af1d7b97bdd
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --needed --noconfirm git dbus fuse3
+          useradd --create-home builder
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Arch packages with makepkg
+        run: runuser -u builder -- bash hacks/obs/test-package-builds.sh arch
+
   publish:
     name: Publish ${{ inputs.version }} to OBS
-    needs: [checks, rpm-builds, deb-builds]
+    needs: [checks, rpm-builds, deb-builds, arch-builds]
     if: github.event_name == 'workflow_dispatch' && inputs.version != ''
     runs-on: ubuntu-22.04
     environment: release

@@ -1,0 +1,20 @@
+pkgname=kftray
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc="Kubernetes port-forwarding GUI manager"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hcavarsan/kftray"
+license=('GPL-3.0-only')
+depends=('fuse3')
+options=('!strip')
+source=("kftray_${pkgver}.orig.tar.gz")
+sha256sums=('{{SHA256_ORIG}}')
+
+package() {
+    local machine=amd64 variant=
+    [ "$CARCH" = aarch64 ] && machine=aarch64
+    if getconf GNU_LIBC_VERSION | awk -F '[ .]' '{ exit !($2 > 2 || ($2 == 2 && $3 >= 39)) }'; then
+        variant=newer-glibc_
+    fi
+    install -Dm755 "kftray-${pkgver}/kftray_${pkgver}_${variant}${machine}.AppImage" "${pkgdir}/usr/bin/kftray"
+}

@@ -3,8 +3,8 @@
 The release workflow publishes Linux packages to the OpenSUSE Build Service after
 the GitHub release is public and its updater metadata is final. Each package uses
 one source archive containing the release binaries, downloaded from the release
-and verified against GitHub's SHA256 asset digests. RPM and Debian packaging must
-not strip the AppImage, because stripping discards the embedded filesystem.
+and verified against GitHub's SHA256 asset digests. RPM, Debian and Arch packaging
+must not strip the AppImage, because stripping discards the embedded filesystem.
 The kftray archive includes both glibc variants for each architecture; package
 builds select the newer variant on glibc 2.39 or later, matching the updater.
 
@@ -42,9 +42,12 @@ to build only that format; `bash hacks/obs/test-package-builds.sh rpm` runs on a
 Fedora or openSUSE host with rpm-build, gcc, a static glibc, dbus development
 headers, and cpio, exercising the distribution's own rpm macros. `bash
 hacks/obs/test-package-builds.sh deb` does the same for debhelper on a Debian or
-Ubuntu host. CI runs these checks from `.github/workflows/obs-publishing.yml`
-when the publishing files change, building the RPMs and Debian packages inside a
-container for every distribution in `distros.conf`.
+Ubuntu host, and `bash hacks/obs/test-package-builds.sh arch` runs makepkg on an
+Arch host with base-devel, dbus, and fuse3 (as a regular user, since makepkg
+refuses to run as root). CI runs these checks from
+`.github/workflows/obs-publishing.yml` when the publishing files change, building
+the RPM, Debian and Arch packages inside a container for every distribution in
+`distros.conf`.
 
 ## Publishing
 
