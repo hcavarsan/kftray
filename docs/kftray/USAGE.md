@@ -42,6 +42,7 @@ In a few simple steps, you can configure your first port forward:
 - Expose waits for its server and reverse WebSocket handshake before reporting success. Kubernetes Service routing can still take time to converge after Service creation.
 - HTTP logs use the same configuration directory as the database: `KFTRAY_CONFIG`, then `$XDG_CONFIG_HOME/kftray`, then `~/.kftray`. Logs are stored in its `http_logs` subdirectory.
 - Bulk actions run independent configurations concurrently in bounded batches. A busy configuration cannot start another operation until its current operation finishes.
+- With rows selected, the toolbar shows **Start Selected** and **Stop Selected**. These act only on selected rows that the current search and filters show. **Start All** starts the shown configurations. **Stop All** stops every running configuration, shown or not.
 - During a bulk action, the cancel button discards queued operations. Operations already in progress finish normally. Failed configurations are reported without blocking the rest of the batch.
 - Stop All also stops expose tunnels. Stopping a configuration cancels its recovery before releasing its listeners and Kubernetes resources.
 

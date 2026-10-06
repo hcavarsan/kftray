@@ -5,6 +5,7 @@ import { ChevronsDownUp, ChevronsUpDown, RefreshCw, X } from 'lucide-react'
 import { Box, Group } from '@chakra-ui/react'
 
 import { ForwardBatchButton } from '@/components/HeaderMenu/ForwardBatchButton'
+import { forwardBatchState } from '@/components/HeaderMenu/forwardBatchState'
 import {
   ToolbarIconButton,
   WithTooltip,
@@ -17,8 +18,8 @@ interface HeaderMenuProps {
   configs: Config[]
   selectedConfigs: Config[]
   initiatePortForwarding: (configs: Config[]) => void
-  startSelectedPortForwarding: () => void
-  stopSelectedPortForwarding: () => void
+  startSelectedPortForwarding: (configs: Config[]) => void
+  stopSelectedPortForwarding: (configs: Config[]) => void
   stopAllPortForwarding: () => void
   abortStartOperation: () => void
   abortStopOperation: () => void
@@ -61,30 +62,14 @@ export function HeaderMenu({
     () => new Set(selectedConfigs.map(config => config.id)),
     [selectedConfigs],
   )
-  const configById = useMemo(
-    () => new Map(configs.map(config => [config.id, config])),
-    [configs],
-  )
-
   const isSelectAllChecked = useMemo(
     () =>
       configs.length > 0 && configs.every(config => selectedIds.has(config.id)),
     [configs, selectedIds],
   )
-
-  const hasSelectedNotRunning = useMemo(
-    () =>
-      selectedConfigs.some(
-        selected => configById.get(selected.id)?.is_running === false,
-      ),
-    [selectedConfigs, configById],
-  )
-  const hasSelectedRunning = useMemo(
-    () =>
-      selectedConfigs.some(
-        selected => configById.get(selected.id)?.is_running === true,
-      ),
-    [selectedConfigs, configById],
+  const batch = useMemo(
+    () => forwardBatchState(configs, selectedConfigs),
+    [configs, selectedConfigs],
   )
 
   const handleCheckboxChange = ({
@@ -94,22 +79,6 @@ export function HeaderMenu({
   }) => {
     setSelectedConfigs(checked === true ? configs : [])
   }
-
-  const isStartBusy =
-    isInitiating ||
-    (selectedConfigs.length > 0
-      ? selectedConfigs.every(
-          selected => configById.get(selected.id)?.is_running === true,
-        )
-      : configs.every(config => config.is_running))
-
-  const isStopBusy =
-    isStopping ||
-    (selectedConfigs.length > 0
-      ? selectedConfigs.every(
-          selected => configById.get(selected.id)?.is_running === false,
-        )
-      : configs.every(config => !config.is_running))
 
   return (
     <Box
@@ -142,24 +111,20 @@ export function HeaderMenu({
         <Group display='flex' alignItems='center' gap={2}>
           <ForwardBatchButton
             icon={RefreshCw}
-            label={
-              selectedConfigs.length > 0 && hasSelectedNotRunning
-                ? 'Start Selected'
-                : 'Start All'
-            }
+            label={batch.startSelected ? 'Start Selected' : 'Start All'}
             busyLabel='Starting...'
             tooltip={
               isInitiating
                 ? 'Starting port forwards...'
-                : selectedConfigs.length > 0 && hasSelectedNotRunning
+                : batch.startSelected
                   ? 'Start selected port forwards'
                   : 'Start all port forwards'
             }
             isPending={isInitiating}
-            disabled={isStartBusy}
+            disabled={isInitiating || batch.startDisabled}
             onClick={
-              selectedConfigs.length > 0
-                ? () => void startSelectedPortForwarding()
+              batch.startSelected
+                ? () => void startSelectedPortForwarding(batch.selected)
                 : () =>
                     void initiatePortForwarding(
                       configs.filter(config => !config.is_running),
@@ -170,24 +135,20 @@ export function HeaderMenu({
 
           <ForwardBatchButton
             icon={X}
-            label={
-              selectedConfigs.length > 0 && hasSelectedRunning
-                ? 'Stop Selected'
-                : 'Stop All'
-            }
+            label={batch.stopSelected ? 'Stop Selected' : 'Stop All'}
             busyLabel='Stopping...'
             tooltip={
               isStopping
                 ? 'Stopping port forwards...'
-                : selectedConfigs.length > 0 && hasSelectedRunning
+                : batch.stopSelected
                   ? 'Stop selected port forwards'
                   : 'Stop all port forwards'
             }
             isPending={isStopping}
-            disabled={isStopBusy}
+            disabled={isStopping || batch.stopDisabled}
             onClick={
-              selectedConfigs.length > 0
-                ? () => void stopSelectedPortForwarding()
+              batch.stopSelected
+                ? () => void stopSelectedPortForwarding(batch.selected)
                 : () => void stopAllPortForwarding()
             }
             onCancel={abortStopOperation}
