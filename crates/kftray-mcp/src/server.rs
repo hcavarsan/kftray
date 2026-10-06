@@ -113,8 +113,12 @@ impl Default for ServerState {
 
 /// Start the MCP HTTP server
 pub async fn start_server(addr: SocketAddr) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    info!("MCP server listening on http://{}", addr);
+    serve(TcpListener::bind(addr).await?).await
+}
+
+/// Serve MCP requests on a listener the caller already bound
+pub async fn serve(listener: TcpListener) -> anyhow::Result<()> {
+    info!("MCP server listening on http://{}", listener.local_addr()?);
 
     let state = Arc::new(ServerState::new());
 
