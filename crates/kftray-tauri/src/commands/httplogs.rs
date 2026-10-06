@@ -57,7 +57,7 @@ pub async fn update_http_logs_config_cmd(config: HttpLogsConfig) -> Result<(), S
 #[tauri::command]
 pub async fn clear_http_logs() -> Result<(), String> {
     let log_folder_path = get_and_validate_log_folder()?;
-    delete_files_in_folder(&log_folder_path)
+    clear_files_in_folder(&log_folder_path)
 }
 
 #[tauri::command]
@@ -79,7 +79,7 @@ fn get_and_validate_log_folder() -> Result<PathBuf, String> {
     Ok(log_folder_path)
 }
 
-fn delete_files_in_folder(path: &Path) -> Result<(), String> {
+fn clear_files_in_folder(path: &Path) -> Result<(), String> {
     if !path.is_dir() {
         return Err(format!("Path is not a directory: {}", path.display()));
     }
@@ -96,18 +96,30 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
         match entry_result {
             Ok(entry) => {
                 let file_path = entry.path();
-                if file_path.is_file() {
-                    match fs::remove_file(&file_path) {
-                        Ok(_) => {
-                            success_count += 1;
-                        }
-                        Err(e) => {
-                            let error_msg =
-                                format!("Failed to delete file {}: {}", file_path.display(), e);
-                            error!("{error_msg}");
-                            errors.push(error_msg);
-                            error_count += 1;
-                        }
+                let is_regular_file = entry.file_type().is_ok_and(|kind| kind.is_file());
+                // A running forward's logger keeps its file open in append mode, so a
+                // deleted file would swallow every later request. Emptying it in place
+                // keeps those writes in the visible file.
+                let result = if is_regular_file {
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .open(&file_path)
+                        .and_then(|file| file.set_len(0))
+                } else if file_path.is_file() {
+                    fs::remove_file(&file_path)
+                } else {
+                    continue;
+                };
+                match result {
+                    Ok(_) => {
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        let error_msg =
+                            format!("Failed to clear file {}: {}", file_path.display(), e);
+                        error!("{error_msg}");
+                        errors.push(error_msg);
+                        error_count += 1;
                     }
                 }
             }
@@ -121,18 +133,18 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
     }
 
     // Report summary
-    info!("Deleted {success_count} files, encountered {error_count} errors");
+    info!("Cleared {success_count} files, encountered {error_count} errors");
 
     if error_count > 0 {
         if success_count > 0 {
-            // Partial success - we deleted some files but not all
+            // Partial success - we cleared some files but not all
             Err(format!(
-                "Partially deleted files: {} succeeded, {} failed. First error: {}",
+                "Partially cleared files: {} succeeded, {} failed. First error: {}",
                 success_count, error_count, errors[0]
             ))
         } else {
-            // Complete failure - couldn't delete any files
-            Err(format!("Failed to delete any files: {}", errors[0]))
+            // Complete failure - couldn't clear any files
+            Err(format!("Failed to clear any files: {}", errors[0]))
         }
     } else {
         Ok(())
@@ -725,28 +737,54 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_files_in_folder() {
+    fn test_clear_files_in_folder() {
         let temp_dir = create_test_log_folder();
 
-        let file_count_before = std::fs::read_dir(temp_dir.path()).unwrap().count();
-        assert!(
-            file_count_before > 0,
-            "Should have test files before deletion"
+        assert!(calculate_folder_size(temp_dir.path()).unwrap() > 0);
+
+        let result = clear_files_in_folder(temp_dir.path());
+
+        assert!(result.is_ok(), "Should successfully clear files");
+        assert_eq!(
+            calculate_folder_size(temp_dir.path()).unwrap(),
+            0,
+            "All files should be emptied"
         );
-
-        let result = delete_files_in_folder(temp_dir.path());
-
-        assert!(result.is_ok(), "Should successfully delete files");
-
-        let file_count_after = std::fs::read_dir(temp_dir.path()).unwrap().count();
-        assert_eq!(file_count_after, 0, "All files should be deleted");
     }
 
     #[test]
-    fn test_delete_files_in_nonexistent_folder() {
+    fn test_pruned_log_keeps_receiving_writes_from_an_open_logger() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("7_8080.http");
+        let mut logger_handle = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&log_path)
+            .unwrap();
+        logger_handle.write_all(b"before prune\n").unwrap();
+        logger_handle.flush().unwrap();
+
+        clear_files_in_folder(temp_dir.path()).unwrap();
+
+        logger_handle.write_all(b"after prune\n").unwrap();
+        logger_handle.flush().unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&log_path).unwrap(),
+            "after prune\n",
+            "requests logged after a prune must land in the visible log file"
+        );
+        assert_eq!(
+            calculate_folder_size(temp_dir.path()).unwrap(),
+            "after prune\n".len() as u64
+        );
+    }
+
+    #[test]
+    fn test_clear_files_in_nonexistent_folder() {
         let path = std::path::Path::new("/this/path/does/not/exist");
 
-        let result = delete_files_in_folder(path);
+        let result = clear_files_in_folder(path);
 
         assert!(
             result.is_err(),

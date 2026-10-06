@@ -174,7 +174,7 @@ export function HttpLogsConfigModal({
     onSuccess: () => {
       toaster.success({ title: 'HTTP logs pruned', duration: 2000 })
     },
-    // Clearing can delete some files before it fails, so the size is read
+    // Clearing can empty some files before it fails, so the size is read
     // again either way.
     onSettled: () => {
       setConfirmPrune(false)
@@ -269,7 +269,7 @@ export function HttpLogsConfigModal({
             disabled={
               logSize === 0 || logSizeQuery.isError || pruneMutation.isPending
             }
-            title='Delete the HTTP log files of every config'
+            title='Empty the HTTP log files of every config'
           >
             <Eraser size={12} />
             Prune all logs ({formatBytes(logSize)})
