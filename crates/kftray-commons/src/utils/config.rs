@@ -497,12 +497,11 @@ async fn merge_config_with_existing(
 pub(crate) async fn import_configs_with_pool(
     json: String, pool: &SqlitePool,
 ) -> Result<(), String> {
-    let configs = parse_config_json(&json)?;
+    let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
 
     for config in configs {
-        validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
         merge_config_with_existing(config, &existing_configs, pool)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
@@ -513,6 +512,14 @@ pub(crate) async fn import_configs_with_pool(
     }
 
     Ok(())
+}
+
+pub fn parse_import_configs(json: &str) -> Result<Vec<Config>, String> {
+    let configs = parse_config_json(json)?;
+    for config in &configs {
+        validate_imported_config(config).map_err(|e| format!("Invalid config: {e}"))?;
+    }
+    Ok(configs)
 }
 
 fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
@@ -580,12 +587,11 @@ async fn merge_config_with_existing_and_mode(
 pub(crate) async fn import_configs_with_pool_and_mode(
     json: String, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    let configs = parse_config_json(&json)?;
+    let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
 
     for config in configs {
-        validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
         merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
