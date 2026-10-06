@@ -525,6 +525,7 @@ mod tests {
     #[tokio::test]
     async fn changing_the_port_starts_an_enabled_mcp_server_that_failed_to_bind() {
         let _db = use_test_db().await;
+        let _mcp = crate::mcp::TEST_LOCK.lock().await;
         let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         set_mcp_server_port(taken.local_addr().unwrap().port())
             .await

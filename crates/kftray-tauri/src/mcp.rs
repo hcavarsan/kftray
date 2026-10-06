@@ -117,11 +117,15 @@ pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send
 }
 
 #[cfg(test)]
+pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn start_fails_when_the_port_is_already_taken() {
+        let _mcp = TEST_LOCK.lock().await;
         let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = taken.local_addr().unwrap().port();
 
@@ -134,6 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn start_rejects_port_zero() {
+        let _mcp = TEST_LOCK.lock().await;
         assert!(start(0).await.is_err());
         assert!(!is_running().await);
     }
