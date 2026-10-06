@@ -15,6 +15,8 @@ use log::{
     info,
     warn,
 };
+use openssl::asn1::Asn1Time;
+use openssl::x509::X509;
 use rustls::pki_types::{
     CertificateDer,
     PrivateKeyDer,
@@ -38,6 +40,25 @@ lazy_static! {
 #[cfg(test)]
 lazy_static! {
     pub static ref SSL_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+#[cfg(test)]
+pub(crate) fn self_signed_pair(
+    domains: Vec<String>, not_before: time::OffsetDateTime, not_after: time::OffsetDateTime,
+) -> CertificatePair {
+    super::ensure_crypto_provider_installed();
+    let mut params = rcgen::CertificateParams::new(domains.clone()).unwrap();
+    params.not_before = not_before;
+    params.not_after = not_after;
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = params.self_signed(&key).unwrap();
+    CertificatePair {
+        certificate: vec![cert.der().clone()],
+        private_key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+        domain: domains[0].clone(),
+        local_domain: domains[0].clone(),
+        subject_alt_names: domains,
+    }
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -192,7 +213,35 @@ impl CertificateStore {
             return false;
         }
 
-        true
+        let cert_file = self.store_path.join(format!("{}.crt", alias));
+        let leaf_is_current = async_fs::read(&cert_file)
+            .await
+            .context("Failed to read certificate file")
+            .and_then(|cert_pem| Self::leaf_is_current(&cert_pem));
+
+        match leaf_is_current {
+            Ok(true) => true,
+            Ok(false) => {
+                info!(
+                    "Certificate for alias {} is outside its validity period",
+                    alias
+                );
+                false
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to check certificate dates for alias {}: {}",
+                    alias, e
+                );
+                false
+            }
+        }
+    }
+
+    fn leaf_is_current(cert_pem: &[u8]) -> Result<bool> {
+        let leaf = X509::from_pem(cert_pem).context("Failed to parse certificate")?;
+        let now = Asn1Time::days_from_now(0).context("Failed to read current time")?;
+        Ok(leaf.not_before() <= now && leaf.not_after() > now)
     }
 
     pub fn get_store_path(&self) -> &std::path::Path {
@@ -558,5 +607,63 @@ mod tests {
 
         store.remove("test-service").await.unwrap();
         assert!(!store.exists("test-service").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_valid_rejects_certificate_outside_validity_period() {
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
+        let (store, _temp_dir) = create_test_store().await;
+        let now = time::OffsetDateTime::now_utc();
+        let domains = vec!["old.local".to_string()];
+
+        let expired = self_signed_pair(
+            domains.clone(),
+            now - time::Duration::days(400),
+            now - time::Duration::days(35),
+        );
+        store.store("expired", &expired).await.unwrap();
+        assert!(store.exists("expired").await);
+        assert!(!store.is_valid("expired").await);
+
+        let not_yet_valid = self_signed_pair(
+            domains.clone(),
+            now + time::Duration::days(1),
+            now + time::Duration::days(365),
+        );
+        store.store("future", &not_yet_valid).await.unwrap();
+        assert!(!store.is_valid("future").await);
+
+        let current = self_signed_pair(
+            domains,
+            now - time::Duration::minutes(1),
+            now + time::Duration::days(1),
+        );
+        store.store("current", &current).await.unwrap();
+        assert!(store.is_valid("current").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_valid_rejects_unparseable_certificate() {
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
+        let (store, _temp_dir) = create_test_store().await;
+        let now = time::OffsetDateTime::now_utc();
+        let pair = self_signed_pair(
+            vec!["broken.local".to_string()],
+            now - time::Duration::minutes(1),
+            now + time::Duration::days(1),
+        );
+        store.store("broken", &pair).await.unwrap();
+        fs::write(
+            store.store_path.join("broken.crt"),
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+
+        assert!(store.exists("broken").await);
+        assert!(!store.is_valid("broken").await);
     }
 }

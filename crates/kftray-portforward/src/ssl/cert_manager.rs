@@ -1009,4 +1009,40 @@ mod tests {
         let loaded_cert = manager.load_global_certificate().await.unwrap();
         assert_eq!(cert_pair.certificate.len(), loaded_cert.certificate.len());
     }
+
+    #[tokio::test]
+    async fn test_load_global_certificate_replaces_expired_certificate() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+            self_signed_pair,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
+        let (manager, _temp_dir) = create_test_manager().await;
+        let domains = CertificateManager::collect_all_domains_from_configs()
+            .await
+            .unwrap();
+        let now = time::OffsetDateTime::now_utc();
+        let expired = self_signed_pair(
+            domains,
+            now - time::Duration::days(400),
+            now - time::Duration::days(35),
+        );
+        manager
+            .store
+            .store("global-ssl-cert", &expired)
+            .await
+            .unwrap();
+
+        let loaded = manager.load_global_certificate().await.unwrap();
+
+        assert_ne!(loaded.certificate[0], expired.certificate[0]);
+        let leaf = openssl::x509::X509::from_der(loaded.certificate[0].as_ref()).unwrap();
+        let now = openssl::asn1::Asn1Time::days_from_now(0).unwrap();
+        assert!(leaf.not_after() > now);
+        assert!(manager.store.is_valid("global-ssl-cert").await);
+    }
 }
