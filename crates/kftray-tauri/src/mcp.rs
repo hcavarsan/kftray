@@ -42,6 +42,10 @@ pub async fn is_running() -> bool {
 
 /// Start the MCP server on the specified port
 pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if port == 0 {
+        return Err("MCP server port cannot be 0".into());
+    }
+
     // Check if already running
     {
         let state = MCP_SERVER.read().await;
@@ -126,5 +130,11 @@ mod tests {
             .expect_err("start should fail on a busy port");
 
         assert!(err.to_string().contains(&port.to_string()), "{err}");
+    }
+
+    #[tokio::test]
+    async fn start_rejects_port_zero() {
+        assert!(start(0).await.is_err());
+        assert!(!is_running().await);
     }
 }
