@@ -375,3 +375,218 @@ async fn test_list_ports_missing_required() {
         );
     }
 }
+
+struct TempConfigDb {
+    _db: kftray_commons::test_utils::TestDb,
+    _env: kftray_commons::test_utils::EnvVarGuard,
+    _dir: tempfile::TempDir,
+}
+
+async fn temp_config_db() -> TempConfigDb {
+    let db = kftray_commons::test_utils::test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let env =
+        kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    kftray_commons::utils::db::init().await.unwrap();
+    kftray_commons::utils::migration::migrate_configs(None)
+        .await
+        .unwrap();
+    TempConfigDb {
+        _db: db,
+        _env: env,
+        _dir: dir,
+    }
+}
+
+fn result_text(result: &CallToolResult) -> &str {
+    match result.content.first() {
+        Some(ToolContent::Text { text }) => text,
+        _ => panic!("Expected text content"),
+    }
+}
+
+fn result_json(result: &CallToolResult) -> serde_json::Value {
+    assert_ne!(result.is_error, Some(true), "{}", result_text(result));
+    serde_json::from_str(result_text(result)).unwrap()
+}
+
+async fn create_tagged(service: &str, namespace: &str, tags: serde_json::Value) -> i64 {
+    let result = execute_tool(
+        "create_config",
+        Some(serde_json::json!({
+            "context": "kind",
+            "namespace": namespace,
+            "service": service,
+            "remote_port": 80,
+            "tags": tags,
+        })),
+    )
+    .await;
+    result_json(&result)["config_id"].as_i64().unwrap()
+}
+
+async fn list_services(filters: serde_json::Value) -> Vec<String> {
+    let result = execute_tool(
+        "list_configs",
+        Some(serde_json::json!({ "filters": filters })),
+    )
+    .await;
+    result_json(&result)["configs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["service"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn list_configs_filters_by_tags_and_fields_like_kftui() {
+    let _db = temp_config_db().await;
+    create_tagged(
+        "billing",
+        "api",
+        serde_json::json!({"Team": " payments ", "pinned": ""}),
+    )
+    .await;
+    create_tagged("ledger", "web", serde_json::json!({"team": "payments"})).await;
+    create_tagged("search", "api", serde_json::json!({"team": "core"})).await;
+
+    let all = execute_tool("list_configs", None).await;
+    let all = result_json(&all);
+    assert_eq!(all["count"], 3);
+    let billing = all["configs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["service"] == "billing")
+        .unwrap();
+    assert_eq!(
+        billing["tags"],
+        serde_json::json!({"pinned": "", "team": "payments"})
+    );
+
+    assert_eq!(
+        list_services(serde_json::json!(["tag:team=payments"])).await,
+        ["billing", "ledger"]
+    );
+    assert_eq!(
+        list_services(serde_json::json!(["tag:team=payments", "namespace=api"])).await,
+        ["billing"]
+    );
+    assert_eq!(
+        list_services(serde_json::json!(["tag:team=core,payments"])).await,
+        ["billing", "ledger", "search"]
+    );
+    assert_eq!(
+        list_services(serde_json::json!(["tag:pinned"])).await,
+        ["billing"]
+    );
+    assert!(
+        list_services(serde_json::json!(["tag:owner"]))
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn list_configs_rejects_an_unknown_filter_field() {
+    let _db = temp_config_db().await;
+
+    let result = execute_tool(
+        "list_configs",
+        Some(serde_json::json!({"filters": ["team=payments"]})),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result_text(&result).starts_with("Invalid filter 'team=payments': unknown field 'team'"),
+        "{}",
+        result_text(&result)
+    );
+}
+
+#[tokio::test]
+async fn update_config_replaces_tags_only_when_given() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("billing", "api", serde_json::json!({"team": "payments"})).await;
+    let tags_of = |id: i64| async move {
+        let result = execute_tool("get_config", Some(serde_json::json!({"config_id": id}))).await;
+        result_json(&result)
+            .get("tags")
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    let result = execute_tool(
+        "update_config",
+        Some(serde_json::json!({"config_id": id, "tags": {"env": "dev", "pinned": ""}})),
+    )
+    .await;
+    result_json(&result);
+    assert_eq!(
+        tags_of(id).await,
+        serde_json::json!({"env": "dev", "pinned": ""})
+    );
+
+    let result = execute_tool(
+        "update_config",
+        Some(serde_json::json!({"config_id": id, "alias": "renamed"})),
+    )
+    .await;
+    result_json(&result);
+    assert_eq!(
+        tags_of(id).await,
+        serde_json::json!({"env": "dev", "pinned": ""})
+    );
+
+    let result = execute_tool(
+        "update_config",
+        Some(serde_json::json!({"config_id": id, "tags": {}})),
+    )
+    .await;
+    result_json(&result);
+    assert_eq!(tags_of(id).await, serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn invalid_tags_are_rejected_without_saving() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("billing", "api", serde_json::json!({"team": "payments"})).await;
+
+    let created = execute_tool(
+        "create_config",
+        Some(serde_json::json!({
+            "context": "kind",
+            "namespace": "api",
+            "service": "ledger",
+            "remote_port": 80,
+            "tags": {"bad key": "x"},
+        })),
+    )
+    .await;
+    assert_eq!(created.is_error, Some(true));
+    assert!(
+        result_text(&created).contains("tag key 'bad key' may only contain"),
+        "{}",
+        result_text(&created)
+    );
+
+    let updated = execute_tool(
+        "update_config",
+        Some(serde_json::json!({"config_id": id, "tags": {"team": "a=b"}})),
+    )
+    .await;
+    assert_eq!(updated.is_error, Some(true));
+    assert!(
+        result_text(&updated).contains("cannot contain ',' or '='"),
+        "{}",
+        result_text(&updated)
+    );
+
+    assert_eq!(
+        list_services(serde_json::json!(["tag:team=payments"])).await,
+        ["billing"]
+    );
+    assert_eq!(list_services(serde_json::json!([])).await, ["billing"]);
+}
