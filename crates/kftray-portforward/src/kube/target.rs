@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use k8s_openapi::api::core::v1::{
@@ -51,23 +52,26 @@ pub async fn resolve_pod_selector(
                 .filter(|selector| !selector.is_empty())
                 .ok_or_else(|| anyhow::anyhow!("Service '{}' has no selector", service_name))?;
 
-            let mut label_selector = String::with_capacity(selector.len() * 20);
-            let mut first = true;
-            for (k, v) in selector {
-                if !first {
-                    label_selector.push(',');
-                }
-                label_selector.push_str(k);
-                label_selector.push('=');
-                label_selector.push_str(v);
-                first = false;
-            }
-
             Ok(PodSelector::Labels {
-                selector: label_selector,
+                selector: service_label_selector(selector),
             })
         }
     }
+}
+
+pub(crate) fn service_label_selector(selector: &BTreeMap<String, String>) -> String {
+    let mut label_selector = String::with_capacity(selector.len() * 20);
+    let mut first = true;
+    for (k, v) in selector {
+        if !first {
+            label_selector.push(',');
+        }
+        label_selector.push_str(k);
+        label_selector.push('=');
+        label_selector.push_str(v);
+        first = false;
+    }
+    label_selector
 }
 
 /// Resolves the port and reports the pod it was read from.

@@ -129,6 +129,8 @@ spec:
 
 The annotation format is `alias-local_port-remote_port`. Multiple configurations are separated by commas.
 
+`remote_port` can also be a Service port name. kftray forwards to that port's `targetPort` on the pod. A named `targetPort` is resolved from the container ports of the pods the Service selects. If none of those pods declares that name, the port is skipped and a warning is logged.
+
 ### Auto-Discovery via TUI
 
 To use auto-discovery interactively, navigate to the top menu in kftui and select "Auto Add". Choose your Kubernetes context from the available options, and kftui will create configurations for all annotated services in that context.

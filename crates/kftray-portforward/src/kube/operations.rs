@@ -5,8 +5,8 @@ use std::collections::{
 
 use k8s_openapi::api::core::v1::{
     Namespace,
+    Pod,
     Service,
-    ServiceSpec,
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::api::ListParams;
@@ -15,7 +15,10 @@ use kube::{
     Api,
     Client,
 };
-use log::info;
+use log::{
+    info,
+    warn,
+};
 
 use super::client::error::{
     KubeClientError,
@@ -23,6 +26,7 @@ use super::client::error::{
 };
 use super::client::get_kubeconfig_paths_from_option;
 use crate::kube::models::KubeContextInfo;
+use crate::kube::target::service_label_selector;
 
 pub type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
 
@@ -41,42 +45,80 @@ pub async fn list_all_namespaces(client: Client) -> KubeResult<Vec<String>> {
 pub async fn get_services_with_annotation(
     client: Client, namespace: &str, _: &str,
 ) -> KubeResult<Vec<ServiceInfo>> {
-    let services: Api<Service> = Api::namespaced(client, namespace);
+    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let pods: Api<Pod> = Api::namespaced(client, namespace);
     let lp = ListParams::default();
 
     let service_list = services.list(&lp).await?;
 
-    let results: Vec<ServiceInfo> = service_list
-        .into_iter()
-        .filter_map(|service| {
-            let service_name = service.metadata.name.clone()?;
-            let annotations = service.metadata.annotations.clone()?;
-            if annotations
-                .get("kftray.app/enabled")
-                .is_some_and(|v| v == "true")
-            {
-                let ports = extract_ports_from_service(&service);
-                let annotations_hashmap: HashMap<String, String> =
-                    annotations.into_iter().collect();
-                Some((service_name, annotations_hashmap, ports))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut results = Vec::new();
+    for service in service_list {
+        let Some(service_name) = service.metadata.name.clone() else {
+            continue;
+        };
+        let Some(annotations) = service.metadata.annotations.clone() else {
+            continue;
+        };
+        if !annotations
+            .get("kftray.app/enabled")
+            .is_some_and(|v| v == "true")
+        {
+            continue;
+        }
+
+        let selected_pods = list_pods_for_named_target_ports(&pods, &service).await?;
+        let ports = extract_ports_from_service(&service, &selected_pods);
+        let annotations_hashmap: HashMap<String, String> = annotations.into_iter().collect();
+        results.push((service_name, annotations_hashmap, ports));
+    }
 
     Ok(results)
 }
 
-pub fn extract_ports_from_service(service: &Service) -> HashMap<String, i32> {
+async fn list_pods_for_named_target_ports(
+    pods: &Api<Pod>, service: &Service,
+) -> KubeResult<Vec<Pod>> {
+    let Some(spec) = service.spec.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let has_named_target_port = spec
+        .ports
+        .iter()
+        .flatten()
+        .any(|port| matches!(port.target_port, Some(IntOrString::String(_))));
+    if !has_named_target_port {
+        return Ok(Vec::new());
+    }
+    let Some(selector) = spec
+        .selector
+        .as_ref()
+        .filter(|selector| !selector.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+
+    let lp = ListParams::default().labels(&service_label_selector(selector));
+    Ok(pods.list(&lp).await?.items)
+}
+
+pub fn extract_ports_from_service(service: &Service, pods: &[Pod]) -> HashMap<String, i32> {
     let mut ports = HashMap::new();
     if let Some(spec) = &service.spec {
         for port in spec.ports.as_ref().unwrap_or(&vec![]) {
-            let port_number = match port.target_port {
-                Some(IntOrString::Int(port)) => port,
-                Some(IntOrString::String(ref name)) => {
-                    resolve_named_port(spec, name).unwrap_or_default()
-                }
+            let port_number = match &port.target_port {
+                Some(IntOrString::Int(number)) => *number,
+                Some(IntOrString::String(name)) => match resolve_named_port(pods, name) {
+                    Some(number) => number,
+                    None => {
+                        warn!(
+                            "Skipping port '{}' of service '{}': no selected pod declares a \
+                             container port named '{name}'",
+                            port.name.as_deref().unwrap_or_default(),
+                            service.metadata.name.as_deref().unwrap_or_default(),
+                        );
+                        continue;
+                    }
+                },
                 None => continue,
             };
             ports.insert(
@@ -88,14 +130,14 @@ pub fn extract_ports_from_service(service: &Service) -> HashMap<String, i32> {
     ports
 }
 
-fn resolve_named_port(spec: &ServiceSpec, name: &str) -> Option<i32> {
-    spec.ports.as_ref()?.iter().find_map(|port| {
-        if port.name.as_deref() == Some(name) {
-            Some(port.port)
-        } else {
-            None
-        }
-    })
+fn resolve_named_port(pods: &[Pod], name: &str) -> Option<i32> {
+    pods.iter()
+        .filter_map(|pod| pod.spec.as_ref())
+        .flat_map(|spec| &spec.containers)
+        .filter_map(|container| container.ports.as_ref())
+        .flatten()
+        .find(|port| port.name.as_deref() == Some(name))
+        .map(|port| port.container_port)
 }
 
 pub fn list_contexts(kubeconfig: &Kubeconfig) -> Vec<String> {
@@ -188,6 +230,12 @@ mod tests {
                     ..Default::default()
                 },
                 k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("unresolved".to_string()),
+                    port: 9001,
+                    target_port: Some(IntOrString::String("named-port".to_string())),
+                    ..Default::default()
+                },
+                k8s_openapi::api::core::v1::ServicePort {
                     name: None,
                     port: 9090,
                     target_port: Some(IntOrString::Int(9090)),
@@ -205,57 +253,52 @@ mod tests {
 
         service.spec = Some(spec.clone());
 
-        let ports = extract_ports_from_service(&service);
+        let pods = vec![
+            k8s_openapi::api::core::v1::Pod {
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "sidecar".to_string(),
+                        ports: None,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            k8s_openapi::api::core::v1::Pod {
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "app".to_string(),
+                        ports: Some(vec![k8s_openapi::api::core::v1::ContainerPort {
+                            name: Some("web".to_string()),
+                            container_port: 3000,
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ];
+
+        let ports = extract_ports_from_service(&service, &pods);
 
         assert_eq!(ports.len(), 4);
         assert_eq!(ports.get("http"), Some(&8080));
         assert_eq!(ports.get("https"), Some(&8443));
-        assert_eq!(ports.get("named-port"), Some(&0));
+        assert_eq!(ports.get("named-port"), Some(&3000));
+        assert_eq!(ports.get("unresolved"), None);
         assert_eq!(ports.get("9090"), Some(&9090));
         assert_eq!(ports.get("no-target"), None);
 
+        let ports = extract_ports_from_service(&service, &[]);
+        assert_eq!(ports.get("named-port"), None);
+        assert_eq!(ports.get("http"), Some(&8080));
+
         service.spec = None;
-        let ports = extract_ports_from_service(&service);
+        let ports = extract_ports_from_service(&service, &pods);
         assert!(ports.is_empty());
-    }
-
-    #[test]
-    fn test_resolve_named_port() {
-        let spec = k8s_openapi::api::core::v1::ServiceSpec {
-            ports: Some(vec![
-                k8s_openapi::api::core::v1::ServicePort {
-                    name: Some("http".to_string()),
-                    port: 80,
-                    ..Default::default()
-                },
-                k8s_openapi::api::core::v1::ServicePort {
-                    name: Some("https".to_string()),
-                    port: 443,
-                    ..Default::default()
-                },
-            ]),
-            ..Default::default()
-        };
-
-        assert_eq!(resolve_named_port(&spec, "http"), Some(80));
-        assert_eq!(resolve_named_port(&spec, "https"), Some(443));
-        assert_eq!(resolve_named_port(&spec, "nonexistent"), None);
-
-        let empty_spec = k8s_openapi::api::core::v1::ServiceSpec {
-            ports: None,
-            ..Default::default()
-        };
-        assert_eq!(resolve_named_port(&empty_spec, "http"), None);
-
-        let spec_no_names = k8s_openapi::api::core::v1::ServiceSpec {
-            ports: Some(vec![k8s_openapi::api::core::v1::ServicePort {
-                name: None,
-                port: 80,
-                ..Default::default()
-            }]),
-            ..Default::default()
-        };
-        assert_eq!(resolve_named_port(&spec_no_names, "http"), None);
     }
 
     #[test]
@@ -280,9 +323,132 @@ mod tests {
             ..Default::default()
         });
 
-        let ports = extract_ports_from_service(&service);
+        let ports = extract_ports_from_service(&service, &[]);
         assert_eq!(ports.len(), 1);
         assert_eq!(ports.get("http"), Some(&8080));
+    }
+
+    #[tokio::test]
+    async fn test_get_services_with_annotation_resolves_named_target_port_from_pods() {
+        use http::{
+            Request,
+            Response,
+        };
+        use k8s_openapi::api::core::v1::{
+            Container,
+            ContainerPort,
+            Pod,
+            PodSpec,
+            ServicePort,
+            ServiceSpec,
+        };
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+        use k8s_openapi::{
+            List,
+            ListableResource,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        fn list_body<K: ListableResource + serde::Serialize>(items: Vec<K>) -> Body {
+            let list = List::<K> {
+                items,
+                metadata: Default::default(),
+            };
+            Body::from(serde_json::to_vec(&list).unwrap())
+        }
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = Client::new(mock_service, "default");
+
+        let server = tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert!(request.uri().path().ends_with("/namespaces/apps/services"));
+
+            let service = Service {
+                metadata: ObjectMeta {
+                    name: Some("web".to_string()),
+                    namespace: Some("apps".to_string()),
+                    annotations: Some(
+                        [("kftray.app/enabled".to_string(), "true".to_string())].into(),
+                    ),
+                    ..Default::default()
+                },
+                spec: Some(ServiceSpec {
+                    selector: Some([("app".to_string(), "web".to_string())].into()),
+                    ports: Some(vec![
+                        ServicePort {
+                            name: Some("http".to_string()),
+                            port: 80,
+                            target_port: Some(IntOrString::String("http".to_string())),
+                            ..Default::default()
+                        },
+                        ServicePort {
+                            name: Some("metrics".to_string()),
+                            port: 9100,
+                            target_port: Some(IntOrString::String("metrics".to_string())),
+                            ..Default::default()
+                        },
+                    ]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(list_body(vec![service]))
+                    .unwrap(),
+            );
+
+            let (request, send) = handle.next_request().await.unwrap();
+            assert!(request.uri().path().ends_with("/namespaces/apps/pods"));
+            assert!(
+                request
+                    .uri()
+                    .query()
+                    .is_some_and(|query| query.contains("labelSelector=app%3Dweb")),
+                "{:?}",
+                request.uri().query()
+            );
+
+            let pod = Pod {
+                metadata: ObjectMeta {
+                    name: Some("web-0".to_string()),
+                    ..Default::default()
+                },
+                spec: Some(PodSpec {
+                    containers: vec![Container {
+                        name: "web".to_string(),
+                        ports: Some(vec![ContainerPort {
+                            name: Some("http".to_string()),
+                            container_port: 8080,
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(list_body(vec![pod]))
+                    .unwrap(),
+            );
+        });
+
+        let services = get_services_with_annotation(client, "apps", "kftray.app/configs")
+            .await
+            .unwrap();
+
+        assert_eq!(services.len(), 1);
+        let (name, _, ports) = &services[0];
+        assert_eq!(name, "web");
+        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("metrics"), None);
+        server.await.unwrap();
     }
 
     #[test]
