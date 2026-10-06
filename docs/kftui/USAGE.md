@@ -84,7 +84,7 @@ echo '[{"alias":"api",...}]' | kftui --stdin
 ### Command-Line Options
 
 **`--save`**: Store configurations in the database for future use
-**`--flush`**: Clear existing configurations before importing new ones
+**`--flush`**: Replace existing configurations with the imported ones. Nothing is cleared if the source can't be read or a config is invalid
 **`--auto-start`**: Start all port-forwards immediately after loading
 **`--non-interactive`**: Run without the interface for automation scripts
 **`--auto-discover`**: Discover services from Kubernetes annotations (requires `--context`)

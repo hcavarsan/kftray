@@ -1,7 +1,8 @@
 use std::fs;
 
+use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::{
-    import_configs_with_mode,
+    parse_import_configs,
     upsert_configs_with_mode,
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
@@ -21,20 +22,27 @@ pub struct ConfigImporter;
 
 impl ConfigImporter {
     pub async fn import_configs(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
-        Self::handle_flush_if_needed(cli, mode).await?;
         Self::print_import_start_message(cli, mode);
 
-        let result = Self::import_from_source(cli, mode).await;
+        let configs = Self::load_from_source(cli).await?;
 
-        if result.is_ok() {
-            Self::print_import_success_message(cli, mode);
-        }
+        Self::handle_flush_if_needed(cli, mode).await?;
 
-        result
+        upsert_configs_with_mode(configs, mode)
+            .await
+            .map_err(|e| format!("Failed to save configs to database: {e}"))?;
+
+        Self::print_import_success_message(cli, mode);
+
+        Ok(())
     }
 
     async fn handle_flush_if_needed(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
         if cli.flush && mode == DatabaseMode::File {
+            if cli.non_interactive {
+                println!("Clearing existing configurations");
+            }
+
             if let Err(e) =
                 kftray_commons::utils::github::clear_existing_configs_with_mode(mode).await
             {
@@ -51,10 +59,6 @@ impl ConfigImporter {
     fn print_import_start_message(cli: &Cli, mode: DatabaseMode) {
         if !cli.non_interactive {
             return;
-        }
-
-        if cli.flush {
-            println!("Clearing existing configurations");
         }
 
         let (mode_text, location_text) = Self::get_mode_text(mode);
@@ -127,23 +131,24 @@ impl ConfigImporter {
         }
     }
 
-    async fn import_from_source(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+    async fn load_from_source(cli: &Cli) -> Result<Vec<Config>, String> {
         if cli.auto_discover {
-            Self::import_from_annotations(cli, mode).await
+            Self::load_from_annotations(cli).await
         } else if cli.is_github_import() {
-            Self::import_from_github(cli, mode).await
+            Self::load_from_github(cli)
         } else if let Some(config_path) = cli.get_config_path() {
-            Self::import_from_file(config_path, mode).await
+            Self::load_from_file(config_path)
         } else if let Some(json_content) = cli.get_json() {
-            Self::import_from_json(json_content, mode).await
+            parse_import_configs(json_content)
+                .map_err(|e| format!("Failed to import configs from JSON: {e}"))
         } else if cli.stdin {
-            Self::import_from_stdin(mode).await
+            Self::load_from_stdin()
         } else {
             Err("No config source specified".to_string())
         }
     }
 
-    async fn import_from_annotations(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+    async fn load_from_annotations(cli: &Cli) -> Result<Vec<Config>, String> {
         let context = cli.context.as_deref().unwrap();
 
         if cli.non_interactive {
@@ -161,16 +166,10 @@ impl ConfigImporter {
             config.auto_loopback_address = cli.auto_loopback;
         }
 
-        let _count = configs.len();
-
-        upsert_configs_with_mode(configs, mode)
-            .await
-            .map_err(|e| format!("Failed to save discovered configs to database: {e}"))?;
-
-        Ok(())
+        Ok(configs)
     }
 
-    async fn import_from_github(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+    fn load_from_github(cli: &Cli) -> Result<Vec<Config>, String> {
         let github_url = cli.get_github_url().unwrap();
         let config_paths = cli
             .get_configs_path_with_default()
@@ -188,34 +187,26 @@ impl ConfigImporter {
             flush_existing: false,
         };
 
-        GitHubRepository::import_configs(github_config, mode)
-            .await
+        GitHubRepository::fetch_config_content(&github_config)
+            .and_then(|content| parse_import_configs(&content))
             .map_err(|e| {
                 format!("Failed to import configs from GitHub repository '{github_url}': {e}")
             })
     }
 
-    async fn import_from_file(config_path: &str, mode: DatabaseMode) -> Result<(), String> {
+    fn load_from_file(config_path: &str) -> Result<Vec<Config>, String> {
         let json_content = fs::read_to_string(config_path)
             .map_err(|e| format!("Failed to read config file '{config_path}': {e}"))?;
 
-        import_configs_with_mode(json_content, mode)
-            .await
+        parse_import_configs(&json_content)
             .map_err(|e| format!("Failed to import configs from file '{config_path}': {e}"))
     }
 
-    async fn import_from_json(json_content: &str, mode: DatabaseMode) -> Result<(), String> {
-        import_configs_with_mode(json_content.to_string(), mode)
-            .await
-            .map_err(|e| format!("Failed to import configs from JSON: {e}"))
-    }
-
-    async fn import_from_stdin(mode: DatabaseMode) -> Result<(), String> {
+    fn load_from_stdin() -> Result<Vec<Config>, String> {
         let stdin_content =
             stdin::read_stdin_content().map_err(|e| format!("Failed to read from stdin: {e}"))?;
 
-        import_configs_with_mode(stdin_content, mode)
-            .await
+        parse_import_configs(&stdin_content)
             .map_err(|e| format!("Failed to import configs from stdin: {e}"))
     }
 }
