@@ -20,7 +20,7 @@
 
 - Fork the repository and create your branch from `main`.
 - If you've added code that should be tested, add some tests.
-- Ensure your code is formatted and linted (pre-commit hook handles this automatically).
+- Ensure your code is formatted and linted with `mise run format` and `mise run lint`.
 - Write clear, descriptive commit messages.
 - Open a new pull request with a clear title and description.
 - Once approved and green, a maintainer adds the `ready-to-merge` label. Mergify then tests the change against the latest `main` and squash merges it; there is no need to rebase your branch unless it conflicts.
@@ -40,7 +40,7 @@ KFtray uses [mise](https://mise.jdx.dev) to manage the development environment. 
    ```bash
    git clone https://github.com/hcavarsan/kftray.git
    cd kftray
-   mise install        # Install all required tools
+   mise install        # Install Node.js, pnpm, syft and grype
    mise run setup      # Setup system dependencies
    ```
 
@@ -50,7 +50,7 @@ KFtray uses [mise](https://mise.jdx.dev) to manage the development environment. 
    mise run dev        # Launch development mode
    ```
 
-The project has an automatic Git pre-commit hook that runs formatting and linting on every commit. Your code will be automatically formatted and checked before committing.
+mise doesn't install Rust. Install the stable toolchain with [rustup](https://rustup.rs). See [Building from Source](docs/kftray/BUILD.md) for the nightly `rustfmt` and the cargo test tools.
 
 ### Available Development Commands
 
@@ -59,7 +59,7 @@ The project has an automatic Git pre-commit hook that runs formatting and lintin
 - `mise run format` - Format all code
 - `mise run lint` - Lint with auto-fix
 - `mise run test:back` - Run backend tests
-- `mise run precommit` - Run all checks (format, lint, test)
+- `mise run precommit` - Run all checks (format, lint, SBOM scan, test)
 
 Run `mise tasks` to see all available commands.
 

@@ -29,13 +29,28 @@ After installation, restart your terminal or run:
 source ~/.bashrc  # or ~/.zshrc
 ```
 
-That's it! mise will handle installing:
+mise installs the tools pinned in `.mise.toml`:
 
 - Node.js 26
 - pnpm 12
-- Rust stable (nightly only for `cargo fmt`)
-- Cargo tools (cargo-llvm-cov, cargo-nextest, cargo-insta, tauri-cli)
-- System dependencies (via `mise run setup`)
+- syft and grype (for the `sbom:*` tasks)
+
+`mise run setup` installs the system dependencies and the pnpm packages, including the Tauri CLI.
+
+### Required: Rust
+
+mise doesn't install Rust. Install it with [rustup](https://rustup.rs), along with the nightly `rustfmt` that `mise run format:back` uses:
+
+```bash
+rustup toolchain install stable
+rustup toolchain install nightly --profile minimal --component rustfmt
+```
+
+`mise run test:back` also needs `cargo-llvm-cov` and `cargo-nextest`:
+
+```bash
+cargo install --locked cargo-llvm-cov cargo-nextest
+```
 
 ## Quick Start
 
@@ -59,7 +74,7 @@ mise run dev
 ### 1. First Time Setup
 
 ```bash
-# Install mise-managed tools (Node, Rust, pnpm, etc.)
+# Install mise-managed tools (Node, pnpm, syft, grype)
 mise install
 
 # Install system dependencies (webkit, build tools, etc.)
@@ -117,7 +132,6 @@ Run `mise tasks` to see all available tasks. Here are the most commonly used:
 | `mise run lint` | Lint with auto-fix (Biome + Clippy) |
 | `mise run lint:front` | Lint frontend with auto-fix |
 | `mise run lint:back` | Lint backend with auto-fix |
-| `mise run lint:back:check` | Lint backend without auto-fix (CI mode) |
 | `mise run check` | TypeScript type checking |
 
 ### Testing
@@ -131,8 +145,8 @@ Run `mise tasks` to see all available tasks. Here are the most commonly used:
 
 | Task | Description |
 |------|-------------|
-| `mise run precommit` | Run format, lint, and tests |
-| `mise run precommit:hook` | Git hook version (format + lint + stage changes) |
+| `mise run precommit` | Run format, lint, SBOM scan and backend tests |
+| `mise run precommit:hook` | Format, run `cargo check` and stage tracked changes |
 
 ### Utilities
 
@@ -149,8 +163,6 @@ Run `mise tasks` to see all available tasks. Here are the most commonly used:
 | `mise run bump:patch` | Bump patch version (0.0.x) |
 | `mise run bump:minor` | Bump minor version (0.x.0) |
 | `mise run bump:major` | Bump major version (x.0.0) |
-| `mise run release:patch` | Bump patch and create release commit |
-| `mise run release:minor` | Bump minor and create release commit |
 
 ## Project Structure
 
@@ -176,13 +188,13 @@ kftray/
 
 ### Pre-commit Hook
 
-The repository has an automatic pre-commit hook that:
+The repository doesn't install a Git hook. `mise run precommit:hook` is meant to be used as one. It:
 
 1. Formats all code (Biome + rustfmt)
-2. Lints with auto-fix (Biome + Clippy)
-3. Stages the fixed files automatically
+2. Runs `cargo check` on the workspace
+3. Stages every modified tracked file with `git add -u`
 
-When you run `git commit`, the hook runs automatically. Your code will be formatted and linted before the commit is created.
+Run it before you commit, or call it from your own `.git/hooks/pre-commit`.
 
 To bypass the hook (not recommended):
 
@@ -195,7 +207,7 @@ git commit --no-verify
 1. Fork and clone the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Commit (pre-commit hook runs automatically)
+4. Run `mise run format` and `mise run lint`, then commit
 5. Push and create a pull request
 
 The CI will run:
@@ -274,7 +286,7 @@ taskkill /PID <PID> /F
 
 ### Pre-commit hook failing
 
-The hook runs format and lint automatically. If it fails:
+If you call `mise run precommit:hook` from your own Git hook, it runs `mise run format` and `cargo check`. If it fails:
 
 1. Check the error message
 2. Fix the issue manually
@@ -297,9 +309,9 @@ Ensure you have:
 
 Run `mise run setup` to see detailed instructions.
 
-### Node/pnpm/Rust version issues
+### Node/pnpm version issues
 
-mise manages all tool versions. If you're having version issues:
+mise manages the Node and pnpm versions. If you're having version issues:
 
 ```bash
 # Check installed versions

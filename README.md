@@ -273,7 +273,7 @@ Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the 
 
 ## Security and SBOM
 
-Releases are blocked if critical or high severity vulnerabilities are found. The CI scans frontend, backend, Docker image, and GitHub Actions using [Grype](https://github.com/anchore/grype) before publishing. You can run the same scan locally with `mise run sbom:scan`.
+Releases are blocked if critical or high severity vulnerabilities are found. The CI scans frontend, backend, Docker image, and GitHub Actions using [Grype](https://github.com/anchore/grype) before publishing. You can run the same scan locally with `mise run sbom:scan-all`.
 
 SBOMs are generated with [Syft](https://github.com/anchore/syft) in CycloneDX format for each artifact. Links below point to the latest release:
 
@@ -331,7 +331,7 @@ curl https://mise.run | sh
 # Clone and setup
 git clone https://github.com/hcavarsan/kftray.git
 cd kftray
-mise install        # Install all tools
+mise install        # Install Node.js, pnpm, syft and grype
 mise run setup      # Setup dependencies
 mise run dev        # Start development
 ```
@@ -344,7 +344,7 @@ mise run dev        # Start development
 - `mise run lint` - Lint with auto-fix
 - `mise run test:back` - Run tests
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete development guide.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete development guide, including the Rust toolchain mise doesn't install.
 
 ## Contributing
 

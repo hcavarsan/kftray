@@ -6,7 +6,7 @@
 
 ### Requirements
 
-The project uses mise to manage all tools and dependencies. You only need to install:
+The project uses mise to manage Node.js and pnpm and to run tasks. You need to install:
 
 1. **[mise](https://mise.jdx.dev)** - Development environment manager
 
@@ -14,14 +14,26 @@ The project uses mise to manage all tools and dependencies. You only need to ins
    curl https://mise.run | sh
    ```
 
-That's it! mise will handle installing and managing:
+2. **[Rust](https://rustup.rs)** - stable, plus nightly `rustfmt` for `mise run format:back`
+
+   ```bash
+   rustup toolchain install stable
+   rustup toolchain install nightly --profile minimal --component rustfmt
+   ```
+
+3. **cargo-llvm-cov and cargo-nextest** - only for `mise run test:back`
+
+   ```bash
+   cargo install --locked cargo-llvm-cov cargo-nextest
+   ```
+
+`mise install` sets up:
 
 - Node.js 26
 - pnpm 12
-- Rust stable (nightly only for `cargo fmt`)
-- Cargo tools (cargo-llvm-cov, cargo-nextest, cargo-insta)
-- Tauri CLI
-- All system dependencies
+- syft and grype (for the `sbom:*` tasks)
+
+`mise run setup` installs the system dependencies and the pnpm packages, including the Tauri CLI.
 
 ### Quick Start
 
@@ -72,8 +84,8 @@ Run `mise tasks` to see all available tasks:
 
 **Pre-commit:**
 
-- `mise run precommit` - Run format, lint, and tests
-- `mise run precommit:hook` - Git pre-commit hook (auto-staged)
+- `mise run precommit` - Run format, lint, SBOM scan and backend tests
+- `mise run precommit:hook` - Format, run `cargo check` and stage tracked changes
 
 **Utilities:**
 
