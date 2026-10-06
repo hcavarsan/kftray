@@ -85,7 +85,7 @@ jobs:
           - distro: opensuse/tumbleweed
             image: opensuse/tumbleweed:latest@sha256:d531cce8158ef9485bcd9defb061cca27b772d796343ab1d66583de6adc38f11
           - distro: opensuse/leap:16.0
-            image: opensuse/leap:16.1@sha256:b4baa5259d4dde9704c45f29c7cd318e64ab309c9b9d675361f018f2b5009c3e
+            image: opensuse/leap:42.3@sha256:271c921a1c84d65467d565e3f1c754b75aa01ceed1a7ac39de4816683c355fd2
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
     timeout-minutes: 20
