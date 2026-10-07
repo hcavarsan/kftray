@@ -81,6 +81,11 @@ describe('PRIVILEGE_ERROR', () => {
     ).toBe(true)
     expect(
       PRIVILEGE_ERROR.test(
+        'Failed to write to the hostfile for svc: Access is denied. (os error 5). Domain alias feature requires hostfile access.',
+      ),
+    ).toBe(true)
+    expect(
+      PRIVILEGE_ERROR.test(
         'Custom loopback address configuration cancelled: User cancelled loopback address configuration',
       ),
     ).toBe(true)

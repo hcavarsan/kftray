@@ -11,45 +11,23 @@ import {
   PRIVILEGE_PROMPT_SETTING,
   type PrivilegeDecision,
 } from './privilegeGate'
+import {
+  createPrivilegePromptQueue,
+  type PrivilegePrompt,
+  type PrivilegePromptQueue,
+} from './privilegePromptQueue'
 
 const SUPPRESSED_KEY = ['setting', PRIVILEGE_PROMPT_SETTING]
-
-export interface PrivilegePrompt {
-  needs: PrivilegeNeed[]
-  /** Set when a start already failed for lack of privileges. */
-  error: string | null
-  resolve: (decision: PrivilegeDecision) => void
-}
 
 export function usePrivilegeGate() {
   const queryClient = useQueryClient()
   const [prompt, setPrompt] = useState<PrivilegePrompt | null>(null)
-  // Prompts are shown one at a time: a second start reaching the gate while
-  // a dialog is open waits for that dialog to close, then gets its own.
-  // Replacing the visible prompt would drop the first start's resolver and
-  // leave it waiting forever. `activeRef` mirrors `prompt` so the decision
-  // is made outside a state updater, which must stay pure.
-  const activeRef = useRef<PrivilegePrompt | null>(null)
-  const queueRef = useRef<PrivilegePrompt[]>([])
+  const queueRef = useRef<PrivilegePromptQueue>(null)
 
-  const show = useCallback((next: PrivilegePrompt | null) => {
-    activeRef.current = next
-    setPrompt(next)
-  }, [])
-
-  const ask = useCallback(
-    (needs: PrivilegeNeed[], error: string | null) =>
-      new Promise<PrivilegeDecision>(resolve => {
-        const next = { needs, error, resolve }
-
-        if (activeRef.current) {
-          queueRef.current.push(next)
-        } else {
-          show(next)
-        }
-      }),
-    [show],
-  )
+  if (queueRef.current === null) {
+    queueRef.current = createPrivilegePromptQueue(setPrompt)
+  }
+  const queue = queueRef.current
 
   const isSuppressed = useCallback(
     () =>
@@ -68,8 +46,11 @@ export function usePrivilegeGate() {
 
   const ensurePrivileges = useCallback(
     (configs: StoredConfig[]) =>
-      gateStart(configs, { isSuppressed, prompt: needs => ask(needs, null) }),
-    [ask, isSuppressed],
+      gateStart(configs, {
+        isSuppressed,
+        prompt: needs => queue.ask(needs, null),
+      }),
+    [queue, isSuppressed],
   )
 
   /**
@@ -83,17 +64,14 @@ export function usePrivilegeGate() {
         configs,
       }).catch(() => [])
 
-      return ask(needs, error)
+      return queue.ask(needs, error)
     },
-    [ask],
+    [queue],
   )
 
   const resolvePrompt = useCallback(
-    (decision: PrivilegeDecision) => {
-      activeRef.current?.resolve(decision)
-      show(queueRef.current.shift() ?? null)
-    },
-    [show],
+    (decision: PrivilegeDecision) => queue.resolve(decision),
+    [queue],
   )
 
   const suppressPrompt = useCallback(async () => {
@@ -102,7 +80,8 @@ export function usePrivilegeGate() {
       value: 'never',
     })
     queryClient.setQueryData(SUPPRESSED_KEY, true)
-  }, [queryClient])
+    queue.drain()
+  }, [queryClient, queue])
 
   return {
     prompt,
