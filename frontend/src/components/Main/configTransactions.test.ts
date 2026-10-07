@@ -241,4 +241,33 @@ describe('saveConfigTransaction', () => {
 
     expect(update([running])).toEqual([{ ...saved, is_running: true }])
   })
+
+  it.each([
+    ['running', true],
+    ['stopped', false],
+  ])(
+    'reports a %s config as saved when reading it back fails',
+    async (_state, isRunning) => {
+      const original = makeConfig(1, isRunning)
+      const { deps, runForwardCommand } = setup([original])
+
+      vi.mocked(invoke).mockImplementation(async command => {
+        if (command === 'get_config_cmd') {
+          throw new Error('database is locked')
+        }
+      })
+
+      await expect(
+        saveConfigTransaction(deps, { ...original, local_port: 9999 }, true),
+      ).resolves.toBe(true)
+
+      expect(
+        runForwardCommand.mock.calls.filter(
+          ([, action]) => action === 'starting',
+        ),
+      ).toEqual([])
+      expect(toaster.error).not.toHaveBeenCalled()
+      expect(toaster.warning).toHaveBeenCalledTimes(1)
+    },
+  )
 })
