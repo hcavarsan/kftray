@@ -3540,6 +3540,7 @@ dependencies = [
 name = "kftray-network-monitor"
 version = "0.29.6"
 dependencies = [
+ "anyhow",
  "futures",
  "kftray-commons",
  "kftray-portforward",
