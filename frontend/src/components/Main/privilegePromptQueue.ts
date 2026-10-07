@@ -41,7 +41,12 @@ export function createPrivilegePromptQueue(
 
   return {
     ask: (needs, error) => {
-      const { promise, resolve } = Promise.withResolvers<PrivilegeDecision>()
+      // Constructor form on purpose: the WebView targets (`safari13`,
+      // `chrome105` in vite.config.ts) have no `Promise.withResolvers`.
+      let resolve!: (decision: PrivilegeDecision) => void
+      const promise = new Promise<PrivilegeDecision>(settle => {
+        resolve = settle
+      })
       const next = { needs, error, resolve }
 
       if (active) {
