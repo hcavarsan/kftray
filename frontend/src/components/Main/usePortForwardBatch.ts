@@ -23,6 +23,7 @@ interface PortForwardBatch {
     candidates: Config[],
     action: PortForwardToggleAction,
     successMessage?: string,
+    privilegeRetry?: boolean,
   ) => Promise<void>
 }
 
@@ -94,6 +95,7 @@ export function usePortForwardBatch({
       candidates: Config[],
       action: PortForwardToggleAction,
       successMessage?: string,
+      privilegeRetry = false,
     ) =>
       executeBatch(
         {
@@ -117,6 +119,7 @@ export function usePortForwardBatch({
         candidates,
         action,
         successMessage,
+        privilegeRetry,
       ),
     [
       pendingConfigActionsRef,

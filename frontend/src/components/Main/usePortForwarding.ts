@@ -38,10 +38,12 @@ export function usePortForwarding() {
     pending,
     runForwardCommand,
     refreshConfigs,
+    // The retry batch reports a second refusal as a plain failure instead
+    // of asking again.
     onPrivilegeRefused: (failed, message) =>
-      askAfterRefusal(failed, message).then(decision => {
+      void askAfterRefusal(failed, message).then(decision => {
         if (decision !== 'cancel') {
-          void runPortForwardBatch(failed, 'starting')
+          void runPortForwardBatch(failed, 'starting', undefined, true)
         }
       }),
   })
@@ -78,7 +80,8 @@ export function usePortForwarding() {
       // A start refused for lack of privileges is offered once more after
       // the user has had the chance to install the helper or accept the
       // prompts. The row is released between the two attempts so the retry
-      // can reserve it again.
+      // can reserve it again. A second refusal is reported as a plain
+      // failure.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const token = markPending(config.id, action)
         let refused: string | null = null
@@ -89,7 +92,11 @@ export function usePortForwarding() {
           await refreshConfigs()
           const message = errorMessage(error)
 
-          if (action === 'starting' && PRIVILEGE_ERROR.test(message)) {
+          if (
+            action === 'starting' &&
+            attempt === 0 &&
+            PRIVILEGE_ERROR.test(message)
+          ) {
             refused = message
           } else {
             toaster.error({
@@ -107,7 +114,6 @@ export function usePortForwarding() {
         }
         if (
           refused === null ||
-          attempt === 1 ||
           (await askAfterRefusal([config], refused)) === 'cancel'
         ) {
           return

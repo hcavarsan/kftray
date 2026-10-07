@@ -76,14 +76,32 @@ describe('PRIVILEGE_ERROR', () => {
   it('matches the backend messages for refused local changes', () => {
     expect(
       PRIVILEGE_ERROR.test(
-        'Failed to write to the hostfile for svc: Permission denied (os error 13)',
+        'Failed to write to the hostfile for svc: Permission denied (os error 13). Domain alias feature requires hostfile access.',
       ),
     ).toBe(true)
     expect(
       PRIVILEGE_ERROR.test(
-        'Custom loopback address configuration cancelled: User cancelled',
+        'Custom loopback address configuration cancelled: User cancelled loopback address configuration',
       ),
     ).toBe(true)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Address allocation cancelled by user: Failed to configure loopback address: User canceled',
+      ),
+    ).toBe(true)
+  })
+
+  it('leaves other permission and network failures alone', () => {
     expect(PRIVILEGE_ERROR.test('pod not found')).toBe(false)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Failed to load kubeconfig: Permission denied (os error 13)',
+      ),
+    ).toBe(false)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Failed to bind listener on loopback address 127.0.0.1:8080',
+      ),
+    ).toBe(false)
   })
 })

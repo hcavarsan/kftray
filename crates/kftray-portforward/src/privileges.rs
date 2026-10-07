@@ -41,12 +41,22 @@ pub struct PrivilegeNeed {
 /// when the helper answers, the process is root, or nothing privileged is
 /// asked for.
 pub async fn preflight(configs: &[Config]) -> Vec<PrivilegeNeed> {
-    if helper_is_running() || process_is_root() {
+    // The helper ping and the hosts probe are synchronous file and socket
+    // I/O; on Windows the ping also builds its own runtime, which panics
+    // when driven from inside this one.
+    let probed = tokio::task::spawn_blocking(|| {
+        if helper_is_running() || process_is_root() {
+            return None;
+        }
+        // A missing or unsupported hosts path is a write error in its own
+        // terms, not a privilege problem, so it must not trigger a prompt.
+        Some(hosts_file_writable().unwrap_or(true))
+    })
+    .await
+    .unwrap_or(None);
+    let Some(hosts_writable) = probed else {
         return Vec::new();
-    }
-    // A missing or unsupported hosts path is a write error in its own terms,
-    // not a privilege problem, so it must not trigger a privilege prompt.
-    let hosts_writable = hosts_file_writable().unwrap_or(true);
+    };
     let mut needs = Vec::new();
     for config in configs {
         let Some(config_id) = config.id else {

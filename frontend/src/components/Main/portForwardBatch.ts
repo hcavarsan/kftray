@@ -52,6 +52,7 @@ export async function executeBatch(
   candidates: Config[],
   action: PortForwardToggleAction,
   successMessage?: string,
+  privilegeRetry = false,
 ) {
   const { pendingConfigActionsRef, nextToken, publishPending, clearPending } =
     pending
@@ -126,10 +127,11 @@ export async function executeBatch(
   /**
    * Refusals are taken out of the failures before they are reported: the
    * user is about to be asked about them, so the toast covers only what
-   * failed for another reason.
+   * failed for another reason. A batch that is itself the retry after a
+   * refusal keeps them: a second refusal is reported like any failure.
    */
   const splitRefusals = () => {
-    if (action !== 'starting' || !onPrivilegeRefused) {
+    if (action !== 'starting' || !onPrivilegeRefused || privilegeRetry) {
       return null
     }
     const refused = failures.filter(({ error }) =>

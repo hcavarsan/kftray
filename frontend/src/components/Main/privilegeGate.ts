@@ -7,9 +7,15 @@ export type PrivilegeDecision = 'install' | 'continue' | 'cancel'
 
 export const PRIVILEGE_PROMPT_SETTING = 'privilege_prompt'
 
-/** A start failure caused by a privileged local change being refused. */
+/**
+ * A start failure caused by a privileged local change being refused. The
+ * alternatives are the exact messages `kube::start` and `network_utils`
+ * produce for a hosts write the process may not make and for an elevation
+ * prompt the user dismissed; a permission error from anywhere else (a
+ * kubeconfig, a credential) is a different failure and reports as such.
+ */
 export const PRIVILEGE_ERROR =
-  /hostfile|hosts file|loopback address|permission denied/i
+  /Failed to write to the hostfile for |Failed to add HTTPS hosts entries: .*Permission denied|loopback address configuration cancelled|Address allocation cancelled by user|Network config failed: .*loopback address/
 
 export interface PrivilegeGateDeps {
   prompt: (needs: PrivilegeNeed[]) => Promise<PrivilegeDecision>

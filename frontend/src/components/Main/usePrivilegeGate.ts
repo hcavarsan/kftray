@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -24,13 +24,31 @@ export interface PrivilegePrompt {
 export function usePrivilegeGate() {
   const queryClient = useQueryClient()
   const [prompt, setPrompt] = useState<PrivilegePrompt | null>(null)
+  // Prompts are shown one at a time: a second start reaching the gate while
+  // a dialog is open waits for that dialog to close, then gets its own.
+  // Replacing the visible prompt would drop the first start's resolver and
+  // leave it waiting forever. `activeRef` mirrors `prompt` so the decision
+  // is made outside a state updater, which must stay pure.
+  const activeRef = useRef<PrivilegePrompt | null>(null)
+  const queueRef = useRef<PrivilegePrompt[]>([])
+
+  const show = useCallback((next: PrivilegePrompt | null) => {
+    activeRef.current = next
+    setPrompt(next)
+  }, [])
 
   const ask = useCallback(
     (needs: PrivilegeNeed[], error: string | null) =>
       new Promise<PrivilegeDecision>(resolve => {
-        setPrompt({ needs, error, resolve })
+        const next = { needs, error, resolve }
+
+        if (activeRef.current) {
+          queueRef.current.push(next)
+        } else {
+          show(next)
+        }
       }),
-    [],
+    [show],
   )
 
   const isSuppressed = useCallback(
@@ -70,13 +88,13 @@ export function usePrivilegeGate() {
     [ask],
   )
 
-  const resolvePrompt = useCallback((decision: PrivilegeDecision) => {
-    setPrompt(current => {
-      current?.resolve(decision)
-
-      return null
-    })
-  }, [])
+  const resolvePrompt = useCallback(
+    (decision: PrivilegeDecision) => {
+      activeRef.current?.resolve(decision)
+      show(queueRef.current.shift() ?? null)
+    },
+    [show],
+  )
 
   const suppressPrompt = useCallback(async () => {
     await invoke('set_setting_value', {
