@@ -91,11 +91,22 @@ describe('PRIVILEGE_ERROR', () => {
     ).toBe(true)
   })
 
-  it('leaves other permission and network failures alone', () => {
+  it('leaves other permission, hosts and network failures alone', () => {
     expect(PRIVILEGE_ERROR.test('pod not found')).toBe(false)
     expect(
       PRIVILEGE_ERROR.test(
         'Failed to load kubeconfig: Permission denied (os error 13)',
+      ),
+    ).toBe(false)
+    // A hosts write refused for the alias itself; elevation would not help.
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Failed to write to the hostfile for svc: Invalid data: Invalid hostname "bad alias". Domain alias feature requires hostfile access.',
+      ),
+    ).toBe(false)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Failed to add HTTPS hosts entries: IO error: No space left on device',
       ),
     ).toBe(false)
     expect(
