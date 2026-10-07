@@ -486,6 +486,19 @@ mod tests {
         id
     }
 
+    async fn wait_for_state(state: &Mutex<TaskState>, done: impl Fn(&TaskState) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if done(&*state.lock().await) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     #[tokio::test]
     async fn fast_check_after_network_drop_lets_later_health_checks_start() {
         let _db = test_db().await;
@@ -520,25 +533,17 @@ mod tests {
             let monitor = monitor.clone();
             async move { monitor.run_main_loop().await }
         });
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let saw_network_up = wait_for_state(&state, |s| s.last_network_state).await;
         drop(probe);
-
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let finished = loop {
-            {
-                let guard = state.lock().await;
-                if guard.last_health_check.is_some() && !guard.health_check_in_progress {
-                    break true;
-                }
-            }
-            if Instant::now() > deadline {
-                break false;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        };
+        let finished = saw_network_up
+            && wait_for_state(&state, |s| {
+                s.last_health_check.is_some() && !s.health_check_in_progress
+            })
+            .await;
         main_loop.abort();
         CHILD_PROCESSES.remove(&id);
 
+        assert!(saw_network_up, "the main loop never saw the probe up");
         assert!(
             finished,
             "the fast check that ran after the drop must release the health check slot"
