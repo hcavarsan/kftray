@@ -420,31 +420,59 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
         return false;
     }
 
-    match existing.workload_type.as_deref() {
-        Some("service") => {
-            let service_matches = existing.service == incoming.service;
-
-            let has_explicit_ports = existing.local_port.is_some()
-                && incoming.local_port.is_some()
-                && existing.local_port != Some(0)
-                && incoming.local_port != Some(0);
-
-            if has_explicit_ports {
-                service_matches
-                    && existing.local_port == incoming.local_port
-                    && existing.remote_port == incoming.remote_port
-            } else {
-                service_matches
-            }
-        }
+    let target_matches = match existing.workload_type.as_deref() {
+        Some("service") => existing.service == incoming.service,
         Some("pod") => existing.target == incoming.target,
         Some("proxy") => existing.remote_address == incoming.remote_address,
         _ => {
-            existing.service == incoming.service
+            return existing.service == incoming.service
                 && existing.target == incoming.target
-                && existing.remote_address == incoming.remote_address
+                && existing.remote_address == incoming.remote_address;
+        }
+    };
+
+    let has_explicit_ports = existing.local_port.is_some()
+        && incoming.local_port.is_some()
+        && existing.local_port != Some(0)
+        && incoming.local_port != Some(0);
+
+    if has_explicit_ports {
+        target_matches
+            && existing.local_port == incoming.local_port
+            && existing.remote_port == incoming.remote_port
+    } else {
+        target_matches
+    }
+}
+
+fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<usize> {
+    let rank = |c: &Config| match (
+        c.remote_port == incoming.remote_port,
+        c.local_port == incoming.local_port,
+    ) {
+        (true, true) => 2,
+        (true, false) => 1,
+        (false, _) => 0,
+    };
+
+    let mut best: Option<(usize, u8)> = None;
+    let mut ambiguous = false;
+    for (index, config) in configs.iter().enumerate() {
+        if !configs_match_identity(config, incoming) {
+            continue;
+        }
+        let score = rank(config);
+        match best {
+            Some((_, best_score)) if score < best_score => {}
+            Some((_, best_score)) if score == best_score => ambiguous |= score < 2,
+            _ => {
+                best = Some((index, score));
+                ambiguous = false;
+            }
         }
     }
+
+    best.filter(|_| !ambiguous).map(|(index, _)| index)
 }
 
 fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
@@ -460,9 +488,8 @@ fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
 async fn merge_config_with_existing(
     config: Config, existing_configs: &[Config], pool: &SqlitePool,
 ) -> Result<(), String> {
-    if let Some(existing) = existing_configs
-        .iter()
-        .find(|c| configs_match_identity(c, &config))
+    if let Some(existing) =
+        find_identity_match(existing_configs, &config).map(|index| &existing_configs[index])
     {
         info!(
             "Found matching config ID={}, checking if update needed",
@@ -536,10 +563,10 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
     let mut configs: Vec<Config> = Vec::with_capacity(parsed.len());
     for config in parsed {
         match configs
-            .iter_mut()
-            .find(|c| configs_match_identity(c, &config))
+            .iter()
+            .position(|c| configs_match_identity(c, &config) && c.remote_port == config.remote_port)
         {
-            Some(previous) => *previous = config,
+            Some(index) => configs[index] = config,
             None => configs.push(config),
         }
     }
@@ -550,9 +577,8 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
 async fn merge_config_with_existing_and_mode(
     config: Config, existing_configs: &[Config], pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    if let Some(existing) = existing_configs
-        .iter()
-        .find(|c| configs_match_identity(c, &config))
+    if let Some(existing) =
+        find_identity_match(existing_configs, &config).map(|index| &existing_configs[index])
     {
         info!(
             "Found matching config ID={}, checking if update needed",
@@ -1396,6 +1422,131 @@ mod tests {
             configs_after
                 .iter()
                 .any(|c| c.local_port == Some(10148) && c.remote_port == Some(4646))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_keeps_pod_and_proxy_configs_with_different_ports() {
+        let pool = setup_test_db().await;
+        let configs_json = json!([
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "web",
+             "local_port": 18080, "remote_port": 80},
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "metrics",
+             "local_port": 19090, "remote_port": 9090},
+            {"workload_type": "proxy", "remote_address": "db.example.com", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "pg",
+             "local_port": 15432, "remote_port": 5432},
+            {"workload_type": "proxy", "remote_address": "db.example.com", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "redis",
+             "local_port": 16379, "remote_port": 6379}
+        ])
+        .to_string();
+
+        import_configs_with_pool(configs_json.clone(), &pool)
+            .await
+            .unwrap();
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let mut aliases: Vec<_> = configs.iter().filter_map(|c| c.alias.clone()).collect();
+        aliases.sort();
+        assert_eq!(aliases, vec!["metrics", "pg", "redis", "web"]);
+    }
+
+    #[tokio::test]
+    async fn test_import_second_pod_port_keeps_saved_pod_config() {
+        let pool = setup_test_db().await;
+        let saved = json!({"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+            "context": "ctx", "namespace": "default", "alias": "web",
+            "local_port": 18080, "remote_port": 80})
+        .to_string();
+        let incoming = json!({"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+            "context": "ctx", "namespace": "default", "alias": "metrics",
+            "local_port": 19090, "remote_port": 9090})
+        .to_string();
+
+        import_configs_with_pool(saved, &pool).await.unwrap();
+        import_configs_with_pool(incoming, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let mut ports: Vec<_> = configs
+            .iter()
+            .map(|c| (c.alias.clone(), c.local_port, c.remote_port))
+            .collect();
+        ports.sort();
+        assert_eq!(
+            ports,
+            vec![
+                (Some("metrics".to_string()), Some(19090), Some(9090)),
+                (Some("web".to_string()), Some(18080), Some(80)),
+            ]
+        );
+    }
+
+    async fn pod_ports_after_import(saved: Value, incoming: Value) -> Vec<(String, Option<u16>)> {
+        let pool = setup_test_db().await;
+        import_configs_with_pool(saved.to_string(), &pool)
+            .await
+            .unwrap();
+        import_configs_with_pool(incoming.to_string(), &pool)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let mut ports: Vec<_> = configs
+            .iter()
+            .map(|c| (c.alias.clone().unwrap_or_default(), c.remote_port))
+            .collect();
+        ports.sort();
+        ports
+    }
+
+    fn saved_web_and_metrics_pods() -> Value {
+        json!([
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "web",
+             "local_port": 18080, "remote_port": 80},
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "metrics",
+             "local_port": 19090, "remote_port": 9090}
+        ])
+    }
+
+    #[tokio::test]
+    async fn test_import_without_local_port_updates_pod_with_same_remote_port() {
+        let incoming = json!({"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+            "context": "ctx", "namespace": "default", "alias": "prometheus",
+            "remote_port": 9090});
+
+        assert_eq!(
+            pod_ports_after_import(saved_web_and_metrics_pods(), incoming).await,
+            vec![
+                ("prometheus".to_string(), Some(9090)),
+                ("web".to_string(), Some(80)),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_without_local_ports_keeps_each_remote_port() {
+        let incoming = json!([
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "prometheus",
+             "remote_port": 9090},
+            {"workload_type": "pod", "target": "app=demo", "protocol": "tcp",
+             "context": "ctx", "namespace": "default", "alias": "admin",
+             "remote_port": 7070}
+        ]);
+
+        assert_eq!(
+            pod_ports_after_import(saved_web_and_metrics_pods(), incoming).await,
+            vec![
+                ("admin".to_string(), Some(7070)),
+                ("prometheus".to_string(), Some(9090)),
+                ("web".to_string(), Some(80)),
+            ]
         );
     }
 
