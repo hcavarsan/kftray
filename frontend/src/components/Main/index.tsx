@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Footer } from '@/components/Footer'
+import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
 import type { Config, StoredConfig } from '@/types'
 
@@ -42,6 +43,11 @@ const ShortcutModal = lazy(() =>
     default: m.ShortcutModal,
   })),
 )
+const PrivilegeDialog = lazy(() =>
+  import('@/components/PrivilegeDialog').then(m => ({
+    default: m.PrivilegeDialog,
+  })),
+)
 
 type ActiveModal =
   | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
@@ -61,6 +67,8 @@ export function Main() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
   const forwarding = usePortForwarding()
+  const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
+  const { installMutation } = useHelperMutations()
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
   const closeModal = () => setActiveModal(null)
@@ -234,6 +242,22 @@ export function Main() {
           )}
           {activeModal?.type === 'settings' && (
             <SettingsModal onClose={closeModal} />
+          )}
+          {prompt && (
+            <PrivilegeDialog
+              needs={prompt.needs}
+              refusal={prompt.error}
+              isInstalling={installMutation.isPending}
+              installError={installMutation.error}
+              onInstall={() =>
+                installMutation.mutate(undefined, {
+                  onSuccess: () => resolvePrompt('install'),
+                })
+              }
+              onContinue={() => resolvePrompt('continue')}
+              onCancel={() => resolvePrompt('cancel')}
+              onSuppress={suppressPrompt}
+            />
           )}
         </Suspense>
       </VStack>

@@ -4,6 +4,7 @@ import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 import type { Config, PortForwardToggleAction } from '@/types'
 
+import { PRIVILEGE_ERROR } from './privilegeGate'
 import {
   markTimedOut,
   ownsReservation,
@@ -31,6 +32,11 @@ export interface BatchDeps {
   controllerRef: RefObject<AbortController | null>
   graceTimeouts: Set<ReturnType<typeof setTimeout>>
   setBusy: (busy: boolean) => void
+  /**
+   * Starts refused for lack of privileges, once the batch has settled and
+   * released its rows. The handler owns whatever retry follows.
+   */
+  onPrivilegeRefused?: (configs: Config[], message: string) => void
 }
 
 export async function executeBatch(
@@ -41,6 +47,7 @@ export async function executeBatch(
     controllerRef,
     graceTimeouts,
     setBusy,
+    onPrivilegeRefused,
   }: BatchDeps,
   candidates: Config[],
   action: PortForwardToggleAction,
@@ -116,6 +123,36 @@ export async function executeBatch(
       duration: 3000,
     })
   }
+  /**
+   * Refusals are taken out of the failures before they are reported: the
+   * user is about to be asked about them, so the toast covers only what
+   * failed for another reason.
+   */
+  const splitRefusals = () => {
+    if (action !== 'starting' || !onPrivilegeRefused) {
+      return null
+    }
+    const refused = failures.filter(({ error }) =>
+      PRIVILEGE_ERROR.test(errorMessage(error)),
+    )
+
+    if (!refused.length) {
+      return null
+    }
+    failures.splice(
+      0,
+      failures.length,
+      ...failures.filter(failure => !refused.includes(failure)),
+    )
+    const ids = new Set(refused.map(({ id }) => id))
+
+    return {
+      configs: targets.filter(({ id }) => ids.has(id)),
+      message: errorMessage(refused[0].error),
+    }
+  }
+
+  let refusals: { configs: Config[]; message: string } | null = null
 
   try {
     const batch = runWithLimit(
@@ -182,6 +219,8 @@ export async function executeBatch(
 
       return
     }
+    refusals = splitRefusals()
+
     if (failures.length) {
       reportFailures()
     } else if (successMessage && !controller.signal.aborted) {
@@ -204,5 +243,10 @@ export async function executeBatch(
       setBusy(false)
     }
     await refreshConfigs()
+  }
+  // Only after the rows are released and the controller cleared, so the
+  // retry the handler may start is not refused as busy.
+  if (refusals) {
+    onPrivilegeRefused?.(refusals.configs, refusals.message)
   }
 }

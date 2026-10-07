@@ -6,11 +6,13 @@ import { useTauriEvent } from '@/hooks/useTauriEvent'
 import { errorMessage } from '@/lib/errors'
 import type { Config, PortForwardToggleAction } from '@/types'
 
+import { PRIVILEGE_ERROR } from './privilegeGate'
 import { useConfigCache } from './useConfigCache'
 import { useConfigMutations } from './useConfigMutations'
 import { useForwardCommand } from './useForwardCommand'
 import { usePendingActions } from './usePendingActions'
 import { usePortForwardBatch } from './usePortForwardBatch'
+import { usePrivilegeGate } from './usePrivilegeGate'
 
 export function usePortForwarding() {
   const { data: configs = [] } = useConfigs()
@@ -18,6 +20,8 @@ export function usePortForwarding() {
   const pending = usePendingActions(configs)
   const { pendingConfigActions, isBusy, markPending, clearPending } = pending
   const { refreshConfigs, applyConfigs } = useConfigCache()
+  const privileges = usePrivilegeGate()
+  const { ensurePrivileges, askAfterRefusal } = privileges
   const runForwardCommand = useForwardCommand({
     pendingConfigActionsRef: pending.pendingConfigActionsRef,
     inFlightRef: pending.inFlightRef,
@@ -30,7 +34,17 @@ export function usePortForwarding() {
     abortStartOperation,
     abortStopOperation,
     runPortForwardBatch,
-  } = usePortForwardBatch({ pending, runForwardCommand, refreshConfigs })
+  } = usePortForwardBatch({
+    pending,
+    runForwardCommand,
+    refreshConfigs,
+    onPrivilegeRefused: (failed, message) =>
+      askAfterRefusal(failed, message).then(decision => {
+        if (decision !== 'cancel') {
+          void runPortForwardBatch(failed, 'starting')
+        }
+      }),
+  })
   const { deleteConfigs, saveConfig } = useConfigMutations({
     configsRef,
     pending,
@@ -58,32 +72,66 @@ export function usePortForwarding() {
 
         return
       }
-      const token = markPending(config.id, action)
+      if (action === 'starting' && !(await ensurePrivileges([config]))) {
+        return
+      }
+      // A start refused for lack of privileges is offered once more after
+      // the user has had the chance to install the helper or accept the
+      // prompts. The row is released between the two attempts so the retry
+      // can reserve it again.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const token = markPending(config.id, action)
+        let refused: string | null = null
 
-      try {
-        await runForwardCommand(config, action, token)
-      } catch (error) {
-        await refreshConfigs()
-        toaster.error({
-          title:
-            action === 'starting'
-              ? 'Error starting port forwarding'
-              : 'Error stopping port forwarding',
-          description: errorMessage(error),
-          duration: 1000,
-        })
-      } finally {
-        clearPending(config.id, token)
-        void refreshConfigs()
+        try {
+          await runForwardCommand(config, action, token)
+        } catch (error) {
+          await refreshConfigs()
+          const message = errorMessage(error)
+
+          if (action === 'starting' && PRIVILEGE_ERROR.test(message)) {
+            refused = message
+          } else {
+            toaster.error({
+              title:
+                action === 'starting'
+                  ? 'Error starting port forwarding'
+                  : 'Error stopping port forwarding',
+              description: message,
+              duration: 1000,
+            })
+          }
+        } finally {
+          clearPending(config.id, token)
+          void refreshConfigs()
+        }
+        if (
+          refused === null ||
+          attempt === 1 ||
+          (await askAfterRefusal([config], refused)) === 'cancel'
+        ) {
+          return
+        }
       }
     },
-    [isBusy, markPending, clearPending, runForwardCommand, refreshConfigs],
+    [
+      isBusy,
+      ensurePrivileges,
+      askAfterRefusal,
+      markPending,
+      clearPending,
+      runForwardCommand,
+      refreshConfigs,
+    ],
   )
 
   const initiatePortForwarding = useCallback(
-    (configsToStart: Config[]) =>
-      runPortForwardBatch(configsToStart, 'starting'),
-    [runPortForwardBatch],
+    async (configsToStart: Config[]) => {
+      if (await ensurePrivileges(configsToStart)) {
+        await runPortForwardBatch(configsToStart, 'starting')
+      }
+    },
+    [ensurePrivileges, runPortForwardBatch],
   )
 
   const currentConfigs = (selected: Config[]) =>
@@ -97,7 +145,7 @@ export function usePortForwarding() {
     )
 
     if (configsToStart.length > 0) {
-      await runPortForwardBatch(configsToStart, 'starting')
+      await initiatePortForwarding(configsToStart)
     }
   }
 
@@ -141,5 +189,6 @@ export function usePortForwarding() {
     abortStopOperation,
     deleteConfigs,
     saveConfig,
+    privileges,
   }
 }
