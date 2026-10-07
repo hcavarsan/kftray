@@ -41,6 +41,7 @@ In a few simple steps, you can configure your first port forward:
 - Proxy startup waits for the relay's TCP listener instead of a fixed delay. Existing startup probes are preserved; an unready sidecar does not prevent a started relay from forwarding.
 - Expose waits for its server and reverse WebSocket handshake before reporting success. Kubernetes Service routing can still take time to converge after Service creation.
 - HTTP logs use the same configuration directory as the database: `KFTRAY_CONFIG`, then `$XDG_CONFIG_HOME/kftray`, then `~/.kftray`. Logs are stored in its `http_logs` subdirectory.
+- HTTP logs decode response bodies sent with `Content-Encoding: gzip`, `br` or a stacked value such as `gzip, br`. Other encodings are shown as received. A decoded body is cut off at 10 MiB, and the log entry notes the cut.
 - Bulk actions run independent configurations concurrently in bounded batches. A busy configuration cannot start another operation until its current operation finishes.
 - With rows selected, the toolbar shows **Start Selected** and **Stop Selected**. These act only on selected rows that the current search and filters show. **Start All** starts the shown configurations. **Stop All** stops every running configuration, shown or not.
 - During a bulk action, the cancel button discards queued operations. Operations already in progress finish normally. Failed configurations are reported without blocking the rest of the batch.
