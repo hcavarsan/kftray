@@ -1,6 +1,7 @@
 use log::error;
 use sqlx::{
     Row,
+    SqliteConnection,
     SqlitePool,
 };
 
@@ -67,7 +68,12 @@ pub(crate) async fn update_http_logs_config_with_pool(
     config: &HttpLogsConfig, pool: &SqlitePool,
 ) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    update_http_logs_config_on_conn(config, &mut conn).await
+}
 
+pub(crate) async fn update_http_logs_config_on_conn(
+    config: &HttpLogsConfig, conn: &mut SqliteConnection,
+) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO http_logs_config (config_id, enabled, max_file_size, retention_days, auto_cleanup, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
