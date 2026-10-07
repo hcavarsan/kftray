@@ -144,6 +144,7 @@ export async function saveConfigTransaction(
       ...configToSave,
       id: isEdit ? configToSave.id : 0,
     }
+    let configToStart = updatedConfigToSave
 
     if (wasRunning && runningConfig) {
       await runForwardCommand(runningConfig, 'stopping', pendingToken)
@@ -152,20 +153,26 @@ export async function saveConfigTransaction(
 
     if (isEdit) {
       await invoke('update_config_cmd', { config: updatedConfigToSave })
+      configSaved = true
+      const savedConfig = await invoke<StoredConfig>('get_config_cmd', {
+        id: updatedConfigToSave.id,
+      })
+
       await applyConfigs(current =>
         current.map(config =>
-          config.id === updatedConfigToSave.id
-            ? { ...updatedConfigToSave, is_running: config.is_running }
+          config.id === savedConfig.id
+            ? { ...savedConfig, is_running: config.is_running }
             : config,
         ),
       )
+      configToStart = savedConfig
     } else {
       await invoke('insert_config_cmd', { config: updatedConfigToSave })
+      configSaved = true
     }
-    configSaved = true
     if (wasRunning) {
       pendingToken = markPending(configToSave.id, 'starting')
-      await runForwardCommand(updatedConfigToSave, 'starting', pendingToken)
+      await runForwardCommand(configToStart, 'starting', pendingToken)
     }
 
     toaster.success({
@@ -181,7 +188,9 @@ export async function saveConfigTransaction(
     if (configSaved) {
       toaster.warning({
         title: 'Warning',
-        description: `Configuration updated, but restarting the port forward failed: ${message}`,
+        description: wasRunning
+          ? `Configuration updated, but restarting the port forward failed: ${message}`
+          : `Configuration updated, but reloading it failed: ${message}`,
         duration: 2000,
       })
 
