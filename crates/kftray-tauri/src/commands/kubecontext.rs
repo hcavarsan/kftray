@@ -194,12 +194,14 @@ pub async fn list_ports(
                 .await
                 .map_err(|e| format!("Failed to list pods: {e}"))?;
 
+            let mut seen = HashSet::new();
             let pod_port_infos: Vec<KubeServicePortInfo> = pods
                 .iter()
                 .filter_map(|pod| pod.spec.as_ref())
                 .flat_map(|spec| spec.containers.iter())
                 .filter_map(|container| container.ports.as_ref())
                 .flat_map(|ports| ports.iter())
+                .filter(|cp| seen.insert((cp.name.as_deref(), cp.container_port)))
                 .map(|cp| KubeServicePortInfo {
                     name: cp.name.clone(),
                     port: Some(IntOrString::Int(cp.container_port)),
@@ -475,5 +477,115 @@ mod tests {
 
         assert!(port_names.contains(&"http".to_string()));
         assert!(port_names.contains(&"metrics".to_string()));
+    }
+
+    fn kube_response(status: &str, body: serde_json::Value) -> String {
+        let body = body.to_string();
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn pod_json(name: &str, ports: &[(&str, i32)]) -> serde_json::Value {
+        let ports: Vec<_> = ports
+            .iter()
+            .map(|(port_name, port)| serde_json::json!({"name": port_name, "containerPort": port}))
+            .collect();
+        serde_json::json!({
+            "metadata": {"name": name, "labels": {"app": "web"}},
+            "spec": {"containers": [{"name": "app", "image": "app", "ports": ports}]}
+        })
+    }
+
+    async fn serve_fake_kube_api(pods: Vec<serde_json::Value>) -> std::net::SocketAddr {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let pods = pods.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let line = request.lines().next().unwrap_or_default();
+                    let response = if line.contains("/version") {
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "major": "1", "minor": "30", "gitVersion": "v1.30.0",
+                                "gitCommit": "x", "gitTreeState": "clean",
+                                "buildDate": "2024-01-01T00:00:00Z", "goVersion": "go1",
+                                "compiler": "gc", "platform": "linux/amd64"
+                            }),
+                        )
+                    } else if line.contains("/pods") {
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "apiVersion": "v1", "kind": "PodList",
+                                "metadata": {"resourceVersion": "1"}, "items": pods
+                            }),
+                        )
+                    } else {
+                        kube_response(
+                            "404 Not Found",
+                            serde_json::json!({
+                                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                                "status": "Failure", "reason": "NotFound", "code": 404,
+                                "message": "not found"
+                            }),
+                        )
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn list_ports_for_pod_label_lists_each_port_once_across_replicas() {
+        kftray_portforward::ssl::ensure_crypto_provider_installed();
+
+        let addr = serve_fake_kube_api(vec![
+            pod_json("web-1", &[("http", 8080)]),
+            pod_json("web-2", &[("http", 8080)]),
+            pod_json("web-3", &[("http", 8080), ("metrics", 9090)]),
+        ])
+        .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = dir.path().join("config");
+        std::fs::write(
+            &kubeconfig,
+            format!(
+                "apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: http://{addr}\nusers:\n- name: u\n  user: {{}}\ncontexts:\n- name: ctx\n  context:\n    cluster: c\n    user: u\n    namespace: ns\ncurrent-context: ctx\n"
+            ),
+        )
+        .unwrap();
+
+        let ports = list_ports(
+            "ctx",
+            "ns",
+            "app=web",
+            Some(kubeconfig.to_string_lossy().into_owned()),
+        )
+        .await
+        .unwrap();
+
+        let ports: Vec<_> = ports.into_iter().map(|p| (p.name, p.port)).collect();
+        assert_eq!(
+            ports,
+            vec![
+                (Some("http".to_string()), Some(IntOrString::Int(8080))),
+                (Some("metrics".to_string()), Some(IntOrString::Int(9090))),
+            ]
+        );
     }
 }
