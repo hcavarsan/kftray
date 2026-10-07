@@ -21,6 +21,8 @@ use crate::parser::{
     ResponseParser,
 };
 
+const MAX_DECODED_BODY_SIZE: usize = 10 * 1024 * 1024;
+
 pub struct MessageFormatter;
 
 impl MessageFormatter {
@@ -106,7 +108,7 @@ impl MessageFormatter {
 
                 if !body_bytes.is_empty() {
                     let mut content_type = None;
-                    let mut content_encoding = None;
+                    let mut content_encodings = Vec::new();
                     let mut is_chunked = false;
 
                     if let Ok(headers_str) = std::str::from_utf8(headers_bytes) {
@@ -116,7 +118,7 @@ impl MessageFormatter {
                                 content_type = line.split(':').nth(1).map(|s| s.trim());
                             }
                             if let Some(value) = line_lower.strip_prefix("content-encoding:") {
-                                content_encoding = Some(value.trim().to_string());
+                                content_encodings.push(value.trim().to_string());
                             }
                             if line_lower.starts_with("transfer-encoding:")
                                 && line_lower.contains("chunked")
@@ -128,7 +130,7 @@ impl MessageFormatter {
 
                     debug!(
                         "Content-Type: {:?}, Content-Encoding: {:?}, chunked: {}",
-                        content_type, content_encoding, is_chunked
+                        content_type, content_encodings, is_chunked
                     );
 
                     let mut processed_body = if is_chunked {
@@ -138,15 +140,18 @@ impl MessageFormatter {
                         body_bytes.to_vec()
                     };
 
-                    let encodings = content_encoding.iter().flat_map(|v| v.rsplit(','));
+                    let mut truncated = false;
+                    let encodings = content_encodings.iter().rev().flat_map(|v| v.rsplit(','));
                     for encoding in encodings.map(str::trim) {
                         let decoded = match encoding {
                             "gzip" => Self::decompress_gzip(&processed_body),
-                            "br" => Self::decompress_brotli(&processed_body),
+                            "br" => {
+                                Self::read_bounded(Decompressor::new(&processed_body[..], 4096))
+                            }
                             _ => continue,
                         };
                         match decoded {
-                            Ok(decompressed) => {
+                            Ok((decompressed, hit_limit)) => {
                                 debug!(
                                     "Decoded {} content: {} -> {} bytes",
                                     encoding,
@@ -154,6 +159,10 @@ impl MessageFormatter {
                                     decompressed.len()
                                 );
                                 processed_body = decompressed;
+                                if hit_limit {
+                                    truncated = true;
+                                    break;
+                                }
                             }
                             Err(e) => {
                                 debug!("Failed to decode {} content: {:?}", encoding, e);
@@ -163,6 +172,11 @@ impl MessageFormatter {
 
                     let content_type_str = content_type.unwrap_or("text/plain");
                     Self::format_content(&mut log_entry, content_type_str, &processed_body);
+                    if truncated {
+                        log_entry.push_str(&format!(
+                            "\n# <body truncated at {MAX_DECODED_BODY_SIZE} bytes after decoding>"
+                        ));
+                    }
                 }
             } else if let Ok(content) = std::str::from_utf8(buffer) {
                 log_entry.push_str(content);
@@ -235,22 +249,30 @@ impl MessageFormatter {
         }
     }
 
-    fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
+    fn decompress_gzip(data: &[u8]) -> Result<(Vec<u8>, bool)> {
         if data.len() < 2 || data[0] != 0x1f || data[1] != 0x8b {
             return Err(anyhow::anyhow!("Not a valid gzip header"));
         }
 
         debug!("Decompressing gzip data of {} bytes", data.len());
 
-        let mut decoder = flate2::read::GzDecoder::new(data);
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)?;
+        let decompressed = Self::read_bounded(flate2::read::GzDecoder::new(data))?;
 
-        if decompressed.is_empty() {
+        if decompressed.0.is_empty() {
             return Err(anyhow::anyhow!("Decompression produced empty result"));
         }
 
         Ok(decompressed)
+    }
+
+    fn read_bounded(reader: impl Read) -> Result<(Vec<u8>, bool)> {
+        let mut decoded = Vec::new();
+        reader
+            .take(MAX_DECODED_BODY_SIZE as u64 + 1)
+            .read_to_end(&mut decoded)?;
+        let hit_limit = decoded.len() > MAX_DECODED_BODY_SIZE;
+        decoded.truncate(MAX_DECODED_BODY_SIZE);
+        Ok((decoded, hit_limit))
     }
 
     fn dechunk_body(body: &[u8]) -> Vec<u8> {
@@ -577,14 +599,14 @@ impl MessageFormatter {
 
     async fn try_decompress_brotli(body: &[u8]) -> Result<Vec<u8>> {
         let body_owned = body.to_vec();
-        task::spawn_blocking(move || Self::decompress_brotli(&body_owned)).await?
-    }
-
-    fn decompress_brotli(data: &[u8]) -> Result<Vec<u8>> {
-        let mut reader = Decompressor::new(data, 4096);
-        let mut decompressed = Vec::new();
-        reader.read_to_end(&mut decompressed)?;
-        Ok(decompressed)
+        task::spawn_blocking(move || {
+            let cursor = std::io::Cursor::new(body_owned);
+            let mut reader = Decompressor::new(cursor, 4096);
+            let mut decompressed_data = Vec::new();
+            reader.read_to_end(&mut decompressed_data)?;
+            Ok(decompressed_data)
+        })
+        .await?
     }
 
     async fn try_decompress_deflate(body: &[u8]) -> Result<Vec<u8>> {
@@ -1101,9 +1123,9 @@ mod formatter_tests {
         compressed
     }
 
-    fn format_encoded_json_response(encoding: &str, body: &[u8]) -> String {
+    fn format_json_response(encoding_headers: &str, body: &[u8]) -> String {
         let mut response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: {encoding}\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{encoding_headers}Content-Length: {}\r\n\r\n",
             body.len()
         )
         .into_bytes();
@@ -1121,11 +1143,17 @@ mod formatter_tests {
         format!("[{}]", vec![r#"{"marker":"decoded-body"}"#; 50].join(","))
     }
 
+    fn gzip_compress(data: &[u8]) -> Vec<u8> {
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gzip, data).unwrap();
+        gzip.finish().unwrap()
+    }
+
     #[test]
     fn test_format_preformatted_response_brotli() {
         let compressed = brotli_compress(repeated_marker_json().as_bytes());
 
-        let formatted = format_encoded_json_response("br", &compressed);
+        let formatted = format_json_response("Content-Encoding: br\r\n", &compressed);
 
         assert_eq!(
             formatted.matches("decoded-body").count(),
@@ -1136,17 +1164,51 @@ mod formatter_tests {
 
     #[test]
     fn test_format_preformatted_response_gzip_then_brotli() {
-        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        std::io::Write::write_all(&mut gzip, repeated_marker_json().as_bytes()).unwrap();
-        let compressed = brotli_compress(&gzip.finish().unwrap());
+        let compressed = brotli_compress(&gzip_compress(repeated_marker_json().as_bytes()));
 
-        let formatted = format_encoded_json_response("gzip, br", &compressed);
+        for encoding_headers in [
+            "Content-Encoding: gzip, br\r\n",
+            "Content-Encoding: gzip\r\nContent-Encoding: br\r\n",
+        ] {
+            let formatted = format_json_response(encoding_headers, &compressed);
 
-        assert_eq!(
-            formatted.matches("decoded-body").count(),
-            50,
-            "got:\n{formatted}"
-        );
+            assert_eq!(
+                formatted.matches("decoded-body").count(),
+                50,
+                "headers {encoding_headers:?} got:\n{formatted}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_preformatted_response_caps_decoded_body() {
+        let kept = "a".repeat(MAX_DECODED_BODY_SIZE);
+        let payload = format!("{kept}a");
+
+        for (encoding_headers, compressed) in [
+            (
+                "Content-Encoding: br\r\n",
+                brotli_compress(payload.as_bytes()),
+            ),
+            (
+                "Content-Encoding: gzip\r\n",
+                gzip_compress(payload.as_bytes()),
+            ),
+        ] {
+            let formatted = format_json_response(encoding_headers, &compressed);
+
+            assert!(formatted.contains(&kept), "headers {encoding_headers:?}");
+            assert!(
+                !formatted.contains(&payload),
+                "headers {encoding_headers:?}"
+            );
+            assert!(
+                formatted.contains(&format!(
+                    "# <body truncated at {MAX_DECODED_BODY_SIZE} bytes after decoding>"
+                )),
+                "headers {encoding_headers:?}"
+            );
+        }
     }
 
     #[test]
