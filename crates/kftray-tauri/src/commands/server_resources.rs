@@ -533,7 +533,8 @@ async fn list_ingresses_in_namespace(
 fn calculate_age(creation_timestamp: &Time) -> String {
     let seconds = jiff::Timestamp::now()
         .duration_since(creation_timestamp.0)
-        .as_secs();
+        .as_secs()
+        .max(0);
 
     if seconds >= 86_400 {
         format!("{}d", seconds / 86_400)
@@ -1144,5 +1145,6 @@ mod tests {
         assert_eq!(calculate_age(&created_ago(3 * 3_600 + 120)), "3h");
         assert_eq!(calculate_age(&created_ago(5 * 60 + 10)), "5m");
         assert_eq!(calculate_age(&created_ago(30)), "30s");
+        assert_eq!(calculate_age(&created_ago(-30)), "0s");
     }
 }
