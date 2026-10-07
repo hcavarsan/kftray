@@ -531,21 +531,17 @@ async fn list_ingresses_in_namespace(
 }
 
 fn calculate_age(creation_timestamp: &Time) -> String {
-    let created = creation_timestamp.0;
-    let now = jiff::Timestamp::now();
-    let duration = now.since(created).unwrap_or_default();
+    let seconds = jiff::Timestamp::now()
+        .duration_since(creation_timestamp.0)
+        .as_secs()
+        .max(0);
 
-    let days = duration.get_days();
-    let hours = duration.get_hours();
-    let minutes = duration.get_minutes();
-    let seconds = duration.get_seconds();
-
-    if days > 0 {
-        format!("{}d", days)
-    } else if hours > 0 {
-        format!("{}h", hours)
-    } else if minutes > 0 {
-        format!("{}m", minutes)
+    if seconds >= 86_400 {
+        format!("{}d", seconds / 86_400)
+    } else if seconds >= 3_600 {
+        format!("{}h", seconds / 3_600)
+    } else if seconds >= 60 {
+        format!("{}m", seconds / 60)
     } else {
         format!("{}s", seconds)
     }
@@ -1133,5 +1129,22 @@ mod tests {
             "a config_id naming no known deployment must not attribute the resource, even \
              though some config_id was supplied"
         );
+    }
+
+    #[test]
+    fn age_uses_the_largest_whole_unit() {
+        let created_ago = |secs: i64| {
+            Time(
+                jiff::Timestamp::now()
+                    .checked_sub(jiff::SignedDuration::from_secs(secs))
+                    .unwrap(),
+            )
+        };
+
+        assert_eq!(calculate_age(&created_ago(2 * 86_400 + 3_600)), "2d");
+        assert_eq!(calculate_age(&created_ago(3 * 3_600 + 120)), "3h");
+        assert_eq!(calculate_age(&created_ago(5 * 60 + 10)), "5m");
+        assert_eq!(calculate_age(&created_ago(30)), "30s");
+        assert_eq!(calculate_age(&created_ago(-30)), "0s");
     }
 }
