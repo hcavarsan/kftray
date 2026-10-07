@@ -294,30 +294,31 @@ impl WebSocketTunnelServer {
         &self, id: String, method: String, path: String, headers: HashMap<String, String>,
         body: Vec<u8>,
     ) -> Result<TunnelMessage, String> {
-        let (request_tx, pending_responses) = {
-            let tunnel_lock = self.tunnel.read().await;
-            let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
-            (tunnel.request_tx.clone(), tunnel.pending_responses.clone())
-        };
-
         let (response_tx, response_rx) = oneshot::channel();
 
-        {
-            let mut pending = pending_responses.write().await;
-            pending.insert(id.clone(), response_tx);
-        }
+        let pending_responses = {
+            let tunnel_lock = self.tunnel.read().await;
+            let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
 
-        let request_msg = TunnelMessage::HttpRequest {
-            id: id.clone(),
-            method,
-            path,
-            headers,
-            body,
+            tunnel
+                .pending_responses
+                .write()
+                .await
+                .insert(id.clone(), response_tx);
+
+            tunnel
+                .request_tx
+                .send(TunnelMessage::HttpRequest {
+                    id: id.clone(),
+                    method,
+                    path,
+                    headers,
+                    body,
+                })
+                .map_err(|e| format!("Failed to send request: {}", e))?;
+
+            tunnel.pending_responses.clone()
         };
-
-        request_tx
-            .send(request_msg)
-            .map_err(|e| format!("Failed to send request: {}", e))?;
 
         match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
