@@ -64,6 +64,15 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn has_chunked_end_marker(chunk_data: &[u8]) -> bool {
+        let chunk_data = if chunk_data.starts_with(b"HTTP/") {
+            match find_headers_end(chunk_data) {
+                Some(headers_end) => &chunk_data[headers_end + 4..],
+                None => return false,
+            }
+        } else {
+            chunk_data
+        };
+
         let standard_markers = chunk_data.windows(5).any(|w| w == b"0\r\n\r\n");
 
         let leading_crlf_markers = chunk_data.windows(7).any(|w| w == b"\r\n0\r\n\r\n");
@@ -369,6 +378,22 @@ mod tests {
         assert!(!HttpResponseAnalyzer::has_chunked_end_marker(
             partial_marker
         ));
+    }
+
+    #[test]
+    fn chunked_end_marker_ignores_header_values_ending_in_zero() {
+        let headers = b"HTTP/1.1 200 OK\r\nCache-Control: public, max-age=3600\r\nServer: nginx/1.20.0\r\nTransfer-Encoding: chunked\r\nExpires: 0\r\n\r\n";
+
+        assert!(!HttpResponseAnalyzer::has_chunked_end_marker(headers));
+
+        let first_chunk = [&headers[..], b"a\r\nfirst-part\r\n"].concat();
+        assert!(!HttpResponseAnalyzer::has_chunked_end_marker(&first_chunk));
+
+        let complete = [&first_chunk[..], b"0\r\n\r\n"].concat();
+        assert!(HttpResponseAnalyzer::has_chunked_end_marker(&complete));
+
+        let empty_body = [&headers[..], b"0\r\n\r\n"].concat();
+        assert!(HttpResponseAnalyzer::has_chunked_end_marker(&empty_body));
     }
 
     #[test]
