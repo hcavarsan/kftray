@@ -26,7 +26,7 @@ run = "cargo build --bin kftray-helper --release && pnpm tauri"
 
 [tasks."test:server"]
 description = "Run Docker proxy tests"
-run = "bash hacks/test_proxy.sh"
+run = "bash hacks/server/test_proxy.sh"
 
 [tasks."test:back"]
 description = "Run Rust backend tests with coverage"
