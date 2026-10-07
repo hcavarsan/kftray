@@ -123,7 +123,7 @@ impl NetworkMonitor {
 
             if network_up && failure_count > 0 && last_fast.elapsed() > self.config.sleep_up {
                 if self.should_start_health_check().await {
-                    let failed_configs = self.check_health_fast().await;
+                    let failed_configs = self.check_health_fast_with_state().await;
                     if failed_configs.is_empty() {
                         failure_count = failure_count.saturating_sub(1);
                     }
@@ -407,6 +407,23 @@ impl NetworkMonitor {
             log::error!("Health check handler panicked: {e:?}");
         }
     }
+
+    async fn check_health_fast_with_state(
+        &self,
+    ) -> Vec<kftray_commons::models::config_model::Config> {
+        let state = self.get_task_state().await;
+
+        let result = AssertUnwindSafe(self.check_health_fast())
+            .catch_unwind()
+            .await;
+
+        {
+            let mut guard = state.lock().await;
+            guard.finish_health_check();
+        }
+
+        result.unwrap_or_else(|e| std::panic::resume_unwind(e))
+    }
 }
 
 impl Clone for NetworkMonitor {
@@ -422,4 +439,114 @@ impl Clone for NetworkMonitor {
 pub async fn start_network_monitor() {
     let monitor = NetworkMonitor::new();
     monitor.start().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+    use std::sync::LazyLock;
+
+    use kftray_commons::models::config_model::Config;
+    use kftray_commons::models::config_state_model::ConfigState;
+    use kftray_commons::test_utils::{
+        EnvVarGuard,
+        test_db,
+    };
+    use kftray_portforward::port_forward::{
+        CHILD_PROCESSES,
+        PROCESS_TEST_MUTEX,
+        PortForwardProcess,
+    };
+
+    use super::*;
+
+    static PROBE_ADDR: LazyLock<String> = LazyLock::new(|| {
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .to_string()
+    });
+
+    async fn register_running_forward(local: &TcpListener) -> i64 {
+        let config = Config {
+            service: Some("svc".to_string()),
+            namespace: "ns".to_string(),
+            local_address: Some("127.0.0.1".to_string()),
+            local_port: Some(local.local_addr().unwrap().port()),
+            remote_port: Some(80),
+            ..Config::default()
+        };
+        let id = kftray_commons::config::insert_config(config).await.unwrap();
+        kftray_commons::utils::config_state::update_config_state(&ConfigState::new(id, true))
+            .await
+            .unwrap();
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        CHILD_PROCESSES.insert(id, PortForwardProcess::new(handle, id.to_string()));
+        id
+    }
+
+    async fn wait_for_state(state: &Mutex<TaskState>, done: impl Fn(&TaskState) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if done(&*state.lock().await) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn fast_check_after_network_drop_lets_later_health_checks_start() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+
+        let local = TcpListener::bind("127.0.0.1:0").unwrap();
+        let id = register_running_forward(&local).await;
+
+        let probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
+        let config = MonitorConfig {
+            network_endpoints: vec![PROBE_ADDR.as_str()],
+            network_timeout: Duration::from_millis(200),
+            sleep_up: Duration::from_millis(100),
+            sleep_down: Duration::from_millis(100),
+            ..MonitorConfig::default()
+        };
+        let monitor = NetworkMonitor {
+            network_checker: NetworkChecker::new(config.clone()),
+            health_checker: HealthChecker::new(config.clone()),
+            config,
+        };
+        let state = monitor.get_task_state().await;
+        *state.lock().await = TaskState::default();
+
+        let main_loop = tokio::spawn({
+            let monitor = monitor.clone();
+            async move { monitor.run_main_loop().await }
+        });
+        let saw_network_up = wait_for_state(&state, |s| s.last_network_state).await;
+        drop(probe);
+        let finished = saw_network_up
+            && wait_for_state(&state, |s| {
+                s.last_health_check.is_some() && !s.health_check_in_progress
+            })
+            .await;
+        main_loop.abort();
+        CHILD_PROCESSES.remove(&id);
+
+        assert!(saw_network_up, "the main loop never saw the probe up");
+        assert!(
+            finished,
+            "the fast check that ran after the drop must release the health check slot"
+        );
+    }
 }
