@@ -189,7 +189,10 @@ impl ShortcutManager {
 
         self.parser.parse(&shortcut.shortcut_key)?;
 
-        if existing.shortcut_key != shortcut.shortcut_key || existing.enabled != shortcut.enabled {
+        let rebind =
+            existing.shortcut_key != shortcut.shortcut_key || existing.enabled != shortcut.enabled;
+
+        if rebind {
             if self.registered_shortcuts.contains_key(&shortcut_id) {
                 self.platform_manager
                     .unregister_shortcut(shortcut_id)
@@ -203,6 +206,16 @@ impl ShortcutManager {
         }
 
         self.storage.update_shortcut(&shortcut).await?;
+
+        if !rebind && self.registered_shortcuts.contains_key(&shortcut_id) {
+            self.registered_shortcuts
+                .insert(shortcut_id, shortcut.clone());
+            self.action_registry
+                .lock()
+                .await
+                .register_shortcut_definition(shortcut);
+        }
+
         info!("Updated shortcut ID: {}", shortcut_id);
         Ok(())
     }
@@ -421,5 +434,146 @@ impl ShortcutManager {
         self.registered_shortcuts.clear();
         info!("Shortcut manager shut down");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::actions::ActionHandler;
+    use crate::models::ActionContext;
+
+    struct NoopPlatform;
+
+    #[async_trait]
+    impl PlatformManager for NoopPlatform {
+        async fn register_shortcut(&mut self, _: &ShortcutDefinition) -> ShortcutResult<()> {
+            Ok(())
+        }
+
+        async fn unregister_shortcut(&mut self, _: i64) -> ShortcutResult<()> {
+            Ok(())
+        }
+
+        async fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn platform_name(&self) -> &str {
+            "noop"
+        }
+    }
+
+    type Executed = Arc<Mutex<Vec<(String, Option<String>, Option<i64>)>>>;
+
+    struct Recorder {
+        action_type: &'static str,
+        executed: Executed,
+    }
+
+    #[async_trait]
+    impl ActionHandler for Recorder {
+        async fn execute(&self, context: &ActionContext) -> ShortcutResult<()> {
+            self.executed.lock().await.push((
+                self.action_type.to_string(),
+                context.action_data.clone(),
+                context.config_id,
+            ));
+            Ok(())
+        }
+
+        fn action_type(&self) -> &str {
+            self.action_type
+        }
+
+        fn description(&self) -> &str {
+            self.action_type
+        }
+    }
+
+    async fn test_manager(executed: &Executed) -> ShortcutManager {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE shortcuts (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                shortcut_key TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                action_data TEXT,
+                config_id INTEGER,
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut registry = ActionRegistry::new();
+        for action_type in ["start", "stop"] {
+            registry.register_handler(Arc::new(Recorder {
+                action_type,
+                executed: executed.clone(),
+            }));
+        }
+
+        ShortcutManager {
+            storage: ShortcutStorage::new(pool),
+            platform_manager: Box::new(NoopPlatform),
+            action_registry: Arc::new(Mutex::new(registry)),
+            parser: ShortcutParser::new(),
+            registered_shortcuts: HashMap::new(),
+        }
+    }
+
+    async fn press(manager: &ShortcutManager, id: i64) {
+        manager
+            .action_registry
+            .lock()
+            .await
+            .execute_by_id(id, &ActionContext::new(id))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_shortcut_without_key_change_runs_the_new_action() {
+        let executed = Executed::default();
+        let mut manager = test_manager(&executed).await;
+
+        let mut shortcut =
+            ShortcutDefinition::new("s".into(), "Ctrl+Shift+F1".into(), "start".into());
+        shortcut.action_data = Some(r#"{"config_ids":[1]}"#.into());
+        let id = manager.create_shortcut(shortcut.clone()).await.unwrap();
+        shortcut.id = Some(id);
+
+        shortcut.action_data = Some(r#"{"config_ids":[2]}"#.into());
+        shortcut.config_id = Some(2);
+        manager.update_shortcut(shortcut.clone()).await.unwrap();
+        press(&manager, id).await;
+
+        shortcut.action_type = "stop".into();
+        manager.update_shortcut(shortcut.clone()).await.unwrap();
+        press(&manager, id).await;
+
+        assert_eq!(
+            *executed.lock().await,
+            vec![
+                (
+                    "start".to_string(),
+                    Some(r#"{"config_ids":[2]}"#.to_string()),
+                    Some(2)
+                ),
+                (
+                    "stop".to_string(),
+                    Some(r#"{"config_ids":[2]}"#.to_string()),
+                    Some(2)
+                ),
+            ]
+        );
+        assert_eq!(manager.registered_shortcuts.get(&id), Some(&shortcut));
     }
 }
