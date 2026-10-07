@@ -76,6 +76,8 @@ async fn main() -> anyhow::Result<()> {
         .format_timestamp_secs()
         .init();
 
+    kftray_mcp::init_database().await?;
+
     let addr = SocketAddr::new(args.host, args.port);
 
     info!("Starting KFtray MCP Server v{}", env!("CARGO_PKG_VERSION"));

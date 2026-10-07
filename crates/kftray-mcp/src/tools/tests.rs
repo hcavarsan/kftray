@@ -440,6 +440,19 @@ async fn list_services(filters: serde_json::Value) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn config_tools_work_after_startup_on_a_fresh_config_dir() {
+    let _db = kftray_commons::test_utils::test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _env =
+        kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+
+    crate::init_database().await.unwrap();
+
+    let result = execute_tool("list_configs", None).await;
+    assert_eq!(result_json(&result)["configs"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn list_configs_filters_by_tags_and_fields_like_kftui() {
     let _db = temp_config_db().await;
     create_tagged(
