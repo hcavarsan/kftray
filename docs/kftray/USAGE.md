@@ -14,7 +14,7 @@ In a few simple steps, you can configure your first port forward:
    - Define the namespace housing your service
    - Enter the service name
    - Choose TCP or UDP
-   - Set the local and remote port numbers
+   - Set the local and remote port numbers. For a pod label target, the remote port list shows each port name and number once, even when several replicas match the label.
    - Configure a custom local IP address (optional)
 
 4. **Activate Your Configuration**: Use the row switch to start or stop one port forward. Use **Start All** and **Stop All** to operate on multiple configurations.
