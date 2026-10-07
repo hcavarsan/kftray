@@ -33,7 +33,7 @@ handle_error() {
 
 setup_containers() {
 	log_info "Building kftray-server image..."
-	(cd "crates/kftray-server" && docker build -t kftray-server . >/dev/null 2>&1) ||
+	docker build -f crates/kftray-server/Dockerfile -t kftray-server . >/dev/null 2>&1 ||
 		handle_error $? "Failed to build Docker image"
 
 	start_proxy_container "$TCP_CONTAINER" "tcp" "httpbin.org" "80" "8080"
@@ -209,8 +209,6 @@ cleanup() {
 	done
 
 	cleanup_logs >/dev/null 2>&1
-
-	exit 0
 }
 
 print_summary() {
@@ -243,7 +241,9 @@ print_summary() {
 }
 
 main() {
-	trap 'cleanup >/dev/null 2>&1' INT TERM EXIT
+	trap 'cleanup >/dev/null 2>&1' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 
 	while [[ $# -gt 0 ]]; do
 		case $1 in
@@ -276,9 +276,9 @@ main() {
 			done
 			sleep 5
 		done
-	else
-		cleanup
 	fi
+
+	[[ "$TCP_TEST_RESULT" == "PASSED" && "$UDP_TEST_RESULT" == "PASSED" ]]
 }
 
 main "$@"
