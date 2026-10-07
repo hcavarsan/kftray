@@ -42,36 +42,13 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 
-import { errorMessage } from '@/lib/errors'
-
-import { Toaster, toaster } from './toaster'
-
-interface ErrorToastMeta {
-  errorToast?: {
-    id?: string
-    title: string
-    description?: string
-    duration?: number
-  }
-}
+import { type ErrorToastMeta, showErrorToast } from './error-toast'
+import { Toaster } from './toaster'
 
 declare module '@tanstack/react-query' {
   interface Register {
     queryMeta: ErrorToastMeta
     mutationMeta: ErrorToastMeta
-  }
-}
-
-const showErrorToast = (error: unknown, meta: ErrorToastMeta | undefined) => {
-  const toast = meta?.errorToast
-
-  if (toast) {
-    toaster.error({
-      id: toast.id,
-      title: toast.title,
-      description: toast.description ?? errorMessage(error),
-      duration: toast.duration,
-    })
   }
 }
 
