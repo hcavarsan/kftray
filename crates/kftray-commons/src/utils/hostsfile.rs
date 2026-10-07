@@ -1202,6 +1202,25 @@ fn get_default_hosts_path() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Whether this process may write the platform hosts file, judged by opening
+/// it for writing and nothing else.
+///
+/// A caller deciding whether to ask for privileges needs the answer before
+/// any edit is attempted: a failed write already costs a rollback of whatever
+/// the startup acquired. Only a refused permission is reported as `false`; a
+/// missing or unsupported path is an error the write would report in its own
+/// terms, not a privilege problem.
+pub fn hosts_file_writable() -> Result<bool> {
+    match OpenOptions::new()
+        .write(true)
+        .open(get_default_hosts_path()?)
+    {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn get_platform_hosts_path() -> Result<PathBuf> {
     if cfg!(unix) {
         Ok(PathBuf::from("/etc/hosts"))

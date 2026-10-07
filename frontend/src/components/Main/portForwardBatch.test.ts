@@ -300,4 +300,58 @@ describe('executeBatch', () => {
     await flushPromises()
     expect(registry.isBusy(1)).toBe(false)
   })
+
+  const REFUSAL = new Error(
+    'Failed to write to the hostfile for svc: Permission denied (os error 13)',
+  )
+
+  it('hands privilege refusals to the handler after the rows are released, and toasts the rest', async () => {
+    const { deps, registry, gate } = setup()
+    const onPrivilegeRefused = vi.fn()
+    const batch = executeBatch(
+      { ...deps, onPrivilegeRefused },
+      configsWithIds([1, 2, 3]),
+      'starting',
+    )
+
+    await flushPromises()
+    gate(1).reject(REFUSAL)
+    gate(2).reject(new Error('pod not found'))
+    gate(3).resolve()
+    await batch
+
+    expect(onPrivilegeRefused).toHaveBeenCalledTimes(1)
+    const [refused, message] = onPrivilegeRefused.mock.calls[0]
+
+    expect(refused.map((config: { id: number }) => config.id)).toEqual([1])
+    expect(message).toBe(REFUSAL.message)
+    expect(registry.isBusy(1)).toBe(false)
+    expect(toaster.error).toHaveBeenCalledTimes(1)
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Config 2: pod not found' }),
+    )
+  })
+
+  it('reports a refusal on the retry batch as a plain failure instead of asking again', async () => {
+    const { deps, gate } = setup()
+    const onPrivilegeRefused = vi.fn()
+    const batch = executeBatch(
+      { ...deps, onPrivilegeRefused },
+      configsWithIds([1]),
+      'starting',
+      undefined,
+      true,
+    )
+
+    await flushPromises()
+    gate(1).reject(REFUSAL)
+    await batch
+
+    expect(onPrivilegeRefused).not.toHaveBeenCalled()
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: `Config 1: ${REFUSAL.message}`,
+      }),
+    )
+  })
 })

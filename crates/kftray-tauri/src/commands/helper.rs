@@ -113,6 +113,17 @@ fn read_helper_status() -> Result<HelperStatus, String> {
     Ok(status)
 }
 
+/// What starting `configs` would need administrator access for right now.
+///
+/// Read-only: it never prompts, so the frontend can ask before every start
+/// and only interrupt the user when something would actually need elevation.
+#[tauri::command]
+pub async fn preflight_privileges(
+    configs: Vec<kftray_commons::models::config_model::Config>,
+) -> Vec<kftray_portforward::privileges::PrivilegeNeed> {
+    kftray_portforward::privileges::preflight(&configs).await
+}
+
 #[tauri::command]
 pub async fn install_helper() -> Result<bool, String> {
     info!("Installing helper sidecar");
