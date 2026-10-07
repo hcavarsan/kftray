@@ -106,7 +106,7 @@ impl MessageFormatter {
 
                 if !body_bytes.is_empty() {
                     let mut content_type = None;
-                    let mut is_gzipped = false;
+                    let mut content_encoding = None;
                     let mut is_chunked = false;
 
                     if let Ok(headers_str) = std::str::from_utf8(headers_bytes) {
@@ -115,10 +115,8 @@ impl MessageFormatter {
                             if line_lower.starts_with("content-type:") {
                                 content_type = line.split(':').nth(1).map(|s| s.trim());
                             }
-                            if line_lower.starts_with("content-encoding:")
-                                && line_lower.contains("gzip")
-                            {
-                                is_gzipped = true;
+                            if let Some(value) = line_lower.strip_prefix("content-encoding:") {
+                                content_encoding = Some(value.trim().to_string());
                             }
                             if line_lower.starts_with("transfer-encoding:")
                                 && line_lower.contains("chunked")
@@ -129,8 +127,8 @@ impl MessageFormatter {
                     }
 
                     debug!(
-                        "Content-Type: {:?}, gzipped: {}, chunked: {}",
-                        content_type, is_gzipped, is_chunked
+                        "Content-Type: {:?}, Content-Encoding: {:?}, chunked: {}",
+                        content_type, content_encoding, is_chunked
                     );
 
                     let mut processed_body = if is_chunked {
@@ -140,19 +138,25 @@ impl MessageFormatter {
                         body_bytes.to_vec()
                     };
 
-                    if is_gzipped {
-                        debug!("Decompressing gzipped body");
-                        match Self::decompress_gzip(&processed_body) {
+                    let encodings = content_encoding.iter().flat_map(|v| v.rsplit(','));
+                    for encoding in encodings.map(str::trim) {
+                        let decoded = match encoding {
+                            "gzip" => Self::decompress_gzip(&processed_body),
+                            "br" => Self::decompress_brotli(&processed_body),
+                            _ => continue,
+                        };
+                        match decoded {
                             Ok(decompressed) => {
                                 debug!(
-                                    "Successfully decompressed gzip content: {} -> {} bytes",
+                                    "Decoded {} content: {} -> {} bytes",
+                                    encoding,
                                     processed_body.len(),
                                     decompressed.len()
                                 );
                                 processed_body = decompressed;
                             }
-                            _ => {
-                                debug!("Failed to decompress gzip content");
+                            Err(e) => {
+                                debug!("Failed to decode {} content: {:?}", encoding, e);
                             }
                         }
                     }
@@ -573,14 +577,14 @@ impl MessageFormatter {
 
     async fn try_decompress_brotli(body: &[u8]) -> Result<Vec<u8>> {
         let body_owned = body.to_vec();
-        task::spawn_blocking(move || {
-            let cursor = std::io::Cursor::new(body_owned);
-            let mut reader = Decompressor::new(cursor, 4096);
-            let mut decompressed_data = Vec::new();
-            reader.read_to_end(&mut decompressed_data)?;
-            Ok(decompressed_data)
-        })
-        .await?
+        task::spawn_blocking(move || Self::decompress_brotli(&body_owned)).await?
+    }
+
+    fn decompress_brotli(data: &[u8]) -> Result<Vec<u8>> {
+        let mut reader = Decompressor::new(data, 4096);
+        let mut decompressed = Vec::new();
+        reader.read_to_end(&mut decompressed)?;
+        Ok(decompressed)
     }
 
     async fn try_decompress_deflate(body: &[u8]) -> Result<Vec<u8>> {
@@ -1088,6 +1092,61 @@ mod formatter_tests {
         assert!(formatted.contains("# Trace ID: gzip123"));
         assert!(formatted.contains("Content-Type: application/json"));
         assert!(formatted.contains("Content-Encoding: gzip"));
+    }
+
+    fn brotli_compress(data: &[u8]) -> Vec<u8> {
+        let mut encoder = brotli::CompressorReader::new(data, 4096, 11, 22);
+        let mut compressed = Vec::new();
+        std::io::copy(&mut encoder, &mut compressed).unwrap();
+        compressed
+    }
+
+    fn format_encoded_json_response(encoding: &str, body: &[u8]) -> String {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: {encoding}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+
+        MessageFormatter::format_preformatted_response(
+            "enc123",
+            Utc::now(),
+            10,
+            &Bytes::from(response),
+        )
+    }
+
+    fn repeated_marker_json() -> String {
+        format!("[{}]", vec![r#"{"marker":"decoded-body"}"#; 50].join(","))
+    }
+
+    #[test]
+    fn test_format_preformatted_response_brotli() {
+        let compressed = brotli_compress(repeated_marker_json().as_bytes());
+
+        let formatted = format_encoded_json_response("br", &compressed);
+
+        assert_eq!(
+            formatted.matches("decoded-body").count(),
+            50,
+            "got:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_format_preformatted_response_gzip_then_brotli() {
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gzip, repeated_marker_json().as_bytes()).unwrap();
+        let compressed = brotli_compress(&gzip.finish().unwrap());
+
+        let formatted = format_encoded_json_response("gzip, br", &compressed);
+
+        assert_eq!(
+            formatted.matches("decoded-body").count(),
+            50,
+            "got:\n{formatted}"
+        );
     }
 
     #[test]
