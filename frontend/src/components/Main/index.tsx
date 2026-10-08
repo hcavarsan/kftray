@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Footer } from '@/components/Footer'
+import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
 import { telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
@@ -48,6 +49,11 @@ const TelemetryConsentModal = lazy(() =>
     default: m.TelemetryConsentModal,
   })),
 )
+const PrivilegeDialog = lazy(() =>
+  import('@/components/PrivilegeDialog').then(m => ({
+    default: m.PrivilegeDialog,
+  })),
+)
 
 type ActiveModal =
   | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
@@ -68,6 +74,8 @@ export function Main() {
   const queryClient = useQueryClient()
   const telemetry = useQuery(telemetryQuery)
   const forwarding = usePortForwarding()
+  const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
+  const { installMutation } = useHelperMutations()
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
   const closeModal = () => setActiveModal(null)
@@ -242,7 +250,23 @@ export function Main() {
           {activeModal?.type === 'settings' && (
             <SettingsModal onClose={closeModal} />
           )}
-          {activeModal === null && telemetry.data === null && (
+          {prompt && (
+            <PrivilegeDialog
+              needs={prompt.needs}
+              refusal={prompt.error}
+              isInstalling={installMutation.isPending}
+              installError={installMutation.error}
+              onInstall={() =>
+                installMutation.mutate(undefined, {
+                  onSuccess: () => resolvePrompt('install'),
+                })
+              }
+              onContinue={() => resolvePrompt('continue')}
+              onCancel={() => resolvePrompt('cancel')}
+              onSuppress={suppressPrompt}
+            />
+          )}
+          {activeModal === null && !prompt && telemetry.data === null && (
             <TelemetryConsentModal />
           )}
         </Suspense>

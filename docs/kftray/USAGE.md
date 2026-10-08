@@ -19,20 +19,13 @@ In a few simple steps, you can configure your first port forward:
 
 4. **Activate Your Configuration**: Use the row switch to start or stop one port forward. Use **Start All** and **Stop All** to operate on multiple configurations.
 
-> Note: To use the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171).
-> Follow these steps to allow write access:
+> Note: Domain aliases are written to the system hosts file, and a custom local address other than `127.0.0.1` is added to the loopback interface. Both need administrator access. When a start would need it and `kftray-helper` is not running, kftray asks first:
 >
-> For Windows:
+> - **Install helper**: one administrator prompt installs `kftray-helper`; later starts need none. The helper can also be installed or removed from the footer menu.
+> - **Continue without**: the start proceeds and the system asks for administrator access for each change (`pkexec` on Linux, an admin prompt on macOS, UAC on Windows). Tick **Don't ask again** to always take this path; kftray still stops asking once the helper is installed.
+> - **Cancel**: nothing is started.
 >
-> ```bash
-> icacls "C:\Windows\System32\drivers\etc\hosts" /grant Everyone:(R,W)
-> ```
->
-> For MacOS and Linux:
->
-> ```bash
-> sudo chmod ugo+rw /etc/hosts
-> ```
+> A start that fails because administrator access was refused shows the same dialog with the error, and **Retry without** repeats the start.
 
 ## Forwarding behavior
 

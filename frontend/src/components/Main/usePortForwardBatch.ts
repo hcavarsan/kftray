@@ -11,6 +11,7 @@ interface UsePortForwardBatchOptions {
   pending: PendingActions
   runForwardCommand: RunForwardCommand
   refreshConfigs: () => Promise<void>
+  onPrivilegeRefused: (configs: Config[], message: string) => void
 }
 
 interface PortForwardBatch {
@@ -22,6 +23,7 @@ interface PortForwardBatch {
     candidates: Config[],
     action: PortForwardToggleAction,
     successMessage?: string,
+    privilegeRetry?: boolean,
   ) => Promise<void>
 }
 
@@ -29,6 +31,7 @@ export function usePortForwardBatch({
   pending,
   runForwardCommand,
   refreshConfigs,
+  onPrivilegeRefused,
 }: UsePortForwardBatchOptions): PortForwardBatch {
   const {
     pendingConfigActionsRef,
@@ -92,6 +95,7 @@ export function usePortForwardBatch({
       candidates: Config[],
       action: PortForwardToggleAction,
       successMessage?: string,
+      privilegeRetry = false,
     ) =>
       executeBatch(
         {
@@ -110,10 +114,12 @@ export function usePortForwardBatch({
               : stopAbortControllerRef,
           graceTimeouts: graceTimeoutsRef.current,
           setBusy: action === 'starting' ? setIsInitiating : setIsStopping,
+          onPrivilegeRefused,
         },
         candidates,
         action,
         successMessage,
+        privilegeRetry,
       ),
     [
       pendingConfigActionsRef,
@@ -123,6 +129,7 @@ export function usePortForwardBatch({
       clearPending,
       refreshConfigs,
       runForwardCommand,
+      onPrivilegeRefused,
     ],
   )
 

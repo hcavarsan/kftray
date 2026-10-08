@@ -294,34 +294,37 @@ impl WebSocketTunnelServer {
         &self, id: String, method: String, path: String, headers: HashMap<String, String>,
         body: Vec<u8>,
     ) -> Result<TunnelMessage, String> {
-        let tunnel_lock = self.tunnel.read().await;
-        let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
-
         let (response_tx, response_rx) = oneshot::channel();
 
-        {
-            let mut pending = tunnel.pending_responses.write().await;
-            pending.insert(id.clone(), response_tx);
-        }
+        let pending_responses = {
+            let tunnel_lock = self.tunnel.read().await;
+            let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
 
-        let request_msg = TunnelMessage::HttpRequest {
-            id: id.clone(),
-            method,
-            path,
-            headers,
-            body,
+            tunnel
+                .pending_responses
+                .write()
+                .await
+                .insert(id.clone(), response_tx);
+
+            tunnel
+                .request_tx
+                .send(TunnelMessage::HttpRequest {
+                    id: id.clone(),
+                    method,
+                    path,
+                    headers,
+                    body,
+                })
+                .map_err(|e| format!("Failed to send request: {}", e))?;
+
+            tunnel.pending_responses.clone()
         };
-
-        tunnel
-            .request_tx
-            .send(request_msg)
-            .map_err(|e| format!("Failed to send request: {}", e))?;
 
         match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
-                let mut pending = tunnel.pending_responses.write().await;
+                let mut pending = pending_responses.write().await;
                 pending.remove(&id);
                 Err("Request timeout".to_string())
             }
@@ -532,5 +535,77 @@ mod tests {
             "Expected pending_responses to be empty after tunnel close, but had {} entries",
             pending.len()
         );
+    }
+
+    #[tokio::test]
+    async fn send_request_fails_fast_when_tunnel_drops_mid_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = Arc::new(WebSocketTunnelServer::new(0));
+        let tunnel_clone = server.tunnel.clone();
+
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel_clone,
+                stream,
+                Duration::from_secs(300),
+                Duration::from_secs(300),
+            )
+            .await
+        });
+
+        let (mut ws_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
+                .await
+                .unwrap();
+        while !server.is_connected().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let sender = server.clone();
+        let request = tokio::spawn(async move {
+            sender
+                .send_request(
+                    "drop-test-1".to_string(),
+                    "GET".to_string(),
+                    "/".to_string(),
+                    HashMap::new(),
+                    vec![],
+                )
+                .await
+        });
+
+        let forwarded = tokio::time::timeout(Duration::from_secs(5), ws_client.next())
+            .await
+            .expect("Timed out waiting for the forwarded request")
+            .expect("Stream ended")
+            .expect("WebSocket error");
+        assert!(
+            matches!(forwarded, Message::Binary(_)),
+            "Expected Binary, got {forwarded:?}"
+        );
+
+        drop(ws_client);
+
+        let result = tokio::time::timeout(Duration::from_secs(5), request)
+            .await
+            .expect("send_request still waiting after the tunnel closed")
+            .expect("send_request task panicked");
+
+        match result {
+            Ok(TunnelMessage::Error { id, message }) => {
+                assert_eq!(id.as_deref(), Some("drop-test-1"));
+                assert!(
+                    message.contains("tunnel closed"),
+                    "Expected 'tunnel closed' error, got: {message}"
+                );
+            }
+            other => panic!("Expected tunnel closed error, got: {other:?}"),
+        }
+
+        let _ = tokio::time::timeout(Duration::from_secs(5), server_handle)
+            .await
+            .expect("Server handler did not complete");
     }
 }
