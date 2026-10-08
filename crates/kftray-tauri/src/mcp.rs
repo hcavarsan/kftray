@@ -142,4 +142,40 @@ mod tests {
         assert!(start(0).await.is_err());
         assert!(!is_running().await);
     }
+
+    #[tokio::test]
+    async fn stop_closes_connections_that_are_already_open() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let _mcp = TEST_LOCK.lock().await;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        start(port).await.unwrap();
+
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let request = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let mut buf = [0u8; 2048];
+        client.write_all(request).await.unwrap();
+        let n = client.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+
+        stop().await.unwrap();
+
+        let _ = client.write_all(request).await;
+        let after =
+            tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut buf)).await;
+        let still_served = matches!(after, Ok(Ok(n)) if n > 0);
+        assert!(
+            !still_served,
+            "a connection opened before stop() is still answered after stop()"
+        );
+    }
 }
