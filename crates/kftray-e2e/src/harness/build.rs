@@ -45,6 +45,7 @@ pub async fn all(coverage: Option<&Coverage>) -> Result<Binaries> {
     let root = workspace_root();
     let mut app = Command::new(PNPM);
     app.current_dir(&root).args([
+        "exec",
         "tauri",
         "build",
         "--debug",

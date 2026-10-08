@@ -17,6 +17,9 @@
       ]
     }
   },
+  "bundle": {
+    "externalBin": []
+  },
   "plugins": {
     "fs": {
       "requireLiteralLeadingDot": false
