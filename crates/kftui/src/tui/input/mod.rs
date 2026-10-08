@@ -2306,30 +2306,7 @@ pub async fn handle_settings_input(
 }
 
 async fn handle_http_logs_toggle(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
-    let config_id = match app.active_table {
-        ActiveTable::Stopped => {
-            if let Some(index) = app.table_state_stopped.selected() {
-                if index < app.stopped_configs.len() {
-                    app.stopped_configs[index].id
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        ActiveTable::Running => {
-            if let Some(index) = app.table_state_running.selected() {
-                if index < app.running_configs.len() {
-                    app.running_configs[index].id
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-    };
+    let config_id = app.selected_config().and_then(|config| config.id);
 
     if let Some(id) = config_id {
         let current_state = app.http_logs_enabled.get(&id).unwrap_or(&false);
@@ -2372,14 +2349,7 @@ async fn handle_http_logs_toggle(app: &mut App, mode: DatabaseMode) -> io::Resul
 }
 
 async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
-    let config_info = match app.active_table {
-        ActiveTable::Stopped => app
-            .stopped_configs
-            .get(app.table_state_stopped.selected().unwrap_or(0)),
-        ActiveTable::Running => app
-            .running_configs
-            .get(app.table_state_running.selected().unwrap_or(0)),
-    };
+    let config_info = app.selected_config();
 
     if let Some(config) = config_info {
         if let (Some(config_id), Some(local_port)) = (config.id, config.local_port) {
@@ -2457,44 +2427,7 @@ async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<
 }
 
 async fn handle_http_logs_config(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
-    let config_id = match app.active_table {
-        ActiveTable::Stopped => {
-            if let Some(index) = app.table_state_stopped.selected() {
-                if index < app.stopped_configs.len() {
-                    app.stopped_configs[index].id
-                } else {
-                    None
-                }
-            } else if !app.stopped_configs.is_empty() {
-                app.stopped_configs[0].id
-            } else {
-                None
-            }
-        }
-        ActiveTable::Running => {
-            if let Some(index) = app.table_state_running.selected() {
-                if index < app.running_configs.len() {
-                    app.running_configs[index].id
-                } else {
-                    None
-                }
-            } else if !app.running_configs.is_empty() {
-                app.running_configs[0].id
-            } else {
-                None
-            }
-        }
-    };
-
-    let config_id = config_id.or_else(|| {
-        if !app.stopped_configs.is_empty() {
-            app.stopped_configs[0].id
-        } else if !app.running_configs.is_empty() {
-            app.running_configs[0].id
-        } else {
-            None
-        }
-    });
+    let config_id = app.selected_config().and_then(|config| config.id);
 
     if let Some(id) = config_id {
         let config =
@@ -2524,36 +2457,9 @@ async fn handle_http_logs_config(app: &mut App, mode: DatabaseMode) -> io::Resul
 }
 
 async fn handle_open_http_logs(app: &mut App, _mode: DatabaseMode) -> io::Result<()> {
-    let config_info = match app.active_table {
-        ActiveTable::Stopped => {
-            if let Some(index) = app.table_state_stopped.selected() {
-                if index < app.stopped_configs.len() {
-                    Some((
-                        app.stopped_configs[index].id,
-                        app.stopped_configs[index].local_port,
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        ActiveTable::Running => {
-            if let Some(index) = app.table_state_running.selected() {
-                if index < app.running_configs.len() {
-                    Some((
-                        app.running_configs[index].id,
-                        app.running_configs[index].local_port,
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-    };
+    let config_info = app
+        .selected_config()
+        .map(|config| (config.id, config.local_port));
 
     if let Some((config_id, local_port)) = config_info {
         if let (Some(id), Some(port)) = (config_id, local_port) {

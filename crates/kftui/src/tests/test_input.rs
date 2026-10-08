@@ -421,6 +421,44 @@ mod tests {
         assert_eq!(remaining, ["alpha", "beta"]);
     }
 
+    async fn searching_for_gamma() -> (App, Option<i64>) {
+        let mut app = app_with_saved_configs(&["alpha", "beta", "gamma"]).await;
+        app.search_query = "gamma".to_string();
+        app.update_filtered_configs();
+        app.table_state_stopped.select(Some(0));
+        let highlighted = app.selected_config().and_then(|c| c.id);
+        (app, highlighted)
+    }
+
+    #[tokio::test]
+    async fn http_logs_config_hotkey_while_searching_targets_the_highlighted_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (mut app, highlighted) = searching_for_gamma().await;
+
+        handle_stopped_table_input(&mut app, KeyCode::Char('L'), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(app.http_logs_config_id, highlighted);
+    }
+
+    #[tokio::test]
+    async fn http_logs_toggle_hotkey_while_searching_targets_the_highlighted_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (mut app, highlighted) = searching_for_gamma().await;
+
+        handle_stopped_table_input(&mut app, KeyCode::Char('l'), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let enabled: Vec<i64> = app
+            .http_logs_enabled
+            .iter()
+            .filter_map(|(id, on)| on.then_some(*id))
+            .collect();
+        assert_eq!(enabled, vec![highlighted.unwrap()]);
+    }
+
     #[tokio::test]
     async fn select_all_while_searching_only_deletes_matching_configs() {
         let _db = kftray_commons::test_utils::test_db().await;
