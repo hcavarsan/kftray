@@ -33,6 +33,9 @@ const CONSENTS: Record<
 }
 
 const DECLINED: Choices = { crashReports: false, performance: false }
+// Crash reports start on, performance data starts off. Closing the dialog
+// saves what is shown; "No thanks" is the explicit decline.
+const DEFAULT: Choices = { crashReports: true, performance: false }
 
 // onDone runs after every answer, also after a failed save, so the caller
 // can stop asking for the rest of the session.
@@ -44,7 +47,7 @@ export function TelemetryConsentModal({
   onDone: () => void
 }) {
   const queryClient = useQueryClient()
-  const [choices, setChoices] = useState<Choices>(DECLINED)
+  const [choices, setChoices] = useState<Choices>(DEFAULT)
   const choose = useMutation({
     mutationFn: (answer: Choices) =>
       Promise.all(
@@ -68,19 +71,24 @@ export function TelemetryConsentModal({
     <AppDialog
       data-testid='consent-dialog'
       title='Help improve kftray'
-      onClose={() => choose.mutate(DECLINED)}
+      onClose={() => choose.mutate(choices)}
       closeDisabled={choose.isPending}
       placement='center'
       maxWidth='400px'
     >
       <AppDialogBody>
         <Stack gap={3}>
+          <Text fontSize='xs' color='fg.muted'>
+            No cluster, namespace or service names are ever sent. You can change
+            this in Settings.
+          </Text>
           {consents.map(consent => (
             <Stack key={consent} gap={1}>
               <Switch
                 data-testid='consent-option'
                 data-id={consent}
                 size='sm'
+                colorPalette='blue'
                 checked={choices[consent]}
                 onCheckedChange={details =>
                   setChoices(prev => ({ ...prev, [consent]: details.checked }))
@@ -96,10 +104,6 @@ export function TelemetryConsentModal({
               </Text>
             </Stack>
           ))}
-          <Text fontSize='xs' color='fg.muted'>
-            No cluster, namespace or service names are ever sent. You can change
-            this in Settings.
-          </Text>
         </Stack>
       </AppDialogBody>
       <AppDialogFooter>

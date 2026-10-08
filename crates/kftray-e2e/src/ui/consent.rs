@@ -26,12 +26,13 @@ impl<'a> ConsentPage<'a> {
         self.desktop.is_visible(&TestId::ConsentDialog.by()).await
     }
 
+    /// Crash reports are pre-checked in the dialog, so accepting is just
+    /// confirming the default and saving.
     pub async fn accept_crash_reports(&self) -> Result<()> {
         let option = By::Css(format!(
             "{}[data-id='{CRASH_REPORTS}']",
             TestId::ConsentOption.css()
         ));
-        self.desktop.click(&option).await?;
         let limit = self.desktop.timeouts().ui;
         self.desktop
             .wait_attr(&option, "data-state", "checked", limit)
