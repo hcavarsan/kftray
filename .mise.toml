@@ -93,7 +93,30 @@ description = "Run kftui CLI"
 run = "cargo run -p kftui -- --log-level info --logs-to-file"
 
 [tasks.e2e]
-description = "Build the app, start a throwaway k3s and run the e2e suite"
+description = "Run the whole e2e suite in Docker: build the app, start Xvfb and k3s, run every test and copy the results to target/"
+run = """
+set -e
+docker build --file crates/kftray-e2e/Dockerfile --tag kftray-e2e .
+docker rm --force kftray-e2e > /dev/null 2>&1 || true
+status=0
+docker run --name kftray-e2e --init --network host --privileged \
+  --env KFTRAY_E2E_TIMEOUT_SCALE --env RUST_LOG \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume kftray-e2e-target:/work/target \
+  --volume kftray-e2e-cargo-registry:/usr/local/cargo/registry \
+  --volume kftray-e2e-cargo-git:/usr/local/cargo/git \
+  kftray-e2e || status=$?
+rm -rf target/e2e/artifacts
+mkdir -p target/e2e target/nextest/e2e
+docker cp kftray-e2e:/work/target/e2e/artifacts target/e2e/ > /dev/null 2>&1 || true
+docker cp kftray-e2e:/work/target/nextest/e2e/junit.xml target/nextest/e2e/ > /dev/null 2>&1 || true
+docker rm kftray-e2e > /dev/null
+echo "e2e results: target/nextest/e2e/junit.xml, artifacts in target/e2e/artifacts"
+exit $status
+"""
+
+[tasks."e2e:native"]
+description = "Build the app, start a throwaway k3s and run the e2e suite on this machine's display"
 run = "cargo run -p kftray-e2e -- run"
 
 [tasks."e2e:up"]
