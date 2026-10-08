@@ -99,9 +99,10 @@ pub async fn create_config_with_context(
             let decoded_key = decode_block(client_key_data.expose_secret())
                 .context("Failed to decode client key data")?;
 
-            if is_pkcs8_key(&decoded_key) {
-                let converted_key = convert_pkcs8_to_pkcs1(&decoded_key)
-                    .context("Failed to convert PKCS#8 key to PKCS#1")?;
+            if is_pkcs8_key(&decoded_key)
+                && let Some(converted_key) = convert_pkcs8_to_pkcs1(&decoded_key)
+                    .context("Failed to convert PKCS#8 key to PKCS#1")?
+            {
                 let encoded_key = encode_block(&converted_key);
                 auth_info_data.client_key_data = Some(encoded_key.into());
             }
@@ -287,6 +288,48 @@ mod tests {
 
         let result = create_config_with_context(&kubeconfig, context_name).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_config_ignores_unused_non_rsa_pkcs8_key() {
+        use openssl::ec::{
+            EcGroup,
+            EcKey,
+        };
+        use openssl::nid::Nid;
+        use openssl::pkey::PKey;
+
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let ec_key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let ec_key_data = encode_block(&ec_key.private_key_to_pem_pkcs8().unwrap());
+
+        let kubeconfig = Kubeconfig::from_yaml(&format!(
+            r#"
+apiVersion: v1
+kind: Config
+clusters:
+- name: test-cluster
+  cluster:
+    server: https://test-server.com
+contexts:
+- name: token-context
+  context:
+    cluster: test-cluster
+    user: token-user
+current-context: token-context
+users:
+- name: token-user
+  user:
+    token: test-token
+- name: ec-user
+  user:
+    client-key-data: {ec_key_data}
+"#
+        ))
+        .unwrap();
+
+        let result = create_config_with_context(&kubeconfig, "token-context").await;
+        assert!(result.is_ok(), "{:#}", result.unwrap_err());
     }
 
     #[test]
