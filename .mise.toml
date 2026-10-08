@@ -98,6 +98,8 @@ run = """
 set -e
 docker build --file crates/kftray-e2e/Dockerfile --tag kftray-e2e .
 docker rm --force kftray-e2e > /dev/null 2>&1 || true
+rm -rf target/e2e/artifacts target/nextest/e2e/junit.xml
+mkdir -p target/e2e target/nextest/e2e
 status=0
 docker run --name kftray-e2e --init --network host --privileged \
   --env KFTRAY_E2E_TIMEOUT_SCALE --env RUST_LOG \
@@ -106,12 +108,19 @@ docker run --name kftray-e2e --init --network host --privileged \
   --volume kftray-e2e-cargo-registry:/usr/local/cargo/registry \
   --volume kftray-e2e-cargo-git:/usr/local/cargo/git \
   kftray-e2e || status=$?
-rm -rf target/e2e/artifacts
-mkdir -p target/e2e target/nextest/e2e
-docker cp kftray-e2e:/work/target/e2e/artifacts target/e2e/ > /dev/null 2>&1 || true
-docker cp kftray-e2e:/work/target/nextest/e2e/junit.xml target/nextest/e2e/ > /dev/null 2>&1 || true
+copied=0
+docker cp kftray-e2e:/work/target/e2e/artifacts target/e2e/ > /dev/null 2>&1 || copied=$?
+docker cp kftray-e2e:/work/target/nextest/e2e/junit.xml target/nextest/e2e/ > /dev/null 2>&1 || copied=$?
 docker rm kftray-e2e > /dev/null
-echo "e2e results: target/nextest/e2e/junit.xml, artifacts in target/e2e/artifacts"
+if [ "$status" -eq 0 ] && [ "$copied" -ne 0 ]; then
+  echo "e2e passed but its junit or artifacts could not be copied out of the container" >&2
+  exit 1
+fi
+if [ -f target/nextest/e2e/junit.xml ]; then
+  echo "e2e results: target/nextest/e2e/junit.xml, artifacts in target/e2e/artifacts"
+else
+  echo "e2e produced no junit; it failed before nextest ran" >&2
+fi
 exit $status
 """
 

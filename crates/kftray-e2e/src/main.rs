@@ -115,6 +115,7 @@ async fn up(skip_build: bool) -> Result<()> {
 }
 
 async fn prepare(skip_build: bool) -> Result<Environment> {
+    nextest::clear_junit()?;
     let out = workspace_root().join("target").join("e2e");
     let artifacts = out.join("artifacts");
     if artifacts.exists() {
