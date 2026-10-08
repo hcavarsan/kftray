@@ -424,6 +424,9 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
         Some("service") => existing.service == incoming.service,
         Some("pod") => existing.target == incoming.target,
         Some("proxy") => existing.remote_address == incoming.remote_address,
+        Some("expose") => {
+            return existing.alias == incoming.alias && existing.local_port == incoming.local_port;
+        }
         _ => {
             return existing.service == incoming.service
                 && existing.target == incoming.target
@@ -1551,6 +1554,34 @@ mod tests {
                 ("web".to_string(), Some(80)),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_reimporting_exported_expose_config_keeps_one_copy() {
+        let pool = setup_test_db().await;
+        let saved = json!({"workload_type": "expose", "exposure_type": "cluster",
+            "protocol": "tcp", "context": "ctx", "namespace": "default",
+            "alias": "app.example.test", "local_port": 3000});
+        import_configs_with_pool(saved.to_string(), &pool)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            let exported = export_configs_with_pool(&pool).await.unwrap();
+            import_configs_with_pool(exported, &pool).await.unwrap();
+        }
+
+        let other_alias = json!({"workload_type": "expose", "exposure_type": "cluster",
+            "protocol": "tcp", "context": "ctx", "namespace": "default",
+            "alias": "api.example.test", "local_port": 3000});
+        import_configs_with_pool(other_alias.to_string(), &pool)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let mut aliases: Vec<_> = configs.iter().filter_map(|c| c.alias.clone()).collect();
+        aliases.sort();
+        assert_eq!(aliases, vec!["api.example.test", "app.example.test"]);
     }
 
     #[tokio::test]
