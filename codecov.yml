@@ -7,6 +7,11 @@ coverage:
       default:
         informational: true
 
+flag_management:
+  individual_flags:
+    - name: e2e
+      carryforward: true
+
 comment:
   layout: "header, diff, flags, components"
 
