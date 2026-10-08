@@ -22,14 +22,12 @@ const CONSENTS: Record<
 > = {
   crashReports: {
     label: 'Crash reports',
-    description:
-      'A report when kftray crashes or hits an unexpected error. It has the error type, where in the code it happened, the app version and the operating system.',
+    description: 'Send a report when kftray crashes.',
     command: 'update_telemetry_enabled',
   },
   performance: {
     label: 'Performance data',
-    description:
-      'How long port forwards take to start and stop, and whether they failed. It has the operation name, its duration, its result and the app version.',
+    description: 'Send how long port forwards take to start and stop.',
     command: 'update_performance_enabled',
   },
 }
@@ -68,7 +66,7 @@ export function TelemetryConsentModal({
 
   return (
     <AppDialog
-      title='Diagnostics'
+      title='Help improve kftray'
       onClose={() => choose.mutate(DECLINED)}
       closeDisabled={choose.isPending}
       placement='center'
@@ -96,9 +94,8 @@ export function TelemetryConsentModal({
             </Stack>
           ))}
           <Text fontSize='xs' color='fg.muted'>
-            Nothing sent includes cluster names, namespaces, service names,
-            aliases or kubeconfig files. Data goes to a server run by the kftray
-            maintainer. You can change this later in Settings.
+            No cluster, namespace or service names are ever sent. You can change
+            this in Settings.
           </Text>
         </Stack>
       </AppDialogBody>

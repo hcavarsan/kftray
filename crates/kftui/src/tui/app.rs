@@ -310,7 +310,7 @@ mod tests {
 
         let title = row_of("Crash Reports");
         let first_line = row_of("kftui can send a report when it crashes.");
-        let last_line = row_of("later in Settings.");
+        let last_line = row_of("this in Settings.");
         let buttons = row_of("<Allow>");
         assert_eq!(row_of("<No thanks>"), buttons);
         assert!(title < first_line);

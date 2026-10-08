@@ -14,7 +14,7 @@ export function TelemetrySettings({
   return (
     <SettingCard
       title='Crash Reports'
-      description='Send a report when kftray crashes or hits an unexpected error. Reports never include cluster names, namespaces, services, aliases or kubeconfig files.'
+      description='Send a report when kftray crashes.'
     >
       <SettingRow label='Enabled:'>
         <Checkbox

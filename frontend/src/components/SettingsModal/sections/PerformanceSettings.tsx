@@ -14,7 +14,7 @@ export function PerformanceSettings({
   return (
     <SettingCard
       title='Performance Data'
-      description='Send how long port forwards take to start and stop, and whether they failed. This data never includes cluster names, namespaces, services, aliases or kubeconfig files.'
+      description='Send how long port forwards take to start and stop.'
     >
       <SettingRow label='Enabled:'>
         <Checkbox

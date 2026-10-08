@@ -1130,7 +1130,7 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
         ),
         (
             "Crash Reports",
-            "Send crash reports to the kftray maintainer",
+            "Send a report when kftui crashes",
             if app.settings_telemetry_enabled {
                 "ON"
             } else {
@@ -1141,7 +1141,7 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
         ),
         (
             "Performance Data",
-            "Send port forward timings to the kftray maintainer",
+            "Send how long port forwards take to start and stop",
             if app.settings_performance_enabled {
                 "ON"
             } else {
@@ -1963,8 +1963,8 @@ pub fn render_telemetry_consent_popup(
     f: &mut Frame, screen: Rect, consent: crate::tui::input::Consent,
     selected_button: crate::tui::input::TelemetryButton,
 ) {
-    const CRASH_REPORTS_MESSAGE: &str = "kftui can send a report when it crashes.\n\nA report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nReports go to a server run by the kftray maintainer. You can change this later in Settings.";
-    const PERFORMANCE_MESSAGE: &str = "kftui can send how long port forwards take to start and stop, and whether they failed.\n\nThis data has the operation name, its duration, its result and the app version. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nData goes to a server run by the kftray maintainer. You can change this later in Settings.";
+    const CRASH_REPORTS_MESSAGE: &str = "kftui can send a report when it crashes.\n\nNo cluster, namespace or service names are ever sent. You can change this in Settings.";
+    const PERFORMANCE_MESSAGE: &str = "kftui can send how long port forwards take to start and stop.\n\nNo cluster, namespace or service names are ever sent. You can change this in Settings.";
     let (title, message) = match consent {
         crate::tui::input::Consent::CrashReports => ("Crash Reports", CRASH_REPORTS_MESSAGE),
         crate::tui::input::Consent::Performance => ("Performance Data", PERFORMANCE_MESSAGE),
