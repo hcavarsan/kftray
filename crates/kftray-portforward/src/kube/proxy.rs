@@ -1,7 +1,5 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::Read,
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -32,14 +30,12 @@ use kftray_commons::{
         response::CustomResponse,
     },
     utils::{
-        config_dir::{
-            get_pod_manifest_path,
-            get_proxy_deployment_manifest_path,
-        },
         db_mode::DatabaseMode,
         manifests::{
             pod_manifest_is_customized,
+            pod_manifest_template,
             proxy_deployment_manifest_exists,
+            proxy_deployment_manifest_template,
         },
     },
 };
@@ -552,11 +548,7 @@ async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
     values: &HashMap<String, String>, protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
-    let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+    let contents = proxy_deployment_manifest_template()?;
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
@@ -770,11 +762,7 @@ async fn process_pod_proxy(
     client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
     protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
-    let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+    let contents = pod_manifest_template()?;
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
