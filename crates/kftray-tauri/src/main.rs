@@ -18,6 +18,7 @@ mod glibc_detector;
 mod init_check;
 mod mcp;
 mod shortcuts;
+mod telemetry;
 mod tray;
 #[cfg(target_os = "linux")]
 mod tray_linux;
@@ -119,6 +120,8 @@ fn main() {
         eprintln!("failed to initialize file logger: {e}");
     }
 
+    let _telemetry = telemetry::init();
+
     if let Err(e) = fix_path_env::fix_all_vars() {
         log::warn!("fix_path_env::fix_all_vars failed: {e}");
     }
@@ -160,6 +163,8 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
                     error!("Database migration failed during setup: {e}");
                 }
+
+                telemetry::load_setting().await;
             });
 
             let app_handle = app.app_handle().clone();
@@ -419,6 +424,9 @@ fn main() {
             commands::settings::get_mcp_server_status,
             commands::settings::update_mcp_server_enabled,
             commands::settings::update_mcp_server_port,
+            commands::telemetry::get_telemetry_enabled,
+            commands::telemetry::update_telemetry_enabled,
+            commands::telemetry::report_error,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,
             commands::logs::get_log_contents_json,

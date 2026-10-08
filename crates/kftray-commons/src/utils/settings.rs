@@ -558,6 +558,19 @@ pub async fn set_last_update_check(
     set_setting("last_update_check", &timestamp.to_string()).await
 }
 
+pub async fn get_telemetry_enabled()
+-> Result<Option<bool>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_setting("telemetry_enabled")
+        .await?
+        .and_then(|value| value.parse().ok()))
+}
+
+pub async fn set_telemetry_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("telemetry_enabled", &enabled.to_string()).await
+}
+
 pub async fn get_auto_update_enabled_with_mode(
     mode: DatabaseMode,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {

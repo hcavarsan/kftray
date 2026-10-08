@@ -38,6 +38,7 @@ netstat2 = { workspace = true }
 open = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sentry = { workspace = true }
 sqlx = { workspace = true }
 sysinfo = { workspace = true }
 tauri = { workspace = true }

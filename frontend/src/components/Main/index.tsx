@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Footer } from '@/components/Footer'
 import { PortForwardTable } from '@/components/PortForwardTable'
+import { telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
@@ -42,6 +43,11 @@ const ShortcutModal = lazy(() =>
     default: m.ShortcutModal,
   })),
 )
+const TelemetryConsentModal = lazy(() =>
+  import('@/components/TelemetryConsentModal').then(m => ({
+    default: m.TelemetryConsentModal,
+  })),
+)
 
 type ActiveModal =
   | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
@@ -60,6 +66,7 @@ export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
+  const telemetry = useQuery(telemetryQuery)
   const forwarding = usePortForwarding()
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
@@ -234,6 +241,9 @@ export function Main() {
           )}
           {activeModal?.type === 'settings' && (
             <SettingsModal onClose={closeModal} />
+          )}
+          {activeModal === null && telemetry.data === null && (
+            <TelemetryConsentModal />
           )}
         </Suspense>
       </VStack>

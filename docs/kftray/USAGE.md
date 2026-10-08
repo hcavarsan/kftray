@@ -57,6 +57,14 @@ kftray runs in one of two modes. To change the mode, open the footer menu (☰) 
 
 In both modes the `–` button in the header hides the window (Tray) or minimizes it (Window), and the `×` button quits kftray. Launching kftray again while it is running brings the existing window to the front. Drag the window edges to resize it. kftray keeps the size for the next start. **Settings > Window > Reset Position** moves the window back to its default position.
 
+## Crash reports
+
+On first start kftray asks whether it may send crash reports. Nothing is sent before you answer, and nothing is sent when you decline. The choice is stored, and you can change it later under **Settings > Crash Reports**.
+
+A report has the error type, where in the code it happened, the app version, the operating system name and version, the CPU architecture and the device model. Panic messages are sent only when they are fixed strings in the code, so a panic that carries a cluster address or a resource name is reduced to a file and line. Reports never include cluster names, namespaces, service names, aliases, kubeconfig files or your host name.
+
+Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cavarsa.app`. The proxy in front of it drops the client IP before the report is stored. Setting the `DO_NOT_TRACK` environment variable turns reporting off whatever the setting says, and development builds never send reports.
+
 ## Export configurations to a JSON file
 
 1. Open the main menu in the footer

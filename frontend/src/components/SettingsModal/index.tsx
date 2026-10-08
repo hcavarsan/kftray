@@ -18,6 +18,7 @@ import { SETTINGS_QUERIES } from './queries'
 import { LogSettings } from './sections/LogSettings'
 import { NetworkSettings } from './sections/NetworkSettings'
 import { SslSettings } from './sections/SslSettings'
+import { TelemetrySettings } from './sections/TelemetrySettings'
 import { UpdateSettings } from './sections/UpdateSettings'
 import {
   type AppMode,
@@ -125,6 +126,10 @@ function SettingsForm({
               update('autoUpdateEnabled', value)
             }
             lastUpdateCheck={settings.last_update_check}
+          />
+          <TelemetrySettings
+            enabled={draft.telemetryEnabled}
+            onEnabledChange={value => update('telemetryEnabled', value)}
           />
           <LogSettings
             retentionCount={draft.logRetentionCount}
