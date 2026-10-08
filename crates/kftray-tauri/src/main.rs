@@ -339,6 +339,7 @@ fn main() {
             let app_handle_mode = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 tray_mode::load_preference(&app_handle_mode).await;
+                tray_mode::show_on_launch(&app_handle_mode);
             });
 
             Ok(())

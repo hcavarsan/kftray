@@ -142,6 +142,16 @@ pub async fn load_preference(app: &AppHandle<Wry>) {
     }
 }
 
+// Window mode already shows the window while switching to it; tray mode
+// starts hidden, so surface it once so launching the app opens something.
+pub fn show_on_launch(app: &AppHandle<Wry>) {
+    if current(app) == TrayMode::Tray
+        && let Some(window) = app.get_webview_window("main")
+    {
+        crate::window::show_centered_main_window(&window);
+    }
+}
+
 fn switch_to(app: &AppHandle<Wry>, mode: TrayMode, center: bool) {
     info!("Switching kftray to {mode:?} mode");
 
