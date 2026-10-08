@@ -8,9 +8,14 @@ use anyhow::{
     Result,
     ensure,
 };
-use tokio::net::TcpStream;
+use tokio::net::{
+    TcpStream,
+    UdpSocket,
+};
+use tokio::time::timeout;
 
 use crate::fixtures::Expect;
+use crate::harness::env::POLL_INTERVAL;
 use crate::harness::wait::poll;
 
 impl Expect {
@@ -21,6 +26,16 @@ impl Expect {
                 ensure!(
                     got.trim() == *body,
                     "port {port} answered {got:?}, expected {body:?}"
+                );
+                Ok(())
+            }
+            Self::Udp { send, reply } => {
+                let got = udp_exchange(port, send, limit).await?;
+                ensure!(
+                    got == *reply,
+                    "port {port} replied {:?}, expected {:?}",
+                    String::from_utf8_lossy(&got),
+                    String::from_utf8_lossy(reply)
                 );
                 Ok(())
             }
@@ -67,6 +82,37 @@ async fn http_get(port: u16, limit: Duration) -> Result<String> {
     .with_context(|| {
         format!(
             "port {port} gave no HTTP answer within {limit:?}; last error: {}",
+            last_error.borrow()
+        )
+    })
+}
+
+async fn udp_exchange(port: u16, payload: &[u8], limit: Duration) -> Result<Vec<u8>> {
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .context("bind a local UDP socket")?;
+    socket
+        .connect((Ipv4Addr::LOCALHOST, port))
+        .await
+        .with_context(|| format!("connect a UDP socket to port {port}"))?;
+    let last_error = RefCell::new(String::from("no attempt finished"));
+    poll(limit, || async {
+        let mut buffer = [0; 1024];
+        let received = match socket.send(payload).await {
+            Ok(_) => timeout(POLL_INTERVAL, socket.recv(&mut buffer))
+                .await
+                .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into())),
+            Err(error) => Err(error),
+        };
+        received
+            .map(|length| buffer[..length].to_vec())
+            .map_err(|error| *last_error.borrow_mut() = error.to_string())
+            .ok()
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "port {port} gave no UDP reply within {limit:?}; last error: {}",
             last_error.borrow()
         )
     })

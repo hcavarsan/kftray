@@ -11,6 +11,7 @@ use crate::harness::workload::{
 };
 
 const ECHO_BODY: &str = "kftray-e2e";
+const ECHO_DATAGRAM: &[u8] = b"kftray-e2e";
 
 fn base(alias: &str, workload: Workload, workload_type: &str) -> Config {
     Config {
@@ -44,6 +45,32 @@ pub fn pod_http() -> Fixture {
     config.target = Some(Workload::EchoHttp.selector());
     Fixture {
         name: "pod-http",
+        workload: Workload::EchoHttp,
+        config,
+        expect: Expect::Http { body: ECHO_BODY },
+    }
+}
+
+pub fn service_udp() -> Fixture {
+    let mut config = base("svc-udp", Workload::EchoUdp, "service");
+    config.protocol = "udp".to_owned();
+    Fixture {
+        name: "service-udp",
+        workload: Workload::EchoUdp,
+        config,
+        expect: Expect::Udp {
+            send: ECHO_DATAGRAM,
+            reply: ECHO_DATAGRAM,
+        },
+    }
+}
+
+pub fn proxy_http() -> Fixture {
+    let mut config = base("proxy-http", Workload::EchoHttp, "proxy");
+    config.service = None;
+    config.remote_address = Some(Workload::EchoHttp.service_host(NAMESPACE));
+    Fixture {
+        name: "proxy-http",
         workload: Workload::EchoHttp,
         config,
         expect: Expect::Http { body: ECHO_BODY },

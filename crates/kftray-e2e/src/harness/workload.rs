@@ -35,26 +35,30 @@ use tokio::time::timeout;
 pub const NAMESPACE: &str = "e2e";
 
 const HTTP_ECHO_IMAGE: &str = "hashicorp/http-echo:1.0.0";
+const SOCAT_IMAGE: &str = "alpine/socat:1.8.0.3";
 
 #[derive(Clone, Copy, Debug)]
 pub enum Workload {
     EchoHttp,
+    EchoUdp,
 }
 
 impl Workload {
     pub fn all() -> &'static [Workload] {
-        &[Self::EchoHttp]
+        &[Self::EchoHttp, Self::EchoUdp]
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Self::EchoHttp => "echo-http",
+            Self::EchoUdp => "echo-udp",
         }
     }
 
     pub fn port(self) -> u16 {
         match self {
             Self::EchoHttp => 5678,
+            Self::EchoUdp => 5353,
         }
     }
 
@@ -62,30 +66,52 @@ impl Workload {
         format!("app={}", self.name())
     }
 
-    fn objects(self, namespace: &str) -> (Deployment, Service) {
+    pub fn service_host(self, namespace: &str) -> String {
+        format!("{}.{namespace}.svc.cluster.local", self.name())
+    }
+
+    fn protocol(self) -> &'static str {
         match self {
-            Self::EchoHttp => (
-                deployment(
-                    self,
-                    namespace,
-                    Container {
-                        name: self.name().to_owned(),
-                        image: Some(HTTP_ECHO_IMAGE.to_owned()),
-                        args: Some(vec![
-                            "-text=kftray-e2e".to_owned(),
-                            format!("-listen=:{}", self.port()),
-                        ]),
-                        ports: Some(vec![ContainerPort {
-                            container_port: self.port().into(),
-                            protocol: Some("TCP".to_owned()),
-                            ..ContainerPort::default()
-                        }]),
-                        ..Container::default()
-                    },
-                ),
-                service(self, namespace, "TCP"),
-            ),
+            Self::EchoHttp => "TCP",
+            Self::EchoUdp => "UDP",
         }
+    }
+
+    fn container(self) -> Container {
+        let (image, args) = match self {
+            Self::EchoHttp => (
+                HTTP_ECHO_IMAGE,
+                vec![
+                    "-text=kftray-e2e".to_owned(),
+                    format!("-listen=:{}", self.port()),
+                ],
+            ),
+            Self::EchoUdp => (
+                SOCAT_IMAGE,
+                vec![
+                    format!("UDP4-LISTEN:{},fork", self.port()),
+                    "EXEC:cat".to_owned(),
+                ],
+            ),
+        };
+        Container {
+            name: self.name().to_owned(),
+            image: Some(image.to_owned()),
+            args: Some(args),
+            ports: Some(vec![ContainerPort {
+                container_port: self.port().into(),
+                protocol: Some(self.protocol().to_owned()),
+                ..ContainerPort::default()
+            }]),
+            ..Container::default()
+        }
+    }
+
+    fn objects(self, namespace: &str) -> (Deployment, Service) {
+        (
+            deployment(self, namespace, self.container()),
+            service(self, namespace),
+        )
     }
 
     pub async fn apply(self, client: &Client, namespace: &str) -> Result<()> {
@@ -148,7 +174,7 @@ fn deployment(workload: Workload, namespace: &str, container: Container) -> Depl
     }
 }
 
-fn service(workload: Workload, namespace: &str, protocol: &str) -> Service {
+fn service(workload: Workload, namespace: &str) -> Service {
     Service {
         metadata: ObjectMeta {
             name: Some(workload.name().to_owned()),
@@ -159,10 +185,10 @@ fn service(workload: Workload, namespace: &str, protocol: &str) -> Service {
         spec: Some(ServiceSpec {
             selector: Some(labels(workload)),
             ports: Some(vec![ServicePort {
-                name: Some(protocol.to_ascii_lowercase()),
+                name: Some(workload.protocol().to_ascii_lowercase()),
                 port: workload.port().into(),
                 target_port: Some(IntOrString::Int(workload.port().into())),
-                protocol: Some(protocol.to_owned()),
+                protocol: Some(workload.protocol().to_owned()),
                 ..ServicePort::default()
             }]),
             ..ServiceSpec::default()

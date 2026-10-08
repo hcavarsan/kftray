@@ -2,7 +2,9 @@ mod forwards;
 
 pub use forwards::{
     pod_http,
+    proxy_http,
     service_http,
+    service_udp,
 };
 use kftray_commons::models::config_model::Config;
 
@@ -18,7 +20,13 @@ pub struct Fixture {
 
 #[derive(Clone, Debug)]
 pub enum Expect {
-    Http { body: &'static str },
+    Http {
+        body: &'static str,
+    },
+    Udp {
+        send: &'static [u8],
+        reply: &'static [u8],
+    },
 }
 
 impl Fixture {

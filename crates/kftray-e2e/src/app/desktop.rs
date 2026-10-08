@@ -98,6 +98,19 @@ impl Desktop {
         Self::launch(&env, profile).await
     }
 
+    pub async fn relaunch_after_kill(mut self) -> Result<Self> {
+        self.child.start_kill().context("kill kftray")?;
+        let limit = self.env.timeouts.exit;
+        timeout(limit, self.child.wait())
+            .await
+            .with_context(|| format!("kftray did not die within {limit:?}"))?
+            .context("wait for kftray")?;
+        let env = self.env.clone();
+        let profile = self.profile.clone();
+        drop(self);
+        Self::launch(&env, profile).await
+    }
+
     pub async fn quit(mut self) -> Result<()> {
         self.invoke::<Value>("stop_all_port_forward_cmd", json!({}))
             .await?;

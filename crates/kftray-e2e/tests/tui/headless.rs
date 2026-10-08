@@ -11,6 +11,8 @@ use rstest::rstest;
 #[rstest]
 #[case::service_http(fixtures::service_http())]
 #[case::pod_http(fixtures::pod_http())]
+#[case::service_udp(fixtures::service_udp())]
+#[case::proxy_http(fixtures::proxy_http())]
 #[tokio::test]
 async fn auto_start_serves_traffic(#[case] fixture: Fixture) -> Result<()> {
     let env = TestEnv::from_env()?;
