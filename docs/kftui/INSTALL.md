@@ -86,16 +86,16 @@ Download the latest `kftui` binaries directly from GitHub:
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_macos_universal">
         <img src="https://img.shields.io/badge/macOS-Universal-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS Universal" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_arm64">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_linux_arm64">
         <img src="https://img.shields.io/badge/Linux-ARM64-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux ARM64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_amd64">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_linux_amd64">
         <img src="https://img.shields.io/badge/Linux-AMD64-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_x86.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_windows_x86.exe">
         <img src="https://img.shields.io/badge/Windows-x86-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x86" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_x86_64.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftui_windows_x86_64.exe">
         <img src="https://img.shields.io/badge/Windows-x64-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x64" />
     </a>
 </div>
