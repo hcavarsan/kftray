@@ -49,7 +49,7 @@ async fn saved_aliases() -> Vec<String> {
         .collect()
 }
 
-async fn flush_import(args: &[&str]) -> Result<(), String> {
+async fn flush_import(args: &[&str]) -> Result<Vec<i64>, String> {
     let cli = Cli::parse_from(
         ["kftui", "--save", "--flush", "--non-interactive"]
             .iter()
@@ -102,4 +102,37 @@ async fn flush_replaces_saved_configs_after_a_valid_import() {
     flush_import(&["--json", json]).await.unwrap();
 
     assert_eq!(saved_aliases().await, vec!["new"]);
+}
+
+#[tokio::test]
+async fn import_returns_ids_of_saved_and_new_configs() {
+    let _db = db_with_saved_config().await;
+    let saved_id = read_configs_with_mode(DatabaseMode::File).await.unwrap()[0]
+        .id
+        .unwrap();
+    let json = r#"[
+        {"alias":"keep-me","namespace":"default","service":"api","local_port":18080,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"x"},
+        {"alias":"new","namespace":"default","service":"web","local_port":18081,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"x"}
+    ]"#;
+    let cli = Cli::parse_from([
+        "kftui",
+        "--save",
+        "--auto-start",
+        "--non-interactive",
+        "--json",
+        json,
+    ]);
+
+    let ids = ConfigImporter::import_configs(&cli, DatabaseMode::File)
+        .await
+        .unwrap();
+
+    let configs = read_configs_with_mode(DatabaseMode::File).await.unwrap();
+    let new_id = configs
+        .iter()
+        .find(|c| c.alias.as_deref() == Some("new"))
+        .and_then(|c| c.id)
+        .unwrap();
+    assert_eq!(configs.len(), 2);
+    assert_eq!(ids, vec![saved_id, new_id]);
 }

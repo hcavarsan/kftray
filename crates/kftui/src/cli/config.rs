@@ -21,20 +21,20 @@ use crate::stdin;
 pub struct ConfigImporter;
 
 impl ConfigImporter {
-    pub async fn import_configs(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+    pub async fn import_configs(cli: &Cli, mode: DatabaseMode) -> Result<Vec<i64>, String> {
         Self::print_import_start_message(cli, mode);
 
         let configs = Self::load_from_source(cli).await?;
 
         Self::handle_flush_if_needed(cli, mode).await?;
 
-        upsert_configs_with_mode(configs, mode)
+        let ids = upsert_configs_with_mode(configs, mode)
             .await
             .map_err(|e| format!("Failed to save configs to database: {e}"))?;
 
         Self::print_import_success_message(cli, mode);
 
-        Ok(())
+        Ok(ids)
     }
 
     async fn handle_flush_if_needed(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
