@@ -164,17 +164,36 @@ mod tests {
         let request = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let mut buf = [0u8; 2048];
         client.write_all(request).await.unwrap();
-        let n = client.read(&mut buf).await.unwrap();
-        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+        let mut response = Vec::new();
+        loop {
+            let n = client.read(&mut buf).await.unwrap();
+            assert!(n > 0, "connection closed before the health response ended");
+            response.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&response);
+            if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                let content_length = head
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .expect("health response has no Content-Length");
+                if body.len() >= content_length {
+                    break;
+                }
+            }
+        }
+        assert!(response.starts_with(b"HTTP/1.1 200"));
 
         stop().await.unwrap();
 
         let _ = client.write_all(request).await;
-        let after =
-            tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut buf)).await;
-        let still_served = matches!(after, Ok(Ok(n)) if n > 0);
+        let after = tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut buf))
+            .await
+            .expect("a connection opened before stop() is still open 2s after stop()");
         assert!(
-            !still_served,
+            matches!(after, Ok(0) | Err(_)),
             "a connection opened before stop() is still answered after stop()"
         );
     }
