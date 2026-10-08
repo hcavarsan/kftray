@@ -52,7 +52,10 @@ export function FooterMenu({
   return (
     <MenuRoot>
       <MenuTrigger asChild>
-        <FooterActionButton aria-label='Open configuration menu'>
+        <FooterActionButton
+          data-testid='config-menu'
+          aria-label='Open configuration menu'
+        >
           <Box as={MenuIcon} width='12px' height='12px' />
         </FooterActionButton>
       </MenuTrigger>
@@ -93,7 +96,11 @@ export function FooterMenu({
 
         <MenuSeparator borderColor='border' my={1} />
 
-        <MenuItem value='settings' onClick={onOpenSettings}>
+        <MenuItem
+          data-testid='settings-button'
+          value='settings'
+          onClick={onOpenSettings}
+        >
           <Box as={Settings} width='12px' height='12px' />
           <Box fontSize='11px'>Settings</Box>
         </MenuItem>

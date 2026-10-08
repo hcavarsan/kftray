@@ -92,6 +92,18 @@ run = "pnpm run knip"
 description = "Run kftui CLI"
 run = "cargo run -p kftui -- --log-level info --logs-to-file"
 
+[tasks.e2e]
+description = "Build the app, start a throwaway k3s and run the e2e suite"
+run = "cargo run -p kftray-e2e -- run"
+
+[tasks."e2e:up"]
+description = "Start the e2e environment and keep it up for cargo nextest --profile e2e"
+run = "cargo run -p kftray-e2e -- up"
+
+[tasks."e2e:build"]
+description = "Build kftray with the e2e feature and kftui"
+run = "cargo run -p kftray-e2e -- build"
+
 # Setup Task
 [tasks.setup]
 description = "Setup development environment for all platforms"

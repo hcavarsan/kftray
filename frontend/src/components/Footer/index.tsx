@@ -73,6 +73,7 @@ export function Footer({
           }}
         >
           <FooterActionButton
+            data-testid='add-config-button'
             aria-label='Add new config'
             onClick={onAddConfig}
             disabled={!!credentials}

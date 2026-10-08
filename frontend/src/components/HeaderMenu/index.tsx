@@ -161,7 +161,12 @@ export function HeaderMenu({
       <Group display='flex' alignItems='center' gap={1.5}>
         <ViewControls view={view} facets={facets} setView={setView} />
         <WithTooltip content={expandLabel}>
-          <ToolbarIconButton aria-label={expandLabel} onClick={toggleExpandAll}>
+          <ToolbarIconButton
+            data-testid='expand-groups'
+            data-state={isAllExpanded ? 'expanded' : 'collapsed'}
+            aria-label={expandLabel}
+            onClick={toggleExpandAll}
+          >
             {isAllExpanded ? (
               <ChevronsDownUp size={13} />
             ) : (

@@ -142,6 +142,8 @@ export function Main() {
 
   return (
     <Box
+      data-testid='main-view'
+      data-state={telemetry.isFetched ? 'ready' : 'loading'}
       position='fixed'
       width='100%'
       height='100%'

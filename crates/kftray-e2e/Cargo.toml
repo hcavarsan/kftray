@@ -1,0 +1,34 @@
+[package]
+name = "kftray-e2e"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "kftray-e2e"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+env_logger = { workspace = true }
+futures = { workspace = true }
+k8s-openapi = { workspace = true }
+kftray-commons = { workspace = true }
+kube = { workspace = true }
+kube-runtime = { workspace = true }
+log = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+testcontainers-modules = { version = "0.15.0", features = ["k3s"] }
+thirtyfour = { version = "0.37.7", default-features = false, features = ["reqwest", "rustls"] }
+tokio = { workspace = true, features = ["process", "signal", "time", "macros", "rt-multi-thread"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+rstest = "0.27.0"

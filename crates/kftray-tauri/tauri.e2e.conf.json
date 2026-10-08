@@ -1,0 +1,14 @@
+{
+  "app": {
+    "security": {
+      "capabilities": [
+        "migrated",
+        {
+          "identifier": "e2e",
+          "windows": ["main", "logs"],
+          "permissions": ["wdio-webdriver:default"]
+        }
+      ]
+    }
+  }
+}

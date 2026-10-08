@@ -132,7 +132,12 @@ function PortForwardRowComponent({
 
   return (
     <>
-      <Table.Row className='table-row'>
+      <Table.Row
+        data-testid='config-row'
+        data-alias={config.alias}
+        data-state={config.is_running ? 'running' : 'stopped'}
+        className='table-row'
+      >
         <Table.Cell className='table-cell'>
           <Flex align='center' gap={1.5}>
             <Tooltip
@@ -181,6 +186,7 @@ function PortForwardRowComponent({
         <Table.Cell className='table-cell'>
           <Flex align='center' gap={1.5}>
             <Switch
+              data-testid='config-toggle'
               size='sm'
               checked={config.is_running}
               onCheckedChange={state =>

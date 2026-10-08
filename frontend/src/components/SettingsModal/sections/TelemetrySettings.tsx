@@ -18,6 +18,7 @@ export function TelemetrySettings({
     >
       <SettingRow label='Enabled:'>
         <Checkbox
+          data-testid='settings-telemetry'
           checked={enabled}
           onCheckedChange={e => onEnabledChange(e.checked === true)}
           size='sm'

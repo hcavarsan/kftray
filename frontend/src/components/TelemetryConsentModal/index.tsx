@@ -66,6 +66,7 @@ export function TelemetryConsentModal({
 
   return (
     <AppDialog
+      data-testid='consent-dialog'
       title='Help improve kftray'
       onClose={() => choose.mutate(DECLINED)}
       closeDisabled={choose.isPending}
@@ -101,11 +102,13 @@ export function TelemetryConsentModal({
       </AppDialogBody>
       <AppDialogFooter>
         <DialogCancelButton
+          data-testid='consent-decline'
           label='No thanks'
           onClick={() => choose.mutate(DECLINED)}
           disabled={choose.isPending}
         />
         <Button
+          data-testid='consent-allow'
           size='xs'
           height='28px'
           bg='accent.solid'
