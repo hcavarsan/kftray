@@ -18,6 +18,7 @@ export interface SettingsDraft {
   networkMonitor: boolean
   autoUpdateEnabled: boolean
   telemetryEnabled: boolean
+  performanceEnabled: boolean
   sslEnabled: boolean
   sslCertValidityDays: string
   logRetentionCount: string
@@ -39,6 +40,7 @@ export function buildSettingsDraft(data: {
     networkMonitor: data.settings.network_monitor === 'true',
     autoUpdateEnabled: data.settings.auto_update_enabled === 'true',
     telemetryEnabled: data.settings.telemetry_enabled === 'true',
+    performanceEnabled: data.settings.performance_enabled === 'true',
     sslEnabled: data.ssl?.ssl_enabled ?? false,
     sslCertValidityDays: String(data.ssl?.ssl_cert_validity_days ?? 365),
     logRetentionCount: String(data.log?.retention_count ?? 10),

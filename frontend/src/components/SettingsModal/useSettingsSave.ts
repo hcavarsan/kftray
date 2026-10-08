@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
-import { telemetryQuery } from '@/lib/telemetry'
+import { performanceQuery, telemetryQuery } from '@/lib/telemetry'
 
 import { SETTINGS_QUERIES } from './queries'
 import type { SettingsDraft } from './types'
@@ -152,6 +152,14 @@ function buildPlans(
         invoke('update_telemetry_enabled', { enabled: draft.telemetryEnabled }),
     },
     {
+      section: 'General',
+      keys: ['performanceEnabled'],
+      write: () =>
+        invoke('update_performance_enabled', {
+          enabled: draft.performanceEnabled,
+        }),
+    },
+    {
       section: 'SSL',
       skip: !loaded.ssl,
       keys: ['sslEnabled', 'sslCertValidityDays'],
@@ -226,7 +234,11 @@ export function useSettingsSave({
         }
       }
 
-      for (const query of [...SETTINGS_QUERIES, telemetryQuery]) {
+      for (const query of [
+        ...SETTINGS_QUERIES,
+        telemetryQuery,
+        performanceQuery,
+      ]) {
         queryClient.invalidateQueries({ queryKey: query.queryKey })
       }
 

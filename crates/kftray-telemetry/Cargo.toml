@@ -12,3 +12,7 @@ license = "GPL-3.0"
 kftray-commons = { workspace = true }
 log = { workspace = true }
 sentry = { workspace = true }
+
+[dev-dependencies]
+futures = { workspace = true }
+sentry = { workspace = true, features = ["test"] }

@@ -202,6 +202,8 @@ Access settings by pressing `s` or selecting Settings from the menu.
 
 **Crash Reports**: Send a report to the kftray maintainer when kftui crashes. kftui asks once on first start, and closing the prompt counts as no. A report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files. Setting the `DO_NOT_TRACK` environment variable turns reporting off. The prompt and the setting live in the file database, so a run that loads its configs into memory never sends reports.
 
+**Performance Data**: Send how long port forwards take to start and stop, and whether they failed, to the kftray maintainer. kftui asks once on first start, after the crash reports prompt, and closing the prompt counts as no. Each record has the operation name, its duration, its result and the app version. It never includes cluster names, namespaces, service names, aliases or kubeconfig files. `DO_NOT_TRACK` and the in-memory database turn it off the same way as crash reports.
+
 Settings persist between application sessions.
 
 ## HTTP Request Logging

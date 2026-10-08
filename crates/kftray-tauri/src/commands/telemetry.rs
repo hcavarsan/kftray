@@ -22,6 +22,26 @@ pub async fn update_telemetry_enabled(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn get_performance_enabled() -> Result<Option<bool>, String> {
+    settings::get_performance_enabled().await.map_err(|e| {
+        error!("Failed to get performance enabled: {e}");
+        format!("Failed to get performance enabled: {e}")
+    })
+}
+
+#[tauri::command]
+pub async fn update_performance_enabled(enabled: bool) -> Result<(), String> {
+    settings::set_performance_enabled(enabled)
+        .await
+        .map_err(|e| {
+            error!("Failed to update performance enabled: {e}");
+            format!("Failed to update performance enabled: {e}")
+        })?;
+    kftray_telemetry::set_performance_enabled(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn report_error(name: String, stack: Option<String>) {
     kftray_telemetry::capture_error(name, stack);
 }
@@ -51,5 +71,18 @@ mod tests {
 
         update_telemetry_enabled(false).await.unwrap();
         assert_eq!(get_telemetry_enabled().await.unwrap(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn the_performance_choice_is_unset_until_the_user_answers() {
+        let _db = use_test_db().await;
+
+        assert_eq!(get_performance_enabled().await.unwrap(), None);
+
+        update_performance_enabled(true).await.unwrap();
+        assert_eq!(get_performance_enabled().await.unwrap(), Some(true));
+
+        update_performance_enabled(false).await.unwrap();
+        assert_eq!(get_performance_enabled().await.unwrap(), Some(false));
     }
 }

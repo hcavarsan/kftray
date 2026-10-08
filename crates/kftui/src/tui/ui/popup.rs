@@ -1139,6 +1139,17 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
             false,
             5,
         ),
+        (
+            "Performance Data",
+            "Send port forward timings to the kftray maintainer",
+            if app.settings_performance_enabled {
+                "ON"
+            } else {
+                "OFF"
+            },
+            false,
+            6,
+        ),
     ];
 
     let is_compact = content_area.width < 60;
@@ -1949,9 +1960,15 @@ pub fn render_update_confirmation_popup(
 /// from the wrapped explanation, and the buttons sit in their own rows below
 /// it, so the whole explanation is on screen before a choice can be made.
 pub fn render_telemetry_consent_popup(
-    f: &mut Frame, screen: Rect, selected_button: crate::tui::input::TelemetryButton,
+    f: &mut Frame, screen: Rect, consent: crate::tui::input::Consent,
+    selected_button: crate::tui::input::TelemetryButton,
 ) {
-    const MESSAGE: &str = "kftui can send a report when it crashes.\n\nA report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nReports go to a server run by the kftray maintainer. You can change this later in Settings.";
+    const CRASH_REPORTS_MESSAGE: &str = "kftui can send a report when it crashes.\n\nA report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nReports go to a server run by the kftray maintainer. You can change this later in Settings.";
+    const PERFORMANCE_MESSAGE: &str = "kftui can send how long port forwards take to start and stop, and whether they failed.\n\nThis data has the operation name, its duration, its result and the app version. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nData goes to a server run by the kftray maintainer. You can change this later in Settings.";
+    let (title, message) = match consent {
+        crate::tui::input::Consent::CrashReports => ("Crash Reports", CRASH_REPORTS_MESSAGE),
+        crate::tui::input::Consent::Performance => ("Performance Data", PERFORMANCE_MESSAGE),
+    };
     const MAX_WIDTH: u16 = 72;
     const BUTTON_ROWS: u16 = 3;
     // Two border columns and one blank column on each side of the text.
@@ -1964,7 +1981,7 @@ pub fn render_telemetry_consent_popup(
     // still fits down to about 14 rows.
     let layout = |width: u16, compact: bool| {
         let text_width = usize::from(width.saturating_sub(HORIZONTAL_CHROME));
-        let lines: Vec<String> = MESSAGE
+        let lines: Vec<String> = message
             .split('\n')
             .filter(|paragraph| !(compact && paragraph.is_empty()))
             .flat_map(|paragraph| wrap_text_simple(paragraph, text_width))
@@ -1988,7 +2005,7 @@ pub fn render_telemetry_consent_popup(
         height,
     );
 
-    let block = create_common_popup_style("Crash Reports", GREEN);
+    let block = create_common_popup_style(title, GREEN);
     let inner = block.inner(area);
     f.render_widget(Clear, area);
     f.render_widget(block, area);

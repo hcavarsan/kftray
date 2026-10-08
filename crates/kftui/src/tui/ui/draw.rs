@@ -233,7 +233,12 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         }
         AppState::ShowTelemetryConsent => {
             render_background_overlay(f, size);
-            render_telemetry_consent_popup(f, size, app.selected_telemetry_button);
+            render_telemetry_consent_popup(
+                f,
+                size,
+                app.active_consent,
+                app.selected_telemetry_button,
+            );
         }
         AppState::ShowUpdateConfirmation => {
             if let Some(update_info) = &app.update_info {

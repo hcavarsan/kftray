@@ -6,6 +6,7 @@ mod view;
 use std::collections::{
     HashMap,
     HashSet,
+    VecDeque,
 };
 use std::io;
 use std::sync::Arc;
@@ -198,6 +199,12 @@ pub enum TelemetryButton {
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Consent {
+    CrashReports,
+    Performance,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveComponent {
     Menu,
     SearchBar,
@@ -285,6 +292,7 @@ pub struct App {
     pub settings_ssl_enabled: bool,
     pub settings_ssl_cert_validity_input: String,
     pub settings_telemetry_enabled: bool,
+    pub settings_performance_enabled: bool,
     pub http_logs_enabled: std::collections::HashMap<i64, bool>,
     pub active_pods: std::collections::HashMap<i64, Option<String>>,
     pub http_logs_config_id: Option<i64>,
@@ -326,7 +334,8 @@ pub struct App {
     pub update_info: Option<UpdateInfo>,
     pub update_prompt_pending: bool,
     pub selected_update_button: UpdateButton,
-    pub telemetry_prompt_pending: bool,
+    pub pending_consents: VecDeque<Consent>,
+    pub active_consent: Consent,
     pub selected_telemetry_button: TelemetryButton,
     pub update_progress_message: Option<String>,
     /// Set once the event loop should end: by Ctrl+C or the menu's exit
@@ -391,6 +400,7 @@ impl App {
             settings_ssl_enabled: false,
             settings_ssl_cert_validity_input: String::new(),
             settings_telemetry_enabled: false,
+            settings_performance_enabled: false,
             http_logs_enabled: std::collections::HashMap::new(),
             active_pods: std::collections::HashMap::new(),
             http_logs_config_id: None,
@@ -432,7 +442,8 @@ impl App {
             update_info: None,
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
-            telemetry_prompt_pending: false,
+            pending_consents: VecDeque::new(),
+            active_consent: Consent::CrashReports,
             selected_telemetry_button: TelemetryButton::Allow,
             update_progress_message: None,
             should_quit: false,
@@ -1368,6 +1379,14 @@ async fn open_settings(app: &mut App, mode: DatabaseMode) {
             return;
         }
     }
+    match kftray_commons::utils::settings::get_performance_enabled_with_mode(mode).await {
+        Ok(performance) => app.settings_performance_enabled = performance == Some(true),
+        Err(e) => {
+            app.error_message = Some(format!("Failed to read performance data setting: {e}"));
+            app.state = AppState::ShowErrorPopup;
+            return;
+        }
+    }
     app.state = AppState::ShowSettings;
     if let Ok(timeout) =
         kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
@@ -1916,6 +1935,11 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         let task = pending.clone();
         let config_id = pending.config_id;
         let handle = app.forwarding_tasks.spawn(async move {
+            use kftray_telemetry::{
+                Operation,
+                measure,
+            };
+
             use crate::core::port_forward::{
                 start_port_forwarding,
                 stop_port_forwarding,
@@ -1941,9 +1965,9 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
             // or Deployment it already created. The backend observes the same
             // shutdown through its own startup cancellation and timeouts.
             let result = if is_starting {
-                start_port_forwarding(config, mode).await
+                measure(Operation::StartForward, start_port_forwarding(config, mode)).await
             } else {
-                stop_port_forwarding(config, mode).await
+                measure(Operation::StopForward, stop_port_forwarding(config, mode)).await
             };
 
             if let Err(error_msg) = result
@@ -2081,7 +2105,7 @@ pub async fn handle_settings_input(
         KeyCode::Up if app.settings_selected_option > 0 => {
             app.settings_selected_option -= 1;
         }
-        KeyCode::Down if app.settings_selected_option < 5 => {
+        KeyCode::Down if app.settings_selected_option < 6 => {
             app.settings_selected_option += 1;
         }
         KeyCode::Enter => {
@@ -2288,6 +2312,9 @@ pub async fn handle_settings_input(
                 }
                 5 => {
                     save_telemetry_setting(app, !app.settings_telemetry_enabled, mode).await;
+                }
+                6 => {
+                    save_performance_setting(app, !app.settings_performance_enabled, mode).await;
                 }
                 _ => {}
             }
@@ -2855,7 +2882,12 @@ pub async fn handle_telemetry_consent_input(
         KeyCode::Esc => false,
         _ => return Ok(()),
     };
-    if save_telemetry_setting(app, enabled, mode).await {
+    let saved = match app.active_consent {
+        Consent::CrashReports => save_telemetry_setting(app, enabled, mode).await,
+        Consent::Performance => save_performance_setting(app, enabled, mode).await,
+    };
+    if saved {
+        app.selected_telemetry_button = TelemetryButton::Allow;
         app.state = AppState::Normal;
     }
     Ok(())
@@ -2870,6 +2902,21 @@ async fn save_telemetry_setting(app: &mut App, enabled: bool, mode: DatabaseMode
         }
         Err(e) => {
             app.error_message = Some(format!("Failed to save crash reports setting: {e}"));
+            app.state = AppState::ShowErrorPopup;
+            false
+        }
+    }
+}
+
+async fn save_performance_setting(app: &mut App, enabled: bool, mode: DatabaseMode) -> bool {
+    match kftray_commons::utils::settings::set_performance_enabled_with_mode(enabled, mode).await {
+        Ok(()) => {
+            kftray_telemetry::set_performance_enabled(enabled);
+            app.settings_performance_enabled = enabled;
+            true
+        }
+        Err(e) => {
+            app.error_message = Some(format!("Failed to save performance data setting: {e}"));
             app.state = AppState::ShowErrorPopup;
             false
         }
