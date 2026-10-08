@@ -3790,6 +3790,7 @@ dependencies = [
  "self_update",
  "semver",
  "serde_json",
+ "sqlx",
  "tar",
  "tempfile",
  "throbber-widgets-tui",

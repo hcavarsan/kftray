@@ -11,13 +11,20 @@ import {
 } from '@/components/ui/dialog'
 import { telemetryQuery } from '@/lib/telemetry'
 
-export function TelemetryConsentModal() {
+// onDone runs after every answer, also after a failed save, so the caller
+// can stop asking for the rest of the session.
+export function TelemetryConsentModal({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient()
   const choose = useMutation({
     mutationFn: (enabled: boolean) =>
       invoke('update_telemetry_enabled', { enabled }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: telemetryQuery.queryKey }),
+    onSettled: () => {
+      onDone()
+
+      return queryClient.invalidateQueries({
+        queryKey: telemetryQuery.queryKey,
+      })
+    },
     meta: { errorToast: { title: 'Failed to save the crash report setting' } },
   })
 
@@ -33,8 +40,8 @@ export function TelemetryConsentModal() {
         <Stack gap={2}>
           <Text fontSize='xs' color='fg.muted'>
             kftray can send a report when it crashes or hits an unexpected
-            error. A report has the error type and message, where in the code it
-            happened, the app version and the operating system.
+            error. A report has the error type, where in the code it happened,
+            the app version and the operating system.
           </Text>
           <Text fontSize='xs' color='fg.muted'>
             It never includes cluster names, namespaces, service names, aliases

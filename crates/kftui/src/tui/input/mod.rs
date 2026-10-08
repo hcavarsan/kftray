@@ -1357,6 +1357,41 @@ pub fn clear_selection(app: &mut App) {
     }
 }
 
+async fn open_settings(app: &mut App, mode: DatabaseMode) {
+    // The crash reports row toggles the shown value, so a value that could not
+    // be read must not be shown: turning a stale OFF "off" again would store ON.
+    match kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await {
+        Ok(telemetry) => app.settings_telemetry_enabled = telemetry == Some(true),
+        Err(e) => {
+            app.error_message = Some(format!("Failed to read crash reports setting: {e}"));
+            app.state = AppState::ShowErrorPopup;
+            return;
+        }
+    }
+    app.state = AppState::ShowSettings;
+    if let Ok(timeout) =
+        kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
+    {
+        app.settings_timeout_input = timeout.unwrap_or(0).to_string();
+    }
+    if let Ok(network_monitor) =
+        kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
+    {
+        app.settings_network_monitor = network_monitor;
+    }
+    if let Ok(ssl_enabled) = kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
+    {
+        app.settings_ssl_enabled = ssl_enabled;
+    }
+    if let Ok(ssl_validity) =
+        kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode).await
+    {
+        app.settings_ssl_cert_validity_input = ssl_validity.to_string();
+    }
+    app.settings_editing = false;
+    app.settings_selected_option = 0;
+}
+
 pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
@@ -1374,37 +1409,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
             1 => handle_auto_add_configs(app).await,
             2 => open_import_file_explorer(app),
             3 => open_export_file_explorer(app),
-            4 => {
-                app.state = AppState::ShowSettings;
-                if let Ok(timeout) =
-                    kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
-                {
-                    app.settings_timeout_input = timeout.unwrap_or(0).to_string();
-                }
-                if let Ok(network_monitor) =
-                    kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
-                {
-                    app.settings_network_monitor = network_monitor;
-                }
-                if let Ok(ssl_enabled) =
-                    kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
-                {
-                    app.settings_ssl_enabled = ssl_enabled;
-                }
-                if let Ok(ssl_validity) =
-                    kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode)
-                        .await
-                {
-                    app.settings_ssl_cert_validity_input = ssl_validity.to_string();
-                }
-                if let Ok(telemetry) =
-                    kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await
-                {
-                    app.settings_telemetry_enabled = telemetry == Some(true);
-                }
-                app.settings_editing = false;
-                app.settings_selected_option = 0;
-            }
+            4 => open_settings(app, mode).await,
             5 => {
                 #[cfg(not(debug_assertions))]
                 if app.update_info.is_none()
@@ -1611,34 +1616,7 @@ pub async fn handle_common_hotkeys(
             Ok(true)
         }
         KeyCode::Char('s') => {
-            app.state = AppState::ShowSettings;
-            if let Ok(timeout) =
-                kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
-            {
-                app.settings_timeout_input = timeout.unwrap_or(0).to_string();
-            }
-            if let Ok(network_monitor) =
-                kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
-            {
-                app.settings_network_monitor = network_monitor;
-            }
-            if let Ok(ssl_enabled) =
-                kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
-            {
-                app.settings_ssl_enabled = ssl_enabled;
-            }
-            if let Ok(ssl_validity) =
-                kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode).await
-            {
-                app.settings_ssl_cert_validity_input = ssl_validity.to_string();
-            }
-            if let Ok(telemetry) =
-                kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await
-            {
-                app.settings_telemetry_enabled = telemetry == Some(true);
-            }
-            app.settings_editing = false;
-            app.settings_selected_option = 0;
+            open_settings(app, mode).await;
             Ok(true)
         }
         KeyCode::Char('L') => {

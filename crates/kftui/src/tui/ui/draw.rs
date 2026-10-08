@@ -232,9 +232,8 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_http_logs_viewer_popup(f, app, size);
         }
         AppState::ShowTelemetryConsent => {
-            let consent_area = centered_rect(60, 45, size);
             render_background_overlay(f, size);
-            render_telemetry_consent_popup(f, consent_area, app.selected_telemetry_button);
+            render_telemetry_consent_popup(f, size, app.selected_telemetry_button);
         }
         AppState::ShowUpdateConfirmation => {
             if let Some(update_info) = &app.update_info {

@@ -264,8 +264,8 @@ mod tests {
     }
 
     #[test]
-    fn the_consent_popup_shows_both_choices() {
-        let backend = TestBackend::new(120, 30);
+    fn the_consent_popup_shows_its_whole_text_above_the_buttons_at_80x24() {
+        let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(test_logger_state());
         app.state = AppState::ShowTelemetryConsent;
@@ -275,16 +275,27 @@ mod tests {
             .draw(|f| draw_ui(f, &mut app, &config_states))
             .unwrap();
 
-        let screen: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
             .collect();
-        assert!(screen.contains("Crash Reports"));
-        assert!(screen.contains("<Allow>"));
-        assert!(screen.contains("<No thanks>"));
+        let row_of = |needle: &str| {
+            rows.iter()
+                .position(|row| row.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} is not on screen:\n{}", rows.join("\n")))
+        };
+
+        let title = row_of("Crash Reports");
+        let first_line = row_of("kftui can send a report when it crashes.");
+        let last_line = row_of("later in Settings.");
+        let buttons = row_of("<Allow>");
+        assert_eq!(row_of("<No thanks>"), buttons);
+        assert!(title < first_line);
+        assert!(last_line < buttons);
     }
 
     #[test]

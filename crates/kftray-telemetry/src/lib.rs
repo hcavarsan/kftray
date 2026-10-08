@@ -68,8 +68,8 @@ pub async fn load_setting_with_mode(mode: DatabaseMode) {
     apply(get_telemetry_enabled_with_mode(mode).await);
 }
 
-pub fn capture_error(name: String, message: String, stack: Option<String>) {
-    sentry::capture_event(error_event(name, message, stack));
+pub fn capture_error(name: String, stack: Option<String>) {
+    sentry::capture_event(error_event(name, stack));
 }
 
 fn apply(setting: SettingResult) {
@@ -122,12 +122,11 @@ fn panic_message(payload: &(dyn Any + Send), location: Option<&Location<'_>>) ->
     }
 }
 
-fn error_event(name: String, message: String, stack: Option<String>) -> Event<'static> {
+fn error_event(name: String, stack: Option<String>) -> Event<'static> {
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
             ty: name,
-            value: Some(message),
             ..Default::default()
         }]
         .into(),
@@ -180,16 +179,12 @@ mod tests {
     }
 
     #[test]
-    fn error_event_carries_type_message_and_stack() {
-        let event = error_event(
-            "TypeError".into(),
-            "x is undefined".into(),
-            Some("at main.js:1".into()),
-        );
+    fn error_event_carries_type_and_stack() {
+        let event = error_event("TypeError".into(), Some("at main.js:1".into()));
         let exception = &event.exception.values[0];
 
         assert_eq!(exception.ty, "TypeError");
-        assert_eq!(exception.value.as_deref(), Some("x is undefined"));
+        assert_eq!(exception.value, None);
         assert_eq!(event.extra["stack"], Value::String("at main.js:1".into()));
     }
 }

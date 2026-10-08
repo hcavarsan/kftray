@@ -73,6 +73,7 @@ export function Main() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
   const telemetry = useQuery(telemetryQuery)
+  const [telemetryAnswered, setTelemetryAnswered] = useState(false)
   const forwarding = usePortForwarding()
   const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
   const { installMutation } = useHelperMutations()
@@ -266,9 +267,14 @@ export function Main() {
               onSuppress={suppressPrompt}
             />
           )}
-          {activeModal === null && !prompt && telemetry.data === null && (
-            <TelemetryConsentModal />
-          )}
+          {activeModal === null &&
+            !prompt &&
+            !telemetryAnswered &&
+            telemetry.data === null && (
+              <TelemetryConsentModal
+                onDone={() => setTelemetryAnswered(true)}
+              />
+            )}
         </Suspense>
       </VStack>
     </Box>

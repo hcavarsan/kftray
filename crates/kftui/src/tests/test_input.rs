@@ -556,7 +556,7 @@ mod tests {
         app.state = AppState::Normal;
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 4;
-        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::File)
+        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::Memory)
             .await
             .unwrap();
         assert_eq!(app.state, AppState::ShowSettings);
@@ -568,6 +568,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(app.state, AppState::ShowAbout);
+    }
+
+    #[tokio::test]
+    async fn settings_stay_closed_when_the_crash_reports_setting_cannot_be_read() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let context =
+            kftray_commons::utils::db_mode::DatabaseManager::get_context(DatabaseMode::Memory)
+                .await
+                .unwrap();
+        sqlx::query("DROP TABLE settings")
+            .execute(&*context.pool)
+            .await
+            .unwrap();
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Menu;
+        app.selected_menu_item = 4;
+
+        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("crash reports setting"))
+        );
     }
 
     #[tokio::test]

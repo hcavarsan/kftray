@@ -22,8 +22,8 @@ pub async fn update_telemetry_enabled(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn report_error(name: String, message: String, stack: Option<String>) {
-    kftray_telemetry::capture_error(name, message, stack);
+pub fn report_error(name: String, stack: Option<String>) {
+    kftray_telemetry::capture_error(name, stack);
 }
 
 #[cfg(test)]
