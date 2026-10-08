@@ -42,6 +42,7 @@ function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
     <AppDialogFooter>
       <DialogCancelButton onClick={onClose} disabled={isSaving} />
       <Button
+        data-testid='settings-save'
         size='xs'
         onClick={onSave}
         loading={isSaving}

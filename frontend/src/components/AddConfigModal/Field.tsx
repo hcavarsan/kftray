@@ -32,6 +32,7 @@ interface FieldProps {
   error?: string
   hint?: ReactNode
   label: ReactNode
+  'data-testid'?: string
 }
 
 interface TextFieldProps extends FieldProps {
@@ -43,9 +44,15 @@ interface TextFieldProps extends FieldProps {
   value: string
 }
 
-export function Field({ children, error, hint, label }: FieldProps) {
+export function Field({
+  children,
+  error,
+  hint,
+  label,
+  'data-testid': testId,
+}: FieldProps) {
   return (
-    <ChakraField.Root gap={1.5} alignItems='stretch'>
+    <ChakraField.Root data-testid={testId} gap={1.5} alignItems='stretch'>
       <Flex align='center' gap={1}>
         <ChakraField.Label
           fontSize='xs'
@@ -93,9 +100,10 @@ export function TextField({
   placeholder,
   type = 'text',
   value,
+  'data-testid': testId,
 }: TextFieldProps) {
   return (
-    <Field error={error} hint={hint} label={label}>
+    <Field data-testid={testId} error={error} hint={hint} label={label}>
       <Input
         bg='bg.surface'
         border='1px solid'
@@ -117,7 +125,7 @@ export function TextField({
 
 export function ProtocolField({ draft, error, onUpdate }: DraftFieldProps) {
   return (
-    <Field error={error} label='Protocol *'>
+    <Field data-testid='config-protocol' error={error} label='Protocol *'>
       <FieldSelect<StringOption>
         onChange={option =>
           onUpdate({ protocol: option?.value === 'udp' ? 'udp' : 'tcp' })

@@ -227,6 +227,7 @@ export function AddConfigModal({
 
   return (
     <AppDialog
+      data-testid='add-config-dialog'
       title={isEdit ? 'Edit Configuration' : 'Add Configuration'}
       onClose={onClose}
       maxWidth='600px'
@@ -308,6 +309,7 @@ export function AddConfigModal({
       <AppDialogFooter>
         <DialogCancelButton onClick={onClose} />
         <Button
+          data-testid='config-save'
           bg='accent.solid'
           disabled={
             Boolean(duplicateTagError) || Object.keys(errors).length > 0

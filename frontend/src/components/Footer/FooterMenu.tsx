@@ -60,12 +60,17 @@ export function FooterMenu({
         </FooterActionButton>
       </MenuTrigger>
       <MenuContent>
-        <MenuItem value='export' onClick={onExportConfigs}>
+        <MenuItem
+          data-testid='menu-export'
+          value='export'
+          onClick={onExportConfigs}
+        >
           <Box as={Upload} width='12px' height='12px' />
           <Box fontSize='11px'>Export Local File</Box>
         </MenuItem>
 
         <MenuItem
+          data-testid='menu-import'
           value='import'
           onClick={onImportConfigs}
           disabled={!!credentials}

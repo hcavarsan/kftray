@@ -1,8 +1,10 @@
+mod add_config;
 mod consent;
 mod main_page;
 mod settings;
 mod test_id;
 
+pub use add_config::AddConfigPage;
 pub use consent::ConsentPage;
 pub use main_page::{
     ConfigRow,

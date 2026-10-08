@@ -20,12 +20,35 @@ impl<'a> MainPage<'a> {
         }
     }
 
+    pub async fn aliases(&self) -> Result<Vec<String>> {
+        self.desktop
+            .attrs(&TestId::ConfigRow.by(), "data-alias")
+            .await
+    }
+
+    pub async fn wait_rows(&self, count: usize) -> Result<()> {
+        let limit = self.desktop.timeouts().ui;
+        self.desktop
+            .wait_count(&TestId::ConfigRow.by(), count, limit)
+            .await
+    }
+
     pub async fn expand_groups(&self) -> Result<()> {
         let button = TestId::ExpandGroups.by();
         if self.desktop.attr(&button, "data-state").await?.as_deref() == Some("collapsed") {
             self.desktop.click(&button).await?;
         }
         Ok(())
+    }
+
+    pub async fn import_file(&self) -> Result<()> {
+        self.desktop.click(&TestId::ConfigMenu.by()).await?;
+        self.desktop.click(&TestId::MenuImport.by()).await
+    }
+
+    pub async fn export_file(&self) -> Result<()> {
+        self.desktop.click(&TestId::ConfigMenu.by()).await?;
+        self.desktop.click(&TestId::MenuExport.by()).await
     }
 }
 
@@ -41,6 +64,11 @@ impl ConfigRow<'_> {
 
     pub async fn stop(&self) -> Result<()> {
         self.toggle_from("running").await
+    }
+
+    pub async fn wait_present(&self) -> Result<()> {
+        let limit = self.desktop.timeouts().ui;
+        self.desktop.wait_present(&self.by(), limit).await
     }
 
     pub async fn wait_running(&self) -> Result<()> {

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::net::Ipv4Addr;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{
@@ -36,6 +37,17 @@ pub async fn wait_closed(port: u16, limit: Duration) -> Result<()> {
     })
     .await
     .with_context(|| format!("port {port} still accepts connections after {limit:?}"))
+}
+
+pub async fn read_written_file(path: &Path, limit: Duration) -> Result<String> {
+    poll(limit, || async {
+        tokio::fs::read_to_string(path)
+            .await
+            .ok()
+            .filter(|content| !content.is_empty())
+    })
+    .await
+    .with_context(|| format!("{} was not written within {limit:?}", path.display()))
 }
 
 async fn http_get(port: u16, limit: Duration) -> Result<String> {

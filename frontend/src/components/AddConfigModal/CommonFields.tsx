@@ -54,6 +54,7 @@ export function CommonFields({
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <Stack gap={1.5}>
           <TextField
+            data-testid='config-alias'
             error={workloadType === 'expose' ? errors.alias : undefined}
             hint={
               workloadType === 'expose' ? (
@@ -98,7 +99,11 @@ export function CommonFields({
             </Checkbox>
           )}
         </Stack>
-        <Field error={errors.context} label='Context *'>
+        <Field
+          data-testid='config-context'
+          error={errors.context}
+          label='Context *'
+        >
           <FieldSelect<StringOption>
             isLoading={contextQuery.isLoading}
             onBlur={() => onContextFocusChange(false)}
@@ -122,7 +127,11 @@ export function CommonFields({
         </Field>
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-        <Field error={errors.workload_type} label='Workload Type'>
+        <Field
+          data-testid='config-workload-type'
+          error={errors.workload_type}
+          label='Workload Type'
+        >
           <FieldSelect<StringOption>
             onChange={option =>
               onUpdate({
@@ -152,7 +161,11 @@ export function CommonFields({
             }
           />
         </Field>
-        <Field error={errors.namespace} label='Namespace *'>
+        <Field
+          data-testid='config-namespace'
+          error={errors.namespace}
+          label='Namespace *'
+        >
           <FieldCreatableSelect<StringOption>
             formatCreateLabel={value => `Use "${value}"`}
             isLoading={namespaceQuery.isLoading}

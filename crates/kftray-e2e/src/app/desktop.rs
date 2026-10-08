@@ -18,6 +18,7 @@ use thirtyfour::error::{
 use thirtyfour::{
     By,
     Capabilities,
+    Key,
     WebDriver,
     WebElement,
 };
@@ -38,6 +39,7 @@ use crate::harness::{
     free_port,
 };
 use crate::ui::{
+    AddConfigPage,
     ConsentPage,
     MainPage,
     SettingsPage,
@@ -126,6 +128,10 @@ impl Desktop {
         SettingsPage::new(self)
     }
 
+    pub fn add_config(&self) -> AddConfigPage<'_> {
+        AddConfigPage::new(self)
+    }
+
     async fn wait_window_ready(&self) -> Result<()> {
         let limit = self.env.timeouts.startup;
         self.wait_attr(&TestId::MainView.by(), "data-state", "ready", limit)
@@ -144,6 +150,22 @@ impl Desktop {
         let what = format!("{} to disappear", describe(by));
         wait_for(&self.driver, &self.env.artifacts, &what, limit, || async {
             Ok(self.first_visible(by).await?.is_none())
+        })
+        .await
+    }
+
+    pub(crate) async fn wait_present(&self, by: &By, limit: Duration) -> Result<()> {
+        let what = format!("{} to exist", describe(by));
+        wait_for(&self.driver, &self.env.artifacts, &what, limit, || async {
+            Ok(!self.driver.find_all(by.clone()).await?.is_empty())
+        })
+        .await
+    }
+
+    pub(crate) async fn wait_count(&self, by: &By, count: usize, limit: Duration) -> Result<()> {
+        let what = format!("{count} of {}", describe(by));
+        wait_for(&self.driver, &self.env.artifacts, &what, limit, || async {
+            Ok(self.driver.find_all(by.clone()).await?.len() == count)
         })
         .await
     }
@@ -171,6 +193,23 @@ impl Desktop {
         Ok(None)
     }
 
+    pub(crate) async fn find(&self, by: &By) -> Result<WebElement> {
+        self.wait_visible(by, self.env.timeouts.ui).await?;
+        self.first_visible(by)
+            .await?
+            .with_context(|| format!("{} vanished after it became visible", describe(by)))
+    }
+
+    pub(crate) async fn attrs(&self, by: &By, name: &str) -> Result<Vec<String>> {
+        let mut values = Vec::new();
+        for element in self.driver.find_all(by.clone()).await? {
+            if let Some(value) = settle(element.attr(name).await)? {
+                values.push(value);
+            }
+        }
+        Ok(values)
+    }
+
     pub(crate) async fn click(&self, by: &By) -> Result<()> {
         let what = format!("{} to accept a click", describe(by));
         wait_for(
@@ -186,6 +225,17 @@ impl Desktop {
             },
         )
         .await
+    }
+
+    pub(crate) async fn press(&self, key: Key) -> Result<()> {
+        let key = char::from(key);
+        self.driver
+            .action_chain()
+            .key_down(key)
+            .key_up(key)
+            .perform()
+            .await
+            .with_context(|| format!("press {key:?}"))
     }
 
     async fn first_visible(&self, by: &By) -> Result<Option<WebElement>> {
@@ -226,5 +276,5 @@ fn settle<T: Default>(result: WebDriverResult<T>) -> Result<T> {
 }
 
 fn describe(by: &By) -> String {
-    format!("{by:?}")
+    by.to_string()
 }

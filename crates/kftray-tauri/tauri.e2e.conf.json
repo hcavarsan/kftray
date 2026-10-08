@@ -6,9 +6,20 @@
         {
           "identifier": "e2e",
           "windows": ["main", "logs"],
-          "permissions": ["wdio-webdriver:default"]
+          "permissions": [
+            "wdio-webdriver:default",
+            {
+              "identifier": "fs:scope",
+              "allow": [{ "path": "$TEMP/**" }]
+            }
+          ]
         }
       ]
+    }
+  },
+  "plugins": {
+    "fs": {
+      "requireLiteralLeadingDot": false
     }
   }
 }

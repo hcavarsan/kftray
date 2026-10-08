@@ -29,4 +29,16 @@ impl<'a> SettingsPage<'a> {
             .await?;
         Ok(state.as_deref() == Some("checked"))
     }
+
+    pub async fn toggle_crash_reports(&self) -> Result<()> {
+        self.desktop.click(&TestId::SettingsTelemetry.by()).await
+    }
+
+    pub async fn save(&self) -> Result<()> {
+        self.desktop.click(&TestId::SettingsSave.by()).await?;
+        let limit = self.desktop.timeouts().ui;
+        self.desktop
+            .wait_absent(&TestId::SettingsDialog.by(), limit)
+            .await
+    }
 }
