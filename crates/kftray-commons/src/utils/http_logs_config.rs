@@ -102,7 +102,7 @@ pub(crate) async fn update_http_logs_config_with_pool(
                 ),
                 '$.http_logs_auto_cleanup', json(?5)
             )
-         WHERE json_extract(data, '$.id') = ?1",
+         WHERE id = ?1",
     )
     .bind(config.config_id)
     .bind(if config.enabled { "true" } else { "false" })
@@ -370,5 +370,54 @@ mod tests {
             .unwrap();
         assert!(!found_config2.enabled);
         assert_eq!(found_config2.max_file_size, 20 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn test_http_logs_setting_survives_config_edit_and_export() {
+        use crate::config::{
+            export_configs_with_pool,
+            insert_config_with_pool,
+            read_configs_with_pool,
+            update_config_with_pool,
+        };
+        use crate::models::config_model::Config;
+
+        let pool = setup_test_db().await;
+        let config = Config {
+            alias: Some("web".to_string()),
+            service: Some("svc".to_string()),
+            namespace: "ns".to_string(),
+            context: Some("ctx".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            local_port: Some(8080),
+            remote_port: Some(80),
+            ..Config::default()
+        };
+        let config_id = insert_config_with_pool(config, &pool).await.unwrap();
+        let logs_on = HttpLogsConfig {
+            config_id,
+            enabled: true,
+            max_file_size: 5 * 1024 * 1024,
+            retention_days: 30,
+            auto_cleanup: false,
+        };
+        update_http_logs_config_with_pool(&logs_on, &pool)
+            .await
+            .unwrap();
+
+        let exported: Vec<Config> =
+            serde_json::from_str(&export_configs_with_pool(&pool).await.unwrap()).unwrap();
+        assert_eq!(exported[0].http_logs_enabled, Some(true));
+        assert_eq!(exported[0].http_logs_retention_days, Some(30));
+
+        let mut saved = read_configs_with_pool(&pool).await.unwrap().remove(0);
+        saved.alias = Some("renamed".to_string());
+        update_config_with_pool(saved, &pool).await.unwrap();
+
+        let after_edit = get_http_logs_config_with_pool(config_id, &pool)
+            .await
+            .unwrap();
+        assert_eq!(after_edit, logs_on);
     }
 }
