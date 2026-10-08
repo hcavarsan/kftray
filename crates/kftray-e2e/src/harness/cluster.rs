@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::net::Ipv4Addr;
 use std::path::{
     Path,
     PathBuf,
@@ -71,7 +73,6 @@ impl Cluster {
             .await
             .context("start k3s; docker must be running and allow privileged containers")?;
 
-        let host = container.get_host().await.context("read the docker host")?;
         let port = container
             .get_host_port_ipv4(KUBE_SECURE_PORT)
             .await
@@ -90,7 +91,7 @@ impl Cluster {
         let mut kubeconfig = Kubeconfig::from_yaml(&raw).context("parse the k3s kubeconfig")?;
         for named in &mut kubeconfig.clusters {
             if let Some(cluster) = named.cluster.as_mut() {
-                cluster.server = Some(format!("https://{host}:{port}"));
+                cluster.server = Some(format!("https://{}:{port}", Ipv4Addr::LOCALHOST));
             }
         }
         let path = out_dir.join("kubeconfig.json");
@@ -120,11 +121,21 @@ impl Cluster {
 }
 
 async fn wait_api_ready(client: &Client) -> Result<()> {
+    let last_error = RefCell::new(String::from("no attempt finished"));
     poll(CLUSTER_READY, || async {
-        client.apiserver_version().await.ok()
+        client
+            .apiserver_version()
+            .await
+            .map_err(|error| *last_error.borrow_mut() = error.to_string())
+            .ok()
     })
     .await
-    .with_context(|| format!("the k3s API did not answer within {CLUSTER_READY:?}"))?;
+    .with_context(|| {
+        format!(
+            "the k3s API did not answer within {CLUSTER_READY:?}; last error: {}",
+            last_error.borrow()
+        )
+    })?;
     Ok(())
 }
 
