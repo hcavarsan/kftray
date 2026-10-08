@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bytes::Bytes;
 use futures::{
     SinkExt,
@@ -213,7 +211,7 @@ impl WebSocketTunnelClient {
 
     async fn forward_to_local_service(
         &self, http_client: &LegacyClient<HttpConnector, Full<Bytes>>, request_id: String,
-        method: String, path: String, headers: HashMap<String, String>, body: Vec<u8>,
+        method: String, path: String, headers: Vec<(String, String)>, body: Vec<u8>,
     ) -> TunnelMessage {
         let uri_str = format!(
             "http://{}:{}{}",
@@ -276,7 +274,7 @@ impl WebSocketTunnelClient {
             Ok(response) => {
                 let status = response.status().as_u16();
 
-                let response_headers: HashMap<String, String> = response
+                let response_headers: Vec<(String, String)> = response
                     .headers()
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
@@ -431,8 +429,6 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_the_request_without_a_disposable_tcp_probe() {
-        use std::collections::HashMap;
-
         use http_body_util::Full;
         use hyper::body::Bytes;
         use hyper_util::client::legacy::Client;
@@ -467,7 +463,7 @@ mod tests {
                 "request".to_owned(),
                 "GET".to_owned(),
                 "/request".to_owned(),
-                HashMap::new(),
+                Vec::new(),
                 Vec::new(),
             ),
         )
@@ -481,5 +477,70 @@ mod tests {
             other => panic!("expected HTTP response, got {other:?}"),
         }
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_headers_keep_every_value() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper_util::client::legacy::Client;
+        use hyper_util::rt::TokioExecutor;
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            9999,
+            "127.0.0.1".to_owned(),
+            listener.local_addr().unwrap().port(),
+        );
+        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Path=/\r\nSet-Cookie: csrf=xyz; \
+                      Path=/\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                )
+                .await
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.forward_to_local_service(
+                &http_client,
+                "request".to_owned(),
+                "GET".to_owned(),
+                "/login".to_owned(),
+                vec![
+                    ("x-tag".to_owned(), "one".to_owned()),
+                    ("x-tag".to_owned(), "two".to_owned()),
+                ],
+                Vec::new(),
+            ),
+        )
+        .await
+        .unwrap();
+        let request = server.await.unwrap();
+        assert!(
+            request.contains("x-tag: one\r\n") && request.contains("x-tag: two\r\n"),
+            "{request}"
+        );
+        let wire = response.serialize().unwrap();
+        match super::TunnelMessage::deserialize(&wire).unwrap() {
+            super::TunnelMessage::HttpResponse { headers, .. } => {
+                let cookies: Vec<&str> = headers
+                    .iter()
+                    .filter(|(name, _)| name == "set-cookie")
+                    .map(|(_, value)| value.as_str())
+                    .collect();
+                assert_eq!(cookies, ["session=abc; Path=/", "csrf=xyz; Path=/"]);
+            }
+            other => panic!("expected HTTP response, got {other:?}"),
+        }
     }
 }
