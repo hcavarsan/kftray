@@ -35,17 +35,29 @@ fn validate_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
+async fn regenerate_ssl_certificate_if_needed(
+    port_ops: Arc<dyn PortOperations>,
+) -> Result<(), String> {
     // Check if SSL is enabled
     match get_ssl_enabled().await {
         Ok(true) => {
-            info!("SSL is enabled, regenerating global certificate due to config changes");
             match kftray_commons::utils::settings::get_app_settings().await {
                 Ok(settings) => {
                     let cert_manager = CertificateManager::new(&settings)
                         .map_err(|e| format!("Failed to create certificate manager: {}", e))?;
+                    let domains = CertificateManager::collect_all_domains_from_configs()
+                        .await
+                        .map_err(|e| format!("Failed to collect SSL domains: {}", e))?;
 
-                    if let Err(e) = cert_manager.regenerate_certificate_for_all_configs().await {
+                    if !cert_manager.domains_changed(&domains).await
+                        && cert_manager.is_certificate_valid("global-ssl-cert").await
+                    {
+                        info!("Global SSL certificate already covers every config domain");
+                        return Ok(());
+                    }
+
+                    info!("Config domains changed, regenerating global SSL certificate");
+                    if let Err(e) = cert_manager.regenerate_global_certificate(&domains).await {
                         warn!("Failed to regenerate SSL certificate: {}", e);
                         // Don't fail the config operation if certificate
                         // regeneration fails
@@ -56,7 +68,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
                         info!(
                             "Certificate regeneration successful, attempting to restart SSL proxies"
                         );
-                        restart_ssl_proxies_with_retry(Arc::new(RealPortOperations)).await;
+                        restart_ssl_proxies_with_retry(port_ops).await;
                     }
                 }
                 Err(e) => {
@@ -263,7 +275,7 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     )
     .await;
     if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
+        let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result
 }
@@ -284,7 +296,7 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     )
     .await;
     if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
+        let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result
 }
@@ -305,7 +317,7 @@ pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
     validate_config(&config)?;
     let result = insert_config(config).await;
     if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
+        let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result.map(|_| ())
 }
@@ -332,7 +344,7 @@ pub async fn update_config_cmd(config: Config) -> Result<(), String> {
     validate_config(&config)?;
     let result = update_config(config).await;
     if result.is_ok() {
-        let _ = regenerate_ssl_certificate_if_needed().await;
+        let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result
 }
@@ -347,7 +359,7 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
     let result = import_configs(json).await;
     match &result {
         Ok(_) => {
-            let _ = regenerate_ssl_certificate_if_needed().await;
+            let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
         }
         Err(e) => {
             error!(
@@ -975,5 +987,108 @@ mod tests {
         // dropped; a premature return from the loop leaves
         // `dispatch_start` unmet and panics there.
         restart_ssl_proxies_with_retry(port_ops).await;
+    }
+
+    struct SslTestEnv {
+        _config_dir: tempfile::TempDir,
+        _skip_ca_install: kftray_commons::test_utils::EnvVarGuard,
+        _test_mode: kftray_commons::test_utils::EnvVarGuard,
+        _config: kftray_commons::test_utils::EnvVarGuard,
+    }
+
+    async fn running_https_forward_with_current_certificate(alias: &str) -> (SslTestEnv, i64) {
+        let config_dir = tempfile::tempdir().unwrap();
+        let config = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            config_dir.path().to_str().unwrap(),
+        );
+        let test_mode = kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+        let skip_ca_install =
+            kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_SKIP_CA_INSTALL", "1");
+        *kftray_portforward::ssl::cert_store::TEST_SSL_VAULT
+            .lock()
+            .unwrap() = Default::default();
+
+        let id = insert_config(Config {
+            alias: Some(alias.to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        kftray_commons::utils::config_state::update_config_state(
+            &kftray_commons::models::config_state_model::ConfigState::new_without_process(id, true),
+        )
+        .await
+        .unwrap();
+
+        kftray_commons::utils::settings::set_ssl_enabled(true)
+            .await
+            .unwrap();
+        let settings = kftray_commons::utils::settings::get_app_settings()
+            .await
+            .unwrap();
+        CertificateManager::new(&settings)
+            .unwrap()
+            .ensure_global_certificate_for_all_configs()
+            .await
+            .unwrap();
+
+        let env = SslTestEnv {
+            _config_dir: config_dir,
+            _skip_ca_install: skip_ca_install,
+            _test_mode: test_mode,
+            _config: config,
+        };
+        (env, id)
+    }
+
+    #[tokio::test]
+    async fn saving_a_config_without_a_domain_change_keeps_https_forwards_running() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _pool = setup_isolated_test_db().await;
+        let (_env, id) = running_https_forward_with_current_certificate("ssl-unchanged").await;
+
+        let mut config = get_config(id).await.unwrap();
+        config.namespace = "another-namespace".to_string();
+        update_config(config).await.unwrap();
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered().times(0);
+        mock.expect_stop_port_forward().times(0);
+        mock.expect_dispatch_start().times(0);
+
+        regenerate_ssl_certificate_if_needed(Arc::new(mock))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn saving_a_config_with_a_new_alias_restarts_https_forwards() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _pool = setup_isolated_test_db().await;
+        let (_env, id) = running_https_forward_with_current_certificate("ssl-before").await;
+
+        let mut config = get_config(id).await.unwrap();
+        config.alias = Some("ssl-after".to_string());
+        update_config(config).await.unwrap();
+
+        let mut mock = crate::init_check::MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| true);
+        mock.expect_stop_port_forward()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| Ok(()));
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        regenerate_ssl_certificate_if_needed(Arc::new(mock))
+            .await
+            .unwrap();
     }
 }
