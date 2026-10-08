@@ -26,6 +26,7 @@ futures = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
+kftray-telemetry = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
@@ -43,6 +44,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 
 [build-dependencies]

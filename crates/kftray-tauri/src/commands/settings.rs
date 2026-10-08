@@ -7,6 +7,7 @@ use kftray_commons::utils::settings::{
     get_mcp_server_enabled,
     get_mcp_server_port,
     get_setting,
+    get_telemetry_enabled,
     set_auto_update_enabled,
     set_disconnect_timeout,
     set_mcp_server_enabled,
@@ -77,6 +78,16 @@ pub async fn get_settings() -> Result<HashMap<String, String>, String> {
         Err(e) => {
             error!("Failed to get last update check: {e}");
             settings.insert("last_update_check".to_string(), "0".to_string());
+        }
+    }
+
+    match get_telemetry_enabled().await {
+        Ok(Some(enabled)) => {
+            settings.insert("telemetry_enabled".to_string(), enabled.to_string());
+        }
+        Ok(None) => {}
+        Err(e) => {
+            error!("Failed to get telemetry enabled: {e}");
         }
     }
 

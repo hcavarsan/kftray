@@ -11,5 +11,6 @@ pub mod server_resources;
 pub mod settings;
 pub mod shortcuts;
 pub mod ssl;
+pub mod telemetry;
 pub mod updater;
 pub mod window_state;

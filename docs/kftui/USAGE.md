@@ -200,6 +200,8 @@ Access settings by pressing `s` or selecting Settings from the menu.
 
 **Network Monitor**: Enable or disable network connectivity monitoring. When enabled, kftui monitors network status and attempts to reconnect dropped port-forwards.
 
+**Crash Reports**: Send a report to the kftray maintainer when kftui crashes. kftui asks once on first start, and closing the prompt counts as no. A report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files. Setting the `DO_NOT_TRACK` environment variable turns reporting off. The prompt and the setting live in the file database, so a run that loads its configs into memory never sends reports.
+
 Settings persist between application sessions.
 
 ## HTTP Request Logging

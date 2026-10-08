@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 
 import { Footer } from '@/components/Footer'
 import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
+import { telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
@@ -43,6 +44,11 @@ const ShortcutModal = lazy(() =>
     default: m.ShortcutModal,
   })),
 )
+const TelemetryConsentModal = lazy(() =>
+  import('@/components/TelemetryConsentModal').then(m => ({
+    default: m.TelemetryConsentModal,
+  })),
+)
 const PrivilegeDialog = lazy(() =>
   import('@/components/PrivilegeDialog').then(m => ({
     default: m.PrivilegeDialog,
@@ -66,6 +72,8 @@ export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
+  const telemetry = useQuery(telemetryQuery)
+  const [telemetryAnswered, setTelemetryAnswered] = useState(false)
   const forwarding = usePortForwarding()
   const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
   const { installMutation } = useHelperMutations()
@@ -259,6 +267,14 @@ export function Main() {
               onSuppress={suppressPrompt}
             />
           )}
+          {activeModal === null &&
+            !prompt &&
+            !telemetryAnswered &&
+            telemetry.data === null && (
+              <TelemetryConsentModal
+                onDone={() => setTelemetryAnswered(true)}
+              />
+            )}
         </Suspense>
       </VStack>
     </Box>

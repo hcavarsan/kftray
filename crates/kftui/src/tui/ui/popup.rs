@@ -1128,6 +1128,17 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
             !app.settings_ssl_enabled,
             4,
         ),
+        (
+            "Crash Reports",
+            "Send crash reports to the kftray maintainer",
+            if app.settings_telemetry_enabled {
+                "ON"
+            } else {
+                "OFF"
+            },
+            false,
+            5,
+        ),
     ];
 
     let is_compact = content_area.width < 60;
@@ -1932,6 +1943,93 @@ pub fn render_update_confirmation_popup(
 
     f.render_widget(update_button, update_button_area);
     f.render_widget(cancel_button, cancel_button_area);
+}
+
+/// Renders the crash reports prompt centred in `screen`. The popup is sized
+/// from the wrapped explanation, and the buttons sit in their own rows below
+/// it, so the whole explanation is on screen before a choice can be made.
+pub fn render_telemetry_consent_popup(
+    f: &mut Frame, screen: Rect, selected_button: crate::tui::input::TelemetryButton,
+) {
+    const MESSAGE: &str = "kftui can send a report when it crashes.\n\nA report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nReports go to a server run by the kftray maintainer. You can change this later in Settings.";
+    const MAX_WIDTH: u16 = 72;
+    const BUTTON_ROWS: u16 = 3;
+    // Two border columns and one blank column on each side of the text.
+    const HORIZONTAL_CHROME: u16 = 4;
+    const BORDER_ROWS: u16 = 2;
+
+    // The roomy layout keeps a margin around the popup, blank rows between
+    // paragraphs and a blank row above the buttons. On a short terminal it
+    // falls back to the full width without blank rows, so the whole text
+    // still fits down to about 14 rows.
+    let layout = |width: u16, compact: bool| {
+        let text_width = usize::from(width.saturating_sub(HORIZONTAL_CHROME));
+        let lines: Vec<String> = MESSAGE
+            .split('\n')
+            .filter(|paragraph| !(compact && paragraph.is_empty()))
+            .flat_map(|paragraph| wrap_text_simple(paragraph, text_width))
+            .collect();
+        let gap = u16::from(!compact);
+        let text_rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+        let height = text_rows.saturating_add(BORDER_ROWS + gap + BUTTON_ROWS);
+        (width, lines, gap, height)
+    };
+    let roomy = layout(screen.width.saturating_sub(4).min(MAX_WIDTH), false);
+    let (width, lines, gap, height) = if roomy.3 <= screen.height {
+        roomy
+    } else {
+        layout(screen.width.min(MAX_WIDTH), true)
+    };
+    let height = height.min(screen.height);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+
+    let block = create_common_popup_style("Crash Reports", GREEN);
+    let inner = block.inner(area);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    let [text_area, _, button_row] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(gap),
+        Constraint::Length(BUTTON_ROWS),
+    ])
+    .areas(inner);
+    let lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+    f.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(TEXT).bg(BASE))
+            .alignment(Alignment::Center),
+        text_area,
+    );
+    render_shadow_layers(f, create_bottom_right_shadow_layers(area, &[(MANTLE, 1)]));
+
+    let [_, allow_button_area, _, decline_button_area, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(10),
+        Constraint::Length(2),
+        Constraint::Length(13),
+        Constraint::Fill(1),
+    ])
+    .areas(button_row);
+    f.render_widget(
+        create_button(
+            "<Allow>",
+            selected_button == crate::tui::input::TelemetryButton::Allow,
+        ),
+        allow_button_area,
+    );
+    f.render_widget(
+        create_button(
+            "<No thanks>",
+            selected_button == crate::tui::input::TelemetryButton::Decline,
+        ),
+        decline_button_area,
+    );
 }
 
 pub fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, area: Rect) {

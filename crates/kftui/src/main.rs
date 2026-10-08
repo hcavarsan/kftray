@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let _telemetry = kftray_telemetry::init(concat!("kftui@", env!("CARGO_PKG_VERSION")));
     kftray_portforward::ssl::install_default_keyring_store();
     kftray_portforward::ssl::ensure_crypto_provider_installed();
 
