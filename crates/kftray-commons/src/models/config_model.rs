@@ -161,7 +161,7 @@ impl Default for Config {
             context: Some("current-context".to_string()),
             workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
-            remote_address: Some("default-remote-address".to_string()),
+            remote_address: Some(Self::DEFAULT_REMOTE_ADDRESS.to_string()),
             local_address: Some("127.0.0.1".to_string()),
             auto_loopback_address: false,
             domain_enabled: Some(false),
@@ -184,6 +184,8 @@ impl Default for Config {
 }
 
 impl Config {
+    pub const DEFAULT_REMOTE_ADDRESS: &'static str = "default-remote-address";
+
     pub fn prepare_for_export(mut self) -> Self {
         self.id = None;
 
@@ -278,13 +280,13 @@ impl Config {
         self
     }
 
-    pub fn is_placeholder(s: &str) -> bool {
+    fn is_placeholder(s: &str) -> bool {
         matches!(
             s,
             "default-service"
                 | "default-namespace"
                 | "default-target"
-                | "default-remote-address"
+                | Self::DEFAULT_REMOTE_ADDRESS
                 | "default-alias"
                 | "default-workload"
                 | "current-context"

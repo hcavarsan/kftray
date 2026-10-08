@@ -327,10 +327,7 @@ pub(super) async fn start_proxy_config(
             resolved = resolve_target_pod_ip(&pods, config.target.as_deref().unwrap_or_default()) => resolved?,
         }
     } else {
-        config
-            .remote_address
-            .take()
-            .filter(|address| !Config::is_placeholder(address))
+        explicit_remote_address(config.remote_address.take())
             .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
             .ok_or("A proxy destination address or service is required")?
     };
@@ -870,6 +867,10 @@ pub async fn stop_proxy_forward(
     })
 }
 
+fn explicit_remote_address(address: Option<String>) -> Option<String> {
+    address.filter(|address| !address.is_empty() && address != Config::DEFAULT_REMOTE_ADDRESS)
+}
+
 fn should_use_deployment_manifest() -> bool {
     if pod_manifest_is_customized() {
         info!("Using legacy Pod manifest (custom detected)");
@@ -902,6 +903,27 @@ mod tests {
     use kftray_commons::models::config_model::Config;
 
     use super::*;
+
+    #[test]
+    fn only_the_injected_sentinel_and_empty_addresses_are_dropped() {
+        assert_eq!(explicit_remote_address(None), None);
+        assert_eq!(explicit_remote_address(Some(String::new())), None);
+        assert_eq!(
+            explicit_remote_address(Some(Config::DEFAULT_REMOTE_ADDRESS.to_string())),
+            None
+        );
+        for host in [
+            "protocol",
+            "default-service",
+            "current-context",
+            "db.internal",
+        ] {
+            assert_eq!(
+                explicit_remote_address(Some(host.to_string())).as_deref(),
+                Some(host)
+            );
+        }
+    }
 
     #[test]
     fn every_batch_config_registers_before_any_is_buffered() {
