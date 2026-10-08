@@ -1,7 +1,5 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::Read,
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -32,14 +30,12 @@ use kftray_commons::{
         response::CustomResponse,
     },
     utils::{
-        config_dir::{
-            get_pod_manifest_path,
-            get_proxy_deployment_manifest_path,
-        },
         db_mode::DatabaseMode,
         manifests::{
             pod_manifest_is_customized,
+            pod_manifest_template,
             proxy_deployment_manifest_exists,
+            proxy_deployment_manifest_template,
         },
     },
 };
@@ -331,10 +327,7 @@ pub(super) async fn start_proxy_config(
             resolved = resolve_target_pod_ip(&pods, config.target.as_deref().unwrap_or_default()) => resolved?,
         }
     } else {
-        config
-            .remote_address
-            .take()
-            .filter(|address| !address.is_empty())
+        explicit_remote_address(config.remote_address.take())
             .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
             .ok_or("A proxy destination address or service is required")?
     };
@@ -547,11 +540,7 @@ async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
     values: &HashMap<String, String>, protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
-    let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+    let contents = proxy_deployment_manifest_template()?;
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
@@ -765,11 +754,7 @@ async fn process_pod_proxy(
     client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
     protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
-    let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+    let contents = pod_manifest_template()?;
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
@@ -882,6 +867,10 @@ pub async fn stop_proxy_forward(
     })
 }
 
+fn explicit_remote_address(address: Option<String>) -> Option<String> {
+    address.filter(|address| !address.is_empty() && address != Config::DEFAULT_REMOTE_ADDRESS)
+}
+
 fn should_use_deployment_manifest() -> bool {
     if pod_manifest_is_customized() {
         info!("Using legacy Pod manifest (custom detected)");
@@ -914,6 +903,27 @@ mod tests {
     use kftray_commons::models::config_model::Config;
 
     use super::*;
+
+    #[test]
+    fn only_the_injected_sentinel_and_empty_addresses_are_dropped() {
+        assert_eq!(explicit_remote_address(None), None);
+        assert_eq!(explicit_remote_address(Some(String::new())), None);
+        assert_eq!(
+            explicit_remote_address(Some(Config::DEFAULT_REMOTE_ADDRESS.to_string())),
+            None
+        );
+        for host in [
+            "protocol",
+            "default-service",
+            "current-context",
+            "db.internal",
+        ] {
+            assert_eq!(
+                explicit_remote_address(Some(host.to_string())).as_deref(),
+                Some(host)
+            );
+        }
+    }
 
     #[test]
     fn every_batch_config_registers_before_any_is_buffered() {

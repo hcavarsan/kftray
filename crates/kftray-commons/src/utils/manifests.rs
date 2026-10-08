@@ -467,6 +467,28 @@ fn manifest_is_customized(path: &std::path::Path, defaults: &[&serde_json::Value
     }
 }
 
+pub fn pod_manifest_template() -> Result<String, String> {
+    let path = get_pod_manifest_path()?;
+    read_template_or_default(&path, || {
+        serde_json::to_string_pretty(&default_pod_manifest()).map_err(|e| e.to_string())
+    })
+}
+
+pub fn proxy_deployment_manifest_template() -> Result<String, String> {
+    let path = get_proxy_deployment_manifest_path()?;
+    read_template_or_default(&path, || Ok(DEFAULT_PROXY_DEPLOYMENT.to_owned()))
+}
+
+fn read_template_or_default(
+    path: &Path, default: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => default(),
+        Err(error) => Err(format!("Failed to read {}: {error}", path.display())),
+    }
+}
+
 pub fn create_proxy_deployment_manifest() -> Result<(), Box<dyn std::error::Error>> {
     create_config_dir()?;
     let manifest_path = get_proxy_deployment_manifest_path()?;

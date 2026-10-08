@@ -10,7 +10,7 @@ dir = "target/nextest"
 # on top of the default profile.
 [profile.default]
 # The set of tests run by `cargo nextest run` by default.
-default-filter = "all()"
+default-filter = "not package(kftray-e2e)"
 
 # "retries" defines the number of times a test should be retried. If set to a
 # non-zero value, tests that succeed on a subsequent attempt will be marked as
@@ -126,6 +126,17 @@ store-success-output = true
 # Note that if a description can be extracted from the output, it is always stored in the
 # <description> element.
 store-failure-output = true
+
+[profile.e2e]
+default-filter = "package(kftray-e2e)"
+test-threads = 1
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 3 }
+
+[profile.e2e.junit]
+path = "junit.xml"
+report-name = "kftray-e2e"
 
 # This profile is activated if MIRI_SYSROOT is set.
 [profile.default-miri]

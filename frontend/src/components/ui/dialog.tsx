@@ -15,6 +15,7 @@ interface AppDialogProps {
   closeDisabled?: boolean
   role?: ComponentProps<typeof Dialog.Root>['role']
   placement?: ComponentProps<typeof Dialog.Root>['placement']
+  'data-testid'?: string
 }
 
 export function AppDialog({
@@ -27,6 +28,7 @@ export function AppDialog({
   closeDisabled = false,
   role,
   placement,
+  'data-testid': testId,
 }: AppDialogProps) {
   return (
     <Dialog.Root
@@ -48,6 +50,7 @@ export function AppDialog({
         <Dialog.Backdrop bg='transparent' backdropFilter='blur(4px)' />
         <Dialog.Positioner overflow='hidden'>
           <Dialog.Content
+            data-testid={testId}
             maxWidth={maxWidth}
             width='90vw'
             height={height}
@@ -130,13 +133,16 @@ export function DialogCancelButton({
   label = 'Cancel',
   onClick,
   disabled,
+  'data-testid': testId,
 }: {
   label?: string
   onClick: () => void
   disabled?: boolean
+  'data-testid'?: string
 }) {
   return (
     <Button
+      data-testid={testId}
       size='xs'
       variant='ghost'
       height='28px'

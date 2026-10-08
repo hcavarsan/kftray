@@ -139,7 +139,7 @@ fn main() {
     let pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 window::show_main_window(&window);
@@ -152,7 +152,16 @@ fn main() {
             positioning_active: positioning_active.clone(),
             pinned: pinned.clone(),
             runtime: runtime.clone(),
-        })
+        });
+
+    #[cfg(feature = "e2e")]
+    let builder = if std::env::var_os(tauri_plugin_wdio_webdriver::PORT_ENV_VAR).is_some() {
+        builder.plugin(tauri_plugin_wdio_webdriver::init())
+    } else {
+        builder
+    };
+
+    let app = builder
         .setup(move |app| {
             tauri::async_runtime::block_on(async {
                 if let Err(e) = kftray_commons::utils::db::init().await {

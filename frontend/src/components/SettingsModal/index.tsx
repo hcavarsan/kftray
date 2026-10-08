@@ -42,6 +42,7 @@ function SettingsFooter({ onClose, onSave, isSaving }: SettingsFooterProps) {
     <AppDialogFooter>
       <DialogCancelButton onClick={onClose} disabled={isSaving} />
       <Button
+        data-testid='settings-save'
         size='xs'
         onClick={onSave}
         loading={isSaving}
@@ -171,6 +172,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <AppDialog
+      data-testid='settings-dialog'
       title='Settings'
       onClose={onClose}
       maxWidth='600px'

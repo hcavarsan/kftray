@@ -1,0 +1,28 @@
+{
+  "app": {
+    "security": {
+      "capabilities": [
+        "migrated",
+        {
+          "identifier": "e2e",
+          "windows": ["main", "logs"],
+          "permissions": [
+            "wdio-webdriver:default",
+            {
+              "identifier": "fs:scope",
+              "allow": [{ "path": "$TEMP/**" }]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "externalBin": []
+  },
+  "plugins": {
+    "fs": {
+      "requireLiteralLeadingDot": false
+    }
+  }
+}

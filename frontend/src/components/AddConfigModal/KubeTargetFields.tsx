@@ -42,6 +42,7 @@ export function KubeTargetFields({
     <>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <Field
+          data-testid='config-service'
           error={isPod ? errors.target : errors.service}
           label={isPod ? 'Pod Label' : 'Service'}
         >
@@ -70,7 +71,11 @@ export function KubeTargetFields({
         />
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-        <Field error={portError ?? errors.remote_port} label='Target Port *'>
+        <Field
+          data-testid='config-remote-port'
+          error={portError ?? errors.remote_port}
+          label='Target Port *'
+        >
           <FieldCreatableSelect<PortOption>
             formatCreateLabel={value => `Use port ${value}`}
             isDisabled={!draft.context || !draft.namespace}
@@ -88,6 +93,7 @@ export function KubeTargetFields({
           />
         </Field>
         <TextField
+          data-testid='config-local-port'
           error={errors.local_port}
           label='Local Port'
           name='local_port'

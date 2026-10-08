@@ -92,6 +92,59 @@ run = "pnpm run knip"
 description = "Run kftui CLI"
 run = "cargo run -p kftui -- --log-level info --logs-to-file"
 
+[tasks.e2e]
+description = "Run the whole e2e suite in Docker: build the app, start Xvfb and k3s, run every test and copy the results to target/"
+run = """
+set -e
+docker build --file crates/kftray-e2e/Dockerfile --tag kftray-e2e .
+docker rm --force kftray-e2e > /dev/null 2>&1 || true
+rm -rf target/e2e/artifacts target/nextest/e2e/junit.xml
+mkdir -p target/e2e target/nextest/e2e
+status=0
+docker run --name kftray-e2e --init --network host --privileged \
+  --env KFTRAY_E2E_TIMEOUT_SCALE --env RUST_LOG \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume kftray-e2e-target:/work/target \
+  --volume kftray-e2e-cargo-registry:/usr/local/cargo/registry \
+  --volume kftray-e2e-cargo-git:/usr/local/cargo/git \
+  kftray-e2e cargo run --package kftray-e2e -- run ${KFTRAY_E2E_COVERAGE:+--coverage} || status=$?
+copied=0
+docker cp kftray-e2e:/work/target/e2e/artifacts target/e2e/ > /dev/null 2>&1 || copied=$?
+docker cp kftray-e2e:/work/target/nextest/e2e/junit.xml target/nextest/e2e/ > /dev/null 2>&1 || copied=$?
+docker rm kftray-e2e > /dev/null
+if [ "$status" -eq 0 ] && [ "$copied" -ne 0 ]; then
+  echo "e2e passed but its junit or artifacts could not be copied out of the container" >&2
+  exit 1
+fi
+if [ "$status" -eq 0 ] && [ -n "$KFTRAY_E2E_COVERAGE" ] && [ ! -f target/e2e/artifacts/lcov.info ]; then
+  echo "e2e passed but produced no coverage report" >&2
+  exit 1
+fi
+if [ -f target/nextest/e2e/junit.xml ]; then
+  echo "e2e results: target/nextest/e2e/junit.xml, artifacts in target/e2e/artifacts"
+else
+  echo "e2e produced no junit; it failed before nextest ran" >&2
+fi
+exit $status
+"""
+
+[tasks."e2e:coverage"]
+description = "Run the whole e2e suite in Docker with coverage instrumentation, writing target/e2e/artifacts/lcov.info"
+env = { KFTRAY_E2E_COVERAGE = "1" }
+run = "mise run e2e"
+
+[tasks."e2e:native"]
+description = "Build the app, start a throwaway k3s and run the e2e suite on this machine's display"
+run = "cargo run -p kftray-e2e -- run"
+
+[tasks."e2e:up"]
+description = "Start the e2e environment and keep it up for cargo nextest --profile e2e"
+run = "cargo run -p kftray-e2e -- up"
+
+[tasks."e2e:build"]
+description = "Build kftray with the e2e feature and kftui"
+run = "cargo run -p kftray-e2e -- build"
+
 # Setup Task
 [tasks.setup]
 description = "Setup development environment for all platforms"

@@ -1,0 +1,9 @@
+.git
+**/target
+**/target-*
+**/node_modules
+frontend/dist
+crates/kftray-tauri/bin/*
+!crates/kftray-tauri/bin/.gitkeep
+**/*.log
+lcov*
