@@ -28,6 +28,10 @@ use testcontainers_modules::k3s::{
     K3s,
     KUBE_SECURE_PORT,
 };
+use testcontainers_modules::testcontainers::core::{
+    CmdWaitFor,
+    ExecCommand,
+};
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{
     ContainerAsync,
@@ -42,6 +46,7 @@ use crate::harness::workload::{
 };
 
 const K3S_TAG: &str = "v1.33.4-k3s1";
+const K3S_KUBECONFIG: &str = "/etc/rancher/k3s/k3s.yaml";
 
 pub struct Cluster {
     _container: ContainerAsync<K3s>,
@@ -55,11 +60,10 @@ impl Cluster {
                 .install_default()
                 .map_err(|_| anyhow!("install the rustls crypto provider"))?;
         }
-        let conf = out_dir.join("k3s");
-        std::fs::create_dir_all(&conf).with_context(|| format!("create {}", conf.display()))?;
+        std::fs::create_dir_all(out_dir)
+            .with_context(|| format!("create {}", out_dir.display()))?;
         log::info!("starting k3s {K3S_TAG}");
         let container = K3s::default()
-            .with_conf_mount(&conf)
             .with_tag(K3S_TAG)
             .with_privileged(true)
             .with_userns_mode("host")
@@ -67,18 +71,26 @@ impl Cluster {
             .await
             .context("start k3s; docker must be running and allow privileged containers")?;
 
+        let host = container.get_host().await.context("read the docker host")?;
         let port = container
             .get_host_port_ipv4(KUBE_SECURE_PORT)
             .await
             .context("read the mapped k3s API port")?;
         let raw = container
-            .image()
-            .read_kube_config()
-            .context("read the kubeconfig k3s wrote")?;
+            .exec(
+                ExecCommand::new(["cat", K3S_KUBECONFIG])
+                    .with_cmd_ready_condition(CmdWaitFor::exit_code(0)),
+            )
+            .await
+            .context("read the kubeconfig k3s wrote")?
+            .stdout_to_vec()
+            .await
+            .context("collect the k3s kubeconfig")?;
+        let raw = String::from_utf8(raw).context("decode the k3s kubeconfig")?;
         let mut kubeconfig = Kubeconfig::from_yaml(&raw).context("parse the k3s kubeconfig")?;
         for named in &mut kubeconfig.clusters {
             if let Some(cluster) = named.cluster.as_mut() {
-                cluster.server = Some(format!("https://127.0.0.1:{port}"));
+                cluster.server = Some(format!("https://{host}:{port}"));
             }
         }
         let path = out_dir.join("kubeconfig.json");

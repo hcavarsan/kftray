@@ -77,7 +77,7 @@ jobs:
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: e2e-${{ runner.os }}
-          shared-key: deps-e2e
+          shared-key: deps-e2e-${{ runner.os }}
           workspaces: |
             .
             crates/kftray-helper
@@ -92,7 +92,163 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-artifacts
+          name: e2e-artifacts-linux
+          path: |
+            target/e2e/artifacts
+            target/nextest/e2e/junit.xml
+          if-no-files-found: ignore
+
+  desktop-macos:
+    name: Desktop (macOS)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    env:
+      KFTRAY_E2E_TIMEOUT_SCALE: "2"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: "pnpm"
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Install nextest
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: e2e-${{ runner.os }}
+          shared-key: deps-e2e-${{ runner.os }}
+          workspaces: |
+            .
+            crates/kftray-helper
+
+      - name: Start Docker with colima
+        run: |
+          brew install colima docker
+          colima start --cpu 3 --memory 8 --disk 40
+          echo "DOCKER_HOST=unix://$HOME/.colima/default/docker.sock" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run e2e
+        run: cargo run -p kftray-e2e -- run
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-artifacts-macos
+          path: |
+            target/e2e/artifacts
+            target/nextest/e2e/junit.xml
+          if-no-files-found: ignore
+
+  desktop-windows:
+    name: Desktop (Windows)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      KFTRAY_E2E_TIMEOUT_SCALE: "2"
+      DOCKER_HOST: tcp://localhost:2375
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: "pnpm"
+
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@8b574cdc2dffdae49f803204a4f2b716a2fa1db7 # v1.44.2
+        with:
+          perl-version: "5.42"
+          distribution: "strawberry"
+
+      - name: Set Perl environment variables
+        shell: pwsh
+        run: |
+          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install nextest
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: e2e-${{ runner.os }}
+          shared-key: deps-e2e-${{ runner.os }}
+          workspaces: |
+            .
+            crates/kftray-helper
+
+      - name: Install WSL
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 2
+          additional-packages: docker.io
+
+      - name: Start Docker in WSL
+        shell: pwsh
+        run: |
+          wsl -d Ubuntu-24.04 -u root -- sh -c "systemctl stop docker.socket docker 2>/dev/null; pkill dockerd; true"
+          Start-Process -WindowStyle Hidden -FilePath wsl -ArgumentList '-d', 'Ubuntu-24.04', '-u', 'root', '--', 'dockerd', '-H', 'tcp://0.0.0.0:2375', '-H', 'unix:///var/run/docker.sock', '--tls=false'
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try {
+              Invoke-WebRequest -UseBasicParsing http://localhost:2375/_ping | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          }
+          exit 1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run e2e
+        run: cargo run -p kftray-e2e -- run
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-artifacts-windows
           path: |
             target/e2e/artifacts
             target/nextest/e2e/junit.xml
