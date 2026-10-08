@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -108,7 +107,7 @@ impl ReverseHttpProxy {
             .map(|pq| pq.as_str().to_string())
             .unwrap_or_else(|| "/".to_string());
 
-        let headers: HashMap<String, String> = req
+        let headers: Vec<(String, String)> = req
             .headers()
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
@@ -152,7 +151,7 @@ impl ReverseHttpProxy {
                     if let Ok(header_name) = hyper::header::HeaderName::from_bytes(key.as_bytes())
                         && let Ok(header_value) = hyper::header::HeaderValue::from_str(&value)
                     {
-                        response.headers_mut().insert(header_name, header_value);
+                        response.headers_mut().append(header_name, header_value);
                     }
                 }
 
@@ -231,5 +230,111 @@ mod tests {
             Ok(Err(_)) => {}
             Err(_) => panic!("connect timed out; proxy port may still be open after shutdown"),
         }
+    }
+
+    #[tokio::test]
+    async fn repeated_headers_cross_the_tunnel_both_ways() {
+        use futures::{
+            SinkExt,
+            StreamExt,
+        };
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+        use tokio_tungstenite::tungstenite::Message;
+
+        async fn free_port() -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        }
+
+        let ws_port = free_port().await;
+        let http_port = free_port().await;
+        let tunnel_server = Arc::new(WebSocketTunnelServer::new(ws_port));
+        let shutdown = Arc::new(Notify::new());
+        let ws_task = tokio::spawn({
+            let tunnel_server = tunnel_server.clone();
+            let shutdown = shutdown.clone();
+            async move { tunnel_server.start(shutdown).await }
+        });
+        let http_task = tokio::spawn({
+            let proxy = ReverseHttpProxy::new(tunnel_server.clone(), http_port);
+            let shutdown = shutdown.clone();
+            async move { proxy.start(shutdown).await }
+        });
+
+        let ws_addr = format!("127.0.0.1:{ws_port}").parse().unwrap();
+        assert!(test_utils::wait_for_port(ws_addr).await);
+        let (mut ws_client, _) = tokio_tungstenite::connect_async(format!("ws://{ws_addr}"))
+            .await
+            .unwrap();
+        while !tunnel_server.is_connected().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let http_addr = format!("127.0.0.1:{http_port}").parse().unwrap();
+        assert!(test_utils::wait_for_port(http_addr).await);
+
+        let browser = tokio::spawn(async move {
+            let mut stream = TcpStream::connect(http_addr).await.unwrap();
+            stream
+                .write_all(
+                    b"GET /login HTTP/1.1\r\nHost: app\r\nX-Tag: one\r\nX-Tag: two\r\n\
+                      Connection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).await.unwrap();
+            response
+        });
+
+        let request = tokio::time::timeout(Duration::from_secs(5), ws_client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let Message::Binary(data) = request else {
+            panic!("expected a binary tunnel message, got {request:?}");
+        };
+        let TunnelMessage::HttpRequest { id, headers, .. } =
+            TunnelMessage::deserialize(&data).unwrap()
+        else {
+            panic!("expected an HTTP request");
+        };
+        let tags: Vec<&str> = headers
+            .iter()
+            .filter(|(name, _)| name == "x-tag")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(tags, ["one", "two"]);
+
+        let reply = TunnelMessage::HttpResponse {
+            id,
+            status: 200,
+            headers: vec![
+                ("set-cookie".to_owned(), "session=abc; Path=/".to_owned()),
+                ("set-cookie".to_owned(), "csrf=xyz; Path=/".to_owned()),
+            ],
+            body: b"ok".to_vec(),
+        };
+        ws_client
+            .send(Message::Binary(reply.serialize().unwrap().into()))
+            .await
+            .unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(5), browser)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            response.contains("set-cookie: session=abc; Path=/\r\n")
+                && response.contains("set-cookie: csrf=xyz; Path=/\r\n"),
+            "{response}"
+        );
+
+        shutdown.notify_waiters();
+        ws_task.abort();
+        http_task.abort();
     }
 }

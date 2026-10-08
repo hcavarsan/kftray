@@ -296,7 +296,7 @@ impl WebSocketTunnelServer {
     }
 
     pub async fn send_request(
-        &self, id: String, method: String, path: String, headers: HashMap<String, String>,
+        &self, id: String, method: String, path: String, headers: Vec<(String, String)>,
         body: Vec<u8>,
     ) -> Result<TunnelMessage, String> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -575,7 +575,7 @@ mod tests {
                     "drop-test-1".to_string(),
                     "GET".to_string(),
                     "/".to_string(),
-                    HashMap::new(),
+                    Vec::new(),
                     vec![],
                 )
                 .await
