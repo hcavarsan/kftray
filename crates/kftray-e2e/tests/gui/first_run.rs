@@ -20,7 +20,7 @@ async fn shows_the_consent_dialog_on_first_start() -> Result<()> {
 async fn accepting_turns_crash_reports_on_in_settings() -> Result<()> {
     let env = TestEnv::from_env()?;
     let app = Desktop::launch(&env, Profile::new()?).await?;
-    app.consent().allow().await?;
+    app.consent().accept_crash_reports().await?;
 
     let settings = app.settings().open().await?;
 

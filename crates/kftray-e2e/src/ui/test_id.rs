@@ -4,7 +4,8 @@ use thirtyfour::By;
 pub enum TestId {
     MainView,
     ConsentDialog,
-    ConsentAllow,
+    ConsentOption,
+    ConsentSave,
     ConsentDecline,
     AddConfigButton,
     ExpandGroups,
@@ -34,7 +35,8 @@ impl TestId {
         match self {
             Self::MainView => "main-view",
             Self::ConsentDialog => "consent-dialog",
-            Self::ConsentAllow => "consent-allow",
+            Self::ConsentOption => "consent-option",
+            Self::ConsentSave => "consent-save",
             Self::ConsentDecline => "consent-decline",
             Self::AddConfigButton => "add-config-button",
             Self::ExpandGroups => "expand-groups",

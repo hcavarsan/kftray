@@ -78,6 +78,8 @@ export function TelemetryConsentModal({
           {consents.map(consent => (
             <Stack key={consent} gap={1}>
               <Switch
+                data-testid='consent-option'
+                data-id={consent}
                 size='sm'
                 checked={choices[consent]}
                 onCheckedChange={details =>
@@ -108,7 +110,7 @@ export function TelemetryConsentModal({
           disabled={choose.isPending}
         />
         <Button
-          data-testid='consent-allow'
+          data-testid='consent-save'
           size='xs'
           height='28px'
           bg='accent.solid'

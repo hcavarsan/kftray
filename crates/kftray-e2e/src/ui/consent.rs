@@ -1,7 +1,10 @@
 use anyhow::Result;
+use thirtyfour::By;
 
 use crate::app::Desktop;
 use crate::ui::TestId;
+
+const CRASH_REPORTS: &str = "crashReports";
 
 pub struct ConsentPage<'a> {
     desktop: &'a Desktop,
@@ -23,8 +26,17 @@ impl<'a> ConsentPage<'a> {
         self.desktop.is_visible(&TestId::ConsentDialog.by()).await
     }
 
-    pub async fn allow(&self) -> Result<()> {
-        self.answer(TestId::ConsentAllow).await
+    pub async fn accept_crash_reports(&self) -> Result<()> {
+        let option = By::Css(format!(
+            "{}[data-id='{CRASH_REPORTS}']",
+            TestId::ConsentOption.css()
+        ));
+        self.desktop.click(&option).await?;
+        let limit = self.desktop.timeouts().ui;
+        self.desktop
+            .wait_attr(&option, "data-state", "checked", limit)
+            .await?;
+        self.answer(TestId::ConsentSave).await
     }
 
     pub async fn decline(&self) -> Result<()> {
