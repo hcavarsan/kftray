@@ -35,6 +35,7 @@ use log::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
+use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use crate::protocol::{
@@ -121,13 +122,15 @@ pub async fn serve(listener: TcpListener) -> anyhow::Result<()> {
     info!("MCP server listening on http://{}", listener.local_addr()?);
 
     let state = Arc::new(ServerState::new());
+    let mut connections = JoinSet::new();
 
     loop {
         let (stream, remote_addr) = listener.accept().await?;
+        while connections.try_join_next().is_some() {}
         let io = TokioIo::new(stream);
         let state = Arc::clone(&state);
 
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let service = service_fn(move |req| {
                 let state = Arc::clone(&state);
                 async move { handle_request(req, state).await }

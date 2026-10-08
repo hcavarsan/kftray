@@ -142,4 +142,59 @@ mod tests {
         assert!(start(0).await.is_err());
         assert!(!is_running().await);
     }
+
+    #[tokio::test]
+    async fn stop_closes_connections_that_are_already_open() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let _mcp = TEST_LOCK.lock().await;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        start(port).await.unwrap();
+
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let request = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let mut buf = [0u8; 2048];
+        client.write_all(request).await.unwrap();
+        let mut response = Vec::new();
+        loop {
+            let n = client.read(&mut buf).await.unwrap();
+            assert!(n > 0, "connection closed before the health response ended");
+            response.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&response);
+            if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                let content_length = head
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .expect("health response has no Content-Length");
+                if body.len() >= content_length {
+                    break;
+                }
+            }
+        }
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+
+        stop().await.unwrap();
+
+        let _ = client.write_all(request).await;
+        let after = tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut buf))
+            .await
+            .expect("a connection opened before stop() is still open 2s after stop()");
+        assert!(
+            matches!(after, Ok(0) | Err(_)),
+            "a connection opened before stop() is still answered after stop()"
+        );
+    }
 }
