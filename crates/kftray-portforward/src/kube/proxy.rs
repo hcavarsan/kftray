@@ -334,8 +334,13 @@ pub(super) async fn start_proxy_config(
         config
             .remote_address
             .take()
-            .filter(|address| !address.is_empty())
-            .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
+            .filter(|address| !Config::is_placeholder(address))
+            .or_else(|| {
+                config
+                    .service
+                    .clone()
+                    .filter(|service| !Config::is_placeholder(service))
+            })
             .ok_or("A proxy destination address or service is required")?
     };
     let remote_port = config
@@ -345,7 +350,7 @@ pub(super) async fn start_proxy_config(
     let service_name = config
         .service
         .clone()
-        .filter(|service| !service.is_empty())
+        .filter(|service| !Config::is_placeholder(service))
         .unwrap_or_else(|| remote_address.clone());
     config.remote_address = Some(remote_address.clone());
 

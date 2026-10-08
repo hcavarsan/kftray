@@ -278,7 +278,7 @@ impl Config {
         self
     }
 
-    fn is_placeholder(s: &str) -> bool {
+    pub fn is_placeholder(s: &str) -> bool {
         matches!(
             s,
             "default-service"
