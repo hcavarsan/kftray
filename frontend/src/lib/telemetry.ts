@@ -11,6 +11,13 @@ export const telemetryQuery = queryOptions({
   queryFn: () => invoke<boolean | null>('get_telemetry_enabled'),
 })
 
+export const performanceQuery = queryOptions({
+  queryKey: ['performance-enabled'],
+  queryFn: () => invoke<boolean | null>('get_performance_enabled'),
+})
+
+export type Consent = 'crashReports' | 'performance'
+
 // "url:line:column" of a file served from the app bundle: tauri://localhost
 // on macOS and Linux, https://tauri.localhost on Windows (useHttpsScheme).
 const ASSET_LOCATION =

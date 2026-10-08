@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io;
 
 use crossterm::{
@@ -28,6 +29,7 @@ use crate::logging::LoggerState;
 use crate::tui::input::{
     App,
     AppState,
+    Consent,
     UpdateInfo,
     handle_input,
 };
@@ -48,11 +50,9 @@ pub async fn run_tui(
 
     let mut app = App::new(logger_state);
     app.config_view = config_view;
-    app.telemetry_prompt_pending = mode == DatabaseMode::File
-        && matches!(
-            kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await,
-            Ok(None)
-        );
+    if mode == DatabaseMode::File {
+        app.pending_consents = unanswered_consents(mode).await;
+    }
 
     if let Ok(size) = terminal.size() {
         app.update_visible_rows(size.height);
@@ -127,6 +127,22 @@ pub async fn run_tui(
     Ok(())
 }
 
+async fn unanswered_consents(mode: DatabaseMode) -> VecDeque<Consent> {
+    use kftray_commons::utils::settings::{
+        get_performance_enabled_with_mode,
+        get_telemetry_enabled_with_mode,
+    };
+
+    let mut consents = VecDeque::new();
+    if matches!(get_telemetry_enabled_with_mode(mode).await, Ok(None)) {
+        consents.push_back(Consent::CrashReports);
+    }
+    if matches!(get_performance_enabled_with_mode(mode).await, Ok(None)) {
+        consents.push_back(Consent::Performance);
+    }
+    consents
+}
+
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
     update_check: &mut Option<UpdateCheckTask>,
@@ -161,8 +177,10 @@ where
             }
         }
 
-        if app.telemetry_prompt_pending && app.state == AppState::Normal {
-            app.telemetry_prompt_pending = false;
+        if app.state == AppState::Normal
+            && let Some(consent) = app.pending_consents.pop_front()
+        {
+            app.active_consent = consent;
             app.state = AppState::ShowTelemetryConsent;
         }
 
@@ -210,6 +228,7 @@ mod tests {
         ActiveTable,
         App,
         AppState,
+        Consent,
     };
     use crate::tui::ui::draw_ui;
 
@@ -291,11 +310,35 @@ mod tests {
 
         let title = row_of("Crash Reports");
         let first_line = row_of("kftui can send a report when it crashes.");
-        let last_line = row_of("later in Settings.");
+        let last_line = row_of("this in Settings.");
         let buttons = row_of("<Allow>");
         assert_eq!(row_of("<No thanks>"), buttons);
         assert!(title < first_line);
         assert!(last_line < buttons);
+    }
+
+    #[test]
+    fn the_performance_consent_popup_shows_its_own_title_and_text() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(test_logger_state());
+        app.state = AppState::ShowTelemetryConsent;
+        app.active_consent = Consent::Performance;
+        let config_states: Vec<ConfigState> = vec![];
+
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol())
+            .collect();
+        assert!(
+            screen.contains("Performance Data")
+                && screen.contains("kftui can send how long port forwards take to start")
+        );
     }
 
     #[test]

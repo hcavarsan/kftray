@@ -19,6 +19,10 @@ use kftray_portforward::kube::{
     stop_port_forward,
     stop_proxy_forward,
 };
+use kftray_telemetry::{
+    Operation,
+    measure,
+};
 use log::error;
 use log::info;
 use serde_json::json;
@@ -211,35 +215,35 @@ fn hide_for_exit(app: &AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "udp").await
+    measure(Operation::StartForward, start_port_forward(configs, "udp")).await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "tcp").await
+    measure(Operation::StartForward, start_port_forward(configs, "tcp")).await
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
     _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    stop_all_port_forward().await
+    measure(Operation::StopAllForwards, stop_all_port_forward()).await
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id).await
+    measure(Operation::StopForward, stop_port_forward(config_id)).await
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs).await
+    measure(Operation::StartForward, deploy_and_forward_pod(configs)).await
 }
 
 #[tauri::command]
@@ -250,7 +254,11 @@ pub async fn stop_proxy_forward_cmd(
         .parse::<i64>()
         .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
-    stop_proxy_forward(config_id, namespace, service_name).await
+    measure(
+        Operation::StopForward,
+        stop_proxy_forward(config_id, namespace, service_name),
+    )
+    .await
 }
 
 #[tauri::command]

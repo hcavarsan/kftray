@@ -571,6 +571,19 @@ pub async fn set_telemetry_enabled(
     set_setting("telemetry_enabled", &enabled.to_string()).await
 }
 
+pub async fn get_performance_enabled()
+-> Result<Option<bool>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_setting("performance_enabled")
+        .await?
+        .and_then(|value| value.parse().ok()))
+}
+
+pub async fn set_performance_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("performance_enabled", &enabled.to_string()).await
+}
+
 pub async fn get_auto_update_enabled_with_mode(
     mode: DatabaseMode,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
@@ -599,6 +612,20 @@ pub async fn set_telemetry_enabled_with_mode(
     enabled: bool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting_with_mode("telemetry_enabled", &enabled.to_string(), mode).await
+}
+
+pub async fn get_performance_enabled_with_mode(
+    mode: DatabaseMode,
+) -> Result<Option<bool>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_setting_with_mode("performance_enabled", mode)
+        .await?
+        .and_then(|value| value.parse().ok()))
+}
+
+pub async fn set_performance_enabled_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("performance_enabled", &enabled.to_string(), mode).await
 }
 
 pub async fn get_app_settings() -> Result<AppSettings, Box<dyn std::error::Error + Send + Sync>> {

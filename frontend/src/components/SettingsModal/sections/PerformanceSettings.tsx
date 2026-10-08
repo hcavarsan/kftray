@@ -2,19 +2,19 @@ import { Checkbox } from '@/components/ui/checkbox'
 
 import { SettingCard, SettingRow } from '../SettingCard'
 
-interface TelemetrySettingsProps {
+interface PerformanceSettingsProps {
   enabled: boolean
   onEnabledChange: (enabled: boolean) => void
 }
 
-export function TelemetrySettings({
+export function PerformanceSettings({
   enabled,
   onEnabledChange,
-}: TelemetrySettingsProps) {
+}: PerformanceSettingsProps) {
   return (
     <SettingCard
-      title='Crash Reports'
-      description='Send a report when kftray crashes.'
+      title='Performance Data'
+      description='Send how long port forwards take to start and stop.'
     >
       <SettingRow label='Enabled:'>
         <Checkbox

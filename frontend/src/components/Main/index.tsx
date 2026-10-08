@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Footer } from '@/components/Footer'
 import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
-import { telemetryQuery } from '@/lib/telemetry'
+import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
 
 import { useConfigTransfer } from './useConfigTransfer'
@@ -73,6 +73,14 @@ export function Main() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
   const telemetry = useQuery(telemetryQuery)
+  const performance = useQuery(performanceQuery)
+  const unansweredConsents: Consent[] =
+    telemetry.isFetched && performance.isFetched
+      ? [
+          ...(telemetry.data === null ? (['crashReports'] as const) : []),
+          ...(performance.data === null ? (['performance'] as const) : []),
+        ]
+      : []
   const [telemetryAnswered, setTelemetryAnswered] = useState(false)
   const forwarding = usePortForwarding()
   const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
@@ -270,8 +278,9 @@ export function Main() {
           {activeModal === null &&
             !prompt &&
             !telemetryAnswered &&
-            telemetry.data === null && (
+            unansweredConsents.length > 0 && (
               <TelemetryConsentModal
+                consents={unansweredConsents}
                 onDone={() => setTelemetryAnswered(true)}
               />
             )}

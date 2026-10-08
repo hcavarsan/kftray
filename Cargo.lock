@@ -3759,6 +3759,7 @@ dependencies = [
 name = "kftray-telemetry"
 version = "0.29.6"
 dependencies = [
+ "futures",
  "kftray-commons",
  "log",
  "sentry",

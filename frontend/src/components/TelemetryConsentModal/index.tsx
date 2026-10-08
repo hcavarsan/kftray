@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -9,51 +11,98 @@ import {
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
-import { telemetryQuery } from '@/lib/telemetry'
+import { Switch } from '@/components/ui/switch'
+import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
+
+type Choices = Record<Consent, boolean>
+
+const CONSENTS: Record<
+  Consent,
+  { label: string; description: string; command: string }
+> = {
+  crashReports: {
+    label: 'Crash reports',
+    description: 'Send a report when kftray crashes.',
+    command: 'update_telemetry_enabled',
+  },
+  performance: {
+    label: 'Performance data',
+    description: 'Send how long port forwards take to start and stop.',
+    command: 'update_performance_enabled',
+  },
+}
+
+const DECLINED: Choices = { crashReports: false, performance: false }
 
 // onDone runs after every answer, also after a failed save, so the caller
 // can stop asking for the rest of the session.
-export function TelemetryConsentModal({ onDone }: { onDone: () => void }) {
+export function TelemetryConsentModal({
+  consents,
+  onDone,
+}: {
+  consents: Consent[]
+  onDone: () => void
+}) {
   const queryClient = useQueryClient()
+  const [choices, setChoices] = useState<Choices>(DECLINED)
   const choose = useMutation({
-    mutationFn: (enabled: boolean) =>
-      invoke('update_telemetry_enabled', { enabled }),
+    mutationFn: (answer: Choices) =>
+      Promise.all(
+        consents.map(consent =>
+          invoke(CONSENTS[consent].command, { enabled: answer[consent] }),
+        ),
+      ),
     onSettled: () => {
       onDone()
 
-      return queryClient.invalidateQueries({
-        queryKey: telemetryQuery.queryKey,
-      })
+      return Promise.all(
+        [telemetryQuery, performanceQuery].map(query =>
+          queryClient.invalidateQueries({ queryKey: query.queryKey }),
+        ),
+      )
     },
-    meta: { errorToast: { title: 'Failed to save the crash report setting' } },
+    meta: { errorToast: { title: 'Failed to save the diagnostics setting' } },
   })
 
   return (
     <AppDialog
-      title='Crash reports'
-      onClose={() => choose.mutate(false)}
+      title='Help improve kftray'
+      onClose={() => choose.mutate(DECLINED)}
       closeDisabled={choose.isPending}
       placement='center'
       maxWidth='400px'
     >
       <AppDialogBody>
-        <Stack gap={2}>
+        <Stack gap={3}>
+          {consents.map(consent => (
+            <Stack key={consent} gap={1}>
+              <Switch
+                size='sm'
+                checked={choices[consent]}
+                onCheckedChange={details =>
+                  setChoices(prev => ({ ...prev, [consent]: details.checked }))
+                }
+                disabled={choose.isPending}
+              >
+                <Text fontSize='xs' fontWeight='500'>
+                  {CONSENTS[consent].label}
+                </Text>
+              </Switch>
+              <Text fontSize='xs' color='fg.muted'>
+                {CONSENTS[consent].description}
+              </Text>
+            </Stack>
+          ))}
           <Text fontSize='xs' color='fg.muted'>
-            kftray can send a report when it crashes or hits an unexpected
-            error. A report has the error type, where in the code it happened,
-            the app version and the operating system.
-          </Text>
-          <Text fontSize='xs' color='fg.muted'>
-            It never includes cluster names, namespaces, service names, aliases
-            or kubeconfig files. Reports go to a server run by the kftray
-            maintainer. You can change this later in Settings.
+            No cluster, namespace or service names are ever sent. You can change
+            this in Settings.
           </Text>
         </Stack>
       </AppDialogBody>
       <AppDialogFooter>
         <DialogCancelButton
           label='No thanks'
-          onClick={() => choose.mutate(false)}
+          onClick={() => choose.mutate(DECLINED)}
           disabled={choose.isPending}
         />
         <Button
@@ -64,9 +113,9 @@ export function TelemetryConsentModal({ onDone }: { onDone: () => void }) {
           _hover={{ bg: 'accent.solidHover' }}
           _active={{ bg: 'accent.solidActive' }}
           loading={choose.isPending}
-          onClick={() => choose.mutate(true)}
+          onClick={() => choose.mutate(choices)}
         >
-          Send crash reports
+          Save
         </Button>
       </AppDialogFooter>
     </AppDialog>

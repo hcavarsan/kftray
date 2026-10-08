@@ -12,6 +12,7 @@ use crate::tui::input::{
     ActiveTable,
     App,
     AppState,
+    Consent,
     DeleteButton,
     TelemetryButton,
     clear_selection,
@@ -658,6 +659,48 @@ mod tests {
                 .unwrap(),
             Some(false)
         );
+    }
+
+    #[tokio::test]
+    async fn the_performance_consent_popup_stores_only_the_performance_setting() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = setup_app();
+        app.state = AppState::ShowTelemetryConsent;
+        app.active_consent = Consent::Performance;
+
+        handle_telemetry_consent_input(&mut app, KeyCode::Enter, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (
+                kftray_commons::utils::settings::get_performance_enabled_with_mode(
+                    DatabaseMode::Memory
+                )
+                .await
+                .unwrap(),
+                kftray_commons::utils::settings::get_telemetry_enabled_with_mode(
+                    DatabaseMode::Memory
+                )
+                .await
+                .unwrap(),
+            ),
+            (Some(true), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn answering_a_consent_popup_selects_allow_for_the_next_one() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = setup_app();
+        app.state = AppState::ShowTelemetryConsent;
+        app.selected_telemetry_button = TelemetryButton::Decline;
+
+        handle_telemetry_consent_input(&mut app, KeyCode::Enter, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(app.selected_telemetry_button, TelemetryButton::Allow);
     }
 
     #[tokio::test]

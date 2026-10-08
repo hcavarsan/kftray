@@ -426,6 +426,8 @@ fn main() {
             commands::settings::update_mcp_server_port,
             commands::telemetry::get_telemetry_enabled,
             commands::telemetry::update_telemetry_enabled,
+            commands::telemetry::get_performance_enabled,
+            commands::telemetry::update_performance_enabled,
             commands::telemetry::report_error,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,

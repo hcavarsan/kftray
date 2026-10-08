@@ -58,6 +58,14 @@ A report has the error type, where in the code it happened, the app version, the
 
 Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cavarsa.app`. The proxy in front of it drops the client IP before the report is stored. Setting the `DO_NOT_TRACK` environment variable turns reporting off whatever the setting says, and development builds never send reports.
 
+## Performance data
+
+kftray also asks, in the same dialog, whether it may send performance data. It's a separate choice from crash reports, and you can change it under **Settings > Performance Data**.
+
+When it's on, kftray records how long it takes to start a port forward, stop one or stop all of them. It also records whether the operation failed. Each record has the operation name, its duration, its result and the app version. It never includes cluster names, namespaces, service names, aliases, kubeconfig files or your host name.
+
+The data goes to the same GlitchTip server as crash reports. `DO_NOT_TRACK` and development builds turn it off too.
+
 ## Export configurations to a JSON file
 
 1. Open the main menu in the footer

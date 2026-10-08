@@ -17,6 +17,7 @@ import { McpServerSettings } from './McpServerSettings'
 import { SETTINGS_QUERIES } from './queries'
 import { LogSettings } from './sections/LogSettings'
 import { NetworkSettings } from './sections/NetworkSettings'
+import { PerformanceSettings } from './sections/PerformanceSettings'
 import { SslSettings } from './sections/SslSettings'
 import { TelemetrySettings } from './sections/TelemetrySettings'
 import { UpdateSettings } from './sections/UpdateSettings'
@@ -130,6 +131,10 @@ function SettingsForm({
           <TelemetrySettings
             enabled={draft.telemetryEnabled}
             onEnabledChange={value => update('telemetryEnabled', value)}
+          />
+          <PerformanceSettings
+            enabled={draft.performanceEnabled}
+            onEnabledChange={value => update('performanceEnabled', value)}
           />
           <LogSettings
             retentionCount={draft.logRetentionCount}
