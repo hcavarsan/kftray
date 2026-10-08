@@ -8,6 +8,7 @@ use anyhow::{
 };
 use tokio::process::Command;
 
+use crate::harness::coverage::Coverage;
 use crate::harness::workspace_root;
 
 const PNPM: &str = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
@@ -40,9 +41,10 @@ impl Binaries {
     }
 }
 
-pub async fn all() -> Result<Binaries> {
+pub async fn all(coverage: Option<&Coverage>) -> Result<Binaries> {
     let root = workspace_root();
-    run(Command::new(PNPM).current_dir(&root).args([
+    let mut app = Command::new(PNPM);
+    app.current_dir(&root).args([
         "tauri",
         "build",
         "--debug",
@@ -51,14 +53,17 @@ pub async fn all() -> Result<Binaries> {
         "e2e",
         "--config",
         "crates/kftray-tauri/tauri.e2e.conf.json",
-    ]))
-    .await
-    .context("build kftray with the e2e feature")?;
-    run(Command::new("cargo")
-        .current_dir(&root)
-        .args(["build", "-p", "kftui"]))
-    .await
-    .context("build kftui")?;
+    ]);
+    let mut kftui = Command::new("cargo");
+    kftui.current_dir(&root).args(["build", "-p", "kftui"]);
+    if let Some(coverage) = coverage {
+        app.envs(coverage.vars());
+        kftui.envs(coverage.vars());
+    }
+    run(&mut app)
+        .await
+        .context("build kftray with the e2e feature")?;
+    run(&mut kftui).await.context("build kftui")?;
     Ok(Binaries::in_target())
 }
 

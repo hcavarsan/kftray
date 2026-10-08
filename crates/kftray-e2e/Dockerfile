@@ -3,6 +3,7 @@ FROM ubuntu:22.04
 ARG NODE_VERSION=26.11.1
 ARG PNPM_VERSION=12.9.1
 ARG NEXTEST_VERSION=0.9.146
+ARG LLVM_COV_VERSION=0.9.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get -o Acquire::Retries=3 update \
@@ -33,7 +34,10 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:$PATH \
     CARGO_TERM_COLOR=always
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
-    && curl -fsSL "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar -xz -C /usr/local/cargo/bin
+        --component llvm-tools \
+    && curl -fsSL "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar -xz -C /usr/local/cargo/bin \
+    && curl -fsSL "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${LLVM_COV_VERSION}/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz" \
+        | tar -xz -C /usr/local/cargo/bin
 
 WORKDIR /work
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./

@@ -7,6 +7,7 @@ use anyhow::{
 };
 use tokio::process::Command;
 
+use crate::harness::coverage::Coverage;
 use crate::harness::env::TestEnv;
 use crate::harness::workspace_root;
 
@@ -30,7 +31,9 @@ pub fn clear_junit() -> Result<()> {
     }
 }
 
-pub async fn run(env: &TestEnv, display: Option<&str>, filter: Option<&str>) -> Result<ExitStatus> {
+pub async fn run(
+    env: &TestEnv, display: Option<&str>, filter: Option<&str>, coverage: Option<&Coverage>,
+) -> Result<ExitStatus> {
     let mut command = Command::new("cargo");
     command
         .current_dir(workspace_root())
@@ -38,6 +41,9 @@ pub async fn run(env: &TestEnv, display: Option<&str>, filter: Option<&str>) -> 
         .args(["--profile", "e2e", "--package", "kftray-e2e"])
         .envs(env.vars())
         .kill_on_drop(true);
+    if let Some(coverage) = coverage {
+        command.envs(coverage.vars());
+    }
     if let Some(display) = display {
         command.env("DISPLAY", display);
     }

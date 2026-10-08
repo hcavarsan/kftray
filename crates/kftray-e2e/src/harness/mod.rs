@@ -1,5 +1,6 @@
 pub mod build;
 pub mod cluster;
+pub mod coverage;
 pub mod display;
 pub mod env;
 pub mod nextest;

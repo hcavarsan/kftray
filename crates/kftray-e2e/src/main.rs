@@ -9,6 +9,7 @@ use kftray_e2e::harness::build::{
     Binaries,
 };
 use kftray_e2e::harness::cluster::Cluster;
+use kftray_e2e::harness::coverage::Coverage;
 use kftray_e2e::harness::display::Display;
 use kftray_e2e::harness::workload::Workload;
 use kftray_e2e::harness::{
@@ -32,6 +33,11 @@ enum Command {
         filter: Option<String>,
         #[arg(long, help = "reuse target/debug/kftray and target/debug/kftui")]
         skip_build: bool,
+        #[arg(
+            long,
+            help = "build with cargo-llvm-cov instrumentation and write target/e2e/artifacts/lcov.info"
+        )]
+        coverage: bool,
     },
     Up {
         #[arg(long, help = "reuse target/debug/kftray and target/debug/kftui")]
@@ -64,8 +70,12 @@ async fn main() -> Result<()> {
 
 async fn execute(command: Command) -> Result<()> {
     match command {
-        Command::Build => build::all().await.map(drop),
-        Command::Run { filter, skip_build } => run(filter.as_deref(), skip_build).await,
+        Command::Build => build::all(None).await.map(drop),
+        Command::Run {
+            filter,
+            skip_build,
+            coverage,
+        } => run(filter.as_deref(), skip_build, coverage).await,
         Command::Up { skip_build } => up(skip_build).await,
     }
 }
@@ -85,20 +95,34 @@ async fn shutdown_signal() -> Result<()> {
     tokio::signal::ctrl_c().await.context("listen for Ctrl-C")
 }
 
-async fn run(filter: Option<&str>, skip_build: bool) -> Result<()> {
-    let environment = prepare(skip_build).await?;
+async fn run(filter: Option<&str>, skip_build: bool, coverage: bool) -> Result<()> {
+    let coverage = if coverage {
+        Some(Coverage::prepare().await?)
+    } else {
+        None
+    };
+    let environment = prepare(skip_build, coverage.as_ref()).await?;
     let status = nextest::run(
         &environment.env,
         environment.display.name.as_deref(),
         filter,
+        coverage.as_ref(),
     )
     .await?;
+    if let Some(coverage) = &coverage {
+        let report = coverage
+            .report(&environment.env.artifacts.join("lcov.info"))
+            .await;
+        let cleaned = coverage.clean().await;
+        report?;
+        cleaned?;
+    }
     ensure!(status.success(), "e2e tests failed");
     Ok(())
 }
 
 async fn up(skip_build: bool) -> Result<()> {
-    let environment = prepare(skip_build).await?;
+    let environment = prepare(skip_build, None).await?;
     for (name, value) in environment.env.vars() {
         println!("export {name}={}", value.display());
     }
@@ -114,7 +138,7 @@ async fn up(skip_build: bool) -> Result<()> {
     Ok(())
 }
 
-async fn prepare(skip_build: bool) -> Result<Environment> {
+async fn prepare(skip_build: bool, coverage: Option<&Coverage>) -> Result<Environment> {
     nextest::clear_junit()?;
     let out = workspace_root().join("target").join("e2e");
     let artifacts = out.join("artifacts");
@@ -125,7 +149,7 @@ async fn prepare(skip_build: bool) -> Result<Environment> {
     let timeouts = Timeouts::scaled_from_env()?;
     let display = Display::ensure(timeouts.startup).await?;
     let (binaries, cluster) = tokio::try_join!(
-        build_or_reuse(skip_build),
+        build_or_reuse(skip_build, coverage),
         Cluster::start(Workload::all(), &out),
     )?;
     let env = TestEnv::new(binaries, &cluster, artifacts)?;
@@ -136,10 +160,10 @@ async fn prepare(skip_build: bool) -> Result<Environment> {
     })
 }
 
-async fn build_or_reuse(skip_build: bool) -> Result<Binaries> {
+async fn build_or_reuse(skip_build: bool, coverage: Option<&Coverage>) -> Result<Binaries> {
     if skip_build {
         Binaries::existing()
     } else {
-        build::all().await
+        build::all(coverage).await
     }
 }
