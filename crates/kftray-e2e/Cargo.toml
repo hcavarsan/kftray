@@ -25,10 +25,10 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 testcontainers-modules = { version = "0.15.0", features = ["k3s"] }
 thirtyfour = { version = "0.37.7", default-features = false, features = ["reqwest", "rustls"] }
-tokio = { workspace = true, features = ["process", "signal", "time", "macros", "rt-multi-thread"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
 
 [dev-dependencies]
 rstest = "0.27.0"
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true }
