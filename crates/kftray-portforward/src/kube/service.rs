@@ -118,25 +118,12 @@ fn parse_configs(
     configs_str
         .split(',')
         .filter_map(|config_str| {
-            let parts: Vec<&str> = config_str.trim().split('-').collect();
-            if parts.len() != 3 {
+            let config_str = config_str.trim();
+            let Some((alias, local_port, remote_port)) = parse_config_entry(config_str, ports)
+            else {
                 debug!("Invalid config format: {config_str}");
                 return None;
-            }
-
-            let alias = parts[0].to_string();
-            let local_port: u16 = match parts[1].parse() {
-                Ok(port) => port,
-                Err(e) => {
-                    debug!("Failed to parse local port '{}': {}", parts[1], e);
-                    return None;
-                }
             };
-
-            let target_port = parts[2]
-                .parse()
-                .ok()
-                .or_else(|| ports.get(parts[2]).cloned())?;
 
             Some(Config {
                 id: None,
@@ -144,9 +131,9 @@ fn parse_configs(
                 kubeconfig: kubeconfig.clone(),
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
-                alias: Some(alias),
+                alias: Some(alias.to_string()),
                 local_port: Some(local_port),
-                remote_port: Some(target_port as u16),
+                remote_port: Some(remote_port),
                 protocol: "tcp".to_string(),
                 workload_type: Some("service".to_string()),
                 target: None,
@@ -168,6 +155,21 @@ fn parse_configs(
             })
         })
         .collect()
+}
+
+fn parse_config_entry<'a>(
+    entry: &'a str, ports: &HashMap<String, i32>,
+) -> Option<(&'a str, u16, u16)> {
+    entry.match_indices('-').rev().find_map(|(index, _)| {
+        let (local_port, remote_port) = entry[index + 1..].split_once('-')?;
+        let local_port = local_port.parse().ok()?;
+        let remote_port = remote_port.parse().ok().or_else(|| {
+            ports
+                .get(remote_port)
+                .and_then(|&port| u16::try_from(port).ok())
+        })?;
+        Some((&entry[..index], local_port, remote_port))
+    })
 }
 
 fn create_default_configs(
@@ -288,6 +290,64 @@ mod tests {
         );
 
         assert_eq!(configs.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_configs_hyphenated_alias() {
+        let ports = HashMap::new();
+
+        let configs = parse_configs(
+            "my-api-8080-9090",
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].alias, Some("my-api".to_string()));
+        assert_eq!(configs[0].local_port, Some(8080));
+        assert_eq!(configs[0].remote_port, Some(9090));
+    }
+
+    #[test]
+    fn test_parse_configs_hyphenated_port_name() {
+        let mut ports = HashMap::new();
+        ports.insert("http-alt".to_string(), 8081);
+
+        let configs = parse_configs(
+            "api-8080-http-alt,my-api-8082-http-alt",
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].alias, Some("api".to_string()));
+        assert_eq!(configs[0].local_port, Some(8080));
+        assert_eq!(configs[0].remote_port, Some(8081));
+        assert_eq!(configs[1].alias, Some("my-api".to_string()));
+        assert_eq!(configs[1].local_port, Some(8082));
+        assert_eq!(configs[1].remote_port, Some(8081));
+    }
+
+    #[test]
+    fn test_parse_configs_out_of_range_remote_port() {
+        let ports = HashMap::new();
+
+        let configs = parse_configs(
+            "api-3000-70000",
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+
+        assert!(configs.is_empty());
     }
 
     #[test]
