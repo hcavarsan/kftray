@@ -82,7 +82,7 @@ run = ["mise run format", "cargo check --workspace --all-targets --all-features"
 
 [tasks."generate-icons"]
 description = "Generate application icons"
-run = "cargo run --bin generate_icons"
+run = "cargo run --manifest-path hacks/kftray-utils/Cargo.toml --bin generate_icons"
 
 [tasks.knip]
 description = "Detect unused files, exports and dependencies"
