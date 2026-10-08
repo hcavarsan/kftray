@@ -1,7 +1,3 @@
-use std::collections::HashSet;
-
-use kftray_commons::models::config_model::Config;
-use kftray_commons::utils::config::read_configs_with_mode;
 use kftray_commons::utils::config_view::get_config_view_with_mode;
 use kftray_commons::utils::db::init as init_db;
 use kftray_commons::utils::db_mode::DatabaseMode;
@@ -98,58 +94,14 @@ impl CliHandler {
             return Ok(Vec::new());
         }
 
-        let configs_before = if self.cli.auto_start && !self.cli.flush {
-            self.get_existing_configs().await?
-        } else {
-            Vec::new()
-        };
-
-        if let Err(e) = ConfigImporter::import_configs(&self.cli, self.mode).await {
-            eprintln!("Error: Failed to import configurations: {e}");
-            std::process::exit(1);
+        match ConfigImporter::import_configs(&self.cli, self.mode).await {
+            Ok(ids) if self.cli.auto_start => Ok(ids),
+            Ok(_) => Ok(Vec::new()),
+            Err(e) => {
+                eprintln!("Error: Failed to import configurations: {e}");
+                std::process::exit(1);
+            }
         }
-
-        if self.cli.auto_start {
-            self.calculate_imported_config_ids(configs_before).await
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
-    async fn get_existing_configs(&self) -> Result<Vec<Config>, Box<dyn std::error::Error>> {
-        read_configs_with_mode(self.mode).await.map_err(|e| {
-            eprintln!("Error: Failed to read configurations before import: {e}");
-            Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>
-        })
-    }
-
-    async fn calculate_imported_config_ids(
-        &self, configs_before: Vec<Config>,
-    ) -> Result<Vec<i64>, Box<dyn std::error::Error>> {
-        let configs_after = read_configs_with_mode(self.mode).await.map_err(|e| {
-            eprintln!("Error: Failed to read configurations after import: {e}");
-            e
-        })?;
-
-        let imported_ids = if self.cli.flush {
-            configs_after
-                .into_iter()
-                .filter_map(|config| config.id)
-                .collect()
-        } else {
-            let before_ids: HashSet<i64> = configs_before
-                .into_iter()
-                .filter_map(|config| config.id)
-                .collect();
-
-            configs_after
-                .into_iter()
-                .filter_map(|config| config.id)
-                .filter(|id| !before_ids.contains(id))
-                .collect()
-        };
-
-        Ok(imported_ids)
     }
 
     async fn handle_stdin_redirect(&self) -> Result<(), Box<dyn std::error::Error>> {

@@ -576,17 +576,17 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
 
 async fn merge_config_with_existing_and_mode(
     config: Config, existing_configs: &[Config], pool: &SqlitePool, mode: DatabaseMode,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     if let Some(existing) =
         find_identity_match(existing_configs, &config).map(|index| &existing_configs[index])
     {
-        info!(
-            "Found matching config ID={}, checking if update needed",
-            existing.id.unwrap_or(-1)
-        );
+        let id = existing
+            .id
+            .ok_or_else(|| "Matching config has no id".to_string())?;
+        info!("Found matching config ID={id}, checking if update needed");
         if configs_are_identical(existing, &config) {
             info!("Config is identical, skipping");
-            return Ok(());
+            return Ok(id);
         }
 
         info!("Config has changes, updating");
@@ -602,12 +602,11 @@ async fn merge_config_with_existing_and_mode(
         }
 
         update_config_with_pool(updated_config, pool).await?;
+        Ok(id)
     } else {
         info!("No matching config found, inserting new config");
-        insert_config_with_pool_and_mode(config, pool, mode).await?;
+        insert_config_with_pool_and_mode(config, pool, mode).await
     }
-
-    Ok(())
 }
 
 pub(crate) async fn import_configs_with_pool_and_mode(
@@ -663,27 +662,31 @@ pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Resu
 
 pub async fn upsert_configs_with_mode(
     configs: Vec<Config>, mode: DatabaseMode,
-) -> Result<(), String> {
+) -> Result<Vec<i64>, String> {
     let context = DatabaseManager::get_context(mode).await?;
     upsert_configs_with_pool_and_mode(configs, &context.pool, mode).await
 }
 
 pub async fn upsert_configs_with_pool_and_mode(
     configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
-) -> Result<(), String> {
+) -> Result<Vec<i64>, String> {
     let existing_configs = read_configs_with_pool(pool).await?;
 
+    let mut ids = Vec::with_capacity(configs.len());
     for config in configs {
-        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+        let id = merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
     }
 
     if let Err(e) = migrate_configs(Some(pool)).await {
         return Err(format!("Error migrating configs: {e}"));
     }
 
-    Ok(())
+    Ok(ids)
 }
 
 pub async fn read_configs_with_mode(mode: DatabaseMode) -> Result<Vec<Config>, String> {
