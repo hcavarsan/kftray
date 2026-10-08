@@ -5,7 +5,7 @@
 In a few simple steps, you can configure your first port forward:
 
 1. **Launch the application**
-2. **Open the configuration panel from the tray icon**
+2. **The main window opens on its own. Later, open it from the tray icon**
 3. **Add a new configuration:**
 
    - Give it a unique alias and set if you want to set the alias as domain to your forward \*1
@@ -45,14 +45,14 @@ In a few simple steps, you can configure your first port forward:
 
 kftray runs in one of two modes. To change the mode, open the footer menu (☰) and select **Settings > App Mode**:
 
-- **Tray** (default): the window opens from the tray icon or the global shortcut and hides when it loses focus. When no system tray is available (for example, GNOME without the AppIndicator extension), kftray runs in Window mode until a tray appears.
+- **Tray** (default): the window opens when kftray starts, from the tray icon or from the global shortcut, and hides when it loses focus. When no system tray is available (for example, GNOME without the AppIndicator extension), kftray runs in Window mode until a tray appears.
 - **Window**: kftray runs as a regular app. The tray icon goes away, the window opens in the center of the screen with a taskbar or Dock entry, and it stays open when it loses focus.
 
 In both modes the `–` button in the header hides the window (Tray) or minimizes it (Window), and the `×` button quits kftray. Launching kftray again while it is running brings the existing window to the front. Drag the window edges to resize it. kftray keeps the size for the next start. **Settings > Window > Reset Position** moves the window back to its default position.
 
 ## Crash reports
 
-On first start kftray asks whether it may send crash reports. Nothing is sent before you answer, and nothing is sent when you decline. The choice is stored, and you can change it later under **Settings > Crash Reports**.
+On first start kftray asks whether it may send crash reports and performance data. Crash reports start on and performance data starts off. Nothing is sent before you answer. **Save** and closing the dialog keep what the switches show, and **No thanks** turns both off. The choices are stored, and you can change them later under **Settings > Crash Reports** and **Settings > Performance Data**.
 
 A report has the error type, where in the code it happened, the app version, the operating system name and version, the CPU architecture and the device model. Panic messages are sent only when they are fixed strings in the code, so a panic that carries a cluster address or a resource name is reduced to a file and line. For errors in the window, only the error type and the list of code locations are sent, never the error message. Reports never include cluster names, namespaces, service names, aliases, kubeconfig files or your host name.
 
@@ -60,7 +60,7 @@ Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cava
 
 ## Performance data
 
-kftray also asks, in the same dialog, whether it may send performance data. It's a separate choice from crash reports, and you can change it under **Settings > Performance Data**.
+Performance data is the second switch in the same dialog. It starts off and is a separate choice from crash reports. You can change it under **Settings > Performance Data**.
 
 When it's on, kftray records how long it takes to start a port forward, stop one or stop all of them. It also records whether the operation failed. Each record has the operation name, its duration, its result and the app version. It never includes cluster names, namespaces, service names, aliases, kubeconfig files or your host name.
 
