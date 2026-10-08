@@ -6,6 +6,9 @@ pub const DEFAULT_MIN_VALID_HEADERS_SIZE: usize = 16;
 // Match the transport detector's bounded handshake buffer; frame bytes are
 // excluded.
 const MAX_WEBSOCKET_HEADERS_SIZE: usize = 65_536;
+// One less than the longest end marker, `\r\n0\r\n\r\n`, so a marker split
+// across reads is still found.
+const CHUNKED_END_MARKER_OVERLAP: usize = 6;
 
 #[derive(Debug, Clone)]
 pub struct ResponseAnalyzerConfig {
@@ -64,6 +67,23 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn has_chunked_end_marker(chunk_data: &[u8]) -> bool {
+        Self::has_chunked_end_marker_after(chunk_data, 0)
+    }
+
+    fn has_chunked_end_marker_after(response_data: &[u8], scanned_len: usize) -> bool {
+        let body_start = if response_data.starts_with(b"HTTP/") {
+            match find_headers_end(response_data) {
+                Some(headers_end) => headers_end + 4,
+                None => return false,
+            }
+        } else {
+            0
+        };
+        let scan_start = body_start
+            .max(scanned_len.saturating_sub(CHUNKED_END_MARKER_OVERLAP))
+            .min(response_data.len());
+        let chunk_data = &response_data[scan_start..];
+
         let standard_markers = chunk_data.windows(5).any(|w| w == b"0\r\n\r\n");
 
         let leading_crlf_markers = chunk_data.windows(7).any(|w| w == b"\r\n0\r\n\r\n");
@@ -242,18 +262,18 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn process_chunk(
-        chunk_data: &[u8], is_chunked: bool, found_end_marker: &mut bool,
+        response_data: &[u8], scanned_len: usize, is_chunked: bool, found_end_marker: &mut bool,
         total_chunks_received: &mut usize,
     ) {
         if is_chunked && !*found_end_marker {
             *total_chunks_received += 1;
 
-            if Self::has_chunked_end_marker(chunk_data) {
+            if Self::has_chunked_end_marker_after(response_data, scanned_len) {
                 *found_end_marker = true;
                 trace!(
                     "Found end marker for chunked response after {} chunks, {}B total",
                     total_chunks_received,
-                    chunk_data.len()
+                    response_data.len()
                 );
             }
         }
@@ -369,6 +389,22 @@ mod tests {
         assert!(!HttpResponseAnalyzer::has_chunked_end_marker(
             partial_marker
         ));
+    }
+
+    #[test]
+    fn chunked_end_marker_ignores_header_values_ending_in_zero() {
+        let headers = b"HTTP/1.1 200 OK\r\nCache-Control: public, max-age=3600\r\nServer: nginx/1.20.0\r\nTransfer-Encoding: chunked\r\nExpires: 0\r\n\r\n";
+
+        assert!(!HttpResponseAnalyzer::has_chunked_end_marker(headers));
+
+        let first_chunk = [&headers[..], b"a\r\nfirst-part\r\n"].concat();
+        assert!(!HttpResponseAnalyzer::has_chunked_end_marker(&first_chunk));
+
+        let complete = [&first_chunk[..], b"0\r\n\r\n"].concat();
+        assert!(HttpResponseAnalyzer::has_chunked_end_marker(&complete));
+
+        let empty_body = [&headers[..], b"0\r\n\r\n"].concat();
+        assert!(HttpResponseAnalyzer::has_chunked_end_marker(&empty_body));
     }
 
     #[test]
@@ -604,6 +640,7 @@ mod tests {
         let chunk_with_end = b"5\r\nhello\r\n0\r\n\r\n";
         HttpResponseAnalyzer::process_chunk(
             chunk_with_end,
+            0,
             true,
             &mut found_end_marker,
             &mut total_chunks,
@@ -617,6 +654,7 @@ mod tests {
         let chunk_without_end = b"5\r\nhello\r\n";
         HttpResponseAnalyzer::process_chunk(
             chunk_without_end,
+            0,
             true,
             &mut found_end_marker,
             &mut total_chunks,
@@ -626,12 +664,41 @@ mod tests {
 
         HttpResponseAnalyzer::process_chunk(
             b"some data",
+            0,
             false,
             &mut found_end_marker,
             &mut total_chunks,
         );
         assert!(!found_end_marker);
         assert_eq!(total_chunks, 1);
+    }
+
+    #[test]
+    fn process_chunk_finds_end_marker_split_at_any_read_boundary() {
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nExpires: 0\r\n\r\na\r\nfirst-part\r\n0\r\n\r\n";
+
+        for split in 1..response.len() {
+            let mut found_end_marker = false;
+            let mut total_chunks = 0;
+
+            HttpResponseAnalyzer::process_chunk(
+                &response[..split],
+                0,
+                true,
+                &mut found_end_marker,
+                &mut total_chunks,
+            );
+            assert!(!found_end_marker, "marker found early at split {split}");
+
+            HttpResponseAnalyzer::process_chunk(
+                response,
+                split,
+                true,
+                &mut found_end_marker,
+                &mut total_chunks,
+            );
+            assert!(found_end_marker, "marker missed at split {split}");
+        }
     }
 
     #[test]

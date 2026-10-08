@@ -608,21 +608,24 @@ impl TcpForwarder {
             state.reset_for_new_response(current_req_id);
         }
 
-        if state.buffer.is_empty() && !buffer.is_empty() {
-            if state.first_chunk_time.is_none() {
-                state.first_chunk_time = Some(tokio::time::Instant::now());
-            }
-            state.is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(buffer);
+        if state.first_chunk_time.is_none() && !buffer.is_empty() {
+            state.first_chunk_time = Some(tokio::time::Instant::now());
+        }
+
+        let scanned_len = state.buffer.len();
+        state.buffer.extend_from_slice(buffer);
+
+        if !state.is_chunked && !state.found_end_marker {
+            state.is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(&state.buffer);
         }
 
         kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::process_chunk(
-            buffer,
+            &state.buffer,
+            scanned_len,
             state.is_chunked,
             &mut state.found_end_marker,
             &mut state.total_chunks_received,
         );
-
-        state.buffer.extend_from_slice(buffer);
         let is_websocket_upgrade =
             kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(
                 &state.buffer,
@@ -856,6 +859,162 @@ mod tests {
             !contents.contains("frame-payload"),
             "WebSocket frames are not HTTP log entries"
         );
+    }
+
+    async fn assert_chunked_logging_waits_for_completion(fragments: &[&[u8]]) {
+        let mut state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+        };
+        let logger = Arc::new(Mutex::new(None));
+        let request_id = Arc::new(Mutex::new(Some("chunked-request".to_string())));
+
+        for fragment in &fragments[..fragments.len() - 1] {
+            TcpForwarder::handle_response_logging_static(
+                fragment,
+                &mut state,
+                &logger,
+                &request_id,
+            )
+            .await;
+            tokio::time::advance(Duration::from_millis(20)).await;
+            assert!(
+                !state.found_end_marker,
+                "incomplete response must stay open"
+            );
+            assert!(!TcpForwarder::should_log_response_static(&mut state));
+        }
+
+        TcpForwarder::handle_response_logging_static(
+            fragments.last().unwrap(),
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        assert!(
+            state.is_chunked,
+            "split headers must retain chunked framing"
+        );
+        assert!(
+            state.found_end_marker,
+            "split end marker must be recognized"
+        );
+        assert!(!TcpForwarder::should_log_response_static(&mut state));
+        tokio::time::advance(Duration::from_millis(20)).await;
+        assert!(TcpForwarder::should_log_response_static(&mut state));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chunked_logging_waits_for_body_after_split_headers() {
+        assert_chunked_logging_waits_for_completion(&[
+            b"HTTP/",
+            b"1.1 200 OK\r\nTransfer-Encoding: chunked\r\nExpires: 0\r\n",
+            b"\r\n",
+            b"a\r\nfirst-part\r\n",
+            b"9\r\nlast-part\r\n0\r\n\r\n",
+        ])
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chunked_logging_recognizes_split_marker_after_http_body_fragment() {
+        assert_chunked_logging_waits_for_completion(&[
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nExpires: 0\r\n\r\ne\r\n",
+            b"HTTP/last-part\r\n0\r",
+            b"\n\r\n",
+        ])
+        .await;
+    }
+
+    #[tokio::test]
+    async fn chunked_response_split_across_reads_is_logged_complete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("chunked.log");
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /chunked HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nCache-Control: public, max-age=3600\r\nExpires: 0\r\n\r\na\r\nfirst-part\r\n9\r\nlast-part\r\n0\r\n\r\n";
+        let mut prev = 0usize;
+        for split in [23usize, 95, 102, 118] {
+            let part = &response[prev..split];
+            upstream_writer.write_all(part).await.unwrap();
+            let mut received = vec![0; part.len()];
+            client_reader.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, part);
+            prev = split;
+            http_logger.flush().await.unwrap();
+            let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+            assert!(
+                !contents.contains("first-part"),
+                "incomplete chunked response must not be logged yet"
+            );
+        }
+
+        let tail = &response[prev..];
+        upstream_writer.write_all(tail).await.unwrap();
+        let mut received = vec![0; tail.len()];
+        client_reader.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, tail);
+
+        upstream_writer.shutdown().await.unwrap();
+        forward.await.unwrap();
+
+        let contents = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                http_logger.flush().await.unwrap();
+                let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                if contents.contains("last-part") {
+                    break contents;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("complete chunked response must be logged");
+        assert!(
+            contents.contains("first-part") && contents.contains("last-part"),
+            "logged body must cover every chunk: {contents}"
+        );
+        http_logger.shutdown().await;
     }
 
     #[tokio::test]
