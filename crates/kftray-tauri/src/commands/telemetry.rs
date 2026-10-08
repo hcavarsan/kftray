@@ -17,13 +17,13 @@ pub async fn update_telemetry_enabled(enabled: bool) -> Result<(), String> {
             error!("Failed to update telemetry enabled: {e}");
             format!("Failed to update telemetry enabled: {e}")
         })?;
-    crate::telemetry::set_enabled(enabled);
+    kftray_telemetry::set_enabled(enabled);
     Ok(())
 }
 
 #[tauri::command]
 pub fn report_error(name: String, message: String, stack: Option<String>) {
-    crate::telemetry::capture_frontend_error(name, message, stack);
+    kftray_telemetry::capture_error(name, message, stack);
 }
 
 #[cfg(test)]

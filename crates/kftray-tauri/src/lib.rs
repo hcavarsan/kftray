@@ -4,7 +4,6 @@ pub mod glibc_detector;
 pub mod init_check;
 pub mod mcp;
 pub mod shortcuts;
-pub mod telemetry;
 pub mod tray;
 #[cfg(target_os = "linux")]
 pub mod tray_linux;

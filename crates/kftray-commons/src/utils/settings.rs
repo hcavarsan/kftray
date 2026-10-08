@@ -587,6 +587,20 @@ pub async fn set_auto_update_enabled_with_mode(
     set_setting_with_mode("auto_update_enabled", &enabled.to_string(), mode).await
 }
 
+pub async fn get_telemetry_enabled_with_mode(
+    mode: DatabaseMode,
+) -> Result<Option<bool>, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_setting_with_mode("telemetry_enabled", mode)
+        .await?
+        .and_then(|value| value.parse().ok()))
+}
+
+pub async fn set_telemetry_enabled_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("telemetry_enabled", &enabled.to_string(), mode).await
+}
+
 pub async fn get_app_settings() -> Result<AppSettings, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_db_pool().await?;
     let settings = load_all_settings(&pool).await?;

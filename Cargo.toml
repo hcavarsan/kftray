@@ -59,6 +59,7 @@ kftray-mcp = { path = "crates/kftray-mcp", version = "0.29.6" }
 kftray-network-monitor = { path = "crates/kftray-network-monitor", version = "0.29.6" }
 kftray-portforward = { path = "crates/kftray-portforward", version = "0.29.6" }
 kftray-shortcuts = { path = "crates/kftray-shortcuts", version = "0.29.6" }
+kftray-telemetry = { path = "crates/kftray-telemetry", version = "0.29.6" }
 kube = {
   version = "4.2.0",
   features = [

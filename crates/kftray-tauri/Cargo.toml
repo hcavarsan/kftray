@@ -31,6 +31,7 @@ kftray-mcp = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kftray-shortcuts = { workspace = true }
+kftray-telemetry = { workspace = true }
 kube = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
@@ -38,7 +39,6 @@ netstat2 = { workspace = true }
 open = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sentry = { workspace = true }
 sqlx = { workspace = true }
 sysinfo = { workspace = true }
 tauri = { workspace = true }

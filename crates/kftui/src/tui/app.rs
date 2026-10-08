@@ -48,6 +48,11 @@ pub async fn run_tui(
 
     let mut app = App::new(logger_state);
     app.config_view = config_view;
+    app.telemetry_prompt_pending = mode == DatabaseMode::File
+        && matches!(
+            kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await,
+            Ok(None)
+        );
 
     if let Ok(size) = terminal.size() {
         app.update_visible_rows(size.height);
@@ -156,6 +161,11 @@ where
             }
         }
 
+        if app.telemetry_prompt_pending && app.state == AppState::Normal {
+            app.telemetry_prompt_pending = false;
+            app.state = AppState::ShowTelemetryConsent;
+        }
+
         if app.update_prompt_pending && app.state == AppState::Normal {
             app.update_prompt_pending = false;
             app.state = AppState::ShowUpdateConfirmation;
@@ -251,6 +261,30 @@ mod tests {
             .draw(|f| draw_ui(f, &mut app, &config_states))
             .unwrap();
         assert_eq!(app.error_scroll, max_after_first_render);
+    }
+
+    #[test]
+    fn the_consent_popup_shows_both_choices() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(test_logger_state());
+        app.state = AppState::ShowTelemetryConsent;
+        let config_states: Vec<ConfigState> = vec![];
+
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(screen.contains("Crash Reports"));
+        assert!(screen.contains("<Allow>"));
+        assert!(screen.contains("<No thanks>"));
     }
 
     #[test]

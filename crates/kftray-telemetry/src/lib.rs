@@ -9,7 +9,11 @@ use std::sync::atomic::{
     Ordering,
 };
 
-use kftray_commons::utils::settings::get_telemetry_enabled;
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::settings::{
+    get_telemetry_enabled,
+    get_telemetry_enabled_with_mode,
+};
 use log::warn;
 use sentry::integrations::backtrace::current_stacktrace;
 use sentry::protocol::{
@@ -26,14 +30,15 @@ use sentry::{
 };
 
 const DSN: &str = "https://203f8b8ffea047f9a8bac854d93e6a46@glitchtip.cavarsa.app/1";
-const RELEASE: &str = concat!("kftray@", env!("CARGO_PKG_VERSION"));
+
+type SettingResult = Result<Option<bool>, Box<dyn std::error::Error + Send + Sync>>;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
-pub fn init() -> ClientInitGuard {
+pub fn init(release: &'static str) -> ClientInitGuard {
     let mut options = ClientOptions::new();
     options.dsn = dsn();
-    options.release = Some(RELEASE.into());
+    options.release = Some(release.into());
     options.before_send = Some(Arc::new(|event| {
         scrub(ENABLED.load(Ordering::Relaxed), event)
     }));
@@ -56,14 +61,22 @@ pub fn set_enabled(enabled: bool) {
 }
 
 pub async fn load_setting() {
-    match get_telemetry_enabled().await {
+    apply(get_telemetry_enabled().await);
+}
+
+pub async fn load_setting_with_mode(mode: DatabaseMode) {
+    apply(get_telemetry_enabled_with_mode(mode).await);
+}
+
+pub fn capture_error(name: String, message: String, stack: Option<String>) {
+    sentry::capture_event(error_event(name, message, stack));
+}
+
+fn apply(setting: SettingResult) {
+    match setting {
         Ok(enabled) => set_enabled(enabled == Some(true)),
         Err(e) => warn!("Failed to read telemetry setting: {e}"),
     }
-}
-
-pub fn capture_frontend_error(name: String, message: String, stack: Option<String>) {
-    sentry::capture_event(frontend_event(name, message, stack));
 }
 
 fn dsn() -> Option<Dsn> {
@@ -109,7 +122,7 @@ fn panic_message(payload: &(dyn Any + Send), location: Option<&Location<'_>>) ->
     }
 }
 
-fn frontend_event(name: String, message: String, stack: Option<String>) -> Event<'static> {
+fn error_event(name: String, message: String, stack: Option<String>) -> Event<'static> {
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
@@ -167,8 +180,8 @@ mod tests {
     }
 
     #[test]
-    fn frontend_event_carries_type_message_and_stack() {
-        let event = frontend_event(
+    fn error_event_carries_type_message_and_stack() {
+        let event = error_event(
             "TypeError".into(),
             "x is undefined".into(),
             Some("at main.js:1".into()),

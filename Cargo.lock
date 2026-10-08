@@ -3721,6 +3721,7 @@ dependencies = [
  "kftray-network-monitor",
  "kftray-portforward",
  "kftray-shortcuts",
+ "kftray-telemetry",
  "ksni",
  "kube",
  "lazy_static",
@@ -3731,7 +3732,6 @@ dependencies = [
  "objc2-app-kit",
  "open",
  "png 0.18.1",
- "sentry",
  "serde",
  "serde_json",
  "sqlx",
@@ -3756,6 +3756,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-telemetry"
+version = "0.29.6"
+dependencies = [
+ "kftray-commons",
+ "log",
+ "sentry",
+]
+
+[[package]]
 name = "kftui"
 version = "0.29.6"
 dependencies = [
@@ -3771,6 +3780,7 @@ dependencies = [
  "kftray-commons",
  "kftray-network-monitor",
  "kftray-portforward",
+ "kftray-telemetry",
  "libc",
  "log",
  "ratatui",

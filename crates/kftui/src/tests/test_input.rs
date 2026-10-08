@@ -13,6 +13,7 @@ use crate::tui::input::{
     App,
     AppState,
     DeleteButton,
+    TelemetryButton,
     clear_selection,
     handle_about_input,
     handle_confirmation_popup_input,
@@ -27,6 +28,7 @@ use crate::tui::input::{
     handle_running_table_input,
     handle_search_input,
     handle_stopped_table_input,
+    handle_telemetry_consent_input,
     select_first_row,
     show_delete_confirmation,
     toggle_row_selection,
@@ -566,6 +568,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(app.state, AppState::ShowAbout);
+    }
+
+    #[tokio::test]
+    async fn the_consent_popup_stores_the_choice_and_closes() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = setup_app();
+        app.state = AppState::ShowTelemetryConsent;
+
+        handle_telemetry_consent_input(&mut app, KeyCode::Right, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(app.selected_telemetry_button, TelemetryButton::Decline);
+
+        handle_telemetry_consent_input(&mut app, KeyCode::Enter, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+        assert!(!app.settings_telemetry_enabled);
+        assert_eq!(
+            kftray_commons::utils::settings::get_telemetry_enabled_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_the_consent_popup_counts_as_no() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = setup_app();
+        app.state = AppState::ShowTelemetryConsent;
+
+        handle_telemetry_consent_input(&mut app, KeyCode::Esc, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(app.state, AppState::Normal);
+        assert_eq!(
+            kftray_commons::utils::settings::get_telemetry_enabled_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap(),
+            Some(false)
+        );
     }
 
     #[tokio::test]

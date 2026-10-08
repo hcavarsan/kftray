@@ -1128,6 +1128,17 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
             !app.settings_ssl_enabled,
             4,
         ),
+        (
+            "Crash Reports",
+            "Send crash reports to the kftray maintainer",
+            if app.settings_telemetry_enabled {
+                "ON"
+            } else {
+                "OFF"
+            },
+            false,
+            5,
+        ),
     ];
 
     let is_compact = content_area.width < 60;
@@ -1932,6 +1943,46 @@ pub fn render_update_confirmation_popup(
 
     f.render_widget(update_button, update_button_area);
     f.render_widget(cancel_button, cancel_button_area);
+}
+
+pub fn render_telemetry_consent_popup(
+    f: &mut Frame, area: Rect, selected_button: crate::tui::input::TelemetryButton,
+) {
+    let message_text = "kftui can send a report when it crashes.\n\nA report has the error type, where in the code it happened, the app version and the operating system. It never includes cluster names, namespaces, service names, aliases or kubeconfig files.\n\nReports go to a server run by the kftray maintainer. You can change this later in Settings.";
+    let message_paragraph = Paragraph::new(Text::raw(message_text))
+        .block(create_common_popup_style("Crash Reports", GREEN))
+        .style(Style::default().fg(TEXT).bg(BASE))
+        .alignment(Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    f.render_widget(Clear, area);
+    f.render_widget(message_paragraph, area);
+    render_shadow_layers(f, create_bottom_right_shadow_layers(area, &[(MANTLE, 1)]));
+
+    let allow_button = create_button(
+        "<Allow>",
+        selected_button == crate::tui::input::TelemetryButton::Allow,
+    );
+    let decline_button = create_button(
+        "<No thanks>",
+        selected_button == crate::tui::input::TelemetryButton::Decline,
+    );
+
+    let allow_button_area = Rect::new(
+        area.x + (area.width / 2) - 15,
+        area.y + area.height - 4,
+        10,
+        3,
+    );
+    let decline_button_area = Rect::new(
+        area.x + (area.width / 2) + 3,
+        area.y + area.height - 4,
+        13,
+        3,
+    );
+
+    f.render_widget(allow_button, allow_button_area);
+    f.render_widget(decline_button, decline_button_area);
 }
 
 pub fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
