@@ -74,10 +74,13 @@ export function Main() {
   const queryClient = useQueryClient()
   const telemetry = useQuery(telemetryQuery)
   const performance = useQuery(performanceQuery)
-  const unansweredConsents: Consent[] = [
-    ...(telemetry.data === null ? (['crashReports'] as const) : []),
-    ...(performance.data === null ? (['performance'] as const) : []),
-  ]
+  const unansweredConsents: Consent[] =
+    telemetry.isFetched && performance.isFetched
+      ? [
+          ...(telemetry.data === null ? (['crashReports'] as const) : []),
+          ...(performance.data === null ? (['performance'] as const) : []),
+        ]
+      : []
   const [telemetryAnswered, setTelemetryAnswered] = useState(false)
   const forwarding = usePortForwarding()
   const { prompt, resolvePrompt, suppressPrompt } = forwarding.privileges
