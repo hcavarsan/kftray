@@ -267,7 +267,12 @@ impl WebSocketTunnelServer {
 
         {
             let mut tunnel_lock = tunnel.write().await;
-            *tunnel_lock = None;
+            if tunnel_lock
+                .as_ref()
+                .is_some_and(|conn| Arc::ptr_eq(&conn.pending_responses, &pending_responses))
+            {
+                *tunnel_lock = None;
+            }
         }
 
         {
@@ -607,5 +612,88 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(5), server_handle)
             .await
             .expect("Server handler did not complete");
+    }
+
+    #[tokio::test]
+    async fn old_tunnel_close_keeps_replacement_registered() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("ws://127.0.0.1:{}", addr.port());
+        let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
+
+        let tunnel_clone = tunnel.clone();
+        let accept = tokio::spawn(async move {
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                handles.push(tokio::spawn(
+                    WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                        tunnel_clone.clone(),
+                        stream,
+                        Duration::from_secs(300),
+                        Duration::from_secs(300),
+                    ),
+                ));
+            }
+            handles
+        });
+
+        let current_pending = || async {
+            tunnel
+                .read()
+                .await
+                .as_ref()
+                .map(|conn| conn.pending_responses.clone())
+        };
+
+        let (client_a, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        let pending_a = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pending) = current_pending().await {
+                    break pending;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("tunnel A was never registered");
+
+        let (client_b, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        let pending_b = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pending) = current_pending().await
+                    && !Arc::ptr_eq(&pending, &pending_a)
+                {
+                    break pending;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("tunnel B never replaced tunnel A");
+
+        let mut handles = accept.await.unwrap();
+        let handler_b = handles.pop().unwrap();
+        let handler_a = handles.pop().unwrap();
+
+        drop(client_a);
+        tokio::time::timeout(Duration::from_secs(5), handler_a)
+            .await
+            .expect("handler A did not finish")
+            .unwrap()
+            .unwrap();
+
+        let registered = current_pending()
+            .await
+            .expect("closing the old tunnel cleared the live replacement");
+        assert!(Arc::ptr_eq(&registered, &pending_b));
+
+        drop(client_b);
+        tokio::time::timeout(Duration::from_secs(5), handler_b)
+            .await
+            .expect("handler B did not finish")
+            .unwrap()
+            .unwrap();
+        assert!(current_pending().await.is_none());
     }
 }
