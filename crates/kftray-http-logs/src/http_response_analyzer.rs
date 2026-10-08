@@ -59,7 +59,7 @@ impl HttpResponseAnalyzer {
         if let Some(headers_end) = find_headers_end(response_data) {
             let headers = &response_data[..headers_end];
             if let Some(content_length) = parse_content_length(headers) {
-                let body_size = response_data.len() - headers_end;
+                let body_size = response_data.len() - (headers_end + 4);
                 return body_size >= content_length;
             }
         }
@@ -350,6 +350,8 @@ mod tests {
         let no_headers_response = b"some invalid data";
         let equal_response = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd";
         let exceeding_response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nabcd";
+        let missing_last_bytes = b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\ndata";
+        let headers_only = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n";
 
         assert!(HttpResponseAnalyzer::check_content_length_match(
             complete_response
@@ -365,6 +367,12 @@ mod tests {
         ));
         assert!(HttpResponseAnalyzer::check_content_length_match(
             exceeding_response
+        ));
+        assert!(!HttpResponseAnalyzer::check_content_length_match(
+            missing_last_bytes
+        ));
+        assert!(!HttpResponseAnalyzer::check_content_length_match(
+            headers_only
         ));
     }
 

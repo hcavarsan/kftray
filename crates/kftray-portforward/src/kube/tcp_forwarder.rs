@@ -1018,6 +1018,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn content_length_response_split_before_last_bytes_is_logged_complete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("content-length.log");
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /content-length HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        for part in [
+            &b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\ncomplete-"
+                [..],
+            &b"TAIL"[..],
+        ] {
+            upstream_writer.write_all(part).await.unwrap();
+            let mut received = vec![0; part.len()];
+            client_reader.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, part);
+        }
+        upstream_writer.shutdown().await.unwrap();
+        forward.await.unwrap();
+
+        let contents = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                http_logger.flush().await.unwrap();
+                let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                if contents.contains("complete-") {
+                    break contents;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("content-length response must be logged");
+        assert!(
+            contents.contains("complete-TAIL"),
+            "logged body lost its last bytes: {contents}"
+        );
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn test_websocket_handshake_logged_before_tunnel() {
         check_websocket_response_forwarding(WEBSOCKET_HANDSHAKE, 30, true, true).await;
     }
