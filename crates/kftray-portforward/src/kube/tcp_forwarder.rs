@@ -612,6 +612,7 @@ impl TcpForwarder {
             state.first_chunk_time = Some(tokio::time::Instant::now());
         }
 
+        let scanned_len = state.buffer.len();
         state.buffer.extend_from_slice(buffer);
 
         if !state.is_chunked && !state.found_end_marker {
@@ -620,6 +621,7 @@ impl TcpForwarder {
 
         kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::process_chunk(
             &state.buffer,
+            scanned_len,
             state.is_chunked,
             &mut state.found_end_marker,
             &mut state.total_chunks_received,
