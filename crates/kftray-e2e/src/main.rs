@@ -1,7 +1,6 @@
 use anyhow::{
     Context,
     Result,
-    bail,
     ensure,
 };
 use clap::Parser;
@@ -51,19 +50,49 @@ struct Environment {
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("kftray_e2e=info"))
         .init();
-    match Command::parse() {
+    let command = Command::parse();
+    let stops_on_signal = matches!(command, Command::Up { .. });
+    tokio::select! {
+        result = execute(command) => result,
+        signal = shutdown_signal() => {
+            signal?;
+            ensure!(stops_on_signal, "interrupted");
+            Ok(())
+        }
+    }
+}
+
+async fn execute(command: Command) -> Result<()> {
+    match command {
         Command::Build => build::all().await.map(drop),
         Command::Run { filter, skip_build } => run(filter.as_deref(), skip_build).await,
         Command::Up { skip_build } => up(skip_build).await,
     }
 }
 
+#[cfg(unix)]
+async fn shutdown_signal() -> Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("listen for SIGTERM")?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result.context("listen for Ctrl-C"),
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> Result<()> {
+    tokio::signal::ctrl_c().await.context("listen for Ctrl-C")
+}
+
 async fn run(filter: Option<&str>, skip_build: bool) -> Result<()> {
     let environment = prepare(skip_build).await?;
-    let status = tokio::select! {
-        status = nextest::run(&environment.env, environment.display.name.as_deref(), filter) => status?,
-        _ = tokio::signal::ctrl_c() => bail!("interrupted"),
-    };
+    let status = nextest::run(
+        &environment.env,
+        environment.display.name.as_deref(),
+        filter,
+    )
+    .await?;
     ensure!(status.success(), "e2e tests failed");
     Ok(())
 }
@@ -81,7 +110,7 @@ async fn up(skip_build: bool) -> Result<()> {
         nextest::CONFIG_FILE
     );
     println!("environment is up; press Ctrl-C to tear it down");
-    tokio::signal::ctrl_c().await.context("wait for Ctrl-C")?;
+    std::future::pending::<()>().await;
     Ok(())
 }
 
