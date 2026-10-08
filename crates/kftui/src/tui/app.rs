@@ -48,6 +48,11 @@ pub async fn run_tui(
 
     let mut app = App::new(logger_state);
     app.config_view = config_view;
+    app.telemetry_prompt_pending = mode == DatabaseMode::File
+        && matches!(
+            kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await,
+            Ok(None)
+        );
 
     if let Ok(size) = terminal.size() {
         app.update_visible_rows(size.height);
@@ -156,6 +161,11 @@ where
             }
         }
 
+        if app.telemetry_prompt_pending && app.state == AppState::Normal {
+            app.telemetry_prompt_pending = false;
+            app.state = AppState::ShowTelemetryConsent;
+        }
+
         if app.update_prompt_pending && app.state == AppState::Normal {
             app.update_prompt_pending = false;
             app.state = AppState::ShowUpdateConfirmation;
@@ -251,6 +261,41 @@ mod tests {
             .draw(|f| draw_ui(f, &mut app, &config_states))
             .unwrap();
         assert_eq!(app.error_scroll, max_after_first_render);
+    }
+
+    #[test]
+    fn the_consent_popup_shows_its_whole_text_above_the_buttons_at_80x24() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(test_logger_state());
+        app.state = AppState::ShowTelemetryConsent;
+        let config_states: Vec<ConfigState> = vec![];
+
+        terminal
+            .draw(|f| draw_ui(f, &mut app, &config_states))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect();
+        let row_of = |needle: &str| {
+            rows.iter()
+                .position(|row| row.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} is not on screen:\n{}", rows.join("\n")))
+        };
+
+        let title = row_of("Crash Reports");
+        let first_line = row_of("kftui can send a report when it crashes.");
+        let last_line = row_of("later in Settings.");
+        let buttons = row_of("<Allow>");
+        assert_eq!(row_of("<No thanks>"), buttons);
+        assert!(title < first_line);
+        assert!(last_line < buttons);
     }
 
     #[test]

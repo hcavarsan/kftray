@@ -119,6 +119,8 @@ fn main() {
         eprintln!("failed to initialize file logger: {e}");
     }
 
+    let _telemetry = kftray_telemetry::init(concat!("kftray@", env!("CARGO_PKG_VERSION")));
+
     if let Err(e) = fix_path_env::fix_all_vars() {
         log::warn!("fix_path_env::fix_all_vars failed: {e}");
     }
@@ -160,6 +162,8 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
                     error!("Database migration failed during setup: {e}");
                 }
+
+                kftray_telemetry::load_setting().await;
             });
 
             let app_handle = app.app_handle().clone();
@@ -420,6 +424,9 @@ fn main() {
             commands::settings::get_mcp_server_status,
             commands::settings::update_mcp_server_enabled,
             commands::settings::update_mcp_server_port,
+            commands::telemetry::get_telemetry_enabled,
+            commands::telemetry::update_telemetry_enabled,
+            commands::telemetry::report_error,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,
             commands::logs::get_log_contents_json,

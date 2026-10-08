@@ -192,6 +192,12 @@ pub enum UpdateButton {
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
+pub enum TelemetryButton {
+    Allow,
+    Decline,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveComponent {
     Menu,
     SearchBar,
@@ -224,6 +230,7 @@ pub enum AppState {
     ShowHttpLogsViewer,
     ShowViewSettings,
     ShowTagEditor,
+    ShowTelemetryConsent,
     #[cfg_attr(debug_assertions, allow(dead_code))]
     ShowUpdateConfirmation,
     #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -277,6 +284,7 @@ pub struct App {
     pub settings_selected_option: usize,
     pub settings_ssl_enabled: bool,
     pub settings_ssl_cert_validity_input: String,
+    pub settings_telemetry_enabled: bool,
     pub http_logs_enabled: std::collections::HashMap<i64, bool>,
     pub active_pods: std::collections::HashMap<i64, Option<String>>,
     pub http_logs_config_id: Option<i64>,
@@ -318,6 +326,8 @@ pub struct App {
     pub update_info: Option<UpdateInfo>,
     pub update_prompt_pending: bool,
     pub selected_update_button: UpdateButton,
+    pub telemetry_prompt_pending: bool,
+    pub selected_telemetry_button: TelemetryButton,
     pub update_progress_message: Option<String>,
     /// Set once the event loop should end: by Ctrl+C or the menu's exit
     /// item. `run_app`'s loop checks it on the next `handle_input` return so
@@ -380,6 +390,7 @@ impl App {
             settings_selected_option: 0,
             settings_ssl_enabled: false,
             settings_ssl_cert_validity_input: String::new(),
+            settings_telemetry_enabled: false,
             http_logs_enabled: std::collections::HashMap::new(),
             active_pods: std::collections::HashMap::new(),
             http_logs_config_id: None,
@@ -421,6 +432,8 @@ impl App {
             update_info: None,
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
+            telemetry_prompt_pending: false,
+            selected_telemetry_button: TelemetryButton::Allow,
             update_progress_message: None,
             should_quit: false,
         }
@@ -1142,6 +1155,10 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
                     log::debug!("Handling ShowTagEditor state");
                     handle_tag_editor_input(app, key.code, mode).await?;
                 }
+                AppState::ShowTelemetryConsent => {
+                    log::debug!("Handling ShowTelemetryConsent state");
+                    handle_telemetry_consent_input(app, key.code, mode).await?;
+                }
                 AppState::ShowUpdateConfirmation => {
                     log::debug!("Handling ShowUpdateConfirmation state");
                     handle_update_confirmation_input(app, key.code, mode).await?;
@@ -1340,6 +1357,41 @@ pub fn clear_selection(app: &mut App) {
     }
 }
 
+async fn open_settings(app: &mut App, mode: DatabaseMode) {
+    // The crash reports row toggles the shown value, so a value that could not
+    // be read must not be shown: turning a stale OFF "off" again would store ON.
+    match kftray_commons::utils::settings::get_telemetry_enabled_with_mode(mode).await {
+        Ok(telemetry) => app.settings_telemetry_enabled = telemetry == Some(true),
+        Err(e) => {
+            app.error_message = Some(format!("Failed to read crash reports setting: {e}"));
+            app.state = AppState::ShowErrorPopup;
+            return;
+        }
+    }
+    app.state = AppState::ShowSettings;
+    if let Ok(timeout) =
+        kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
+    {
+        app.settings_timeout_input = timeout.unwrap_or(0).to_string();
+    }
+    if let Ok(network_monitor) =
+        kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
+    {
+        app.settings_network_monitor = network_monitor;
+    }
+    if let Ok(ssl_enabled) = kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
+    {
+        app.settings_ssl_enabled = ssl_enabled;
+    }
+    if let Ok(ssl_validity) =
+        kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode).await
+    {
+        app.settings_ssl_cert_validity_input = ssl_validity.to_string();
+    }
+    app.settings_editing = false;
+    app.settings_selected_option = 0;
+}
+
 pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
@@ -1357,32 +1409,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
             1 => handle_auto_add_configs(app).await,
             2 => open_import_file_explorer(app),
             3 => open_export_file_explorer(app),
-            4 => {
-                app.state = AppState::ShowSettings;
-                if let Ok(timeout) =
-                    kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
-                {
-                    app.settings_timeout_input = timeout.unwrap_or(0).to_string();
-                }
-                if let Ok(network_monitor) =
-                    kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
-                {
-                    app.settings_network_monitor = network_monitor;
-                }
-                if let Ok(ssl_enabled) =
-                    kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
-                {
-                    app.settings_ssl_enabled = ssl_enabled;
-                }
-                if let Ok(ssl_validity) =
-                    kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode)
-                        .await
-                {
-                    app.settings_ssl_cert_validity_input = ssl_validity.to_string();
-                }
-                app.settings_editing = false;
-                app.settings_selected_option = 0;
-            }
+            4 => open_settings(app, mode).await,
             5 => {
                 #[cfg(not(debug_assertions))]
                 if app.update_info.is_none()
@@ -1589,29 +1616,7 @@ pub async fn handle_common_hotkeys(
             Ok(true)
         }
         KeyCode::Char('s') => {
-            app.state = AppState::ShowSettings;
-            if let Ok(timeout) =
-                kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
-            {
-                app.settings_timeout_input = timeout.unwrap_or(0).to_string();
-            }
-            if let Ok(network_monitor) =
-                kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
-            {
-                app.settings_network_monitor = network_monitor;
-            }
-            if let Ok(ssl_enabled) =
-                kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
-            {
-                app.settings_ssl_enabled = ssl_enabled;
-            }
-            if let Ok(ssl_validity) =
-                kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode).await
-            {
-                app.settings_ssl_cert_validity_input = ssl_validity.to_string();
-            }
-            app.settings_editing = false;
-            app.settings_selected_option = 0;
+            open_settings(app, mode).await;
             Ok(true)
         }
         KeyCode::Char('L') => {
@@ -2076,7 +2081,7 @@ pub async fn handle_settings_input(
         KeyCode::Up if app.settings_selected_option > 0 => {
             app.settings_selected_option -= 1;
         }
-        KeyCode::Down if app.settings_selected_option < 4 => {
+        KeyCode::Down if app.settings_selected_option < 5 => {
             app.settings_selected_option += 1;
         }
         KeyCode::Enter => {
@@ -2280,6 +2285,9 @@ pub async fn handle_settings_input(
                             app.settings_editing = true;
                         }
                     }
+                }
+                5 => {
+                    save_telemetry_setting(app, !app.settings_telemetry_enabled, mode).await;
                 }
                 _ => {}
             }
@@ -2924,6 +2932,42 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
         _ => {}
     }
     Ok(())
+}
+
+pub async fn handle_telemetry_consent_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    let enabled = match key {
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+            app.selected_telemetry_button = match app.selected_telemetry_button {
+                TelemetryButton::Allow => TelemetryButton::Decline,
+                TelemetryButton::Decline => TelemetryButton::Allow,
+            };
+            return Ok(());
+        }
+        KeyCode::Enter => app.selected_telemetry_button == TelemetryButton::Allow,
+        KeyCode::Esc => false,
+        _ => return Ok(()),
+    };
+    if save_telemetry_setting(app, enabled, mode).await {
+        app.state = AppState::Normal;
+    }
+    Ok(())
+}
+
+async fn save_telemetry_setting(app: &mut App, enabled: bool, mode: DatabaseMode) -> bool {
+    match kftray_commons::utils::settings::set_telemetry_enabled_with_mode(enabled, mode).await {
+        Ok(()) => {
+            kftray_telemetry::set_enabled(enabled);
+            app.settings_telemetry_enabled = enabled;
+            true
+        }
+        Err(e) => {
+            app.error_message = Some(format!("Failed to save crash reports setting: {e}"));
+            app.state = AppState::ShowErrorPopup;
+            false
+        }
+    }
 }
 
 pub async fn handle_update_confirmation_input(

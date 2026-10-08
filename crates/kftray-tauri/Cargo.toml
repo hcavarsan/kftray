@@ -31,6 +31,7 @@ kftray-mcp = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kftray-shortcuts = { workspace = true }
+kftray-telemetry = { workspace = true }
 kube = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }

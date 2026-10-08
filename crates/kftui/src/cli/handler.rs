@@ -34,6 +34,7 @@ impl CliHandler {
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         self.validate_args()?;
         self.initialize_database().await?;
+        kftray_telemetry::load_setting_with_mode(self.mode).await;
 
         let imported_config_ids = self.handle_config_import().await?;
 

@@ -198,6 +198,14 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     println!("kftray-mcp Cargo.toml updated");
 
     update_file_content(
+        "../../crates/kftray-telemetry/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-telemetry Cargo.toml updated");
+
+    update_file_content(
         "../../docs/kftray/INSTALL.md",
         new_version,
         update_markdown_version,
