@@ -69,7 +69,7 @@ pub enum ProblemReportError {
     Disabled,
     #[error("The report id is not valid")]
     InvalidReportId,
-    #[error("The associated event id is not valid")]
+    #[error("The original error event id is not valid")]
     InvalidEventId,
     #[error("The report message is empty")]
     EmptyMessage,
@@ -228,30 +228,8 @@ struct GeneralExtra<'a> {
     description: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     contact_email: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct FeedbackEvent<'a> {
-    event_id: Simple,
-    timestamp: f64,
-    level: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    release: Option<&'a str>,
-    tags: Tags,
-    contexts: FeedbackContexts<'a>,
-}
-
-#[derive(Serialize)]
-struct FeedbackContexts<'a> {
-    feedback: Feedback<'a>,
-}
-
-#[derive(Serialize)]
-struct Feedback<'a> {
-    message: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    contact_email: Option<&'a str>,
-    associated_event_id: Simple,
+    original_event_id: Option<Simple>,
 }
 
 fn timestamp() -> f64 {
@@ -263,49 +241,28 @@ fn timestamp() -> f64 {
 
 fn encode(report: &Validated<'_>, release: Option<&str>) -> Result<Vec<u8>, ProblemReportError> {
     let capacity = report.message.len() + report.email.map_or(0, str::len) + 512;
-    match report.event_id {
-        Some(associated) => envelope(
-            report.report_id,
-            "feedback",
-            capacity,
-            &FeedbackEvent {
-                event_id: report.report_id.simple(),
-                timestamp: timestamp(),
-                level: INFO_LEVEL,
-                release,
-                tags: TAGS,
-                contexts: FeedbackContexts {
-                    feedback: Feedback {
-                        message: report.message,
-                        contact_email: report.email,
-                        associated_event_id: associated.simple(),
-                    },
-                },
+    envelope(
+        report.report_id,
+        capacity,
+        &GeneralEvent {
+            event_id: report.report_id.simple(),
+            timestamp: timestamp(),
+            level: INFO_LEVEL,
+            message: GENERAL_MESSAGE,
+            fingerprint: (SURFACE, report.report_id.hyphenated()),
+            release,
+            tags: TAGS,
+            extra: GeneralExtra {
+                description: report.message,
+                contact_email: report.email,
+                original_event_id: report.event_id.map(|id| id.simple()),
             },
-        ),
-        None => envelope(
-            report.report_id,
-            "event",
-            capacity,
-            &GeneralEvent {
-                event_id: report.report_id.simple(),
-                timestamp: timestamp(),
-                level: INFO_LEVEL,
-                message: GENERAL_MESSAGE,
-                fingerprint: (SURFACE, report.report_id.hyphenated()),
-                release,
-                tags: TAGS,
-                extra: GeneralExtra {
-                    description: report.message,
-                    contact_email: report.email,
-                },
-            },
-        ),
-    }
+        },
+    )
 }
 
 fn envelope(
-    report_id: Uuid, kind: &'static str, capacity: usize, payload: &impl Serialize,
+    report_id: Uuid, capacity: usize, payload: &impl Serialize,
 ) -> Result<Vec<u8>, ProblemReportError> {
     let encode_error = |_| ProblemReportError::Encode;
     let mut body = Vec::with_capacity(capacity);
@@ -317,7 +274,7 @@ fn envelope(
     )
     .map_err(encode_error)?;
     body.push(b'\n');
-    serde_json::to_writer(&mut body, &ItemHeader { kind }).map_err(encode_error)?;
+    serde_json::to_writer(&mut body, &ItemHeader { kind: "event" }).map_err(encode_error)?;
     body.push(b'\n');
     serde_json::to_writer(&mut body, payload).map_err(encode_error)?;
     body.push(b'\n');
@@ -761,78 +718,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn linked_report_is_a_feedback_item_for_the_associated_event() {
+    async fn report_with_an_error_reference_uses_its_own_issue_identity() {
         let mut fixture = fixture(200, String::new(), "{}").await;
-        let associated = Uuid::new_v4();
-        let mut linked = report("it broke on start");
-        linked.email = Some("user@example.com".to_owned());
-        linked.event_id = Some(associated);
-        let report_id = linked.report_id;
+        let original_event_id = Uuid::new_v4();
+        let mut contextual = report("The forward did not start");
+        contextual.event_id = Some(original_event_id);
+        let report_id = contextual.report_id;
 
-        let (result, request) = send_to(&mut fixture, linked).await;
-        let request = request.unwrap();
-        let sent = parse_envelope(&request.body);
+        let (result, request) = send_to(&mut fixture, contextual).await;
+        let sent = parse_envelope(&request.unwrap().body);
 
         assert_eq!(result, Ok(()));
-        assert_eq!(request.path, "/api/1/envelope/");
-        assert_eq!(keys(&sent.header), ["event_id"]);
-        assert_eq!(sent.header["event_id"], report_id.simple().to_string());
-        assert_eq!(sent.item_header["type"], "feedback");
+        assert_eq!(sent.item_header["type"], "event");
+        assert_eq!(sent.payload["level"], "info");
         assert_eq!(sent.payload["event_id"], report_id.simple().to_string());
         assert_eq!(
-            sent.payload["contexts"]["feedback"],
+            sent.payload["fingerprint"],
+            json!(["manual-report", report_id.to_string()])
+        );
+        assert_eq!(
+            sent.payload["extra"],
             json!({
-                "message": "it broke on start",
-                "contact_email": "user@example.com",
-                "associated_event_id": associated.simple().to_string(),
+                "description": "The forward did not start",
+                "original_event_id": original_event_id.simple().to_string(),
             })
         );
-        assert_eq!(sent.payload["release"], RELEASE_UNDER_TEST);
-        assert_eq!(
-            sent.payload["tags"],
-            json!({ "app": "kftray", "surface": "manual-report", "target": TARGET })
-        );
-    }
-
-    #[tokio::test]
-    async fn linked_report_without_email_omits_the_contact() {
-        let mut fixture = fixture(200, String::new(), "{}").await;
-        let mut linked = report("it broke");
-        linked.event_id = Some(Uuid::new_v4());
-
-        let (_, request) = send_to(&mut fixture, linked).await;
-        let sent = parse_envelope(&request.unwrap().body);
-
-        assert!(
-            sent.payload["contexts"]["feedback"]
-                .get("contact_email")
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn linked_report_carries_no_automatic_context() {
-        let mut fixture = fixture(200, String::new(), "{}").await;
-        let mut linked = report("it broke");
-        linked.event_id = Some(Uuid::new_v4());
-
-        let (_, request) = send_to(&mut fixture, linked).await;
-        let sent = parse_envelope(&request.unwrap().body);
-
-        let mut payload_keys = keys(&sent.payload);
-        payload_keys.sort_unstable();
-        assert_eq!(
-            payload_keys,
-            [
-                "contexts",
-                "event_id",
-                "level",
-                "release",
-                "tags",
-                "timestamp"
-            ]
-        );
-        assert_eq!(keys(&sent.payload["contexts"]), ["feedback"]);
+        assert!(sent.payload.get("contexts").is_none());
     }
 
     #[tokio::test]

@@ -60,15 +60,15 @@ Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cava
 
 ## Report a problem
 
-Open the footer menu and choose `Report a problem` to describe a problem without needing a crash. Enter a description of up to 4000 characters. The email field is optional and lets the maintainer contact you.
+Open the footer menu and choose `Report a problem` to describe a problem, with or without a crash. Enter a description of up to 4000 characters. The email field is optional and lets the maintainer contact you.
 
-To add details to a captured error, choose `Report` on its notification. This option appears for individual failed app requests captured while crash reports are enabled. The app checks that GlitchTip accepted the error before sending your feedback. If that delivery failed, use `Report a problem` from the menu to send a separate report.
+To describe a specific failure, choose `Report` on its notification. The option appears for individual failed app requests captured while crash reports are enabled.
 
-Clicking `Send report` authorizes that submission and leaves your diagnostics settings unchanged. You can send a general report with crash reports and performance data turned off. Development builds and sessions started with `DO_NOT_TRACK` cannot send either kind of report.
+Sending applies to that report only and leaves your diagnostics settings unchanged. You can send a report with crash reports and performance data turned off. Development builds and sessions started with `DO_NOT_TRACK` cannot send reports.
 
-Manual submissions go to the same GlitchTip server as crash reports. They include your description, optional email, app version, build target, submission time and a random report id. Feedback for an error also includes that error's id. The app does not attach logs, configuration files or screenshots. Review your text before sending and leave out passwords, tokens, kubeconfig contents and cluster details.
+Reports go to the same server as crash reports and carry your description, optional email, app version, build target, submission time and a random report id. A report about a specific failure also references that error. Logs, configuration files and screenshots are never attached. Review your text before sending and leave out passwords, tokens, kubeconfig contents and cluster details.
 
-A general report creates an informational issue titled `User-submitted problem`, tagged `surface:manual-report`. Feedback for an error appears in that issue's user reports. If submission fails, the form keeps your text so you can try again or cancel.
+Each report is stored as its own entry, so it is never lost to a timing issue on the server. If submission fails, the form keeps your text so you can try again or cancel.
 
 ## Performance data
 

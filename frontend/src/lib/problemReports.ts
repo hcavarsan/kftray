@@ -3,9 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { errorMessage } from './errors'
 
-export type ProblemReportContext =
-  | { eventId: string; delivery: Promise<boolean> }
-  | undefined
+export type ProblemReportContext = { eventId: string } | undefined
 
 const reportContexts = new WeakMap<object, ProblemReportContext>()
 const reportListeners = new Set<(context: ProblemReportContext) => void>()
@@ -68,11 +66,6 @@ export const submitProblemReport = async ({
   email?: string
   context?: ProblemReportContext
 }): Promise<void> => {
-  if (context && !(await context.delivery)) {
-    throw new Error(
-      'The error could not be delivered. Use Report a problem from the menu to send a separate report.',
-    )
-  }
   await invoke('submit_problem_report', {
     report: {
       report_id: reportId,

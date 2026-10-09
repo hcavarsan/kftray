@@ -169,27 +169,11 @@ export const captureInvokeFailure = (command: string): ProblemReportContext => {
   if (!client?.getDsn()) {
     return undefined
   }
-  const eventId = crypto.randomUUID().replaceAll('-', '')
-  const delivery = new Promise<boolean>(resolve => {
-    const timeout = setTimeout(() => {
-      unsubscribe()
-      resolve(false)
-    }, 15_000)
-    const unsubscribe = client.on('afterSendEvent', (event, response) => {
-      if (event.event_id !== eventId) {
-        return
-      }
-      clearTimeout(timeout)
-      unsubscribe()
-      const status = response.statusCode
-      resolve(status !== undefined && status >= 200 && status < 300)
-    })
-    Sentry.captureException(new InvokeError(command), {
-      event_id: eventId,
-      captureContext: { tags: { command } },
-    })
-  })
-  return { eventId, delivery }
+  return {
+    eventId: Sentry.captureException(new InvokeError(command), {
+      tags: { command },
+    }),
+  }
 }
 
 // Starts the SDK once the Rust side has said whether reporting is allowed.

@@ -156,16 +156,9 @@ export function ReportProblemModal({
   }
 
   const disclosure: [string, string][] = [
-    ['Description', 'The text you write above'],
     ['Email', trimmedEmail ? 'The address you entered' : 'Not provided'],
     ['App version', build.data?.release || 'Unknown'],
-    ['Build target', build.data?.target || 'Unknown'],
-    [
-      'Related error',
-      context
-        ? `The error from the notification you chose (ref ${context.eventId.slice(0, 8)})`
-        : 'None, this is a general report',
-    ],
+    ['Linked error', context ? 'The error you reported' : 'None'],
   ]
 
   return (
@@ -338,6 +331,10 @@ export function ReportProblemModal({
                     ))}
                   </Box>
                 </Box>
+
+                <Text fontSize='11px' color='fg.muted'>
+                  Your diagnostics settings stay as they are.
+                </Text>
 
                 <Text fontSize='11px' color='fg.subtle'>
                   Sending applies to this report only. Your diagnostics settings

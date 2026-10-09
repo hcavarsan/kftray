@@ -58,7 +58,7 @@ afterEach(async () => {
 })
 
 describe('reporting an invoke failure', () => {
-  it('keeps concurrent failures associated with their own delivery result', async () => {
+  it('keeps concurrent failures tied to their own error reference', async () => {
     const first = captureInvokeFailure('start_port_forward_tcp_cmd')
     const second = captureInvokeFailure('stop_port_forward_cmd')
     expect(first).toBeDefined()
@@ -74,8 +74,7 @@ describe('reporting an invoke failure', () => {
 
     expect(getProblemReportContext(firstError)?.eventId).toBe(first.eventId)
     expect(getProblemReportContext(secondError)?.eventId).toBe(second.eventId)
-    await expect(first.delivery).resolves.toBe(false)
-    await expect(second.delivery).resolves.toBe(true)
+    expect(first.eventId).not.toBe(second.eventId)
     expect(errorMessage(firstError)).toBe('same native error')
   })
 
@@ -109,14 +108,34 @@ describe('reporting an invoke failure', () => {
     expect(receipts.size).toBe(0)
   })
 
-  it('does not submit feedback when the associated error was rejected', async () => {
+  it('submits a report while the original error is still awaiting delivery', async () => {
+    const context = captureInvokeFailure('start_port_forward_tcp_cmd')
+    if (!context) {
+      throw new Error('Expected a reportable failure')
+    }
+    await vi.waitFor(() => expect(receipts.size).toBe(1))
+    let submitted = false
+
+    const submission = submitProblemReport({
+      reportId: crypto.randomUUID(),
+      message: 'The forward could not start.',
+      context,
+    }).then(() => {
+      submitted = true
+    })
+
+    await vi.waitFor(() => expect(submitted).toBe(true))
+    await submission
+  })
+
+  it('reports a submission failure independently of the original error', async () => {
     const context = captureInvokeFailure('start_port_forward_tcp_cmd')
     if (!context) {
       throw new Error('Expected a reportable failure')
     }
     await vi.waitFor(() => expect(receipts.size).toBe(1))
     receipts.get(context.eventId)?.(429)
-    native.invoke.mockClear()
+    native.invoke.mockRejectedValueOnce(new Error('Report server unavailable'))
 
     await expect(
       submitProblemReport({
@@ -124,7 +143,6 @@ describe('reporting an invoke failure', () => {
         message: 'The forward could not start.',
         context,
       }),
-    ).rejects.toThrow('The error could not be delivered')
-    expect(native.invoke).not.toHaveBeenCalled()
+    ).rejects.toThrow('Report server unavailable')
   })
 })
