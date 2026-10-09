@@ -57,8 +57,16 @@ if ! command_exists curl && ! command_exists wget; then
   exit 1
 fi
 
+fetch_url() {
+  if command_exists curl; then
+    curl -s "$1"
+  else
+    wget -qO- "$1"
+  fi
+}
+
 # Get the latest release tag from GitHub
-LATEST_RELEASE=$(curl -s https://api.github.com/repos/hcavarsan/kftray/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+LATEST_RELEASE=$(fetch_url https://api.github.com/repos/hcavarsan/kftray/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 if [ -z "$LATEST_RELEASE" ]; then
   print_msg red "Error: Unable to fetch the latest release tag from GitHub."
   exit 1
