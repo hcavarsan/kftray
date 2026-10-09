@@ -22,7 +22,6 @@ mod tests {
     use crate::tui::input::file_explorer::handle_file_selection;
     use crate::tui::input::file_explorer::handle_file_selection_key;
     use crate::tui::input::file_explorer::handle_import_enter_key;
-    use crate::tui::input::file_explorer::navigate_to_parent_directory;
     use crate::tui::input::handle_export_file_explorer_input;
     use crate::tui::input::handle_export_input_prompt;
 
@@ -177,13 +176,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_navigate_to_parent_directory() {
-        let mut app = setup_file_explorer_app();
-
-        navigate_to_parent_directory(&mut app);
-    }
-
     #[tokio::test]
     async fn test_handle_file_selection_key() {
         let mut app = setup_file_explorer_app();
@@ -192,14 +184,28 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    fn nested_dir() -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let deep = root.path().join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+        let deep = deep.canonicalize().unwrap();
+        (root, deep)
+    }
+
     #[tokio::test]
     async fn test_handle_export_file_explorer_backspace() {
+        let (_root, deep) = nested_dir();
         let mut app = setup_file_explorer_app();
         app.state = AppState::ExportFileExplorerOpen;
+        app.import_file_explorer.set_cwd(deep.clone()).unwrap();
+        app.export_file_explorer.set_cwd(deep.clone()).unwrap();
 
         handle_export_file_explorer_input(&mut app, KeyCode::Backspace, DatabaseMode::File)
             .await
             .unwrap();
+
+        assert_eq!(app.export_file_explorer.cwd(), deep.parent().unwrap());
+        assert_eq!(app.import_file_explorer.cwd(), &deep);
     }
 
     #[tokio::test]
@@ -214,11 +220,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_import_file_explorer_backspace() {
+        let (_root, deep) = nested_dir();
         let mut app = setup_file_explorer_app();
+        app.import_file_explorer.set_cwd(deep.clone()).unwrap();
 
         handle_import_file_explorer_input(&mut app, KeyCode::Backspace, DatabaseMode::File)
             .await
             .unwrap();
+
+        assert_eq!(app.import_file_explorer.cwd(), deep.parent().unwrap());
     }
 
     #[tokio::test]
