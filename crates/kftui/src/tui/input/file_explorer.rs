@@ -104,7 +104,6 @@ pub async fn handle_import_file_explorer_input(
 
     match key {
         KeyCode::Esc => close_import_file_explorer(app),
-        KeyCode::Backspace => navigate_to_parent_directory(app),
         _ => handle_file_selection_key(app).await?,
     }
     Ok(())
@@ -130,14 +129,6 @@ pub async fn handle_import_enter_key(
         }
     }
     Ok(())
-}
-
-pub fn navigate_to_parent_directory(app: &mut App) {
-    if let Some(parent_path) = app.import_file_explorer.cwd().parent() {
-        app.import_file_explorer
-            .set_cwd(parent_path.to_path_buf())
-            .unwrap();
-    }
 }
 
 pub async fn handle_file_selection_key(app: &mut App) -> Result<(), std::io::Error> {
@@ -169,7 +160,6 @@ pub async fn handle_export_file_explorer_input(
         AppState::ShowInputPrompt => handle_export_input_prompt(app, key, mode).await?,
         _ => match key {
             KeyCode::Esc => close_export_file_explorer(app),
-            KeyCode::Backspace => navigate_to_parent_directory(app),
             _ => log::debug!("Unhandled key: {key:?}"),
         },
     }
