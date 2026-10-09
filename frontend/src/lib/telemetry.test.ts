@@ -184,7 +184,7 @@ const tauri = vi.hoisted(() => ({
   // Settled when the module asks for the context; the test then decides
   // when the answer arrives, so a broadcast can be timed against it.
   requested: Promise.withResolvers<void>(),
-  releaseContext: () => {},
+  releaseContext: vi.fn() as () => void,
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -208,7 +208,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (_: string, handler: (event: { payload: boolean }) => void) => {
     tauri.listeners.push(handler)
-    return Promise.resolve(() => {})
+    return Promise.resolve(vi.fn())
   },
 }))
 
