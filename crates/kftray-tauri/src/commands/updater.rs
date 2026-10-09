@@ -35,7 +35,14 @@ fn relaunch(app: &AppHandle) -> ! {
         }
     };
 
-    tauri_plugin_single_instance::destroy(app);
+    // Both callers are async commands, so this runs on a tokio worker. On
+    // Linux `destroy` releases the D-Bus name through zbus's blocking API,
+    // which drives its own tokio runtime with `block_on`; doing that from a
+    // worker thread panics ("Cannot start a runtime from within a runtime").
+    // A plain OS thread has no runtime context, so the call is moved there.
+    std::thread::scope(|scope| {
+        scope.spawn(|| tauri_plugin_single_instance::destroy(app));
+    });
 
     // Use process restart instead of app.restart() for more reliable restart
     if let Err(e) = std::process::Command::new(executable).spawn() {
