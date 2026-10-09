@@ -80,6 +80,7 @@ impl NetworkMonitor {
 
             if active_configs.is_empty() {
                 debug!("No active port forward configs found, network monitor idling");
+                self.get_task_state().await.lock().await.reconnect_pending = false;
                 sleep(Duration::from_secs(60)).await;
                 failure_count = 0;
                 continue;
@@ -87,15 +88,26 @@ impl NetworkMonitor {
 
             let is_up = self.network_checker.check_connectivity().await;
 
-            {
+            let reconnect_pending = {
                 let state = self.get_task_state().await;
                 let mut guard = state.lock().await;
                 guard.update_network_state(is_up);
-            }
+                if !network_up && is_up {
+                    guard.reconnect_pending = true;
+                }
+                guard.reconnect_pending
+            };
 
             if !network_up && is_up {
                 debug!("Network reconnected (main loop)");
                 failure_count = 0;
+                last_health = Instant::now();
+            } else if network_up && !is_up {
+                info!("Network disconnected");
+                failure_count = failure_count.saturating_add(1);
+            }
+
+            if reconnect_pending {
                 if self.should_start_reconnect().await {
                     debug!("Starting reconnection handler from main loop");
                     let monitor = self.clone();
@@ -103,12 +115,8 @@ impl NetworkMonitor {
                         monitor.handle_reconnect_with_state().await;
                     });
                 } else {
-                    debug!("Skipping reconnection - rate limited or network unstable");
+                    debug!("Reconnection pending - rate limited or network unstable");
                 }
-                last_health = Instant::now();
-            } else if network_up && !is_up {
-                info!("Network disconnected");
-                failure_count = failure_count.saturating_add(1);
             }
 
             if network_up && last_health.elapsed() > self.config.health_interval {
@@ -547,6 +555,60 @@ mod tests {
         assert!(
             finished,
             "the fast check that ran after the drop must release the health check slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn main_loop_restarts_forwards_once_the_network_returns() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+
+        let local = TcpListener::bind("127.0.0.1:0").unwrap();
+        let id = register_running_forward(&local).await;
+
+        let config = MonitorConfig {
+            network_endpoints: vec![PROBE_ADDR.as_str()],
+            network_timeout: Duration::from_millis(200),
+            sleep_up: Duration::from_millis(100),
+            sleep_down: Duration::from_millis(100),
+            ..MonitorConfig::default()
+        };
+        let monitor = NetworkMonitor {
+            network_checker: NetworkChecker::new(config.clone()),
+            health_checker: HealthChecker::new(config.clone()),
+            config,
+        };
+        let state = monitor.get_task_state().await;
+        *state.lock().await = TaskState::default();
+
+        let main_loop = tokio::spawn({
+            let monitor = monitor.clone();
+            async move { monitor.run_main_loop().await }
+        });
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
+        let saw_up = wait_for_state(&state, |s| s.last_network_state).await;
+        tokio::time::sleep(Duration::from_secs(12)).await;
+
+        let (attempts, last) = {
+            let g = state.lock().await;
+            (g.reconnect_attempts, g.last_reconnect)
+        };
+        main_loop.abort();
+        drop(probe);
+        CHILD_PROCESSES.remove(&id);
+
+        assert!(saw_up, "the main loop never saw the probe come up");
+        assert!(
+            last.is_some() && attempts == 1,
+            "network came back and stayed up for 12s, one reconnect must start \
+             (attempts={attempts}, last_reconnect={last:?})"
         );
     }
 }
