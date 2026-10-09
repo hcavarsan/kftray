@@ -212,7 +212,16 @@ async fn handle_mcp_post(req: Request<Incoming>, state: Arc<ServerState>) -> Res
     };
 
     // Handle the request
+    let is_notification = rpc_request.id.is_none();
     let response = handle_json_rpc_request(rpc_request, &session_id, &state).await;
+
+    if is_notification {
+        return Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .header("Mcp-Session-Id", &session_id)
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+    }
 
     // Build HTTP response with session header
     let json_body = serde_json::to_vec(&response).unwrap_or_default();
@@ -498,7 +507,46 @@ async fn handle_call_tool(request: JsonRpcRequest) -> JsonRpcResponse {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+
     use super::*;
+
+    async fn post_mcp(addr: SocketAddr, body: &str) -> (u16, String) {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).await.unwrap();
+        let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+        let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+        (status, body.to_string())
+    }
+
+    #[tokio::test]
+    async fn notifications_are_accepted_without_a_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve(listener));
+
+        for body in [
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
+        ] {
+            assert_eq!(post_mcp(addr, body).await, (202, String::new()), "{body}");
+        }
+
+        let (status, reply) = post_mcp(addr, r#"{"jsonrpc":"2.0","method":"ping","id":7}"#).await;
+        assert_eq!(status, 200);
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["id"], 7);
+
+        server.abort();
+    }
 
     #[tokio::test]
     async fn test_server_state() {
