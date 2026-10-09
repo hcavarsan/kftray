@@ -2,6 +2,7 @@ import type { ErrorEvent, Exception, StackFrame } from '@sentry/browser'
 import * as Sentry from '@sentry/browser'
 import { queryOptions } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 export const telemetryQuery = queryOptions({
   queryKey: ['telemetry-enabled'],
@@ -26,9 +27,14 @@ type TelemetryContext = {
   enabled: boolean
 }
 
-// The Rust side owns the stored choice; this is the live copy the SDK
-// consults, so a toggle in Settings takes effect without a restart.
+// The Rust side owns the stored choice and broadcasts every change; this is
+// the live copy the SDK in this window consults. Each webview (main, logs)
+// runs its own copy, so a toggle in one window reaches the others through
+// the broadcast rather than through `setCrashReportsConsent`.
 let crashReportsConsent = false
+
+// Matches `TELEMETRY_ENABLED_CHANGED` in commands/telemetry.rs.
+const TELEMETRY_ENABLED_CHANGED = 'telemetry-enabled-changed'
 
 export const setCrashReportsConsent = async (enabled: boolean) => {
   await invoke('update_telemetry_enabled', { enabled })
@@ -99,13 +105,22 @@ export const scrub = (event: ErrorEvent): ErrorEvent | null => {
 // Starts the SDK once the Rust side has said whether reporting is allowed.
 // Errors thrown before that answer arrives are not reported.
 export const initCrashReporting = async () => {
+  // Subscribed before the context is read: a toggle in another window that
+  // lands between the two would otherwise be overwritten by the stale
+  // `enabled` in the context.
+  let broadcast: boolean | undefined
+  await listen<boolean>(TELEMETRY_ENABLED_CHANGED, event => {
+    broadcast = event.payload
+    crashReportsConsent = event.payload
+  }).catch(() => undefined)
+
   const context = await invoke<TelemetryContext>('get_telemetry_context').catch(
     () => null,
   )
   if (!context?.dsn) {
     return
   }
-  crashReportsConsent = context.enabled
+  crashReportsConsent = broadcast ?? context.enabled
 
   Sentry.init({
     dsn: context.dsn,

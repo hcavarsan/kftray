@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ErrorEvent } from '@sentry/browser'
 
-import { scrub } from './telemetry'
+import { initCrashReporting, scrub } from './telemetry'
 
 const MAIN = 'tauri://localhost/assets/main-BkQTPf31.js'
 const WINDOWS_MAIN = 'https://tauri.localhost/assets/main-BkQTPf31.js'
@@ -172,5 +172,106 @@ describe('scrub', () => {
 
   it('drops events without an exception', () => {
     expect(scrub(event({ exception: undefined }))).toBeNull()
+  })
+})
+
+// Each webview runs its own copy of this module. These tests play the logs
+// window: it never calls setCrashReportsConsent itself, so the only way a
+// toggle made in the main window reaches it is the Rust broadcast.
+const tauri = vi.hoisted(() => ({
+  context: { dsn: null as string | null, enabled: true },
+  listeners: [] as Array<(event: { payload: boolean }) => void>,
+  // Settled when the module asks for the context; the test then decides
+  // when the answer arrives, so a broadcast can be timed against it.
+  requested: Promise.withResolvers<void>(),
+  releaseContext: () => {},
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (command: string) => {
+    if (command !== 'get_telemetry_context') {
+      return Promise.resolve()
+    }
+    const { promise, resolve } = Promise.withResolvers<unknown>()
+    tauri.releaseContext = () =>
+      resolve({
+        ...tauri.context,
+        release: 'kftray@test',
+        target: 'x86_64-unknown-linux-gnu',
+        run_id: 'r',
+      })
+    tauri.requested.resolve()
+    return promise
+  },
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (_: string, handler: (event: { payload: boolean }) => void) => {
+    tauri.listeners.push(handler)
+    return Promise.resolve(() => {})
+  },
+}))
+
+const sentry = vi.hoisted(() => ({
+  beforeSend: undefined as
+    | ((event: ErrorEvent) => ErrorEvent | null)
+    | undefined,
+}))
+
+vi.mock('@sentry/browser', () => ({
+  init: (options: { beforeSend: typeof sentry.beforeSend }) => {
+    sentry.beforeSend = options.beforeSend
+  },
+  globalHandlersIntegration: () => ({}),
+  browserApiErrorsIntegration: () => ({}),
+  linkedErrorsIntegration: () => ({}),
+  dedupeIntegration: () => ({}),
+}))
+
+describe('consent in a window that did not change it', () => {
+  beforeEach(() => {
+    tauri.context = { dsn: 'https://k@example.invalid/1', enabled: true }
+    tauri.listeners.length = 0
+    tauri.requested = Promise.withResolvers<void>()
+    sentry.beforeSend = undefined
+  })
+
+  it('stops reporting when the main window turns the switch off', async () => {
+    const started = initCrashReporting()
+    await tauri.requested.promise
+    tauri.releaseContext()
+    await started
+    expect(sentry.beforeSend?.(event())).not.toBeNull()
+
+    for (const listener of tauri.listeners) {
+      listener({ payload: false })
+    }
+
+    expect(sentry.beforeSend?.(event())).toBeNull()
+  })
+
+  it('keeps a broadcast that lands before the initial context', async () => {
+    const started = initCrashReporting()
+    await tauri.requested.promise
+    // The listener was registered before the context was requested...
+    expect(tauri.listeners).toHaveLength(1)
+    for (const listener of tauri.listeners) {
+      listener({ payload: false })
+    }
+    // ...so the stale `enabled: true` in the context must not win.
+    tauri.releaseContext()
+    await started
+
+    expect(sentry.beforeSend?.(event())).toBeNull()
+  })
+
+  it('never starts the SDK when the process is not allowed to report', async () => {
+    tauri.context.dsn = null
+    const started = initCrashReporting()
+    await tauri.requested.promise
+    tauri.releaseContext()
+    await started
+
+    expect(sentry.beforeSend).toBeUndefined()
   })
 })

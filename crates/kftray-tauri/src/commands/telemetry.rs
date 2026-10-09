@@ -1,5 +1,10 @@
 use kftray_commons::utils::settings;
 use log::error;
+use tauri::{
+    AppHandle,
+    Emitter,
+    Wry,
+};
 
 #[tauri::command]
 pub async fn get_telemetry_enabled() -> Result<Option<bool>, String> {
@@ -9,8 +14,23 @@ pub async fn get_telemetry_enabled() -> Result<Option<bool>, String> {
     })
 }
 
+/// Every webview runs its own copy of the crash-reporting SDK, so the new
+/// choice is broadcast: the logs window must stop reporting the moment the
+/// switch is turned off in the main window.
+pub const TELEMETRY_ENABLED_CHANGED: &str = "telemetry-enabled-changed";
+
 #[tauri::command]
-pub async fn update_telemetry_enabled(enabled: bool) -> Result<(), String> {
+pub async fn update_telemetry_enabled(
+    app_handle: AppHandle<Wry>, enabled: bool,
+) -> Result<(), String> {
+    store_telemetry_enabled(enabled).await?;
+    if let Err(e) = app_handle.emit(TELEMETRY_ENABLED_CHANGED, enabled) {
+        error!("Failed to emit telemetry enabled change: {e}");
+    }
+    Ok(())
+}
+
+async fn store_telemetry_enabled(enabled: bool) -> Result<(), String> {
     settings::set_telemetry_enabled(enabled)
         .await
         .map_err(|e| {
@@ -69,10 +89,10 @@ mod tests {
 
         assert_eq!(get_telemetry_enabled().await.unwrap(), None);
 
-        update_telemetry_enabled(true).await.unwrap();
+        store_telemetry_enabled(true).await.unwrap();
         assert_eq!(get_telemetry_enabled().await.unwrap(), Some(true));
 
-        update_telemetry_enabled(false).await.unwrap();
+        store_telemetry_enabled(false).await.unwrap();
         assert_eq!(get_telemetry_enabled().await.unwrap(), Some(false));
     }
 
