@@ -262,7 +262,7 @@ jobs:
           # Source maps for GlitchTip: only the jobs flagged above get the
           # token; the others still inject debug ids but do not upload.
           SENTRY_URL: https://glitchtip.cavarsa.app
-          SENTRY_ORG: ${{ vars.GLITCHTIP_ORG }}
+          SENTRY_ORG: ${{ vars.GLITCHTIP_ORG || 'kftray' }}
           SENTRY_PROJECT: ${{ vars.GLITCHTIP_PROJECT || 'kftray' }}
           SENTRY_AUTH_TOKEN: ${{ matrix.upload_sourcemaps && secrets.GLITCHTIP_AUTH_TOKEN || '' }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
