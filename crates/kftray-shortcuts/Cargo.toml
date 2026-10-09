@@ -1,6 +1,6 @@
 [package]
 name = "kftray-shortcuts"
-version = "0.30.1"
+version = "0.30.2"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "Cross-platform global shortcut management for KFTray"
