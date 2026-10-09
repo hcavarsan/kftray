@@ -28,14 +28,14 @@ def test_installer_puts_kftui_in_install_dir_and_on_path(tmp_path: Path) -> None
     work.mkdir()
     command = (
         STUBS
-        + f"Invoke-Expression (Get-Content -Raw '{INSTALLER}')\n"
+        + "Invoke-Expression (Get-Content -Raw -LiteralPath $env:KFTUI_INSTALLER)\n"
         + "Write-Output \"SESSION_PATH=$env:PATH\"\n"
     )
 
     result = subprocess.run(
         ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
         cwd=work,
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(home), "KFTUI_INSTALLER": str(INSTALLER)},
         capture_output=True,
         text=True,
         check=False,
