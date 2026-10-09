@@ -120,11 +120,6 @@ impl ShortcutParser {
             ("pageup", 104),
             ("pagedown", 109),
             ("insert", 110),
-            ("print", 99),
-            ("pause", 119),
-            ("capslock", 58),
-            ("numlock", 69),
-            ("scrolllock", 70),
         ] {
             key_mappings.insert(key.to_string(), value);
         }
@@ -206,9 +201,6 @@ impl ShortcutParser {
             "arrowright" => "Right".to_string(),
             "pageup" => "PageUp".to_string(),
             "pagedown" => "PageDown".to_string(),
-            "capslock" => "CapsLock".to_string(),
-            "numlock" => "NumLock".to_string(),
-            "scrolllock" => "ScrollLock".to_string(),
             key if key.starts_with('f') && key.len() <= 3 => key.to_uppercase(),
             _ => {
                 let mut chars: Vec<char> = key.chars().collect();
@@ -230,5 +222,10 @@ impl ShortcutParser {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn key_names(&self) -> impl Iterator<Item = &str> {
+        self.key_mappings.keys().map(String::as_str)
     }
 }

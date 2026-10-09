@@ -569,11 +569,6 @@ impl LinuxPlatform {
             "arrowdown" | "down" => EvdevKey::KEY_DOWN,
             "arrowleft" | "left" => EvdevKey::KEY_LEFT,
             "arrowright" | "right" => EvdevKey::KEY_RIGHT,
-            "print" => EvdevKey::KEY_PRINT,
-            "pause" => EvdevKey::KEY_PAUSE,
-            "capslock" => EvdevKey::KEY_CAPSLOCK,
-            "numlock" => EvdevKey::KEY_NUMLOCK,
-            "scrolllock" => EvdevKey::KEY_SCROLLLOCK,
             _ => return None,
         };
         Some(evdev_key.code())
@@ -736,5 +731,39 @@ impl PlatformManager for LinuxPlatform {
             LinuxImpl::Evdev => "linux-evdev",
             LinuxImpl::Fallback => "linux-fallback",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::ShortcutParser;
+
+    #[test]
+    fn every_key_the_parser_accepts_maps_to_a_linux_key() {
+        let platform = LinuxPlatform {
+            implementation: LinuxImpl::Fallback,
+            shortcuts: Arc::new(Mutex::new(HashMap::new())),
+            registry: Arc::new(Mutex::new(ActionRegistry::new())),
+            event_loop_started: Arc::new(Mutex::new(false)),
+        };
+        let parser = ShortcutParser::new();
+
+        let mut unmapped: Vec<String> = parser
+            .key_names()
+            .filter_map(|key| {
+                let normalized = parser.normalize_shortcut(&format!("Ctrl+{key}")).unwrap();
+                let evdev_key = normalized.rsplit('+').next().unwrap().to_lowercase();
+                let mapped = platform.parse_shortcut(&normalized).is_ok()
+                    && LinuxPlatform::key_name_to_evdev(&evdev_key).is_some();
+                (!mapped).then_some(normalized)
+            })
+            .collect();
+        unmapped.sort();
+
+        assert!(
+            unmapped.is_empty(),
+            "parser accepts shortcuts Linux can't register: {unmapped:?}"
+        );
     }
 }
