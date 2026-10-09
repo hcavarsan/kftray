@@ -2,12 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { Provider } from './components/ui/provider'
-import { installErrorReporting } from './lib/telemetry'
+import { initCrashReporting } from './lib/telemetry'
 import { LogViewerPage } from './pages/LogViewerPage'
 
 import './index.css'
 
-installErrorReporting()
+void initCrashReporting()
 
 const rootElement = document.getElementById('root')
 

@@ -49,7 +49,10 @@ export default defineConfig({
     target:
       process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: !isDebug,
-    sourcemap: isDebug,
+    // Maps are always written: scripts/sourcemaps.mjs injects debug ids,
+    // uploads them to GlitchTip when a token is present, and removes them
+    // from dist in release builds so they are never shipped.
+    sourcemap: isDebug ? true : 'hidden',
     rolldownOptions: {
       input: {
         main: resolve(import.meta.dirname, 'index.html'),

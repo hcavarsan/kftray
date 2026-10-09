@@ -4,6 +4,8 @@ packages:
 minimumReleaseAge: 1440
 
 allowBuilds:
+  # downloads the sentry-cli binary used to inject debug ids into the bundle
+  '@sentry/cli': true
   oxc-resolver: true
 
 overrides:

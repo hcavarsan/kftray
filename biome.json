@@ -93,6 +93,16 @@
       }
     },
     {
+      "includes": ["frontend/scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "frontend/src/**",
         "!frontend/src/components/ui/provider.tsx"

@@ -12,23 +12,32 @@ import {
   DialogCancelButton,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
+import {
+  type Consent,
+  performanceQuery,
+  setCrashReportsConsent,
+  telemetryQuery,
+} from '@/lib/telemetry'
 
 type Choices = Record<Consent, boolean>
 
 const CONSENTS: Record<
   Consent,
-  { label: string; description: string; command: string }
+  {
+    label: string
+    description: string
+    save: (enabled: boolean) => Promise<unknown>
+  }
 > = {
   crashReports: {
     label: 'Crash reports',
     description: 'Send a report when kftray crashes.',
-    command: 'update_telemetry_enabled',
+    save: setCrashReportsConsent,
   },
   performance: {
     label: 'Performance data',
     description: 'Send how long port forwards take to start and stop.',
-    command: 'update_performance_enabled',
+    save: enabled => invoke('update_performance_enabled', { enabled }),
   },
 }
 
@@ -51,9 +60,7 @@ export function TelemetryConsentModal({
   const choose = useMutation({
     mutationFn: (answer: Choices) =>
       Promise.all(
-        consents.map(consent =>
-          invoke(CONSENTS[consent].command, { enabled: answer[consent] }),
-        ),
+        consents.map(consent => CONSENTS[consent].save(answer[consent])),
       ),
     onSettled: () => {
       onDone()

@@ -74,6 +74,10 @@ jobs:
             arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
+            # The webview bundle is the same for every non-Windows target, so
+            # one job per bundle flavour uploads its source maps (see
+            # frontend/scripts/sourcemaps.mjs).
+            upload_sourcemaps: true
           - os: ubuntu-24.04
             arch: arm64
             runner: ubuntu-24.04-arm
@@ -99,6 +103,7 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             tauri_args: "--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose"
             msvc_arch: x64
+            upload_sourcemaps: true
           - os: windows-latest
             arch: arm64
             rust_target: aarch64-pc-windows-msvc
@@ -254,6 +259,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
+          # Source maps for GlitchTip: only the jobs flagged above get the
+          # token; the others still inject debug ids but do not upload.
+          SENTRY_URL: https://glitchtip.cavarsa.app
+          SENTRY_ORG: ${{ vars.GLITCHTIP_ORG }}
+          SENTRY_PROJECT: ${{ vars.GLITCHTIP_PROJECT || 'kftray' }}
+          SENTRY_AUTH_TOKEN: ${{ matrix.upload_sourcemaps && secrets.GLITCHTIP_AUTH_TOKEN || '' }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

@@ -19,6 +19,7 @@ use std::sync::atomic::{
 use std::sync::{
     Arc,
     LazyLock,
+    OnceLock,
 };
 use std::time::Instant;
 
@@ -50,6 +51,7 @@ use sentry::{
     Span,
     TransactionContext,
 };
+use serde::Serialize;
 
 const DSN: &str = "https://203f8b8ffea047f9a8bac854d93e6a46@glitchtip.cavarsa.app/1";
 
@@ -64,6 +66,11 @@ const ANONYMOUS_HOST: &str = "anonymous";
 /// Operation breadcrumbs kept for the next error report. Each is one short
 /// fixed string, so this is a few KiB at most.
 const MAX_BREADCRUMBS: usize = 50;
+/// Random per launch and never stored: groups the events of one run (from
+/// the Rust process and the webview alike) without identifying the install.
+static RUN_ID: LazyLock<String> = LazyLock::new(|| Uuid::new_v4().simple().to_string());
+/// Set once by `init`; runtime input, hence `OnceLock`.
+static RELEASE: OnceLock<&'static str> = OnceLock::new();
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static PERFORMANCE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -171,6 +178,30 @@ pub fn phase(phase: Phase) -> PhaseGuard {
     PhaseGuard(parent.map(|parent| parent.start_child(phase.name(), "")))
 }
 
+/// What the webview needs to report the same way this process does. `dsn` is
+/// `None` when reporting is off for the whole process (debug build,
+/// `DO_NOT_TRACK`), so the JS SDK is never initialised in that case.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FrontendContext {
+    pub dsn: Option<&'static str>,
+    pub release: &'static str,
+    pub target: &'static str,
+    pub run_id: &'static str,
+    /// Current crash-reports consent; the webview keeps it in sync on toggles.
+    pub enabled: bool,
+}
+
+/// Only meaningful after [`init`]; before it `release` is empty.
+pub fn frontend_context() -> FrontendContext {
+    FrontendContext {
+        dsn: reporting_allowed().then_some(DSN),
+        release: RELEASE.get().copied().unwrap_or_default(),
+        target: TARGET,
+        run_id: &RUN_ID,
+        enabled: ENABLED.load(Ordering::Relaxed),
+    }
+}
+
 /// `release` is `<app>@<version>`, e.g. `kftray@0.30.0`; the part before `@`
 /// becomes the `app` tag so kftray and kftui events can be told apart.
 pub fn init(release: &'static str) -> ClientInitGuard {
@@ -179,12 +210,11 @@ pub fn init(release: &'static str) -> ClientInitGuard {
 
     // Every other thread's hub is derived from the main hub, so tags set
     // there are inherited by tokio workers and by `measure`'s bound hubs.
+    RELEASE.get_or_init(|| release);
     Hub::main().configure_scope(|scope| {
         scope.set_tag("app", app_name(release));
         scope.set_tag("target", TARGET);
-        // Random per launch and never stored: groups the events of one run
-        // without identifying the installation.
-        scope.set_tag("run_id", Uuid::new_v4().simple());
+        scope.set_tag("run_id", &*RUN_ID);
     });
 
     let previous = std::panic::take_hook();
@@ -243,10 +273,6 @@ pub async fn measure<T, E>(
     transaction.finish();
     record_breadcrumb(operation, status, level);
     result
-}
-
-pub fn capture_error(name: String, stack: Option<String>) {
-    sentry::capture_event(error_event(name, stack));
 }
 
 /// `allowed` is the process-wide gate (`DO_NOT_TRACK`, debug builds). It is
@@ -373,22 +399,6 @@ fn panic_message(payload: &(dyn Any + Send), location: Option<&Location<'_>>) ->
         (None, Some(location)) => location,
         (None, None) => "panic".to_string(),
     }
-}
-
-fn error_event(name: String, stack: Option<String>) -> Event<'static> {
-    let mut event = Event {
-        level: Level::Error,
-        exception: vec![Exception {
-            ty: name,
-            ..Default::default()
-        }]
-        .into(),
-        ..Default::default()
-    };
-    if let Some(stack) = stack {
-        event.extra.insert("stack".into(), Value::String(stack));
-    }
-    event
 }
 
 #[cfg(test)]
@@ -566,10 +576,15 @@ mod tests {
         assert!(guard.0.is_none());
     }
 
+    /// The consent flags are process globals; tests that flip them must not
+    /// overlap.
+    static CONSENT_LOCK: Mutex<()> = Mutex::new(());
+
     /// Runs `emit` with both consent flags on, under a client that has a DSN
     /// (the test transport sets one, like `SENTRY_DSN` would), and returns
     /// what the client let through.
     fn envelopes_with_consent(allowed: bool, emit: impl FnOnce()) -> Vec<sentry::Envelope> {
+        let _consent = CONSENT_LOCK.lock();
         ENABLED.store(true, Ordering::Relaxed);
         PERFORMANCE_ENABLED.store(true, Ordering::Relaxed);
         let envelopes = sentry::test::with_captured_envelopes_options(
@@ -585,7 +600,10 @@ mod tests {
         let result: Result<(), ()> =
             futures::executor::block_on(measure(Operation::StartForward, async { Ok(()) }));
         assert!(result.is_ok());
-        capture_error("TypeError".into(), None);
+        sentry::capture_event(Event {
+            level: Level::Error,
+            ..Default::default()
+        });
     }
 
     #[test]
@@ -613,12 +631,18 @@ mod tests {
     }
 
     #[test]
-    fn error_event_carries_type_and_stack() {
-        let event = error_event("TypeError".into(), Some("at main.js:1".into()));
-        let exception = &event.exception.values[0];
+    fn frontend_context_mirrors_the_process_gate_and_consent() {
+        let _consent = CONSENT_LOCK.lock();
+        RELEASE.get_or_init(|| "kftray@test");
+        set_enabled(true);
+        let context = frontend_context();
+        set_enabled(false);
 
-        assert_eq!(exception.ty, "TypeError");
-        assert_eq!(exception.value, None);
-        assert_eq!(event.extra["stack"], Value::String("at main.js:1".into()));
+        // Debug builds (tests included) never hand out a DSN.
+        assert_eq!(context.dsn, None);
+        assert_eq!(context.release, "kftray@test");
+        assert_eq!(context.target, TARGET);
+        assert_eq!(context.run_id, *RUN_ID);
+        assert!(context.enabled);
     }
 }

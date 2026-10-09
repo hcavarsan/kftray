@@ -13,6 +13,7 @@ kftray-commons = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 sentry = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }

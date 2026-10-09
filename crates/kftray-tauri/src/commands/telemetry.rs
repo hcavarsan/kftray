@@ -41,9 +41,12 @@ pub async fn update_performance_enabled(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Hands the webview what it needs to report crashes the way this process
+/// does: same DSN gate, release, build target and run id. Read once at
+/// startup; consent changes afterwards go through `update_telemetry_enabled`.
 #[tauri::command]
-pub fn report_error(name: String, stack: Option<String>) {
-    kftray_telemetry::capture_error(name, stack);
+pub fn get_telemetry_context() -> kftray_telemetry::FrontendContext {
+    kftray_telemetry::frontend_context()
 }
 
 #[cfg(test)]
