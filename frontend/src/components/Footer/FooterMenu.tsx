@@ -11,7 +11,6 @@ import {
 
 import { Box } from '@chakra-ui/react'
 import { useMutation } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { FooterActionButton } from '@/components/Footer/FooterActionButton'
 import {
@@ -22,6 +21,7 @@ import {
   MenuTrigger,
 } from '@/components/ui/menu'
 import { useGitSync } from '@/contexts/GitSyncContext'
+import { invoke } from '@/lib/tauri'
 
 interface FooterMenuProps {
   onImportConfigs: () => void

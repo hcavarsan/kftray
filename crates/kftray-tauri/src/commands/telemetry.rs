@@ -49,8 +49,22 @@ pub async fn get_performance_enabled() -> Result<Option<bool>, String> {
     })
 }
 
+/// Broadcast for the same reason as `TELEMETRY_ENABLED_CHANGED`: every
+/// webview samples its own spans.
+pub const PERFORMANCE_ENABLED_CHANGED: &str = "performance-enabled-changed";
+
 #[tauri::command]
-pub async fn update_performance_enabled(enabled: bool) -> Result<(), String> {
+pub async fn update_performance_enabled(
+    app_handle: AppHandle<Wry>, enabled: bool,
+) -> Result<(), String> {
+    store_performance_enabled(enabled).await?;
+    if let Err(e) = app_handle.emit(PERFORMANCE_ENABLED_CHANGED, enabled) {
+        error!("Failed to emit performance enabled change: {e}");
+    }
+    Ok(())
+}
+
+async fn store_performance_enabled(enabled: bool) -> Result<(), String> {
     settings::set_performance_enabled(enabled)
         .await
         .map_err(|e| {
@@ -102,10 +116,10 @@ mod tests {
 
         assert_eq!(get_performance_enabled().await.unwrap(), None);
 
-        update_performance_enabled(true).await.unwrap();
+        store_performance_enabled(true).await.unwrap();
         assert_eq!(get_performance_enabled().await.unwrap(), Some(true));
 
-        update_performance_enabled(false).await.unwrap();
+        store_performance_enabled(false).await.unwrap();
         assert_eq!(get_performance_enabled().await.unwrap(), Some(false));
     }
 }

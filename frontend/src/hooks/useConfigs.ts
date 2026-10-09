@@ -1,6 +1,6 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
+import { invoke } from '@/lib/tauri'
 import type { Config } from '@/types'
 
 export async function fetchConfigsWithState(): Promise<Config[]> {

@@ -1,13 +1,14 @@
 import { useState } from 'react'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
+import { invoke } from '@/lib/tauri'
 import {
   performanceQuery,
   setCrashReportsConsent,
+  setPerformanceConsent,
   telemetryQuery,
 } from '@/lib/telemetry'
 
@@ -157,10 +158,7 @@ function buildPlans(
     {
       section: 'General',
       keys: ['performanceEnabled'],
-      write: () =>
-        invoke('update_performance_enabled', {
-          enabled: draft.performanceEnabled,
-        }),
+      write: () => setPerformanceConsent(draft.performanceEnabled),
     },
     {
       section: 'SSL',

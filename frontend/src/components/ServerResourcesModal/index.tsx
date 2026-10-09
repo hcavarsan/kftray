@@ -4,7 +4,6 @@ import Select from 'react-select'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -15,6 +14,7 @@ import {
 import { selectStyles } from '@/components/ui/select-styles'
 import { Tooltip } from '@/components/ui/tooltip'
 import { configsQuery } from '@/hooks/useConfigs'
+import { invoke } from '@/lib/tauri'
 
 import { CleanupDialog } from './CleanupDialog'
 import { ResourceList } from './ResourceList'

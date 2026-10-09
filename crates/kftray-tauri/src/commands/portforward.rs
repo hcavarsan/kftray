@@ -279,6 +279,7 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
 
 #[tauri::command]
 pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
+    kftray_telemetry::breadcrumb(kftray_telemetry::AppEvent::ExitRequested);
     match app_handle.get_webview_window("main") {
         Some(window) => {
             let config_states = match get_configs_state().await {

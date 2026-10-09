@@ -2,12 +2,12 @@ import { FileText, Trash2 } from 'lucide-react'
 
 import { Box, Flex, Input, Stack } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { logFilesQuery } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import { toaster } from '@/components/ui/toaster'
 import { formatBytes } from '@/lib/format'
+import { invoke } from '@/lib/tauri'
 
 import {
   compactActionButtonProps,

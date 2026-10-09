@@ -8,6 +8,7 @@
 
 use std::any::Any;
 use std::collections::VecDeque;
+use std::fmt::Display;
 use std::panic::{
     Location,
     PanicHookInfo,
@@ -21,7 +22,10 @@ use std::sync::{
     LazyLock,
     OnceLock,
 };
-use std::time::Instant;
+use std::time::{
+    Instant,
+    SystemTime,
+};
 
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::settings::{
@@ -39,6 +43,7 @@ use sentry::protocol::{
     Exception,
     Level,
     Mechanism,
+    SpanId,
     SpanStatus,
     Value,
 };
@@ -86,6 +91,15 @@ pub enum Operation {
     StartForward,
     StopForward,
     StopAllForwards,
+    /// A forward started on launch because it was running when the app
+    /// last exited.
+    AutoStart,
+    /// Database and settings initialisation on launch.
+    AppStartup,
+    /// Importing configurations from a git repository.
+    GitSync,
+    /// Starting the MCP server.
+    McpStart,
 }
 
 impl Operation {
@@ -94,6 +108,10 @@ impl Operation {
             Self::StartForward => "portforward.start",
             Self::StopForward => "portforward.stop",
             Self::StopAllForwards => "portforward.stop_all",
+            Self::AutoStart => "portforward.autostart",
+            Self::AppStartup => "app.startup",
+            Self::GitSync => "git.sync",
+            Self::McpStart => "mcp.start",
         }
     }
 }
@@ -127,6 +145,16 @@ pub enum Phase {
     ReleaseAddress,
     /// Removing the alias from the hosts file.
     HostsCleanup,
+    /// Opening the SQLite database and creating its tables.
+    DbInit,
+    /// Running the configuration migrations.
+    DbMigrate,
+    /// Reading the telemetry settings.
+    SettingsLoad,
+    /// Cloning or fetching the repository.
+    GitFetch,
+    /// Parsing the configuration files and writing them to the database.
+    GitImport,
 }
 
 impl Phase {
@@ -144,8 +172,175 @@ impl Phase {
             Self::Shutdown => "forward.shutdown",
             Self::ReleaseAddress => "forward.release_address",
             Self::HostsCleanup => "forward.hosts_cleanup",
+            Self::DbInit => "db.init",
+            Self::DbMigrate => "db.migrate",
+            Self::SettingsLoad => "settings.load",
+            Self::GitFetch => "git.fetch",
+            Self::GitImport => "git.import",
         }
     }
+}
+
+/// Why an operation failed, reduced to a fixed vocabulary so a report can
+/// say "timeout" or "kubeconfig" without carrying the message, which names
+/// clusters, namespaces and services. Classified from the error text by
+/// [`classify`]; the first matching rule wins, so the order below is the
+/// priority order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// The user or a concurrent stop cancelled the operation.
+    Cancelled,
+    /// The forward was already running, here or in another kftray process.
+    AlreadyRunning,
+    /// A step did not finish in time (pod readiness, stream, allocation).
+    Timeout,
+    /// Choosing or claiming a loopback address.
+    AddressAllocation,
+    /// The local port could not be bound.
+    PortInUse,
+    /// Writing or removing the hosts-file alias.
+    HostsFile,
+    /// Building the TLS acceptor or the certificate.
+    Tls,
+    /// Reading or decoding the kubeconfig and its credentials.
+    Kubeconfig,
+    /// The service, pod or named port does not exist or selects nothing.
+    TargetNotFound,
+    /// The cluster refused or dropped the connection.
+    Connection,
+    /// Creating, reading or deleting the relay pod or its service.
+    RelayPod,
+    /// The configuration itself is invalid (no id, bad protocol or address).
+    InvalidConfig,
+    /// Reading or writing the local database.
+    Database,
+    /// Talking to the privileged helper.
+    Helper,
+    /// Cloning, fetching or authenticating against the git repository.
+    Git,
+    Other,
+}
+
+impl FailureKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::AlreadyRunning => "already_running",
+            Self::Timeout => "timeout",
+            Self::AddressAllocation => "address_allocation",
+            Self::PortInUse => "port_in_use",
+            Self::HostsFile => "hosts_file",
+            Self::Tls => "tls",
+            Self::Kubeconfig => "kubeconfig",
+            Self::TargetNotFound => "target_not_found",
+            Self::Connection => "connection",
+            Self::RelayPod => "relay_pod",
+            Self::InvalidConfig => "invalid_config",
+            Self::Database => "database",
+            Self::Helper => "helper",
+            Self::Git => "git",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Maps an error message to a [`FailureKind`]. Only the kind leaves the
+/// process; the message is used here and dropped.
+pub fn classify(message: &str) -> FailureKind {
+    const RULES: &[(FailureKind, &[&str])] = &[
+        (FailureKind::Cancelled, &["cancelled", "canceled"]),
+        (
+            FailureKind::AlreadyRunning,
+            &["already running", "being forwarded by another"],
+        ),
+        (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
+        (
+            FailureKind::AddressAllocation,
+            &["allocat", "loopback", "still being released"],
+        ),
+        (
+            FailureKind::PortInUse,
+            &["address already in use", "address in use", "failed to bind"],
+        ),
+        (
+            FailureKind::HostsFile,
+            &["hosts file", "host entry", "hosts entry"],
+        ),
+        (
+            FailureKind::Tls,
+            &["tls", "certificate", "pkcs", "rustls", "acceptor"],
+        ),
+        (
+            FailureKind::Kubeconfig,
+            &[
+                "kubeconfig",
+                "client key",
+                "exec plugin",
+                "auth",
+                "unauthorized",
+                "forbidden",
+            ],
+        ),
+        (
+            FailureKind::TargetNotFound,
+            &[
+                "not found",
+                "no pods",
+                "has no selector",
+                "no label selector",
+                "no service name",
+                "out of range",
+                "kept changing",
+            ],
+        ),
+        (
+            FailureKind::Connection,
+            &[
+                "connection refused",
+                "connection reset",
+                "broken pipe",
+                "dns",
+                "resolve",
+                "unreachable",
+                "websocket",
+                "stream",
+            ],
+        ),
+        (
+            FailureKind::RelayPod,
+            &[
+                "relay",
+                "proxy pod",
+                "proxy listener",
+                "deployment",
+                "pod has no ip",
+            ],
+        ),
+        (
+            FailureKind::InvalidConfig,
+            &[
+                "config has no id",
+                "unsupported protocol",
+                "invalid ip",
+                "invalid port",
+                "no label selector",
+            ],
+        ),
+        (
+            FailureKind::Database,
+            &["sqlite", "database", "config_state"],
+        ),
+        (FailureKind::Helper, &["helper", "socket", "named pipe"]),
+        (
+            FailureKind::Git,
+            &["git", "repository", "clone", "credential"],
+        ),
+    ];
+    let message = message.to_ascii_lowercase();
+    RULES
+        .iter()
+        .find(|(_, needles)| needles.iter().any(|needle| message.contains(needle)))
+        .map_or(FailureKind::Other, |(kind, _)| *kind)
 }
 
 /// Child span of the operation currently being measured; finishes on drop.
@@ -189,6 +384,8 @@ pub struct FrontendContext {
     pub run_id: &'static str,
     /// Current crash-reports consent; the webview keeps it in sync on toggles.
     pub enabled: bool,
+    /// Current performance-data consent, likewise.
+    pub performance_enabled: bool,
 }
 
 /// Only meaningful after [`init`]; before it `release` is empty.
@@ -199,6 +396,7 @@ pub fn frontend_context() -> FrontendContext {
         target: TARGET,
         run_id: &RUN_ID,
         enabled: ENABLED.load(Ordering::Relaxed),
+        performance_enabled: PERFORMANCE_ENABLED.load(Ordering::Relaxed),
     }
 }
 
@@ -252,8 +450,10 @@ pub async fn load_setting_with_mode(mode: DatabaseMode) {
 
 /// Runs `future` as a transaction named after `operation`. Code awaited
 /// inside it (not spawned from it) can attach child spans with [`phase`].
-/// The outcome is also kept as a breadcrumb for the next error report.
-pub async fn measure<T, E>(
+/// A failure is classified into a [`FailureKind`], tagged on the
+/// transaction and reported as an error event; the outcome is also kept as
+/// a breadcrumb for the next error report.
+pub async fn measure<T, E: Display>(
     operation: Operation, future: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
     // A hub of its own so the transaction can be the scope's span for the
@@ -265,14 +465,114 @@ pub async fn measure<T, E>(
 
     let result = future.bind_hub(hub).await;
 
-    let (status, level) = match result {
-        Ok(_) => (SpanStatus::Ok, Level::Info),
-        Err(_) => (SpanStatus::InternalError, Level::Error),
-    };
-    transaction.set_status(status);
-    transaction.finish();
-    record_breadcrumb(operation, status, level);
+    match &result {
+        Ok(_) => {
+            transaction.set_status(SpanStatus::Ok);
+            transaction.finish();
+            push_breadcrumb(
+                "portforward",
+                format!("{} ok", operation.name()),
+                Level::Info,
+            );
+        }
+        Err(error) => {
+            let kind = classify(&error.to_string());
+            transaction.set_status(SpanStatus::InternalError);
+            transaction.set_tag("failure_kind", kind.name());
+            transaction.finish();
+            report_failure(operation, kind);
+        }
+    }
     result
+}
+
+/// Reports a failed operation as an error event titled
+/// `<operation>: <kind>` and keeps it as a breadcrumb. Used by `measure`
+/// for the operation's own result, and by callers that see failures inside
+/// an operation that still succeeded as a whole (a mixed start batch).
+pub fn report_failure(operation: Operation, kind: FailureKind) {
+    push_breadcrumb(
+        "portforward",
+        format!("{} {}", operation.name(), kind.name()),
+        Level::Error,
+    );
+    let mut event = Event {
+        level: Level::Error,
+        exception: vec![Exception {
+            ty: operation.name().into(),
+            value: Some(kind.name().into()),
+            mechanism: Some(Mechanism {
+                ty: "operation".into(),
+                handled: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]
+        .into(),
+        ..Default::default()
+    };
+    event
+        .tags
+        .insert("operation".into(), operation.name().into());
+    event.tags.insert("failure_kind".into(), kind.name().into());
+    sentry::capture_event(event);
+}
+
+/// Records the steps of an operation whose timing matters before the
+/// performance setting can be read (app startup: the setting lives in the
+/// database the startup is initialising). Steps are timed as they run and
+/// the transaction is only built in [`Timeline::finish`], after the setting
+/// is known, with the recorded timestamps.
+pub struct Timeline {
+    operation: Operation,
+    started: SystemTime,
+    phases: Vec<(Phase, SystemTime, SystemTime, bool)>,
+}
+
+impl Timeline {
+    pub fn start(operation: Operation) -> Self {
+        Self {
+            operation,
+            started: SystemTime::now(),
+            phases: Vec::new(),
+        }
+    }
+
+    /// Runs `future` as one step. A step that fails still ends the timeline
+    /// normally; the failure shows as the span's status.
+    pub async fn phase<T, E>(
+        &mut self, phase: Phase, future: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
+        let started = SystemTime::now();
+        let result = future.await;
+        self.phases
+            .push((phase, started, SystemTime::now(), result.is_ok()));
+        result
+    }
+
+    pub fn finish(self) {
+        let transaction = sentry::start_transaction_with_timestamp(
+            TransactionContext::new(self.operation.name(), self.operation.name()),
+            self.started,
+        );
+        let failed = self.phases.iter().any(|(_, _, _, ok)| !ok);
+        for (phase, started, ended, ok) in self.phases {
+            let span =
+                transaction.start_child_with_details(phase.name(), "", SpanId::default(), started);
+            span.set_status(if ok {
+                SpanStatus::Ok
+            } else {
+                SpanStatus::InternalError
+            });
+            span.finish_with_timestamp(ended);
+        }
+        transaction.set_status(if failed {
+            SpanStatus::InternalError
+        } else {
+            SpanStatus::Ok
+        });
+        transaction.finish();
+    }
 }
 
 /// `allowed` is the process-wide gate (`DO_NOT_TRACK`, debug builds). It is
@@ -330,10 +630,44 @@ fn reporting_allowed() -> bool {
     !cfg!(debug_assertions) && std::env::var_os("DO_NOT_TRACK").is_none()
 }
 
-fn record_breadcrumb(operation: Operation, status: SpanStatus, level: Level) {
+/// Something that happened in this run, kept for the next error report. Fixed
+/// names only; nothing about which configuration or window it concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppEvent {
+    WindowShown,
+    WindowHidden,
+    LogViewerOpened,
+    UpdateCheck,
+    UpdateInstall,
+    TrayOnline,
+    TrayOffline,
+    ExitRequested,
+}
+
+impl AppEvent {
+    fn name(self) -> &'static str {
+        match self {
+            Self::WindowShown => "window.shown",
+            Self::WindowHidden => "window.hidden",
+            Self::LogViewerOpened => "logs.opened",
+            Self::UpdateCheck => "update.check",
+            Self::UpdateInstall => "update.install",
+            Self::TrayOnline => "tray.online",
+            Self::TrayOffline => "tray.offline",
+            Self::ExitRequested => "app.exit_requested",
+        }
+    }
+}
+
+/// Records an [`AppEvent`] as a breadcrumb for the next error report.
+pub fn breadcrumb(event: AppEvent) {
+    push_breadcrumb("app", event.name().to_string(), Level::Info);
+}
+
+fn push_breadcrumb(category: &'static str, message: String, level: Level) {
     let crumb = Breadcrumb {
-        category: Some("portforward".into()),
-        message: Some(format!("{} {status}", operation.name())),
+        category: Some(category.into()),
+        message: Some(message),
         level,
         ..Default::default()
     };
@@ -441,32 +775,129 @@ mod tests {
     }
 
     #[test]
-    fn scrub_attaches_recorded_operations_as_breadcrumbs() {
-        record_breadcrumb(
-            Operation::StartForward,
-            SpanStatus::InternalError,
-            Level::Error,
-        );
+    fn scrub_attaches_recorded_events_as_breadcrumbs() {
+        report_failure(Operation::StartForward, FailureKind::Timeout);
+        breadcrumb(AppEvent::LogViewerOpened);
 
         let event = scrub(true, event_from("laptop")).unwrap();
-        let crumb = event
+        let messages: Vec<_> = event
             .breadcrumbs
             .values
             .iter()
-            .find(|crumb| crumb.message.as_deref() == Some("portforward.start internal_error"))
-            .unwrap();
+            .map(|crumb| {
+                (
+                    crumb.category.as_deref(),
+                    crumb.message.as_deref(),
+                    crumb.level,
+                )
+            })
+            .collect();
 
-        assert_eq!(crumb.level, Level::Error);
-        assert_eq!(crumb.category.as_deref(), Some("portforward"));
+        assert!(messages.contains(&(
+            Some("portforward"),
+            Some("portforward.start timeout"),
+            Level::Error
+        )));
+        assert!(messages.contains(&(Some("app"), Some("logs.opened"), Level::Info)));
     }
 
     #[test]
     fn breadcrumbs_are_bounded() {
         for _ in 0..(MAX_BREADCRUMBS * 2) {
-            record_breadcrumb(Operation::StopForward, SpanStatus::Ok, Level::Info);
+            breadcrumb(AppEvent::WindowShown);
         }
 
         assert!(BREADCRUMBS.lock().len() <= MAX_BREADCRUMBS);
+    }
+
+    #[test]
+    fn classify_picks_the_first_matching_rule() {
+        assert_eq!(
+            classify("Startup cancelled for config 3"),
+            FailureKind::Cancelled
+        );
+        assert_eq!(
+            classify("Timed out waiting for proxy listener in pod kftray-proxy-x"),
+            FailureKind::Timeout
+        );
+        assert_eq!(
+            classify(
+                "Failed to start TCP port forwarding for service api: Service 'api' not found: ApiError"
+            ),
+            FailureKind::TargetNotFound
+        );
+        assert_eq!(
+            classify("Failed to bind TCP listener to 127.0.0.1:8080: Address already in use"),
+            FailureKind::PortInUse
+        );
+        assert_eq!(
+            classify("Failed to create configuration from kubeconfig: exec plugin"),
+            FailureKind::Kubeconfig
+        );
+        assert_eq!(classify("something unexpected"), FailureKind::Other);
+    }
+
+    #[test]
+    fn failed_measure_reports_the_kind_not_the_message() {
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), String> =
+                futures::executor::block_on(measure(Operation::StartForward, async {
+                    Err("Service 'secret-svc' not found in namespace prod".to_string())
+                }));
+            assert!(result.is_err());
+        });
+        let json = format!("{envelopes:?}");
+
+        assert!(!json.contains("secret-svc"), "{json}");
+        assert!(!json.contains("prod"), "{json}");
+        let event = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .find_map(|item| match item {
+                EnvelopeItem::Event(event) => Some(event),
+                _ => None,
+            })
+            .unwrap();
+        let exception = &event.exception.values[0];
+        assert_eq!(exception.ty, "portforward.start");
+        assert_eq!(exception.value.as_deref(), Some("target_not_found"));
+        assert_eq!(event.tags["failure_kind"], "target_not_found");
+        let transaction = captured_transaction(&envelopes);
+        assert_eq!(transaction.tags["failure_kind"], "target_not_found");
+    }
+
+    #[test]
+    fn timeline_builds_a_transaction_from_recorded_steps() {
+        let envelopes = envelopes_with_consent(true, || {
+            futures::executor::block_on(async {
+                let mut timeline = Timeline::start(Operation::AppStartup);
+                let _: Result<(), ()> = timeline.phase(Phase::DbInit, async { Ok(()) }).await;
+                let _: Result<(), ()> = timeline.phase(Phase::DbMigrate, async { Err(()) }).await;
+                timeline.finish();
+            });
+        });
+        let transaction = captured_transaction(&envelopes);
+        let spans: Vec<_> = transaction
+            .spans
+            .iter()
+            .map(|span| (span.op.as_deref(), span.status))
+            .collect();
+
+        assert_eq!(transaction.name.as_deref(), Some("app.startup"));
+        assert_eq!(
+            spans,
+            vec![
+                (Some("db.init"), Some(SpanStatus::Ok)),
+                (Some("db.migrate"), Some(SpanStatus::InternalError)),
+            ]
+        );
+        assert_eq!(
+            transaction.contexts.get("trace").and_then(|c| match c {
+                sentry::protocol::Context::Trace(trace) => trace.status,
+                _ => None,
+            }),
+            Some(SpanStatus::InternalError)
+        );
     }
 
     #[test]
@@ -517,8 +948,10 @@ mod tests {
 
         let envelopes = sentry::test::with_captured_envelopes_options(
             || {
-                let result: Result<(), ()> =
-                    futures::executor::block_on(measure(Operation::StopForward, async { Err(()) }));
+                let result: Result<(), String> =
+                    futures::executor::block_on(measure(Operation::StopForward, async {
+                        Err("boom".to_string())
+                    }));
                 assert!(result.is_err());
             },
             options,
@@ -540,7 +973,7 @@ mod tests {
 
         let envelopes = sentry::test::with_captured_envelopes_options(
             || {
-                let result: Result<(), ()> =
+                let result: Result<(), String> =
                     futures::executor::block_on(measure(Operation::StartForward, async {
                         let connect = phase(Phase::Connect);
                         futures::future::ready(()).await;
@@ -597,7 +1030,7 @@ mod tests {
     }
 
     fn emit_one_of_each() {
-        let result: Result<(), ()> =
+        let result: Result<(), String> =
             futures::executor::block_on(measure(Operation::StartForward, async { Ok(()) }));
         assert!(result.is_ok());
         sentry::capture_event(Event {

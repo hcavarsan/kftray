@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import type { LogSettings } from '@/components/LogViewer'
+import { invoke } from '@/lib/tauri'
 
 import type { AppMode, McpStatus, SslSettingsData } from './types'
 

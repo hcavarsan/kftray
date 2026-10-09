@@ -2,7 +2,6 @@ import { useState } from 'react'
 
 import { Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -12,10 +11,12 @@ import {
   DialogCancelButton,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
+import { invoke } from '@/lib/tauri'
 import {
   type Consent,
   performanceQuery,
   setCrashReportsConsent,
+  setPerformanceConsent,
   telemetryQuery,
 } from '@/lib/telemetry'
 
@@ -37,7 +38,7 @@ const CONSENTS: Record<
   performance: {
     label: 'Performance data',
     description: 'Send how long port forwards take to start and stop.',
-    save: enabled => invoke('update_performance_enabled', { enabled }),
+    save: setPerformanceConsent,
   },
 }
 

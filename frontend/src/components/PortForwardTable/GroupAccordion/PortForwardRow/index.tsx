@@ -3,7 +3,6 @@ import { ClipboardIcon, ExternalLinkIcon, Info } from 'lucide-react'
 
 import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 import { open as openShell } from '@tauri-apps/plugin-shell'
 
 import { HttpLogsConfigModal } from '@/components/HttpLogsConfigModal'
@@ -24,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
+import { invoke } from '@/lib/tauri'
 import type {
   Config,
   PendingConfigAction,

@@ -2,7 +2,6 @@ import { type FormEvent, useMemo, useState } from 'react'
 
 import { Stack } from '@chakra-ui/react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +18,7 @@ import {
   useKubeServices,
 } from '@/hooks/useKube'
 import { DEFAULT_KUBECONFIG } from '@/hooks/useKubeconfigPicker'
+import { invoke } from '@/lib/tauri'
 import type { ConfigViewResult, StoredConfig } from '@/types'
 
 import { CommonFields } from './CommonFields'

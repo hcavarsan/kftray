@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 
 import { useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import type { PrivilegeNeed } from '@/components/PrivilegeDialog/types'
+import { invoke } from '@/lib/tauri'
 import type { StoredConfig } from '@/types'
 
 import {

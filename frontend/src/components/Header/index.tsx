@@ -5,13 +5,13 @@ import { GripVertical, Minus, Pin, PinOff, Search, X } from 'lucide-react'
 import { Box, Image, Input } from '@chakra-ui/react'
 import { useMutation } from '@tanstack/react-query'
 import { app } from '@tauri-apps/api'
-import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTauriEvent } from '@/hooks/useTauriEvent'
+import { invoke } from '@/lib/tauri'
 
 const appWindow = getCurrentWebviewWindow()
 

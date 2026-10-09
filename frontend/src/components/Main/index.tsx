@@ -2,11 +2,11 @@ import { lazy, Suspense, useCallback, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Footer } from '@/components/Footer'
 import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
+import { invoke } from '@/lib/tauri'
 import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
 

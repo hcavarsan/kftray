@@ -1,13 +1,13 @@
 import { useCallback } from 'react'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
 import { withNativeDialog } from '@/lib/nativeDialog'
+import { invoke } from '@/lib/tauri'
 
 const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }]
 

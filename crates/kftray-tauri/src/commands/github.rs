@@ -14,6 +14,12 @@ use kftray_commons::utils::github::{
     GitHubConfig,
     GitHubRepository,
 };
+use kftray_telemetry::{
+    Operation,
+    Phase,
+    measure,
+    phase,
+};
 use tauri::{
     Error as TauriError,
     ipc::InvokeError,
@@ -129,7 +135,20 @@ pub async fn import_configs_from_github(
         flush_existing: flush,
     };
 
-    GitHubRepository::import_configs(config, DatabaseMode::File).await
+    measure(Operation::GitSync, async {
+        let guard = phase(Phase::GitFetch);
+        let config_content = GitHubRepository::fetch_config_content(&config)?;
+        drop(guard);
+
+        let _guard = phase(Phase::GitImport);
+        GitHubRepository::process_config_content(
+            &config_content,
+            config.flush_existing,
+            DatabaseMode::File,
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -118,6 +118,11 @@ pub fn set_preference(app: &AppHandle<Wry>, preference: AppMode, center: bool) {
 
 #[cfg(target_os = "linux")]
 pub fn set_tray_available(app: &AppHandle<Wry>, available: bool) {
+    kftray_telemetry::breadcrumb(if available {
+        kftray_telemetry::AppEvent::TrayOnline
+    } else {
+        kftray_telemetry::AppEvent::TrayOffline
+    });
     if !available {
         info!(
             "No system tray available. On GNOME, install the AppIndicator extension to use tray mode"

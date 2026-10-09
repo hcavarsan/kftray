@@ -1,10 +1,9 @@
 import type { RefObject } from 'react'
 
-import { invoke } from '@tauri-apps/api/core'
-
 import { toaster } from '@/components/ui/toaster'
 import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { errorMessage } from '@/lib/errors'
+import { invoke } from '@/lib/tauri'
 import type { Config, StoredConfig } from '@/types'
 
 import type { RunForwardCommand } from './useForwardCommand'

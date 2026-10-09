@@ -3,7 +3,6 @@ import ReactSelect from 'react-select'
 
 import { Dialog, Flex, Spinner, Stack, Text, VStack } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -20,6 +19,7 @@ import {
   DEFAULT_KUBECONFIG,
   useKubeconfigPicker,
 } from '@/hooks/useKubeconfigPicker'
+import { invoke } from '@/lib/tauri'
 import type { StoredConfig, StringOption } from '@/types'
 
 interface AutoImportModalProps {

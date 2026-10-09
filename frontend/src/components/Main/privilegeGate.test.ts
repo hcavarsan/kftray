@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { invoke } from '@tauri-apps/api/core'
-
 import type { PrivilegeNeed } from '@/components/PrivilegeDialog/types'
+import { invoke } from '@/lib/tauri'
 
 import {
   gateStart,
@@ -11,7 +10,7 @@ import {
 } from './privilegeGate'
 import { makeConfig } from './testFixtures'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@/lib/tauri', () => ({ invoke: vi.fn() }))
 
 const hostsNeed: PrivilegeNeed = {
   config_id: 1,

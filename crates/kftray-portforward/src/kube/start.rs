@@ -1372,13 +1372,21 @@ pub async fn start_port_forward_with_mode(
 /// A mixed batch keeps its per-config responses (including the dynamically
 /// assigned local ports of the configs that did start): a batch-level `Err`
 /// would discard those. Only a batch where every config failed is reported
-/// as `Err`.
+/// as `Err`. The failures of a mixed batch are reported to telemetry here,
+/// since the `Ok` hides them from the `measure` wrapping the batch; an
+/// all-failed batch is reported once by that wrapper from the `Err`.
 pub(super) fn finish_start_batch(
     responses: Vec<CustomResponse>,
 ) -> Result<Vec<CustomResponse>, String> {
     if !responses.is_empty() && responses.iter().all(CustomResponse::failed) {
         let errors: Vec<String> = responses.iter().map(|r| r.stderr.clone()).collect();
         return Err(errors.join("; "));
+    }
+    for failed in responses.iter().filter(|r| r.failed()) {
+        kftray_telemetry::report_failure(
+            kftray_telemetry::Operation::StartForward,
+            kftray_telemetry::classify(&failed.stderr),
+        );
     }
     Ok(responses)
 }

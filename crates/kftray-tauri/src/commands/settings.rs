@@ -20,6 +20,10 @@ use kftray_commons::utils::settings::{
     get_disconnect_timeout,
     get_network_monitor,
 };
+use kftray_telemetry::{
+    Operation,
+    measure,
+};
 use log::{
     error,
     info,
@@ -448,7 +452,7 @@ pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
 
     if enabled {
         let port = get_mcp_server_port().await.unwrap_or(3000);
-        if let Err(e) = crate::mcp::start(port).await {
+        if let Err(e) = measure(Operation::McpStart, crate::mcp::start(port)).await {
             error!("Failed to start MCP server: {e}");
             return Err(format!("Failed to start MCP server: {e}"));
         }
@@ -489,7 +493,7 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
         format!("Failed to read MCP server enabled: {e}")
     })?;
 
-    if enabled && let Err(e) = crate::mcp::start(port).await {
+    if enabled && let Err(e) = measure(Operation::McpStart, crate::mcp::start(port)).await {
         error!("Failed to start MCP server: {e}");
         return Err(format!("Failed to start MCP server: {e}"));
     }

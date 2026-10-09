@@ -34,6 +34,11 @@ use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
+use kftray_telemetry::{
+    Operation,
+    Phase,
+    Timeline,
+};
 use tauri::Manager;
 use tokio::runtime::Runtime;
 
@@ -190,15 +195,33 @@ fn main() {
     let app = builder
         .setup(move |app| {
             tauri::async_runtime::block_on(async {
-                if let Err(e) = kftray_commons::utils::db::init().await {
+                let mut startup = Timeline::start(Operation::AppStartup);
+
+                if let Err(e) = startup
+                    .phase(Phase::DbInit, kftray_commons::utils::db::init())
+                    .await
+                {
                     error!("Failed to initialize database: {e}");
                 }
 
-                if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
+                if let Err(e) = startup
+                    .phase(
+                        Phase::DbMigrate,
+                        kftray_commons::utils::migration::migrate_configs(None),
+                    )
+                    .await
+                {
                     error!("Database migration failed during setup: {e}");
                 }
 
-                kftray_telemetry::load_setting().await;
+                let _ = startup
+                    .phase(Phase::SettingsLoad, async {
+                        kftray_telemetry::load_setting().await;
+                        Ok::<(), String>(())
+                    })
+                    .await;
+
+                startup.finish();
             });
 
             let app_handle = app.app_handle().clone();

@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
+import { invoke } from '@/lib/tauri'
 
 import type {
   CleanupMode,

@@ -1,5 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+
+import { invoke } from './tauri'
 
 export async function withNativeDialog<T>(run: () => Promise<T>): Promise<T> {
   await invoke('open_save_dialog')

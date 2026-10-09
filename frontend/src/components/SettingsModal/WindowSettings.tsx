@@ -2,7 +2,6 @@ import { Check, ChevronDown, LocateFixed } from 'lucide-react'
 
 import { Box, Flex } from '@chakra-ui/react'
 import { useMutation } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +10,7 @@ import {
   MenuRoot,
   MenuTrigger,
 } from '@/components/ui/menu'
+import { invoke } from '@/lib/tauri'
 
 import {
   compactActionButtonProps,

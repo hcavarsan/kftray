@@ -4,6 +4,7 @@ use std::time::{
 };
 
 use kftray_commons::utils::settings::set_last_update_check;
+use kftray_telemetry::AppEvent;
 use log::{
     error,
     info,
@@ -55,6 +56,7 @@ fn relaunch(app: &AppHandle) -> ! {
 
 #[command]
 pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
+    kftray_telemetry::breadcrumb(AppEvent::UpdateCheck);
     info!("Checking for application updates...");
 
     let updater = match app.updater() {
@@ -90,6 +92,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
 
             if answer {
                 info!("User chose to install update");
+                kftray_telemetry::breadcrumb(AppEvent::UpdateInstall);
 
                 match update
                     .download_and_install(
@@ -211,6 +214,7 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
                 update.version
             );
 
+            kftray_telemetry::breadcrumb(AppEvent::UpdateInstall);
             match update
                 .download_and_install(
                     |_chunk_size, _total_size| {},

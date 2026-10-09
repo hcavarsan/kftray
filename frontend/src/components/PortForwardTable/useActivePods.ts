@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { useQueries, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { useTauriEvent } from '@/hooks/useTauriEvent'
+import { invoke } from '@/lib/tauri'
 import type { Config, ResolvedGroup } from '@/types'
 
 interface ActivePodChangedPayload {

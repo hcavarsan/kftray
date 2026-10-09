@@ -1,10 +1,9 @@
 import type { RefObject } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { invoke } from '@tauri-apps/api/core'
-
 import { toaster } from '@/components/ui/toaster'
 import { fetchConfigsWithState } from '@/hooks/useConfigs'
+import { invoke } from '@/lib/tauri'
 import type { Config, StoredConfig } from '@/types'
 
 import {
@@ -15,7 +14,7 @@ import { createReservationRegistry } from './reservationRegistry'
 import { makeConfig } from './testFixtures'
 import type { RunForwardCommand } from './useForwardCommand'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@/lib/tauri', () => ({ invoke: vi.fn() }))
 vi.mock('@/hooks/useConfigs', () => ({ fetchConfigsWithState: vi.fn() }))
 vi.mock('@/components/ui/toaster', () => ({
   toaster: {

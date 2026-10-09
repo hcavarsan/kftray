@@ -1,6 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-
 import type { PrivilegeNeed } from '@/components/PrivilegeDialog/types'
+import { invoke } from '@/lib/tauri'
 import type { StoredConfig } from '@/types'
 
 export type PrivilegeDecision = 'install' | 'continue' | 'cancel'

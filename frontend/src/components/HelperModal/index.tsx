@@ -3,7 +3,6 @@ import { RefreshCw } from 'lucide-react'
 
 import { Box, Flex, Spinner, Stack, Text } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -15,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { errorMessage } from '@/lib/errors'
+import { invoke } from '@/lib/tauri'
 
 import { FeatureList, type HelperPhase, StatusHeader } from './HelperSections'
 import type { HelperStatus } from './types'

@@ -3,7 +3,6 @@ import { X } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import type {
@@ -28,6 +27,7 @@ import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { errorMessage } from '@/lib/errors'
+import { invoke } from '@/lib/tauri'
 
 interface LogData {
   entries: LogEntry[]

@@ -9,6 +9,7 @@ use std::time::Duration;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::WindowPosition;
 use kftray_commons::utils::config_dir::get_window_state_path;
+use kftray_telemetry::AppEvent;
 use log::{
     info,
     warn,
@@ -166,6 +167,7 @@ fn toggle_window_visibility_with_position(window: &WebviewWindow<Wry>, from_tray
     match toggle_action(tray_mode::current(window.app_handle()), snapshot) {
         ToggleAction::Show => show_main_window_with_mode(window, from_tray),
         ToggleAction::Hide => {
+            kftray_telemetry::breadcrumb(AppEvent::WindowHidden);
             if let Err(e) = window.hide() {
                 warn!("Failed to hide window: {e}");
             }
@@ -194,6 +196,7 @@ pub fn hide_main_window(window: &WebviewWindow<Wry>) {
 }
 
 fn show_main_window_with_mode(window: &WebviewWindow<Wry>, from_tray: bool) {
+    kftray_telemetry::breadcrumb(AppEvent::WindowShown);
     set_position_before_show_with_mode(window.clone(), from_tray);
     raise_main_window(window);
 }

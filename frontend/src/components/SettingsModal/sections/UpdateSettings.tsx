@@ -4,11 +4,11 @@ import { Download, RefreshCw } from 'lucide-react'
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { app } from '@tauri-apps/api'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
+import { invoke } from '@/lib/tauri'
 
 import { settingsQuery } from '../queries'
 import {

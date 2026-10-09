@@ -3,7 +3,6 @@ import { Eraser, FileText } from 'lucide-react'
 
 import { Box, Dialog, Flex, Grid, Stack, Text } from '@chakra-ui/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -15,6 +14,7 @@ import {
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
+import { invoke } from '@/lib/tauri'
 
 import { NumberField } from './NumberField'
 import { SwitchCard } from './SwitchCard'

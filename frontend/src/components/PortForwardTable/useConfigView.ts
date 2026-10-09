@@ -6,8 +6,8 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
+import { invoke } from '@/lib/tauri'
 import type {
   Config,
   ConfigView,

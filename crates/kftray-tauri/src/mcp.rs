@@ -10,6 +10,10 @@ use std::net::{
 };
 use std::sync::Arc;
 
+use kftray_telemetry::{
+    Operation,
+    measure,
+};
 use lazy_static::lazy_static;
 use log::{
     error,
@@ -108,7 +112,7 @@ pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send
     if enabled {
         let port = get_mcp_server_port().await.unwrap_or(3000);
         info!("MCP server enabled in settings, starting on port {}", port);
-        start(port).await?;
+        measure(Operation::McpStart, start(port)).await?;
     } else {
         info!("MCP server disabled in settings");
     }

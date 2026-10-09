@@ -532,6 +532,7 @@ pub fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
+    kftray_telemetry::breadcrumb(kftray_telemetry::AppEvent::LogViewerOpened);
 
     let main_window = app.get_webview_window("main");
     let monitor = main_window

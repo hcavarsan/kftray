@@ -9,6 +9,10 @@ use kftray_commons::config_state::{
 };
 use kftray_commons::config_state_model::ConfigState;
 use kftray_commons::models::config_model::Config;
+use kftray_telemetry::{
+    Operation,
+    measure,
+};
 use log::{
     debug,
     error,
@@ -224,7 +228,7 @@ async fn start_port_forwarding(
         .clone()
         .unwrap_or_else(|| format!("ID:{config_id}"));
 
-    let result = port_ops.dispatch_start(&config).await;
+    let result = measure(Operation::AutoStart, port_ops.dispatch_start(&config)).await;
     match result {
         Ok(_) => {
             let config_state = ConfigState::new(config_id, true);

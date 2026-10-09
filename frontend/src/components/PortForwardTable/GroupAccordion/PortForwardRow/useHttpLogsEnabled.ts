@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
+
+import { invoke } from '@/lib/tauri'
 
 export const httpLogsEnabledQueryKey = (configId: number) =>
   ['http-logs-enabled', configId] as const

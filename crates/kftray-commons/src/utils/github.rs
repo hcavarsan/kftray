@@ -236,7 +236,7 @@ impl GitHubRepository {
         Ok(canonical_file)
     }
 
-    async fn process_config_content(
+    pub async fn process_config_content(
         config_content: &str, flush_existing: bool, mode: DatabaseMode,
     ) -> GitHubResult<()> {
         if flush_existing && mode == DatabaseMode::File {

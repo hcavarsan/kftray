@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
+
+import { invoke } from '@/lib/tauri'
 
 import type { LogFileInfo } from './types'
 

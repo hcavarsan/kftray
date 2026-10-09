@@ -2,7 +2,6 @@ import { useState } from 'react'
 
 import { Box, Flex, Stack, Text, Wrap, WrapItem } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { invoke } from '@tauri-apps/api/core'
 
 import { ShortcutCapture } from '@/components/ShortcutCapture'
 import { Button } from '@/components/ui/button'
@@ -15,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, shortcutsQuery } from '@/hooks/useGlobalShortcuts'
+import { invoke } from '@/lib/tauri'
 import type { Config } from '@/types'
 
 import {
