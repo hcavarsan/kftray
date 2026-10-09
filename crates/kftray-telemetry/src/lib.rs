@@ -457,13 +457,16 @@ pub async fn measure<T, E: Display>(
     operation: Operation, future: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
     // A hub of its own so the transaction can be the scope's span for the
-    // whole future even as tokio moves it between worker threads.
+    // whole future even as tokio moves it between worker threads. Kept here
+    // too: `bind_hub` only switches hubs while the future is polled, and the
+    // failure event must be captured on this hub, while the transaction is
+    // still its span, to carry the same trace id.
     let hub = Arc::new(Hub::new_from_top(Hub::current()));
     let transaction =
         hub.start_transaction(TransactionContext::new(operation.name(), operation.name()));
     hub.configure_scope(|scope| scope.set_span(Some(transaction.clone().into())));
 
-    let result = future.bind_hub(hub).await;
+    let result = future.bind_hub(Arc::clone(&hub)).await;
 
     match &result {
         Ok(_) => {
@@ -479,18 +482,22 @@ pub async fn measure<T, E: Display>(
             let kind = classify(&error.to_string());
             transaction.set_status(SpanStatus::InternalError);
             transaction.set_tag("failure_kind", kind.name());
+            report_failure_on(&hub, operation, kind);
             transaction.finish();
-            report_failure(operation, kind);
         }
     }
     result
 }
 
 /// Reports a failed operation as an error event titled
-/// `<operation>: <kind>` and keeps it as a breadcrumb. Used by `measure`
-/// for the operation's own result, and by callers that see failures inside
-/// an operation that still succeeded as a whole (a mixed start batch).
+/// `<operation>: <kind>` and keeps it as a breadcrumb. For callers that see
+/// failures inside an operation that still succeeded as a whole (a mixed
+/// start batch); `measure` reports its own result on the operation's hub.
 pub fn report_failure(operation: Operation, kind: FailureKind) {
+    report_failure_on(&Hub::current(), operation, kind);
+}
+
+fn report_failure_on(hub: &Hub, operation: Operation, kind: FailureKind) {
     push_breadcrumb(
         "portforward",
         format!("{} {}", operation.name(), kind.name()),
@@ -515,7 +522,7 @@ pub fn report_failure(operation: Operation, kind: FailureKind) {
         .tags
         .insert("operation".into(), operation.name().into());
     event.tags.insert("failure_kind".into(), kind.name().into());
-    sentry::capture_event(event);
+    hub.capture_event(event);
 }
 
 /// Records the steps of an operation whose timing matters before the
@@ -864,6 +871,19 @@ mod tests {
         assert_eq!(event.tags["failure_kind"], "target_not_found");
         let transaction = captured_transaction(&envelopes);
         assert_eq!(transaction.tags["failure_kind"], "target_not_found");
+        // Linked to the measured transaction, so GlitchTip shows them together.
+        let trace_id_of =
+            |contexts: &sentry::protocol::Map<String, sentry::protocol::Context>| match contexts
+                .get("trace")
+            {
+                Some(sentry::protocol::Context::Trace(trace)) => Some(trace.trace_id),
+                _ => None,
+            };
+        assert!(trace_id_of(&event.contexts).is_some());
+        assert_eq!(
+            trace_id_of(&event.contexts),
+            trace_id_of(&transaction.contexts)
+        );
     }
 
     #[test]
