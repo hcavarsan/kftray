@@ -19,8 +19,15 @@ use tokio::{
         TcpListener,
         TcpStream,
         UdpSocket,
+        tcp::{
+            ReadHalf,
+            WriteHalf,
+        },
     },
-    sync::Notify,
+    sync::{
+        Mutex,
+        Notify,
+    },
 };
 
 use crate::proxy::{
@@ -29,7 +36,6 @@ use crate::proxy::{
     traits::ProxyHandler,
 };
 
-const UDP_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_UDP_PAYLOAD_SIZE: usize = 65507;
 
 #[derive(Clone)]
@@ -57,10 +63,23 @@ impl UdpProxy {
         &self, mut tcp_stream: TcpStream, config: &ProxyConfig,
     ) -> Result<(), ProxyError> {
         let udp_socket = self.create_udp_socket(config).await?;
+        let (mut reader, writer) = tcp_stream.split();
+        let writer = Mutex::new(writer);
+
+        tokio::select! {
+            result = Self::relay_to_target(&mut reader, &writer, &udp_socket) => result,
+            result = Self::relay_to_client(&udp_socket, &writer) => result,
+        }
+    }
+
+    async fn relay_to_target(
+        reader: &mut ReadHalf<'_>, writer: &Mutex<WriteHalf<'_>>, udp_socket: &UdpSocket,
+    ) -> Result<(), ProxyError> {
         let mut size_buf = [0u8; 4];
+        let mut buffer = vec![0u8; MAX_UDP_PAYLOAD_SIZE];
 
         loop {
-            match tcp_stream.read_exact(&mut size_buf).await {
+            match reader.read_exact(&mut size_buf).await {
                 Ok(_) => {
                     let size = u32::from_be_bytes(size_buf);
                     debug!("Read size: {size}");
@@ -69,24 +88,22 @@ impl UdpProxy {
                         let err = ProxyError::InvalidData(format!(
                             "UDP packet size {size} exceeds maximum allowed {MAX_UDP_PAYLOAD_SIZE}"
                         ));
-                        tcp_stream.write_all(&0u32.to_be_bytes()).await?;
-                        tcp_stream.flush().await?;
+                        let mut writer = writer.lock().await;
+                        writer.write_all(&0u32.to_be_bytes()).await?;
+                        writer.flush().await?;
                         return Err(err);
                     }
 
-                    let mut buffer = vec![0u8; size as usize];
-                    match tcp_stream.read_exact(&mut buffer).await {
+                    let payload = &mut buffer[..size as usize];
+                    match reader.read_exact(payload).await {
                         Ok(_) => {
                             debug!("Received {size} bytes from TCP");
-                            udp_socket.send(&buffer).await?;
+                            udp_socket.send(payload).await?;
                             debug!("Sent {size} bytes to UDP");
-
-                            self.handle_udp_response(&udp_socket, &mut tcp_stream)
-                                .await?;
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                             debug!("TCP connection closed while reading payload");
-                            break;
+                            return Ok(());
                         }
                         Err(e) => {
                             error!("Error reading TCP payload: {e}");
@@ -96,7 +113,7 @@ impl UdpProxy {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     debug!("TCP connection closed");
-                    break;
+                    return Ok(());
                 }
                 Err(e) => {
                     error!("TCP read error: {e}");
@@ -104,34 +121,25 @@ impl UdpProxy {
                 }
             }
         }
-
-        Ok(())
     }
 
-    async fn handle_udp_response(
-        &self, udp_socket: &UdpSocket, tcp_stream: &mut TcpStream,
+    async fn relay_to_client(
+        udp_socket: &UdpSocket, writer: &Mutex<WriteHalf<'_>>,
     ) -> Result<(), ProxyError> {
         let mut response = vec![0u8; MAX_UDP_PAYLOAD_SIZE];
 
-        match tokio::time::timeout(UDP_TIMEOUT, udp_socket.recv(&mut response)).await {
-            Ok(Ok(n)) => {
-                debug!("Received {n} bytes from UDP");
-                tcp_stream.write_all(&(n as u32).to_be_bytes()).await?;
-                tcp_stream.write_all(&response[..n]).await?;
-                tcp_stream.flush().await?;
-                debug!("Sent response back to TCP client");
-                Ok(())
-            }
-            Ok(Err(e)) => {
+        loop {
+            let n = udp_socket.recv(&mut response).await.map_err(|e| {
                 error!("UDP receive error: {e}");
-                Err(ProxyError::Io(e))
-            }
-            Err(_) => {
-                debug!("UDP response timed out, sending zero-length response");
-                tcp_stream.write_all(&0u32.to_be_bytes()).await?;
-                tcp_stream.flush().await?;
-                Ok(())
-            }
+                ProxyError::Io(e)
+            })?;
+            debug!("Received {n} bytes from UDP");
+
+            let mut writer = writer.lock().await;
+            writer.write_all(&(n as u32).to_be_bytes()).await?;
+            writer.write_all(&response[..n]).await?;
+            writer.flush().await?;
+            debug!("Sent response back to TCP client");
         }
     }
 }
@@ -214,6 +222,11 @@ mod tests {
 
     async fn setup_proxy() -> (TestServer, Arc<Notify>, SocketAddr) {
         let echo_server = test_utils::setup_test_udp_echo_server().await;
+        let (shutdown, addr) = start_proxy(echo_server.addr()).await;
+        (echo_server, shutdown, addr)
+    }
+
+    async fn start_proxy(target: SocketAddr) -> (Arc<Notify>, SocketAddr) {
         let proxy = UdpProxy::new();
         let shutdown = Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
@@ -223,8 +236,8 @@ mod tests {
         drop(listener);
 
         let config = ProxyConfig::builder()
-            .target_host(echo_server.addr().ip().to_string())
-            .target_port(echo_server.addr().port())
+            .target_host(target.ip().to_string())
+            .target_port(target.port())
             .proxy_port(addr.port())
             .proxy_type(ProxyType::Udp)
             .build()
@@ -239,7 +252,24 @@ mod tests {
             "Proxy failed to start"
         );
 
-        (echo_server, shutdown_clone, addr)
+        (shutdown_clone, addr)
+    }
+
+    async fn write_frame(stream: &mut TcpStream, data: &[u8]) {
+        stream
+            .write_all(&(data.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        stream.write_all(data).await.unwrap();
+        stream.flush().await.unwrap();
+    }
+
+    async fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
+        let mut size_buf = [0u8; 4];
+        stream.read_exact(&mut size_buf).await.unwrap();
+        let mut frame = vec![0u8; u32::from_be_bytes(size_buf) as usize];
+        stream.read_exact(&mut frame).await.unwrap();
+        frame
     }
 
     async fn send_udp_packet(stream: &mut TcpStream, data: &[u8]) -> Result<Vec<u8>, ProxyError> {
@@ -349,6 +379,51 @@ mod tests {
         // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn datagrams_without_replies_reach_the_target_at_once() {
+        let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (shutdown, proxy_addr) = start_proxy(target.local_addr().unwrap()).await;
+        let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+
+        for data in [b"one", b"two", b"thr"] {
+            write_frame(&mut stream, data).await;
+        }
+
+        let mut buf = [0u8; 16];
+        for expected in [b"one", b"two", b"thr"] {
+            let n = tokio::time::timeout(Duration::from_secs(1), target.recv(&mut buf))
+                .await
+                .expect("the relay held a datagram back while waiting for a reply")
+                .unwrap();
+            assert_eq!(&buf[..n], expected);
+        }
+
+        shutdown.notify_one();
+    }
+
+    #[tokio::test]
+    async fn every_reply_reaches_the_client_without_a_new_datagram() {
+        let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (shutdown, proxy_addr) = start_proxy(target.local_addr().unwrap()).await;
+        let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+
+        write_frame(&mut stream, b"subscribe").await;
+        let mut buf = [0u8; 16];
+        let (_, relay) = target.recv_from(&mut buf).await.unwrap();
+        for reply in [b"first", b"again"] {
+            target.send_to(reply, relay).await.unwrap();
+        }
+
+        for expected in [b"first", b"again"] {
+            let frame = tokio::time::timeout(Duration::from_secs(1), read_frame(&mut stream))
+                .await
+                .expect("the relay held a reply back until the client sent again");
+            assert_eq!(frame, expected);
+        }
+
+        shutdown.notify_one();
     }
 
     #[test]
