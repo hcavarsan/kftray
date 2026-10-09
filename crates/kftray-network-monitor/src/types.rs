@@ -58,6 +58,7 @@ impl Default for MonitorConfig {
 
 pub struct TaskState {
     pub reconnect_in_progress: bool,
+    pub reconnect_pending: bool,
     pub health_check_in_progress: bool,
     pub last_reconnect: Option<Instant>,
     pub last_health_check: Option<Instant>,
@@ -71,6 +72,7 @@ impl Default for TaskState {
     fn default() -> Self {
         Self {
             reconnect_in_progress: false,
+            reconnect_pending: false,
             health_check_in_progress: false,
             last_reconnect: None,
             last_health_check: None,
@@ -98,6 +100,7 @@ impl TaskState {
                 self.reconnect_attempts = 0;
             } else {
                 self.network_stable_since = None;
+                self.reconnect_pending = false;
             }
         }
     }
@@ -108,6 +111,7 @@ impl TaskState {
 
     pub fn start_reconnect(&mut self) {
         self.reconnect_in_progress = true;
+        self.reconnect_pending = false;
         self.last_reconnect = Some(Instant::now());
         self.reconnect_attempts += 1;
     }
