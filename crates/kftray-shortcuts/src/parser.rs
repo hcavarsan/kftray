@@ -224,7 +224,7 @@ impl ShortcutParser {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn key_names(&self) -> impl Iterator<Item = &str> {
         self.key_mappings.keys().map(String::as_str)
     }
