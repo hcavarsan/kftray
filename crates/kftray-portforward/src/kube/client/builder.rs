@@ -279,7 +279,7 @@ fn env_debug_info() -> String {
     let path = env::var("PATH")
         .map(|p| {
             if p.len() > 80 {
-                format!("{}...", &p[..80])
+                format!("{}...", &p[..p.floor_char_boundary(80)])
             } else {
                 p
             }
@@ -370,5 +370,32 @@ mod tests {
     fn merge_paths_prefers_shell_entries_and_appends_new_process_entries() {
         let merged = merge_paths("/opt/homebrew/bin:/usr/bin", "/usr/bin:/usr/local/sbin");
         assert_eq!(merged, "/opt/homebrew/bin:/usr/bin:/usr/local/sbin");
+    }
+
+    #[tokio::test]
+    async fn unicode_path_does_not_panic_on_client_error() {
+        init_path().await;
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = dir.path().join("config");
+        std::fs::write(
+            &kubeconfig,
+            "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n",
+        )
+        .unwrap();
+        let path = format!("{}x/home/joão/.local/bin:/usr/bin", "/x".repeat(35));
+        assert!(!path.is_char_boundary(80));
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set("PATH", &path);
+
+        let Err(error) = create_client_with_specific_context(
+            Some(kubeconfig.to_string_lossy().into_owned()),
+            "missing",
+        )
+        .await
+        else {
+            panic!("a missing context must fail");
+        };
+
+        let expected = format!("PATH={}... |", &path[..79]);
+        assert!(error.to_string().contains(&expected), "{error}");
     }
 }
