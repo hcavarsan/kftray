@@ -193,15 +193,26 @@ impl ShortcutManager {
             existing.shortcut_key != shortcut.shortcut_key || existing.enabled != shortcut.enabled;
 
         if rebind {
-            if self.registered_shortcuts.contains_key(&shortcut_id) {
+            let was_registered = self.registered_shortcuts.contains_key(&shortcut_id);
+            if was_registered {
                 self.platform_manager
                     .unregister_shortcut(shortcut_id)
                     .await?;
                 self.registered_shortcuts.remove(&shortcut_id);
             }
 
-            if shortcut.enabled {
-                self.register_platform_shortcut(&shortcut).await?;
+            if shortcut.enabled
+                && let Err(e) = self.register_platform_shortcut(&shortcut).await
+            {
+                if was_registered
+                    && let Err(restore_err) = self.register_platform_shortcut(&existing).await
+                {
+                    error!(
+                        "Failed to restore shortcut ID {} after a failed update: {}",
+                        shortcut_id, restore_err
+                    );
+                }
+                return Err(e);
             }
         }
 
@@ -575,5 +586,49 @@ mod tests {
             ]
         );
         assert_eq!(manager.registered_shortcuts.get(&id), Some(&shortcut));
+    }
+
+    struct RejectKey(&'static str);
+
+    #[async_trait]
+    impl PlatformManager for RejectKey {
+        async fn register_shortcut(&mut self, shortcut: &ShortcutDefinition) -> ShortcutResult<()> {
+            if shortcut.shortcut_key == self.0 {
+                return Err(ShortcutError::PlatformError("Unknown key: pause".into()));
+            }
+            Ok(())
+        }
+
+        async fn unregister_shortcut(&mut self, _: i64) -> ShortcutResult<()> {
+            Ok(())
+        }
+
+        async fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn platform_name(&self) -> &str {
+            "reject"
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_rebind_keeps_old_shortcut() {
+        let executed = Executed::default();
+        let mut manager = test_manager(&executed).await;
+        manager.platform_manager = Box::new(RejectKey("Ctrl+Shift+Pause"));
+
+        let mut shortcut =
+            ShortcutDefinition::new("s".into(), "Ctrl+Shift+F1".into(), "start".into());
+        let id = manager.create_shortcut(shortcut.clone()).await.unwrap();
+        shortcut.id = Some(id);
+        let old = shortcut.clone();
+
+        shortcut.shortcut_key = "Ctrl+Shift+Pause".into();
+        assert!(manager.update_shortcut(shortcut).await.is_err());
+
+        assert_eq!(manager.registered_shortcuts.get(&id), Some(&old));
+        press(&manager, id).await;
+        assert_eq!(executed.lock().await.len(), 1);
     }
 }
