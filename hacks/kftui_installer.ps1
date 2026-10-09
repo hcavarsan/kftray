@@ -1,7 +1,6 @@
 # PowerShell script to install kftui on Windows
 
 $INSTALL_DIR = "$HOME\.local\bin"
-$PROFILE_FILES = @("$HOME\.profile", "$HOME\.bashrc", "$HOME\.zshrc", "$HOME\.config\fish\config.fish")
 
 function Print-Message {
     param (
@@ -39,14 +38,14 @@ function Install-Kftui {
     Print-Message -Color "green" -Message "kftui installed successfully"
 
     # Add $INSTALL_DIR to PATH if it's not already there
-    if (-not ($env:PATH -contains $INSTALL_DIR)) {
-        foreach ($profile in $PROFILE_FILES) {
-            if (Test-Path $profile) {
-                Add-Content -Path $profile -Value "export PATH=$INSTALL_DIR:`$PATH"
-            }
-        }
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $userPathEntries = @($userPath -split ";" | Where-Object { $_ })
+    if ($userPathEntries -notcontains $INSTALL_DIR) {
+        [Environment]::SetEnvironmentVariable("Path", (($userPathEntries + $INSTALL_DIR) -join ";"), "User")
+        Print-Message -Color "yellow" -Message "Added $INSTALL_DIR to your user PATH. Restart your terminal to use kftui."
+    }
+    if (($env:PATH -split ";") -notcontains $INSTALL_DIR) {
         $env:PATH = "$INSTALL_DIR;$env:PATH"
-        Print-Message -Color "yellow" -Message "Added $INSTALL_DIR to PATH. Please restart your terminal or run 'source ~/.profile' to update your PATH."
     }
 
     & "$INSTALL_DIR\kftui.exe" --version
