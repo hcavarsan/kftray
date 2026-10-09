@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use log::{
@@ -65,20 +66,45 @@ fn set_default_env(key: &str, value: &str) {
     }
 }
 
+/// Cap for `logger-errors.log`; the file is removed at startup past this size.
+const MAX_LOGGER_ERROR_FILE_BYTES: u64 = 1_000_000;
+
 fn init_file_logger() -> anyhow::Result<()> {
     let log_dir = commands::logs::log_dir().map_err(|e| anyhow::anyhow!(e))?;
     let basename = format!(
         "kftray_{}",
         jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
     );
+    // flexi_logger's own errors (file write/rotation failures) go here instead
+    // of stderr, which is often broken when launched from a desktop entry. The
+    // name deliberately doesn't match `kftray_*.log` so the log viewer and
+    // retention cleanup ignore it. flexi_logger only ever appends to it, so
+    // reset it at startup once it gets large; errors should be rare anyway.
+    let error_log = log_dir.join("logger-errors.log");
+    if std::fs::metadata(&error_log).is_ok_and(|m| m.len() > MAX_LOGGER_ERROR_FILE_BYTES) {
+        let _ = std::fs::remove_file(&error_log);
+    }
+
+    // Only mirror to stdout when someone is actually watching. A detached or
+    // dead stdout (desktop launcher, parent exited) would otherwise fail on
+    // every line and fill the error file.
+    let console = if std::io::stdout().is_terminal() {
+        flexi_logger::Duplicate::Info
+    } else {
+        flexi_logger::Duplicate::None
+    };
 
     flexi_logger::Logger::try_with_str("info, zbus=warn")?
         .log_to_file(
             flexi_logger::FileSpec::default()
-                .directory(log_dir)
+                .directory(&log_dir)
                 .basename(basename),
         )
-        .duplicate_to_stdout(flexi_logger::Duplicate::Info)
+        .duplicate_to_stdout(console)
+        .error_channel(flexi_logger::ErrorChannel::File(error_log))
+        // Even the error file can fail (disk full, read-only dir); never abort
+        // the app over a logging problem.
+        .panic_if_error_channel_is_broken(false)
         .rotate(
             flexi_logger::Criterion::Size(5_000_000),
             flexi_logger::Naming::Numbers,
