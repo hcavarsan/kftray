@@ -11,6 +11,7 @@ license = "GPL-3.0"
 [dependencies]
 kftray-commons = { workspace = true }
 log = { workspace = true }
+parking_lot = { workspace = true }
 sentry = { workspace = true }
 
 [dev-dependencies]

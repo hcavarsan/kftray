@@ -31,6 +31,7 @@ keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
+kftray-telemetry = { workspace = true }
 kube = { workspace = true }
 kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }

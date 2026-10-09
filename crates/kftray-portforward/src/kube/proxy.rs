@@ -39,6 +39,7 @@ use kftray_commons::{
         },
     },
 };
+use kftray_telemetry::Phase;
 use kube::Client;
 use kube::api::{
     Api,
@@ -590,7 +591,10 @@ async fn process_deployment_proxy(
     // flight leaves an unknown outcome, and a cleanup pass that lists before
     // the object is persisted would forget it. Bounded instead, so a stalled
     // request still releases the lifecycle lock.
-    match create_proxy_resource(&deployments, &deployment).await {
+    let phase = kftray_telemetry::phase(Phase::RelayDeploy);
+    let outcome = create_proxy_resource(&deployments, &deployment).await;
+    drop(phase);
+    match outcome {
         CreateOutcome::Settled(Ok(())) => guard.confirm(),
         // A definitive rejection means nothing was created, so there is nothing
         // for a later cleanup pass to find.
@@ -608,6 +612,7 @@ async fn process_deployment_proxy(
             "app={hashed_name},{}",
             proxy_owner_selector(config_id_str, options.mode).await?
         );
+        let phase = kftray_telemetry::phase(Phase::RelayWait);
         wait_for_relay_pod(
             &pods,
             &label_selector,
@@ -616,6 +621,7 @@ async fn process_deployment_proxy(
             options.cancellation,
         )
         .await?;
+        drop(phase);
         config.service = Some(hashed_name.to_string());
         let response = super::start::start_config_cancellable(
             config.clone(),
@@ -787,7 +793,10 @@ async fn process_pod_proxy(
         options.mode,
     )
     .await?;
-    match create_proxy_resource(&pods, &pod).await {
+    let phase = kftray_telemetry::phase(Phase::RelayDeploy);
+    let outcome = create_proxy_resource(&pods, &pod).await;
+    drop(phase);
+    match outcome {
         CreateOutcome::Settled(Ok(())) => guard.confirm(),
         CreateOutcome::Settled(Err(error)) => {
             guard.disarm().await;
@@ -796,6 +805,7 @@ async fn process_pod_proxy(
         CreateOutcome::Unknown(error) => return Err(error),
     }
     let result: Result<CustomResponse, String> = async {
+        let phase = kftray_telemetry::phase(Phase::RelayWait);
         wait_for_relay_startup(
             &pods,
             hashed_name,
@@ -804,6 +814,7 @@ async fn process_pod_proxy(
             options.cancellation,
         )
         .await?;
+        drop(phase);
         config.service = Some(hashed_name.to_string());
         let response = super::start::start_config_cancellable(
             config.clone(),

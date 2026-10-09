@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use kftray_commons::models::config_model::Config;
+use kftray_telemetry::Phase;
 use lazy_static::lazy_static;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -342,6 +343,7 @@ impl PortForward {
 
         let namespace = self.target.namespace.name_any();
 
+        let phase = kftray_telemetry::phase(Phase::Connect);
         let direct_forwarder = PortForwarder::new(
             &namespace,
             self.target.clone(),
@@ -351,6 +353,7 @@ impl PortForward {
             self.expected_destination.as_deref(),
         )
         .await?;
+        drop(phase);
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -362,6 +365,7 @@ impl PortForward {
 
         let forwarder_clone = direct_forwarder.clone();
         let cancellation_token = CancellationToken::new();
+        let phase = kftray_telemetry::phase(Phase::Listen);
         let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
@@ -371,8 +375,12 @@ impl PortForward {
             )
             .await
         {
-            Ok(result) => result,
+            Ok(result) => {
+                drop(phase);
+                result
+            }
             Err(e) => {
+                drop(phase);
                 forwarder_clone.shutdown().await;
                 return Err(e);
             }
@@ -396,6 +404,7 @@ impl PortForward {
 
         let namespace = self.target.namespace.name_any();
 
+        let phase = kftray_telemetry::phase(Phase::Connect);
         let direct_forwarder = PortForwarder::new(
             &namespace,
             self.target.clone(),
@@ -405,6 +414,7 @@ impl PortForward {
             self.expected_destination.as_deref(),
         )
         .await?;
+        drop(phase);
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -416,6 +426,7 @@ impl PortForward {
 
         let forwarder_clone = direct_forwarder.clone();
         let cancellation_token = CancellationToken::new();
+        let phase = kftray_telemetry::phase(Phase::Listen);
         let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
@@ -425,8 +436,12 @@ impl PortForward {
             )
             .await
         {
-            Ok(result) => result,
+            Ok(result) => {
+                drop(phase);
+                result
+            }
             Err(e) => {
+                drop(phase);
                 forwarder_clone.shutdown().await;
                 return Err(e);
             }

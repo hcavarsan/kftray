@@ -210,7 +210,9 @@ incremental = true
 
 [profile.release]
 opt-level = "s"
-strip = true
+# Symbol table kept (debug info dropped): crash reports resolve function names
+# in-process, GlitchTip has no native symbolication. Costs a few percent of size.
+strip = "debuginfo"
 lto = true
 panic = "abort"
 codegen-units = 1

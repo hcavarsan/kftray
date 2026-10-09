@@ -20,6 +20,7 @@ use kftray_commons::{
         timeout_manager::start_timeout_for_forward,
     },
 };
+use kftray_telemetry::Phase;
 use log::{
     debug,
     error,
@@ -864,12 +865,14 @@ pub(super) async fn start_config_cancellable(
         // and an address it assigns afterwards would never be recorded or
         // released. Waiting for the outcome keeps that impossible while still
         // releasing the lifecycle lock in bounded time.
-        match tokio::time::timeout(
+        let phase = kftray_telemetry::phase(Phase::AllocateAddress);
+        let allocation = tokio::time::timeout(
             ALLOCATION_TIMEOUT,
             allocate_local_address_owned(&mut config, mode),
         )
-        .await
-        {
+        .await;
+        drop(phase);
+        match allocation {
             Ok(allocated) => {
                 let (_, claim) = allocated?;
                 allocated_claim = claim;
@@ -990,6 +993,7 @@ pub(super) async fn start_config_cancellable(
             ip: ip_addr,
             hostname: config.alias.clone().unwrap_or_default(),
         };
+        let phase = kftray_telemetry::phase(Phase::HostsEntry);
         let written = add_host_entry_owned(
             config.id.unwrap_or_default(),
             &config,
@@ -999,6 +1003,7 @@ pub(super) async fn start_config_cancellable(
             hosts_claim,
         )
         .await;
+        drop(phase);
         if let Err(e) = written {
             let error_message = format!(
                 "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
@@ -1042,9 +1047,15 @@ pub(super) async fn start_config_cancellable(
 
     let tls_acceptor = if protocol == "tcp" && should_use_ssl {
         if let Some(settings) = &settings {
+            let phase = kftray_telemetry::phase(Phase::Tls);
             match build_tls_acceptor(&actual_config, settings).await {
-                Ok(acceptor) => Some(acceptor),
+                Ok(acceptor) => {
+                    drop(phase);
+                    Some(acceptor)
+                }
                 Err(e) => {
+                    phase.fail();
+                    drop(phase);
                     warn!("Failed to create TLS acceptor: {}", e);
                     None
                 }
@@ -1113,14 +1124,17 @@ pub(super) async fn start_config_cancellable(
             // The snapshot goes first: what this forward holds is written
             // before anything says it is running, so another process never
             // reads a running row with no record of its resources.
+            let phase = kftray_telemetry::phase(Phase::PersistState);
             let recorded =
                 kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode)
                     .await;
             let config_state = ConfigState::new(config_id, true);
-            if let Err(error) = match recorded {
+            let persisted = match recorded {
                 Ok(()) => update_config_state_with_mode(&config_state, mode).await,
                 Err(error) => Err(error),
-            } {
+            };
+            drop(phase);
+            if let Err(error) = persisted {
                 handle.cleanup_and_abort().await;
                 kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
                 return Err(rollback_startup(&port_forward, config, error, mode).await);

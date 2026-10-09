@@ -32,6 +32,7 @@ use kftray_commons::{
         timeout_manager::cancel_timeout_for_forward,
     },
 };
+use kftray_telemetry::Phase;
 use kube::Client;
 use kube::api::{
     Api,
@@ -1130,18 +1131,30 @@ async fn release_local_resources(id: i64, config: &Config, mode: DatabaseMode) -
     let mut cleanup = LocalCleanup::default();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
-        && let Err(error) = release_address_with_fallback(address, Some(id), mode).await
     {
-        if error.is_unsatisfiable() {
-            cleanup.unsatisfiable.push(error.to_string());
-        } else {
-            cleanup.deferred.push(error.to_string());
+        let phase = kftray_telemetry::phase(Phase::ReleaseAddress);
+        let released = release_address_with_fallback(address, Some(id), mode).await;
+        if released.is_err() {
+            phase.fail();
+        }
+        drop(phase);
+        if let Err(error) = released {
+            if error.is_unsatisfiable() {
+                cleanup.unsatisfiable.push(error.to_string());
+            } else {
+                cleanup.deferred.push(error.to_string());
+            }
         }
     }
     let snapshot = config.clone();
     let in_use = forwarding_configs(mode).await;
+    let phase = kftray_telemetry::phase(Phase::HostsCleanup);
     let hosts =
         crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
+    if hosts.is_err() {
+        phase.fail();
+    }
+    drop(phase);
     match hosts {
         Ok(()) => {}
         Err(error) => cleanup.failures.push(error.to_string()),
@@ -1229,7 +1242,12 @@ async fn delete_cluster_resources_inner(
         )
         .await
     } else {
-        delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id, mode).await
+        let phase = kftray_telemetry::phase(Phase::RelayDelete);
+        let deleted =
+            delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id, mode)
+                .await;
+        drop(phase);
+        deleted
     }
 }
 
@@ -2220,7 +2238,9 @@ async fn stop_config(
                 retained_destination.clone(),
             );
         }
+        let phase = kftray_telemetry::phase(Phase::Shutdown);
         process.cleanup_and_abort().await;
+        drop(phase);
     }
     // The snapshot taken at startup describes the resources that actually
     // exist. The database record can have been edited since without stopping

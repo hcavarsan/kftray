@@ -3987,6 +3987,7 @@ dependencies = [
  "kftray-commons",
  "kftray-helper",
  "kftray-http-logs",
+ "kftray-telemetry",
  "kube",
  "kube-portforward",
  "kube-runtime",
@@ -4123,6 +4124,7 @@ dependencies = [
  "futures",
  "kftray-commons",
  "log",
+ "parking_lot",
  "sentry",
 ]
 
