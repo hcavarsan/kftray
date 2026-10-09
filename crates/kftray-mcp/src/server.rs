@@ -199,14 +199,34 @@ async fn handle_mcp_post(req: Request<Incoming>, state: Arc<ServerState>) -> Res
         }
     };
 
-    // Parse JSON-RPC request
-    let rpc_request: JsonRpcRequest = match serde_json::from_slice(&body_bytes) {
-        Ok(req) => req,
+    // Parse JSON-RPC request. serde maps both an omitted `id` and `"id":null`
+    // to `None`, but MCP forbids a null request id, so reject it explicitly.
+    let json_body: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(body) => body,
         Err(e) => {
             return json_rpc_error_response(
                 None,
                 error_codes::PARSE_ERROR,
                 format!("Invalid JSON: {e}"),
+            );
+        }
+    };
+
+    if matches!(json_body.get("id"), Some(serde_json::Value::Null)) {
+        return json_rpc_error_response(
+            None,
+            error_codes::INVALID_REQUEST,
+            "Request id must not be null".to_string(),
+        );
+    }
+
+    let rpc_request: JsonRpcRequest = match serde_json::from_value(json_body) {
+        Ok(req) => req,
+        Err(e) => {
+            return json_rpc_error_response(
+                None,
+                error_codes::INVALID_REQUEST,
+                format!("Invalid request: {e}"),
             );
         }
     };
@@ -544,6 +564,13 @@ mod tests {
         assert_eq!(status, 200);
         let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(reply["id"], 7);
+
+        let (status, reply) =
+            post_mcp(addr, r#"{"jsonrpc":"2.0","method":"ping","id":null}"#).await;
+        assert_eq!(status, 200);
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["error"]["code"], error_codes::INVALID_REQUEST);
+        assert!(reply["id"].is_null());
 
         server.abort();
     }
