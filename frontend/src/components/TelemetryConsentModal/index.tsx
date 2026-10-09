@@ -11,7 +11,6 @@ import {
   DialogCancelButton,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { invoke } from '@/lib/tauri'
 import {
   type Consent,
   performanceQuery,
