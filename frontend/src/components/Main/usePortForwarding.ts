@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 
+import { showErrorToast } from '@/components/ui/error-toast'
 import { toaster } from '@/components/ui/toaster'
 import { useConfigs } from '@/hooks/useConfigs'
 import { useTauriEvent } from '@/hooks/useTauriEvent'
@@ -99,13 +100,14 @@ export function usePortForwarding() {
           ) {
             refused = message
           } else {
-            toaster.error({
-              title:
-                action === 'starting'
-                  ? 'Error starting port forwarding'
-                  : 'Error stopping port forwarding',
-              description: message,
-              duration: 1000,
+            showErrorToast(error, {
+              errorToast: {
+                title:
+                  action === 'starting'
+                    ? 'Error starting port forwarding'
+                    : 'Error stopping port forwarding',
+                duration: 1000,
+              },
             })
           }
         } finally {

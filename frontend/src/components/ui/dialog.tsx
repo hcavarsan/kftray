@@ -15,6 +15,8 @@ interface AppDialogProps {
   closeDisabled?: boolean
   role?: ComponentProps<typeof Dialog.Root>['role']
   placement?: ComponentProps<typeof Dialog.Root>['placement']
+  initialFocusEl?: ComponentProps<typeof Dialog.Root>['initialFocusEl']
+  closeOnInteractOutside?: boolean
   'data-testid'?: string
 }
 
@@ -28,6 +30,8 @@ export function AppDialog({
   closeDisabled = false,
   role,
   placement,
+  initialFocusEl,
+  closeOnInteractOutside,
   'data-testid': testId,
 }: AppDialogProps) {
   return (
@@ -35,6 +39,8 @@ export function AppDialog({
       open
       role={role}
       placement={placement}
+      initialFocusEl={initialFocusEl}
+      closeOnInteractOutside={closeOnInteractOutside}
       onOpenChange={({ open }) => !open && !closeDisabled && onClose()}
       onFocusOutside={event => event.preventDefault()}
       onEscapeKeyDown={event => {

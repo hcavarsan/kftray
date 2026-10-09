@@ -58,6 +58,18 @@ A report has the error type, where in the code it happened, the app version, the
 
 Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cavarsa.app`. The proxy in front of it drops the client IP before the report is stored. Setting the `DO_NOT_TRACK` environment variable turns reporting off whatever the setting says, and development builds never send reports.
 
+## Report a problem
+
+Open the footer menu and choose `Report a problem` to describe a problem without needing a crash. Enter a description of up to 4000 characters. The email field is optional and lets the maintainer contact you.
+
+To add details to a captured error, choose `Report` on its notification. This option appears for individual failed app requests captured while crash reports are enabled. The app checks that GlitchTip accepted the error before sending your feedback. If that delivery failed, use `Report a problem` from the menu to send a separate report.
+
+Clicking `Send report` authorizes that submission and leaves your diagnostics settings unchanged. You can send a general report with crash reports and performance data turned off. Development builds and sessions started with `DO_NOT_TRACK` cannot send either kind of report.
+
+Manual submissions go to the same GlitchTip server as crash reports. They include your description, optional email, app version, build target, submission time and a random report id. Feedback for an error also includes that error's id. The app does not attach logs, configuration files or screenshots. Review your text before sending and leave out passwords, tokens, kubeconfig contents and cluster details.
+
+A general report creates an informational issue titled `User-submitted problem`, tagged `surface:manual-report`. Feedback for an error appears in that issue's user reports. If submission fails, the form keeps your text so you can try again or cancel.
+
 ## Performance data
 
 Performance data is the second switch in the same dialog. It starts off and is a separate choice from crash reports. You can change it under **Settings > Performance Data**.

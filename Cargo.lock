@@ -4125,8 +4125,13 @@ dependencies = [
  "kftray-commons",
  "log",
  "parking_lot",
+ "reqwest 0.13.5",
  "sentry",
  "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

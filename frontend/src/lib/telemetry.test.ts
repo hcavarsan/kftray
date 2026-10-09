@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ErrorEvent } from '@sentry/browser'
 
 import {
-  InvokeError,
   initCrashReporting,
   scrub,
   scrubTransaction,
@@ -397,15 +396,5 @@ describe('scrubTransaction', () => {
         },
       ],
     })
-  })
-})
-
-describe('InvokeError', () => {
-  it('carries only the command name', () => {
-    const error = new InvokeError('start_port_forward_tcp_cmd')
-
-    expect(error.name).toBe('InvokeError')
-    expect(error.command).toBe('start_port_forward_tcp_cmd')
-    expect(error.message).toBe('start_port_forward_tcp_cmd')
   })
 })

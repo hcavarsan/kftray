@@ -83,6 +83,18 @@ pub fn get_telemetry_context() -> kftray_telemetry::FrontendContext {
     kftray_telemetry::frontend_context()
 }
 
+#[tauri::command]
+pub async fn submit_problem_report(
+    report: kftray_telemetry::problem_reports::ProblemReport,
+) -> Result<(), String> {
+    kftray_telemetry::problem_reports::submit(report)
+        .await
+        .map_err(|e| {
+            error!("Failed to submit problem report: {e}");
+            e.to_string()
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +133,24 @@ mod tests {
 
         store_performance_enabled(false).await.unwrap();
         assert_eq!(get_performance_enabled().await.unwrap(), Some(false));
+    }
+
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    async fn problem_reports_are_refused_in_debug_builds() {
+        let report = serde_json::from_value(serde_json::json!({
+            "report_id": "6f1c0f3e-8a53-4c0e-9a39-2f4c8f4f7b11",
+            "message": "it broke",
+            "email": null,
+            "event_id": null,
+        }))
+        .unwrap();
+
+        let result = submit_problem_report(report).await;
+
+        assert_eq!(
+            result,
+            Err("Problem reporting is turned off for this build or environment".to_owned())
+        );
     }
 }

@@ -86,8 +86,8 @@ export function TelemetryConsentModal({
       <AppDialogBody>
         <Stack gap={3}>
           <Text fontSize='xs' color='fg.muted'>
-            No cluster, namespace or service names are ever sent. You can change
-            this in Settings.
+            Automatic diagnostics exclude cluster, namespace and service names.
+            You can change these settings later.
           </Text>
           {consents.map(consent => (
             <Stack key={consent} gap={1}>

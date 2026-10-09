@@ -4,6 +4,8 @@ import { queryOptions } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
+import type { ProblemReportContext } from './problemReports'
+
 export const telemetryQuery = queryOptions({
   queryKey: ['telemetry-enabled'],
   queryFn: () => invoke<boolean | null>('get_telemetry_enabled'),
@@ -159,8 +161,35 @@ export class InvokeError extends Error {
   }
 }
 
-export const captureInvokeFailure = (command: string) => {
-  Sentry.captureException(new InvokeError(command), { tags: { command } })
+export const captureInvokeFailure = (command: string): ProblemReportContext => {
+  if (!crashReportsConsent) {
+    return undefined
+  }
+  const client = Sentry.getClient()
+  if (!client?.getDsn()) {
+    return undefined
+  }
+  const eventId = crypto.randomUUID().replaceAll('-', '')
+  const delivery = new Promise<boolean>(resolve => {
+    const timeout = setTimeout(() => {
+      unsubscribe()
+      resolve(false)
+    }, 15_000)
+    const unsubscribe = client.on('afterSendEvent', (event, response) => {
+      if (event.event_id !== eventId) {
+        return
+      }
+      clearTimeout(timeout)
+      unsubscribe()
+      const status = response.statusCode
+      resolve(status !== undefined && status >= 200 && status < 300)
+    })
+    Sentry.captureException(new InvokeError(command), {
+      event_id: eventId,
+      captureContext: { tags: { command } },
+    })
+  })
+  return { eventId, delivery }
 }
 
 // Starts the SDK once the Rust side has said whether reporting is allowed.
