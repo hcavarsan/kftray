@@ -1,4 +1,5 @@
 import {
+  Bug,
   Download,
   FolderSync,
   Menu as MenuIcon,
@@ -21,6 +22,7 @@ import {
   MenuTrigger,
 } from '@/components/ui/menu'
 import { useGitSync } from '@/contexts/GitSyncContext'
+import { requestProblemReport } from '@/lib/problemReports'
 import { invoke } from '@/lib/tauri'
 
 interface FooterMenuProps {
@@ -97,6 +99,11 @@ export function FooterMenu({
         <MenuItem value='log-viewer' onClick={() => openLogsMutation.mutate()}>
           <Box as={ScrollText} width='12px' height='12px' />
           <Box fontSize='11px'>Log Viewer</Box>
+        </MenuItem>
+
+        <MenuItem value='report-problem' onClick={() => requestProblemReport()}>
+          <Box as={Bug} width='12px' height='12px' />
+          <Box fontSize='11px'>Report a problem</Box>
         </MenuItem>
 
         <MenuSeparator borderColor='border' my={1} />

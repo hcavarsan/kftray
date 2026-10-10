@@ -12,6 +12,7 @@ import {
   AppDialogFooter,
   DialogCancelButton,
 } from '@/components/ui/dialog'
+import { showErrorToast } from '@/components/ui/error-toast'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, shortcutsQuery } from '@/hooks/useGlobalShortcuts'
 import { invoke } from '@/lib/tauri'
@@ -122,16 +123,24 @@ export function ShortcutFormModal({
       })
       onClose()
     },
-    onError: error =>
-      toaster.error(
-        error instanceof ShortcutFormError
-          ? { title: error.title, description: error.message, duration: 3000 }
-          : {
-              title: 'Error',
-              description: 'Failed to save shortcut',
-              duration: 3000,
-            },
-      ),
+    onError: error => {
+      if (error instanceof ShortcutFormError) {
+        toaster.error({
+          title: error.title,
+          description: error.message,
+          duration: 3000,
+        })
+
+        return
+      }
+      showErrorToast(error, {
+        errorToast: {
+          title: 'Error',
+          description: 'Failed to save shortcut',
+          duration: 3000,
+        },
+      })
+    },
   })
 
   const handleSave = () => {

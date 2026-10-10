@@ -58,6 +58,18 @@ A report has the error type, where in the code it happened, the app version, the
 
 Reports go to a GlitchTip server run by the kftray maintainer at `glitchtip.cavarsa.app`. The proxy in front of it drops the client IP before the report is stored. Setting the `DO_NOT_TRACK` environment variable turns reporting off whatever the setting says, and development builds never send reports.
 
+## Report a problem
+
+Open the footer menu and choose `Report a problem` to describe a problem, with or without a crash. Enter a description of up to 4000 characters. The email field is optional and lets the maintainer contact you.
+
+To describe a specific failure, choose `Report` on its notification. The option appears for individual failed app requests captured while crash reports are enabled.
+
+Sending applies to that report only and leaves your diagnostics settings unchanged. You can send a report with crash reports and performance data turned off. Development builds and sessions started with `DO_NOT_TRACK` cannot send reports.
+
+Reports go to the same server as crash reports and carry your description, optional email, app version, build target, submission time and a random report id. A report about a specific failure also references that error. Logs, configuration files and screenshots are never attached. Review your text before sending and leave out passwords, tokens, kubeconfig contents and cluster details.
+
+Each report is stored as its own entry, so it is never lost to a timing issue on the server. If submission fails, the form keeps your text so you can try again or cancel.
+
 ## Performance data
 
 Performance data is the second switch in the same dialog. It starts off and is a separate choice from crash reports. You can change it under **Settings > Performance Data**.

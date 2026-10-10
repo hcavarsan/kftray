@@ -488,6 +488,7 @@ fn main() {
             commands::telemetry::get_performance_enabled,
             commands::telemetry::update_performance_enabled,
             commands::telemetry::get_telemetry_context,
+            commands::telemetry::submit_problem_report,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,
             commands::logs::get_log_contents_json,

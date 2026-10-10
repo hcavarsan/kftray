@@ -1,10 +1,6 @@
 //! Opt-in crash reporting and performance data shared by kftray and kftui.
-//!
-//! Everything that leaves the process goes through this crate so the privacy
-//! contract in `docs/kftray/USAGE.md` is enforced in one place. Reports carry
-//! only fixed strings from the code, the app version, the build target, the
-//! OS and a random per-run id. They never carry cluster names, namespaces,
-//! service names, aliases, kubeconfig paths, the host name or log lines.
+
+pub mod problem_reports;
 
 use std::any::Any;
 use std::collections::VecDeque;

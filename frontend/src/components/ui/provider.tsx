@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { lazy, type ReactNode, Suspense, useEffect, useState } from 'react'
 
 import {
   ChakraProvider,
@@ -30,6 +30,7 @@ import {
   spinnerRecipe,
   switchSlotRecipe,
   tableSlotRecipe,
+  textareaRecipe,
   textStyles,
   toastSlotRecipe,
   tokens,
@@ -42,8 +43,19 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 
+import {
+  type ProblemReportContext,
+  subscribeToProblemReports,
+} from '@/lib/problemReports'
+
 import { type ErrorToastMeta, showErrorToast } from './error-toast'
 import { Toaster } from './toaster'
+
+const ReportProblemModal = lazy(() =>
+  import('@/components/ReportProblemModal').then(m => ({
+    default: m.ReportProblemModal,
+  })),
+)
 
 declare module '@tanstack/react-query' {
   interface Register {
@@ -75,6 +87,7 @@ const system = createSystem(
         input: inputRecipe,
         radiomark: radiomarkRecipe,
         spinner: spinnerRecipe,
+        textarea: textareaRecipe,
       },
       slotRecipes: {
         accordion: accordionSlotRecipe,
@@ -243,11 +256,39 @@ const queryClient = new QueryClient({
   }),
 })
 
+function ProblemReportHost() {
+  const [request, setRequest] = useState<{
+    context: ProblemReportContext
+  } | null>(null)
+
+  useEffect(
+    () =>
+      subscribeToProblemReports(context =>
+        setRequest(current => current ?? { context }),
+      ),
+    [],
+  )
+
+  if (!request) {
+    return null
+  }
+
+  return (
+    <Suspense fallback={null}>
+      <ReportProblemModal
+        context={request.context}
+        onClose={() => setRequest(null)}
+      />
+    </Suspense>
+  )
+}
+
 export function Provider({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ChakraProvider value={system}>
         {children}
+        <ProblemReportHost />
         <Toaster />
       </ChakraProvider>
     </QueryClientProvider>

@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
 
+import { showErrorToast } from '@/components/ui/error-toast'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 import type { Config, PortForwardToggleAction } from '@/types'
@@ -115,12 +116,20 @@ export async function executeBatch(
     }
     const first = reporting[0]
 
+    if (reporting.length === 1) {
+      showErrorToast(first.error, {
+        errorToast: {
+          title: failureTitle,
+          description: `Config ${first.id}: ${errorMessage(first.error)}`,
+          duration: 3000,
+        },
+      })
+
+      return
+    }
     toaster.error({
       title: failureTitle,
-      description:
-        reporting.length === 1
-          ? `Config ${first.id}: ${errorMessage(first.error)}`
-          : `${reporting.length} configs failed to ${verb}`,
+      description: `${reporting.length} configs failed to ${verb}`,
       duration: 3000,
     })
   }
@@ -233,10 +242,8 @@ export async function executeBatch(
       })
     }
   } catch (error) {
-    toaster.error({
-      title: failureTitle,
-      description: errorMessage(error),
-      duration: 3000,
+    showErrorToast(error, {
+      errorToast: { title: failureTitle, duration: 3000 },
     })
   } finally {
     controller.signal.removeEventListener('abort', cancelQueued)

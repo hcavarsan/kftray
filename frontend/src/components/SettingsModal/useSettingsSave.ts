@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
+import { showErrorToast } from '@/components/ui/error-toast'
 import { toaster } from '@/components/ui/toaster'
 import { errorMessage } from '@/lib/errors'
 import { invoke } from '@/lib/tauri'
@@ -247,20 +248,23 @@ export function useSettingsSave({
     },
     onSuccess: failures => {
       if (failures.length > 0) {
-        toaster.error(
-          failures.length === 1
-            ? SECTION_FAILURES[failures[0].section](failures[0].error)
-            : {
-                title: 'Some settings were not saved',
-                description: failures
-                  .map(
-                    ({ section, error }) =>
-                      `${section}: ${errorMessage(error)}`,
-                  )
-                  .join('\n'),
-                duration: 6000,
-              },
-        )
+        if (failures.length === 1) {
+          const [{ section, error }] = failures
+
+          showErrorToast(error, {
+            errorToast: SECTION_FAILURES[section](error),
+          })
+
+          return
+        }
+
+        toaster.error({
+          title: 'Some settings were not saved',
+          description: failures
+            .map(({ section, error }) => `${section}: ${errorMessage(error)}`)
+            .join('\n'),
+          duration: 6000,
+        })
 
         return
       }

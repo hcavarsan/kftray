@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
 
+import { showErrorToast } from '@/components/ui/error-toast'
 import { toaster } from '@/components/ui/toaster'
 import { fetchConfigsWithState } from '@/hooks/useConfigs'
 import { errorMessage } from '@/lib/errors'
@@ -86,11 +87,13 @@ export async function deleteConfigsTransaction(
     })
 
     return true
-  } catch {
-    toaster.error({
-      title: 'Error',
-      description: 'Failed to delete configurations.',
-      duration: 1000,
+  } catch (error) {
+    showErrorToast(error, {
+      errorToast: {
+        title: 'Error',
+        description: 'Failed to delete configurations.',
+        duration: 1000,
+      },
     })
 
     return false
@@ -196,19 +199,23 @@ export async function saveConfigTransaction(
       return true
     }
     if (!wasStopped) {
-      toaster.error({
-        title: 'Error',
-        description: `Failed to ${verb} configuration.`,
-        duration: 1000,
+      showErrorToast(error, {
+        errorToast: {
+          title: 'Error',
+          description: `Failed to ${verb} configuration.`,
+          duration: 1000,
+        },
       })
 
       return false
     }
     if (!runningConfig) {
-      toaster.error({
-        title: 'Error',
-        description: `The forward was stopped but the save failed. ${message}`,
-        duration: 2000,
+      showErrorToast(error, {
+        errorToast: {
+          title: 'Error',
+          description: `The forward was stopped but the save failed. ${message}`,
+          duration: 2000,
+        },
       })
 
       return false
@@ -228,16 +235,20 @@ export async function saveConfigTransaction(
         publishPending()
       }
       await runForwardCommand(runningConfig, 'starting', pendingToken)
-      toaster.error({
-        title: 'Error',
-        description: `Failed to ${verb} configuration. The forward was restarted. ${message}`,
-        duration: 2000,
+      showErrorToast(error, {
+        errorToast: {
+          title: 'Error',
+          description: `Failed to ${verb} configuration. The forward was restarted. ${message}`,
+          duration: 2000,
+        },
       })
     } catch (restartError) {
-      toaster.error({
-        title: 'Error',
-        description: `The forward was stopped, the save failed, and restarting it also failed: ${errorMessage(restartError)}`,
-        duration: 3000,
+      showErrorToast(restartError, {
+        errorToast: {
+          title: 'Error',
+          description: `The forward was stopped, the save failed, and restarting it also failed: ${errorMessage(restartError)}`,
+          duration: 3000,
+        },
       })
     }
 

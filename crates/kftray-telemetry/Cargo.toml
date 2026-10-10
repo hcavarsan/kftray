@@ -12,9 +12,14 @@ license = "GPL-3.0"
 kftray-commons = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
+reqwest = { workspace = true }
 sentry = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 futures = { workspace = true }
 sentry = { workspace = true, features = ["test"] }
+tokio = { workspace = true }
