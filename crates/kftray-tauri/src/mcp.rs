@@ -46,6 +46,17 @@ pub async fn is_running() -> bool {
 
 /// Start the MCP server on the specified port
 pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match bind(port).await? {
+        Some(listener) => switch_to(listener).await,
+        None => Ok(()),
+    }
+}
+
+/// Bind the MCP port without touching the running server.
+/// Returns `None` when the server already runs on `port`.
+pub async fn bind(
+    port: u16,
+) -> Result<Option<TcpListener>, Box<dyn std::error::Error + Send + Sync>> {
     if port == 0 {
         return Err("MCP server port cannot be 0".into());
     }
@@ -57,7 +68,7 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
             && server.port == port
         {
             info!("MCP server already running on port {}", port);
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -66,6 +77,15 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| format!("cannot listen on {addr}: {e}"))?;
+
+    Ok(Some(listener))
+}
+
+/// Stop the running MCP server and serve on `listener` instead
+pub async fn switch_to(
+    listener: TcpListener,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let addr = listener.local_addr()?;
 
     stop().await?;
 
@@ -77,7 +97,10 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
         }
     });
 
-    *MCP_SERVER.write().await = Some(McpServerState { handle, port });
+    *MCP_SERVER.write().await = Some(McpServerState {
+        handle,
+        port: addr.port(),
+    });
 
     Ok(())
 }
