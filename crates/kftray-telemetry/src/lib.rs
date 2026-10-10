@@ -50,6 +50,7 @@ use sentry::{
     Hub,
     SentryFutureExt,
     Span,
+    Transaction,
     TransactionContext,
 };
 use serde::Serialize;
@@ -74,7 +75,7 @@ static RUN_ID: LazyLock<String> = LazyLock::new(|| Uuid::new_v4().simple().to_st
 static RELEASE: OnceLock<&'static str> = OnceLock::new();
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static PERFORMANCE_ENABLED: AtomicBool = AtomicBool::new(false);
+static PERFORMANCE_ENABLED: Mutex<bool> = Mutex::new(false);
 /// Forced in `init`, so uptime counts from launch rather than first report.
 static STARTED: LazyLock<Instant> = LazyLock::new(Instant::now);
 /// Kept here rather than on a sentry scope: scopes are per thread, and a
@@ -397,7 +398,7 @@ pub fn frontend_context() -> FrontendContext {
         target: TARGET,
         run_id: &RUN_ID,
         enabled: ENABLED.load(Ordering::Relaxed),
-        performance_enabled: PERFORMANCE_ENABLED.load(Ordering::Relaxed),
+        performance_enabled: *PERFORMANCE_ENABLED.lock(),
     }
 }
 
@@ -432,19 +433,21 @@ pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Relaxed);
 }
 
+/// Stops new transaction captures before returning when disabled.
+/// Transactions already queued in Sentry's transport can still be sent.
 pub fn set_performance_enabled(enabled: bool) {
-    PERFORMANCE_ENABLED.store(enabled, Ordering::Relaxed);
+    *PERFORMANCE_ENABLED.lock() = enabled;
 }
 
 pub async fn load_setting() {
-    apply(&ENABLED, get_telemetry_enabled().await);
-    apply(&PERFORMANCE_ENABLED, get_performance_enabled().await);
+    apply(set_enabled, get_telemetry_enabled().await);
+    apply(set_performance_enabled, get_performance_enabled().await);
 }
 
 pub async fn load_setting_with_mode(mode: DatabaseMode) {
-    apply(&ENABLED, get_telemetry_enabled_with_mode(mode).await);
+    apply(set_enabled, get_telemetry_enabled_with_mode(mode).await);
     apply(
-        &PERFORMANCE_ENABLED,
+        set_performance_enabled,
         get_performance_enabled_with_mode(mode).await,
     );
 }
@@ -472,7 +475,7 @@ pub async fn measure<T, E: Display>(
     match &result {
         Ok(_) => {
             transaction.set_status(SpanStatus::Ok);
-            transaction.finish();
+            finish_unless_opted_out(transaction);
             push_breadcrumb(
                 "portforward",
                 format!("{} ok", operation.name()),
@@ -488,10 +491,19 @@ pub async fn measure<T, E: Display>(
             });
             transaction.set_tag("failure_kind", kind.name());
             report_failure_on(&hub, operation, kind);
-            transaction.finish();
+            finish_unless_opted_out(transaction);
         }
     }
     result
+}
+
+/// Sentry samples a transaction when it starts, so a user who turns
+/// performance data off while the operation runs is honored only here.
+fn finish_unless_opted_out(transaction: Transaction) {
+    let enabled = PERFORMANCE_ENABLED.lock();
+    if *enabled {
+        transaction.finish();
+    }
 }
 
 /// Reports a failed operation as an error event titled
@@ -588,7 +600,7 @@ impl Timeline {
         } else {
             SpanStatus::Ok
         });
-        transaction.finish();
+        finish_unless_opted_out(transaction);
     }
 }
 
@@ -597,9 +609,8 @@ impl Timeline {
 /// `sentry::init` fills an empty DSN from `SENTRY_DSN`, so a `None` DSN alone
 /// would let the environment re-enable reporting the user turned off.
 fn client_options(release: &'static str, allowed: bool) -> ClientOptions {
-    let mut options = ClientOptions::new().traces_sampler(move |_| {
-        sample_rate(allowed && PERFORMANCE_ENABLED.load(Ordering::Relaxed))
-    });
+    let mut options = ClientOptions::new()
+        .traces_sampler(move |_| sample_rate(allowed && *PERFORMANCE_ENABLED.lock()));
     options.dsn = if allowed { DSN.parse().ok() } else { None };
     options.release = Some(release.into());
     options.server_name = Some(ANONYMOUS_HOST.into());
@@ -634,9 +645,9 @@ fn sample_rate(enabled: bool) -> f32 {
     if enabled { 1.0 } else { 0.0 }
 }
 
-fn apply(flag: &AtomicBool, setting: SettingResult) {
+fn apply(set_enabled: fn(bool), setting: SettingResult) {
     match setting {
-        Ok(enabled) => flag.store(enabled == Some(true), Ordering::Relaxed),
+        Ok(enabled) => set_enabled(enabled == Some(true)),
         Err(e) => warn!("Failed to read telemetry setting: {e}"),
     }
 }
@@ -926,6 +937,123 @@ mod tests {
             Some(SpanStatus::Cancelled)
         );
     }
+
+    #[test]
+    fn turning_performance_off_mid_measure_drops_the_transaction_only() {
+        let item_kinds = |outcome: Result<(), String>| {
+            let expected = outcome.clone();
+            let envelopes = envelopes_with_consent(true, || {
+                let result = futures::executor::block_on(measure(Operation::StartForward, async {
+                    set_performance_enabled(false);
+                    outcome
+                }));
+                assert_eq!(result, expected);
+            });
+            envelopes
+                .iter()
+                .flat_map(|envelope| envelope.items())
+                .map(|item| match item {
+                    EnvelopeItem::Event(_) => "event",
+                    EnvelopeItem::Transaction(_) => "transaction",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(item_kinds(Ok(())), Vec::<&str>::new());
+        assert_eq!(
+            item_kinds(Err("Service 'api' not found".to_string())),
+            vec!["event"]
+        );
+    }
+
+    #[test]
+    fn performance_opt_out_waits_for_transaction_capture() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct PausedTransport {
+            entered: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            opted_out: Arc<AtomicBool>,
+            captured_after_opt_out: Arc<AtomicBool>,
+            captured: Arc<sentry::test::TestTransport>,
+        }
+
+        impl sentry::Transport for PausedTransport {
+            fn send_envelope(&self, envelope: sentry::Envelope) {
+                self.entered.send(()).unwrap();
+                self.resume
+                    .lock()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                self.captured_after_opt_out
+                    .store(self.opted_out.load(Ordering::SeqCst), Ordering::SeqCst);
+                self.captured.send_envelope(envelope);
+            }
+        }
+
+        let opted_out = Arc::new(AtomicBool::new(false));
+        let captured_after_opt_out = Arc::new(AtomicBool::new(false));
+        let captured = sentry::test::TestTransport::new();
+        envelopes_with_consent(true, || {
+            let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+            let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+            let transport = Arc::new(PausedTransport {
+                entered: entered_tx,
+                resume: Mutex::new(resume_rx),
+                opted_out: Arc::clone(&opted_out),
+                captured_after_opt_out: Arc::clone(&captured_after_opt_out),
+                captured: Arc::clone(&captured),
+            });
+            let client = Arc::new(sentry::Client::from_config(
+                client_options("kftray@test", true).transport(transport),
+            ));
+            let hub = Arc::new(Hub::new(Some(client), Default::default()));
+            std::thread::scope(|threads| {
+                let measuring_hub = Arc::clone(&hub);
+                let measuring = threads.spawn(move || {
+                    Hub::run(measuring_hub, || {
+                        futures::executor::block_on(measure(Operation::StartForward, async {
+                            Ok::<_, &str>(())
+                        }))
+                    })
+                });
+                entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                let (started_tx, started_rx) = mpsc::sync_channel(1);
+                let (done_tx, done_rx) = mpsc::sync_channel(1);
+                let opting_out = threads.spawn(move || {
+                    started_tx.send(()).unwrap();
+                    set_performance_enabled(false);
+                    opted_out.store(true, Ordering::SeqCst);
+                    done_tx.send(()).unwrap();
+                });
+                started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                // Let opt-out race with a capture paused inside Sentry's transport.
+                let _ = done_rx.recv_timeout(Duration::from_secs(1));
+                resume_tx.send(()).unwrap();
+                assert_eq!(measuring.join().unwrap(), Ok(()));
+                opting_out.join().unwrap();
+
+                Hub::run(hub, || {
+                    let result =
+                        futures::executor::block_on(measure(Operation::StopForward, async {
+                            Ok::<_, &str>(())
+                        }));
+                    assert_eq!(result, Ok(()));
+                });
+            });
+        });
+
+        assert!(!captured_after_opt_out.load(Ordering::SeqCst));
+        let envelopes = captured.fetch_and_clear_envelopes();
+        assert_eq!(envelopes.len(), 1);
+        assert_eq!(
+            captured_transaction(&envelopes).name.as_deref(),
+            Some("portforward.start")
+        );
+    }
+
     #[test]
     fn cancelled_startup_with_incomplete_cleanup_still_reports_an_error() {
         let envelopes = envelopes_with_consent(true, || {
@@ -1054,18 +1182,13 @@ mod tests {
 
     #[test]
     fn measure_sends_the_operation_name_without_the_host_name() {
-        let options = client_options("kftray@test", true).traces_sample_rate(1.0);
-
-        let envelopes = sentry::test::with_captured_envelopes_options(
-            || {
-                let result: Result<(), String> =
-                    futures::executor::block_on(measure(Operation::StopForward, async {
-                        Err("boom".to_string())
-                    }));
-                assert!(result.is_err());
-            },
-            options,
-        );
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), String> =
+                futures::executor::block_on(measure(Operation::StopForward, async {
+                    Err("boom".to_string())
+                }));
+            assert!(result.is_err());
+        });
         let transaction = captured_transaction(&envelopes);
 
         assert_eq!(
@@ -1079,23 +1202,18 @@ mod tests {
 
     #[test]
     fn phases_awaited_inside_measure_become_child_spans() {
-        let options = client_options("kftray@test", true).traces_sample_rate(1.0);
-
-        let envelopes = sentry::test::with_captured_envelopes_options(
-            || {
-                let result: Result<(), String> =
-                    futures::executor::block_on(measure(Operation::StartForward, async {
-                        let connect = phase(Phase::Connect);
-                        futures::future::ready(()).await;
-                        drop(connect);
-                        let listen = phase(Phase::Listen);
-                        listen.fail();
-                        Ok(())
-                    }));
-                assert!(result.is_ok());
-            },
-            options,
-        );
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), String> =
+                futures::executor::block_on(measure(Operation::StartForward, async {
+                    let connect = phase(Phase::Connect);
+                    futures::future::ready(()).await;
+                    drop(connect);
+                    let listen = phase(Phase::Listen);
+                    listen.fail();
+                    Ok(())
+                }));
+            assert!(result.is_ok());
+        });
         let transaction = captured_transaction(&envelopes);
         let spans: Vec<_> = transaction
             .spans
@@ -1129,13 +1247,13 @@ mod tests {
     fn envelopes_with_consent(allowed: bool, emit: impl FnOnce()) -> Vec<sentry::Envelope> {
         let _consent = CONSENT_LOCK.lock();
         ENABLED.store(true, Ordering::Relaxed);
-        PERFORMANCE_ENABLED.store(true, Ordering::Relaxed);
+        set_performance_enabled(true);
         let envelopes = sentry::test::with_captured_envelopes_options(
             emit,
             client_options("kftray@test", allowed),
         );
         ENABLED.store(false, Ordering::Relaxed);
-        PERFORMANCE_ENABLED.store(false, Ordering::Relaxed);
+        set_performance_enabled(false);
         envelopes
     }
 

@@ -80,6 +80,8 @@ When it's on, kftray records how long it takes to start a port forward (includin
 
 The data goes to the same GlitchTip server as crash reports. `DO_NOT_TRACK` and development builds turn it off too.
 
+Turning performance data off stops new timing records for backend operations, including operations still running. A capture already in progress finishes before the setting change returns. Records already queued for delivery can still be sent. Crash reports keep their separate setting.
+
 ## Export configurations to a JSON file
 
 1. Open the main menu in the footer

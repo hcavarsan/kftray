@@ -206,6 +206,8 @@ Backend operations classified as `cancelled` leave an informational breadcrumb i
 
 **Performance Data**: Send how long port forwards take to start and stop, how long each step inside them took, and whether they failed, to the kftray maintainer. kftui asks once on first start, after the crash reports prompt, and closing the prompt counts as no. Each record has the operation name, its step names and durations, its result (and the fixed failure reason described above), the app version, the build target and the per-run id. It never includes cluster names, namespaces, service names, aliases or kubeconfig files. `DO_NOT_TRACK` and the in-memory database turn it off the same way as crash reports.
 
+Turning performance data off stops new timing records, including operations still running. A capture already in progress finishes before the setting change returns. Records already queued for delivery can still be sent. Crash reports keep their separate setting.
+
 Settings persist between application sessions.
 
 ## HTTP Request Logging
