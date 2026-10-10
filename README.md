@@ -1,8 +1,7 @@
-
 <div align="center">  <br>
   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
   <br><br>
-  <a href="https://kftray.app"><strong>Website</strong></a> |  <a href="https://kftray.app/downloads"><strong>Downloads</strong></a> |  <a href="https://kftray.app/blog"><strong>Blog</strong></a>
+  <a href="https://kftray.app">Website</a> | <a href="https://kftray.app/downloads">Downloads</a> | <a href="https://kftray.app/docs">Docs</a> | <a href="https://kftray.app/blog">Blog</a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
     <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
@@ -36,329 +35,43 @@
 
 ## About
 
-kftray and kftui are Kubernetes port forwarding tools that actually work the way you'd expect them to. While `kubectl port-forward` is fine for quick tasks, it falls apart when pods restart or connections drop – and you're stuck manually reconnecting.
+kftray and kftui manage Kubernetes port forwards from your desktop or terminal. Both apps share configurations and a Rust backend that reconnects forwards when pods restart or connections drop.
 
-Both kftray (desktop app with tray integration) and kftui (terminal UI) share the same Rust backend and configuration files. They use the Kubernetes watch API to detect when pods come and go, automatically reconnecting your forwards without you having to babysit them. They handle TCP and UDP through a proxy relay in your cluster, support multiple forwards at once, and can even log HTTP traffic for debugging.
+- [kftray](https://kftray.app/docs/interfaces/desktop) runs as a desktop app with system tray integration.
+- [kftui](https://kftray.app/docs/interfaces/terminal) runs in the terminal, with a CLI for scripts and headless use.
 
-To download apps, you can check the [download page](https://kftray.app/downloads) on the kftray website.
+Watch the [app overview](https://www.youtube.com/watch?v=j2NnhIIFYHw) or the [HTTP logging demo](https://www.youtube.com/watch?v=73PyGbMnNSY).
 
-### Why Another Port Forwarding Tool?
+## Features
 
-There are plenty of Kubernetes tools out there, but port forwarding has always been weirdly neglected. The main issues with `kubectl port-forward`:
+- Run multiple forwards across Kubernetes contexts without `kubectl`.
+- Forward TCP and UDP traffic to services or pods, or reach other hosts through a cluster proxy.
+- Expose local services to the cluster or through an ingress.
+- Inspect HTTP traffic and replay requests in kftui.
+- Share configs through GitHub or discover services from Kubernetes annotations.
+- Organize configs with tags, filters and grouping.
 
-- **Connections break** when pods restart or get rescheduled
-- **No automatic reconnection** – you have to manually restart everything
-- **Multiple forwards** means multiple terminal windows
-- **No UDP support** out of the box
-- **No way to debug HTTP traffic** flowing through the tunnel
+See the [documentation](https://kftray.app/docs) for configuration options and app behavior.
 
-The tools monitor pod lifecycle events and automatically reconnect to healthy pods when things go sideways. You can manage dozens of forwards from a single interface, forward UDP traffic through a proxy relay, and inspect HTTP requests/responses when you need to debug.
+## Get started
 
-check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward](https://kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward).
+Download [kftray or kftui](https://kftray.app/downloads), follow the [installation guide](https://kftray.app/docs/getting-started/installation) and create your [first port forward](https://kftray.app/docs/getting-started/quick-start).
 
-<br>
-
-<div align="center">
-  <table>
-    <tr>
-      <td>
-        <a href="https://youtu.be/3pIDGB6Tx_o">
-          <img src="https://img.youtube.com/vi/3pIDGB6Tx_o/maxresdefault.jpg" alt="Watch the video" width="800px">
-        </a>
-      </td>
-      <td>
-        <a href="https://www.youtube.com/watch?v=Zvv9gIhLaSM">
-          <img src="https://img.youtube.com/vi/Zvv9gIhLaSM/maxresdefault.jpg" alt="Watch the video" width="800px">
-        </a>
-      </td>
-    </tr>
-  </table>
-</div>
-
-<br>
-
-## Features Matrix
-
-<div align="center">
-
-| Feature | kftray (Desktop) | kftui (Terminal) |
-|---------|------------------|------------------|
-| **Auto-reconnection** – Reconnects when pods restart | ✅ | ✅ |
-| **Multiple forwards** – Start/stop many at once | ✅ | ✅ |
-| **No kubectl needed** – Direct K8s API integration | ✅ | ✅ |
-| **TCP/UDP support** – Via cluster proxy relay | ✅ | ✅ |
-| **HTTP traffic logs** – Inspect requests/responses | ✅ | ✅ |
-| **Pod health tracking** – Shows which pod you're connected to | ✅ | ✅ |
-| **Network recovery** – Auto-reconnects after sleep/disconnect | ✅ | ✅ |
-| **GitHub sync** – Share configs with your team | ✅ | ✅ |
-| **Auto-import** – Discover services via K8s annotations | ✅ | ✅ |
-| **Custom kubeconfig** – Use any kubeconfig path | ✅ | ✅ |
-| **Port-forward timeouts** – Auto-close after time limit | ✅ | ✅ |
-| **Hosts file management** – Auto-update /etc/hosts entries | ✅ | ✅ |
-| **Auto SSL** – Automatic SSL certificate generation for port forwards | ✅ | ✅ |
-| **Expose local services** – Reverse tunnel local apps to cluster/internet (like ngrok) | ✅ | ✅ |
-| **System tray integration** – Quick access from tray | ✅ | ❌ |
-| **Request replay** – Replay HTTP requests for debugging | ❌ | ✅ |
-
-<sub>Notes: (1) Hosts file updates may require admin privileges and vary by OS. (2) HTTP logs/replay can expose sensitive data—opt-in and sanitize where needed.</sub>
-
-</div>
-
-## kftray - Desktop App
-
-The desktop app runs in your system tray and provides a GUI for managing port forwards.
-
-- [Installation](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md) – Download and install
-- [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md) – How to use kftray
-- [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md) – Build it yourself
-
-## kftui - Terminal UI
-
-The terminal interface for those who prefer staying in the console.
-
-- [Installation](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md) – Install via Homebrew, Cargo, or download
-- [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md) – Terminal shortcuts and features
-- [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md) – Build instructions
-
-## Linux Packages
-
-Every release publishes `kftray` and `kftui` packages for Debian, Ubuntu, Fedora, openSUSE, and Arch Linux through the [openSUSE Build Service](https://build.opensuse.org/project/show/home:hencavarsan:kftray). Add the repository once, then install either package with your package manager; updates arrive with the regular system upgrade. The commands below install `kftui`; replace it with `kftray` for the desktop app.
-
-**Debian and Ubuntu** – replace `Debian_12` with `Debian_13`, `Ubuntu_22.04`, `Ubuntu_24.04`, or `Ubuntu_26.04`:
-
-```bash
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Debian_12/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kftray.gpg
-echo "deb [signed-by=/etc/apt/keyrings/kftray.gpg] https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Debian_12/ /" | sudo tee /etc/apt/sources.list.d/kftray.list
-sudo apt update
-sudo apt install kftui
-```
-
-**Fedora** – replace `Fedora_44` with `Fedora_43` if needed:
-
-```bash
-sudo dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Fedora_44/home:hencavarsan:kftray.repo
-sudo dnf install kftui
-```
-
-**openSUSE** – replace `openSUSE_Tumbleweed` with `openSUSE_Leap_16.0` for Leap:
-
-```bash
-sudo zypper addrepo https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/openSUSE_Tumbleweed/home:hencavarsan:kftray.repo
-sudo zypper --gpg-auto-import-keys refresh
-sudo zypper install kftui
-```
-
-**Arch Linux** (x86_64 only):
-
-```bash
-curl -fsSL https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Arch/x86_64/home_hencavarsan_kftray_Arch.key -o /tmp/kftray.key
-sudo pacman-key --add /tmp/kftray.key
-sudo pacman-key --lsign-key "$(gpg --with-colons --show-keys /tmp/kftray.key | awk -F: '$1 == "fpr" { print $10; exit }')"
-printf '\n[home_hencavarsan_kftray_Arch]\nServer = https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Arch/$arch\n' | sudo tee -a /etc/pacman.conf
-sudo pacman -Syu kftui
-```
-
-Packages are signed with the project key of `home:hencavarsan:kftray`; the `.repo` files reference it, the apt source pins it with `signed-by`, and pacman trusts it after `pacman-key --lsign-key`.
-
-## kftray-server - Proxy Relay
-
-The proxy relay that runs in your cluster to handle TCP/UDP forwarding.
-
-- [Architecture Docs](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md) – How it all works
-
-## Configuration
-
-Both tools share the same JSON configuration format. Here's a example:
-
-```json
-[
-  {
-    "alias": "argocd",
-    "context": "kind-kftray-cluster",
-    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
-    "local_port": 16080,
-    "namespace": "argocd",
-    "protocol": "tcp",
-    "remote_port": 8080,
-    "service": "argocd-server",
-    "workload_type": "service",
-    "http_logs_enabled": true,
-    "tags": { "team": "platform", "env": "dev" }
-  }
-]
-```
-
-`tags` is optional. Both apps can group and filter configs by context, namespace, kubeconfig, workload type, protocol or any tag key, and kftui can auto-start only matching configs with `--filter tag:env=dev`. The MCP server's `create_config` and `update_config` tools take the same `tags` map, and `list_configs` takes `filters` in the `--filter` syntax, e.g. `["tag:env=dev"]`.
-
-You can import configs from:
-
-- Local JSON files
-- GitHub repositories (public or private)
-- Direct from your cluster using service annotations
-- Command line (kftui supports `--json` and `--stdin`)
-
-### Workload Types
-
-kftray supports multiple workload types for different use cases:
-
-![Workload types: TCP forward, proxy forward, UDP forward and expose traffic paths side by side](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/workload-types.png)
-
-- **service** - Forward to a Kubernetes service (TCP/UDP)
-- **pod** - Forward directly to pods using label selectors (TCP/UDP)
-- **proxy** - Tunnel to external resources via the cluster (TCP/UDP)
-- **expose** - Reverse tunnel your local services to the cluster or internet
-
-### Expose: Reverse Tunneling
-
-The **expose** workload type lets you share your local development server with your team or expose it to the internet through your Kubernetes cluster. This is useful for:
-
-- Testing webhooks locally with external services
-- Sharing work-in-progress features with teammates
-- Running local services that need to be accessible from the cluster
-
-**Example: Expose local service to the internet**
-
-```json
-{
-  "alias": "myapp.example.com",
-  "namespace": "production",
-  "local_port": 3000,
-  "local_address": "localhost",
-  "context": "my-k8s-cluster",
-  "workload_type": "expose",
-  "protocol": "tcp",
-  "domain_enabled": true,
-  "exposure_type": "public",
-  "cert_manager_enabled": true,
-  "cert_issuer": "letsencrypt-prod",
-  "cert_issuer_kind": "ClusterIssuer",
-  "ingress_class": "nginx"
-}
-```
-
-**Example: Expose to cluster internal network only**
-
-```json
-{
-  "alias": "internal-api",
-  "namespace": "development",
-  "local_port": 8080,
-  "local_address": "localhost",
-  "context": "my-k8s-cluster",
-  "workload_type": "expose",
-  "protocol": "tcp",
-  "domain_enabled": true,
-  "exposure_type": "internal"
-}
-```
-
-For more examples, see the [examples directory](./examples/).
-
-## Under the hood
-
-The tools use a shared Rust core that handles all the Kubernetes interaction. Here's the basic flow:
-
-1. **Config Management** – Load port forward configs from files/GitHub/K8s annotations
-2. **Pod Discovery** – Find target pods using label selectors or service definitions
-3. **Connection Setup** – Establish websocket connection to K8s API
-4. **Traffic Relay** – Forward traffic between local ports and pod ports
-5. **Health Monitoring** – Watch for pod changes and reconnect as needed
-
-For UDP or when you need to reach external services, we deploy a small relay pod in your cluster that handles the actual forwarding.
-
-## Recent Updates
-
-Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
-
-## Security and SBOM
-
-Releases are blocked if critical or high severity vulnerabilities are found. The CI scans frontend, backend, Docker image, and GitHub Actions using [Grype](https://github.com/anchore/grype) before publishing. You can run the same scan locally with `mise run sbom:scan-all`.
-
-SBOMs are generated with [Syft](https://github.com/anchore/syft) in CycloneDX format for each artifact. Links below point to the latest release:
-
-- **kftray** (desktop): [SBOM](https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json) · [Vuln Report](https://github.com/hcavarsan/kftray/releases/latest/download/vuln-report-kftray.json)
-- **kftui** (CLI): [SBOM](https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftui.cdx.json) · [Vuln Report](https://github.com/hcavarsan/kftray/releases/latest/download/vuln-report-kftui.json)
-- **kftray-server** (Docker): [SBOM](https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray-server.cdx.json) · [Vuln Report](https://github.com/hcavarsan/kftray/releases/latest/download/vuln-report-kftray-server.json)
-- [VEX Document](https://github.com/hcavarsan/kftray/releases/latest/download/.vex.openvex.json) (vulnerability exploitability assessments)
-
-### Attestation Verification
-
-All release artifacts are signed with [Cosign](https://github.com/sigstore/cosign) and verified with [gh attestation verify](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds). Verify them using the GitHub CLI:
-
-```bash
-gh attestation verify oci://ghcr.io/hcavarsan/kftray-server:latest --owner hcavarsan
-gh attestation verify kftui_linux_amd64.tar.gz --owner hcavarsan
-gh attestation verify kftray_<version>_amd64.AppImage --owner hcavarsan
-```
-
-### Cosign SBOM Verification
-
-SBOMs and VEX documents are signed with [Cosign](https://docs.sigstore.dev/cosign/overview/) using the v3 bundle format:
-
-```bash
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.bundle.json
-
-cosign verify-blob \
-  --bundle sbom-kftray.cdx.json.bundle.json \
-  --certificate-identity-regexp "https://github.com/hcavarsan/kftray" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  sbom-kftray.cdx.json
-```
-
-### SLSA Compliance
-
-KFtray builds meet [SLSA](https://slsa.dev) Level 2 requirements:
-
-| Requirement | Status | Evidence |
-|-------------|--------|----------|
-| Build service | Hosted | GitHub Actions (hosted runners) |
-| Signed provenance | Yes | `actions/attest-build-provenance@v3.2.0` |
-| Non-forgeable | Yes | GitHub's Sigstore-based attestation |
-| Service-generated | Yes | Provenance generated by GitHub, not user |
-
-## Development
-
-Want to contribute or build from source? We use [mise](https://mise.jdx.dev) to manage the development environment.
-
-**Quick start:**
-
-```bash
-# Install mise
-curl https://mise.run | sh
-
-# Clone and setup
-git clone https://github.com/hcavarsan/kftray.git
-cd kftray
-mise install        # Install Node.js, pnpm, syft and grype
-mise run setup      # Setup dependencies
-mise run dev        # Start development
-```
-
-**Available commands:**
-
-- `mise run dev` - Start development mode
-- `mise run build` - Build production app
-- `mise run format` - Format code
-- `mise run lint` - Lint with auto-fix
-- `mise run test:back` - Run tests
-
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete development guide, including the Rust toolchain mise doesn't install.
+- [Configuration](https://kftray.app/docs/configuration): fields, workload types and shared settings.
+- [CLI reference](https://kftray.app/docs/resources/cli-reference): flags and commands for kftui.
+- [Architecture](https://kftray.app/docs/resources/architecture): the shared core and cluster relay.
+- [Security](https://kftray.app/docs/resources/security): vulnerability reporting and release verification.
+- [Releases](https://github.com/hcavarsan/kftray/releases): changes and release assets.
 
 ## Contributing
 
-We're always looking for contributions. Whether it's bug fixes, new features, or just ideas, we'd love to hear from you.
+Read the [contribution guide](https://kftray.app/docs/resources/contributing) and [code of conduct](https://kftray.app/docs/resources/code-of-conduct). For local builds, see [development](https://kftray.app/docs/resources/development) and [building from source](https://kftray.app/docs/resources/building-from-source).
 
-- **Pull Requests** – Fork, code, and submit
-- **Issues** – Report bugs or request features
-- **Discussions** – Share ideas and feedback
-
-Check out [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
+Report bugs or request features through [GitHub issues](https://github.com/hcavarsan/kftray/issues). Use [Discussions](https://github.com/hcavarsan/kftray/discussions) or [Slack](https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA) for questions.
 
 ## License
 
-kftray is available under the [GPL 3.0 License](LICENSE.md).
+kftray is licensed under [GPL-3.0](LICENSE).
 
 ## Star History
 
@@ -372,7 +85,7 @@ kftray is available under the [GPL 3.0 License](LICENSE.md).
 
 ## Contributors
 
-Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+Contributors are listed below using the [all-contributors](https://allcontributors.org/docs/en/emoji-key) contribution types.
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -401,5 +114,3 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 <!-- prettier-ignore-end -->
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
-
-This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!

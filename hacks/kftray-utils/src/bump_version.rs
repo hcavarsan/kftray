@@ -107,7 +107,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("NPM versions successfully bumped to: {}", new_version);
 
-    println!("Updating version in Cargo.toml, README.md and tauri.conf.json");
+    println!("Updating version in Cargo.toml and tauri.conf.json");
 
     update_file_content(
         "../../Cargo.toml",
@@ -206,14 +206,6 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     println!("kftray-telemetry Cargo.toml updated");
 
     update_file_content(
-        "../../docs/kftray/INSTALL.md",
-        new_version,
-        update_markdown_version,
-    )?;
-
-    println!("README.md updated");
-
-    update_file_content(
         "../../crates/kftray-tauri/tauri.conf.json",
         new_version,
         update_json_version,
@@ -296,24 +288,6 @@ fn update_cargo_toml_version(content: &str, new_version: &str) -> io::Result<Str
     }
 
     Ok(updated_lines.join("\n"))
-}
-
-fn update_markdown_version(content: &str, new_version: &str) -> io::Result<String> {
-    let version_regex = Regex::new(r"kftray_\d+\.\d+\.\d+")
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    let newer_glibc_version_regex = Regex::new(r"kftray_\d+\.\d+\.\d+_newer-glibc")
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    let mut updated_content = newer_glibc_version_regex
-        .replace_all(content, format!("kftray_{}_newer-glibc", new_version))
-        .into_owned();
-
-    updated_content = version_regex
-        .replace_all(&updated_content, format!("kftray_{}", new_version))
-        .into_owned();
-
-    Ok(updated_content)
 }
 
 fn update_json_version(content: &str, new_version: &str) -> io::Result<String> {
