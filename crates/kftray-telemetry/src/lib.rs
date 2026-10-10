@@ -50,6 +50,7 @@ use sentry::{
     Hub,
     SentryFutureExt,
     Span,
+    Transaction,
     TransactionContext,
 };
 use serde::Serialize;
@@ -472,7 +473,7 @@ pub async fn measure<T, E: Display>(
     match &result {
         Ok(_) => {
             transaction.set_status(SpanStatus::Ok);
-            transaction.finish();
+            finish_unless_opted_out(transaction);
             push_breadcrumb(
                 "portforward",
                 format!("{} ok", operation.name()),
@@ -488,10 +489,18 @@ pub async fn measure<T, E: Display>(
             });
             transaction.set_tag("failure_kind", kind.name());
             report_failure_on(&hub, operation, kind);
-            transaction.finish();
+            finish_unless_opted_out(transaction);
         }
     }
     result
+}
+
+/// Sentry samples a transaction when it starts, so a user who turns
+/// performance data off while the operation runs is honored only here.
+fn finish_unless_opted_out(transaction: Transaction) {
+    if PERFORMANCE_ENABLED.load(Ordering::Relaxed) {
+        transaction.finish();
+    }
 }
 
 /// Reports a failed operation as an error event titled
@@ -926,6 +935,36 @@ mod tests {
             Some(SpanStatus::Cancelled)
         );
     }
+
+    #[test]
+    fn turning_performance_off_mid_measure_drops_the_transaction_only() {
+        let item_kinds = |outcome: Result<(), String>| {
+            let expected = outcome.clone();
+            let envelopes = envelopes_with_consent(true, || {
+                let result = futures::executor::block_on(measure(Operation::StartForward, async {
+                    set_performance_enabled(false);
+                    outcome
+                }));
+                assert_eq!(result, expected);
+            });
+            envelopes
+                .iter()
+                .flat_map(|envelope| envelope.items())
+                .map(|item| match item {
+                    EnvelopeItem::Event(_) => "event",
+                    EnvelopeItem::Transaction(_) => "transaction",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(item_kinds(Ok(())), Vec::<&str>::new());
+        assert_eq!(
+            item_kinds(Err("Service 'api' not found".to_string())),
+            vec!["event"]
+        );
+    }
+
     #[test]
     fn cancelled_startup_with_incomplete_cleanup_still_reports_an_error() {
         let envelopes = envelopes_with_consent(true, || {
@@ -1054,18 +1093,13 @@ mod tests {
 
     #[test]
     fn measure_sends_the_operation_name_without_the_host_name() {
-        let options = client_options("kftray@test", true).traces_sample_rate(1.0);
-
-        let envelopes = sentry::test::with_captured_envelopes_options(
-            || {
-                let result: Result<(), String> =
-                    futures::executor::block_on(measure(Operation::StopForward, async {
-                        Err("boom".to_string())
-                    }));
-                assert!(result.is_err());
-            },
-            options,
-        );
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), String> =
+                futures::executor::block_on(measure(Operation::StopForward, async {
+                    Err("boom".to_string())
+                }));
+            assert!(result.is_err());
+        });
         let transaction = captured_transaction(&envelopes);
 
         assert_eq!(
@@ -1079,23 +1113,18 @@ mod tests {
 
     #[test]
     fn phases_awaited_inside_measure_become_child_spans() {
-        let options = client_options("kftray@test", true).traces_sample_rate(1.0);
-
-        let envelopes = sentry::test::with_captured_envelopes_options(
-            || {
-                let result: Result<(), String> =
-                    futures::executor::block_on(measure(Operation::StartForward, async {
-                        let connect = phase(Phase::Connect);
-                        futures::future::ready(()).await;
-                        drop(connect);
-                        let listen = phase(Phase::Listen);
-                        listen.fail();
-                        Ok(())
-                    }));
-                assert!(result.is_ok());
-            },
-            options,
-        );
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), String> =
+                futures::executor::block_on(measure(Operation::StartForward, async {
+                    let connect = phase(Phase::Connect);
+                    futures::future::ready(()).await;
+                    drop(connect);
+                    let listen = phase(Phase::Listen);
+                    listen.fail();
+                    Ok(())
+                }));
+            assert!(result.is_ok());
+        });
         let transaction = captured_transaction(&envelopes);
         let spans: Vec<_> = transaction
             .spans
