@@ -184,6 +184,9 @@ impl Phase {
 /// priority order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
+    /// The operation was cancelled or failed and its rollback could not
+    /// finish, leaving a relay pod, loopback alias or hosts entry behind.
+    CleanupIncomplete,
     /// The user or a concurrent stop cancelled the operation.
     Cancelled,
     /// The forward was already running, here or in another kftray process.
@@ -220,6 +223,7 @@ pub enum FailureKind {
 impl FailureKind {
     pub fn name(self) -> &'static str {
         match self {
+            Self::CleanupIncomplete => "cleanup_incomplete",
             Self::Cancelled => "cancelled",
             Self::AlreadyRunning => "already_running",
             Self::Timeout => "timeout",
@@ -244,6 +248,7 @@ impl FailureKind {
 /// process; the message is used here and dropped.
 pub fn classify(message: &str) -> FailureKind {
     const RULES: &[(FailureKind, &[&str])] = &[
+        (FailureKind::CleanupIncomplete, &["cleanup incomplete"]),
         (FailureKind::Cancelled, &["cancelled", "canceled"]),
         (
             FailureKind::AlreadyRunning,
@@ -446,9 +451,9 @@ pub async fn load_setting_with_mode(mode: DatabaseMode) {
 
 /// Runs `future` as a transaction named after `operation`. Code awaited
 /// inside it (not spawned from it) can attach child spans with [`phase`].
-/// A failure is classified into a [`FailureKind`], tagged on the
-/// transaction and reported as an error event; the outcome is also kept as
-/// a breadcrumb for the next error report.
+/// A failure is classified into a [`FailureKind`] and tagged on the transaction.
+/// Cancellations get a cancelled status and an informational breadcrumb.
+/// Other failures also produce an error event.
 pub async fn measure<T, E: Display>(
     operation: Operation, future: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
@@ -476,7 +481,11 @@ pub async fn measure<T, E: Display>(
         }
         Err(error) => {
             let kind = classify(&error.to_string());
-            transaction.set_status(SpanStatus::InternalError);
+            transaction.set_status(if kind == FailureKind::Cancelled {
+                SpanStatus::Cancelled
+            } else {
+                SpanStatus::InternalError
+            });
             transaction.set_tag("failure_kind", kind.name());
             report_failure_on(&hub, operation, kind);
             transaction.finish();
@@ -489,16 +498,21 @@ pub async fn measure<T, E: Display>(
 /// `<operation>: <kind>` and keeps it as a breadcrumb. For callers that see
 /// failures inside an operation that still succeeded as a whole (a mixed
 /// start batch); `measure` reports its own result on the operation's hub.
+/// Cancellations leave an informational breadcrumb without an error event.
 pub fn report_failure(operation: Operation, kind: FailureKind) {
     report_failure_on(&Hub::current(), operation, kind);
 }
 
 fn report_failure_on(hub: &Hub, operation: Operation, kind: FailureKind) {
+    let cancelled = kind == FailureKind::Cancelled;
     push_breadcrumb(
         "portforward",
         format!("{} {}", operation.name(), kind.name()),
-        Level::Error,
+        if cancelled { Level::Info } else { Level::Error },
     );
+    if cancelled {
+        return;
+    }
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
@@ -880,6 +894,86 @@ mod tests {
             trace_id_of(&event.contexts),
             trace_id_of(&transaction.contexts)
         );
+    }
+
+    #[test]
+    fn cancelled_measure_keeps_the_error_and_records_a_cancelled_transaction() {
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), &str> =
+                futures::executor::block_on(measure(Operation::AutoStart, async {
+                    Err("Startup cancelled for config 2")
+                }));
+            assert_eq!(result, Err("Startup cancelled for config 2"));
+        });
+
+        assert!(
+            envelopes
+                .iter()
+                .flat_map(|envelope| envelope.items())
+                .all(|item| !matches!(item, EnvelopeItem::Event(_))),
+            "cancellation must not create an error issue: {envelopes:?}"
+        );
+        let transaction = captured_transaction(&envelopes);
+        assert_eq!(transaction.tags["failure_kind"], "cancelled");
+        assert_eq!(
+            transaction
+                .contexts
+                .get("trace")
+                .and_then(|context| match context {
+                    sentry::protocol::Context::Trace(trace) => trace.status,
+                    _ => None,
+                }),
+            Some(SpanStatus::Cancelled)
+        );
+    }
+    #[test]
+    fn cancelled_startup_with_incomplete_cleanup_still_reports_an_error() {
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), &str> =
+                futures::executor::block_on(measure(Operation::AutoStart, async {
+                    Err("Startup cancelled for config 2; cleanup incomplete: relay delete failed")
+                }));
+            assert!(result.is_err());
+        });
+        let event = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .find_map(|item| match item {
+                EnvelopeItem::Event(event) => Some(event),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(event.tags["failure_kind"], "cleanup_incomplete");
+        let transaction = captured_transaction(&envelopes);
+        assert_eq!(transaction.tags["failure_kind"], "cleanup_incomplete");
+        assert_eq!(
+            transaction
+                .contexts
+                .get("trace")
+                .and_then(|context| match context {
+                    sentry::protocol::Context::Trace(trace) => trace.status,
+                    _ => None,
+                }),
+            Some(SpanStatus::InternalError)
+        );
+    }
+
+    #[test]
+    fn cancelled_batch_item_does_not_hide_another_failure() {
+        let envelopes = envelopes_with_consent(true, || {
+            report_failure(Operation::StartForward, FailureKind::Cancelled);
+            report_failure(Operation::StartForward, FailureKind::Timeout);
+        });
+        let failures: Vec<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter_map(|item| match item {
+                EnvelopeItem::Event(event) => Some(event.tags["failure_kind"].as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(failures, ["timeout"]);
     }
 
     #[test]
