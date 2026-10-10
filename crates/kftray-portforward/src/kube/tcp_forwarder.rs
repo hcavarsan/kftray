@@ -173,22 +173,20 @@ impl TcpForwarder {
             return Ok(());
         }
 
-        let http_logs_enabled =
-            match kftray_commons::utils::http_logs_config::get_http_logs_config(self.config_id)
+        let http_logs_config =
+            kftray_commons::utils::http_logs_config::get_http_logs_config(self.config_id)
                 .await
-            {
-                Ok(config) => config.enabled,
-                Err(_) => false,
-            };
+                .ok()
+                .filter(|config| config.enabled);
 
-        if http_logs_enabled {
+        if let Some(http_logs_config) = http_logs_config {
             if self.logger.is_none() {
                 debug!(
                     "Initializing HTTP logger for config_id {} on port {}",
                     self.config_id, local_port
                 );
                 let logger =
-                    kftray_http_logs::HttpLogger::for_config(self.config_id, local_port).await?;
+                    kftray_http_logs::HttpLogger::for_config(&http_logs_config, local_port).await?;
                 self.logger = Some(logger);
             }
         } else if self.logger.is_some() {
@@ -389,13 +387,10 @@ impl TcpForwarder {
                             };
 
                             let new_should_log = if needs_logger {
-                                let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                                    Ok(config) => config.enabled,
-                                    Err(_) => false,
-                                };
+                                let http_logs_config = kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await.ok().filter(|config| config.enabled);
 
-                                if http_logs_enabled {
-                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                if let Some(http_logs_config) = http_logs_config {
+                                    match kftray_http_logs::HttpLogger::for_config(&http_logs_config, local_port).await {
                                         Ok(new_logger) => {
                                             let mut guard = logger.lock().await;
                                             if guard.is_none() {
@@ -534,13 +529,10 @@ impl TcpForwarder {
                             };
 
                             let new_should_log = if needs_logger {
-                                let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                                    Ok(config) => config.enabled,
-                                    Err(_) => false,
-                                };
+                                let http_logs_config = kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await.ok().filter(|config| config.enabled);
 
-                                if http_logs_enabled {
-                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                if let Some(http_logs_config) = http_logs_config {
+                                    match kftray_http_logs::HttpLogger::for_config(&http_logs_config, local_port).await {
                                         Ok(new_logger) => {
                                             let mut guard = logger.lock().await;
                                             if guard.is_none() {
