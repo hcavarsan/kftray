@@ -52,14 +52,14 @@ k8s-openapi = {
   ]
 }
 keyring-core = "1.0"
-kftray-commons = { path = "crates/kftray-commons", version = "0.30.3" }
-kftray-helper = { path = "crates/kftray-helper", version = "0.30.3" }
-kftray-http-logs = { path = "crates/kftray-http-logs", version = "0.30.3" }
-kftray-mcp = { path = "crates/kftray-mcp", version = "0.30.3" }
-kftray-network-monitor = { path = "crates/kftray-network-monitor", version = "0.30.3" }
-kftray-portforward = { path = "crates/kftray-portforward", version = "0.30.3" }
-kftray-shortcuts = { path = "crates/kftray-shortcuts", version = "0.30.3" }
-kftray-telemetry = { path = "crates/kftray-telemetry", version = "0.30.3" }
+kftray-commons = { path = "crates/kftray-commons", version = "0.30.4" }
+kftray-helper = { path = "crates/kftray-helper", version = "0.30.4" }
+kftray-http-logs = { path = "crates/kftray-http-logs", version = "0.30.4" }
+kftray-mcp = { path = "crates/kftray-mcp", version = "0.30.4" }
+kftray-network-monitor = { path = "crates/kftray-network-monitor", version = "0.30.4" }
+kftray-portforward = { path = "crates/kftray-portforward", version = "0.30.4" }
+kftray-shortcuts = { path = "crates/kftray-shortcuts", version = "0.30.4" }
+kftray-telemetry = { path = "crates/kftray-telemetry", version = "0.30.4" }
 kube = {
   version = "4.2.0",
   features = [
