@@ -125,7 +125,8 @@ async fn update_hosts_with_ssl(
         .clone()
         .ok_or("Alias required for SSL hosts entry")?;
     let id = config.id.ok_or("Config id required for SSL hosts entry")?;
-    let port = config.local_port.unwrap_or(8080);
+    let ip =
+        crate::hostsfile::listener_ip(config).ok_or("Invalid local address for SSL hosts entry")?;
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let counted = AllocationInFlight::start();
@@ -144,7 +145,7 @@ async fn update_hosts_with_ssl(
             let _ = sender.send(Ok(()));
             return;
         }
-        let written = add_ssl_host_entry(&id.to_string(), &alias, port, mode)
+        let written = add_ssl_host_entry(&id.to_string(), &alias, ip, mode)
             .await
             .map_err(|error| format!("Failed to add HTTPS hosts entries: {error}"));
         let _ = sender.send(written);

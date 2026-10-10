@@ -106,17 +106,15 @@ impl HostfileManager {
     /// decided here, since forgetting them is a durability decision the
     /// caller owns.
     fn add_ssl_host_entry(
-        &self, config_id: &str, alias: &str, protected: &[HostEntry],
+        &self, config_id: &str, alias: &str, ip: std::net::IpAddr, protected: &[HostEntry],
     ) -> Result<(String, String), SslWriteError> {
-        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-
         let https_id = format!("{config_id}-https");
         let https_local_id = format!("{config_id}-https-local");
 
         self.add_host_entry(
             https_id.clone(),
             HostEntry {
-                ip: loopback,
+                ip,
                 hostname: alias.to_string(),
             },
         )
@@ -128,7 +126,7 @@ impl HostfileManager {
         if let Err(error) = self.add_host_entry(
             https_local_id.clone(),
             HostEntry {
-                ip: loopback,
+                ip,
                 hostname: format!("{alias}.local"),
             },
         ) {
@@ -537,17 +535,11 @@ fn config_host_entries(
     let Some(alias) = config.alias.as_deref().filter(|alias| !alias.is_empty()) else {
         return Vec::new();
     };
+    let Some(ip) = listener_ip(config) else {
+        return Vec::new();
+    };
     let mut entries = Vec::new();
-    let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-    // The same default creation uses: a configuration with no address gets
-    // its domain alias on 127.0.0.1, so that is the line to look for.
-    if config.domain_enabled.unwrap_or_default()
-        && config.service.is_some()
-        && let Some(ip) = config
-            .local_address
-            .as_deref()
-            .map_or(Some(loopback), |address| address.parse().ok())
-    {
+    if config.domain_enabled.unwrap_or_default() && config.service.is_some() {
         entries.push((
             id.to_string(),
             HostEntry {
@@ -562,7 +554,7 @@ fn config_host_entries(
             entries.push((
                 https_id,
                 HostEntry {
-                    ip: loopback,
+                    ip,
                     hostname: alias.to_owned(),
                 },
             ));
@@ -572,13 +564,27 @@ fn config_host_entries(
             entries.push((
                 https_local_id,
                 HostEntry {
-                    ip: loopback,
+                    ip,
                     hostname: format!("{alias}.local"),
                 },
             ));
         }
     }
     entries
+}
+
+/// The address a configuration's listener binds, and so the one its aliases
+/// point at: `127.0.0.1` when it has none. `None` for an address that does
+/// not parse, which no listener could have bound.
+pub(crate) fn listener_ip(
+    config: &kftray_commons::models::config_model::Config,
+) -> Option<std::net::IpAddr> {
+    config
+        .local_address
+        .as_deref()
+        .map_or(Some(std::net::Ipv4Addr::LOCALHOST.into()), |address| {
+            address.parse().ok()
+        })
 }
 
 /// The base configuration id a full SSL host id names (`42` from
@@ -728,7 +734,7 @@ pub async fn remove_config_host_entries(
 }
 
 pub async fn add_ssl_host_entry(
-    config_id: &str, alias: &str, _https_port: u16, mode: DatabaseMode,
+    config_id: &str, alias: &str, ip: std::net::IpAddr, mode: DatabaseMode,
 ) -> std::io::Result<()> {
     let https_id = format!("{config_id}-https");
     let https_local_id = format!("{config_id}-https-local");
@@ -760,7 +766,7 @@ pub async fn add_ssl_host_entry(
     let config_id_owned = config_id.to_string();
     let alias_owned = alias.to_string();
     let result = tokio::task::spawn_blocking(move || {
-        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id_owned, &alias_owned, &protected)
+        HOSTFILE_MANAGER.add_ssl_host_entry(&config_id_owned, &alias_owned, ip, &protected)
     })
     .await
     .map_err(|e| std::io::Error::other(format!("add_ssl_host_entry task panicked: {e}")))?;
@@ -857,7 +863,9 @@ mod tests {
 
         // What survives a restart: nothing was handed to the helper in this
         // run, yet an unmarked line an older helper wrote for this alias is
-        // still this configuration's and must be reported as stranded.
+        // still this configuration's and must be reported as stranded. The
+        // domain alias and the HTTPS alias are the same mapping on the
+        // forward's address, so the line is attributable to both ids.
         let section = vec![kftray_commons::utils::hostsfile::SectionEntry {
             ip: "127.0.0.7".parse().unwrap(),
             hostname: "app.local".to_owned(),
@@ -866,7 +874,7 @@ mod tests {
         let handed: HashSet<(String, HostEntry)> = entries.into_iter().collect();
         assert_eq!(
             DirectHostfileManager::stranded_in_helper_section(&section, &ids, &handed),
-            vec!["41"]
+            vec!["41", "41-https"]
         );
         assert!(
             DirectHostfileManager::stranded_in_helper_section(&section, &ids, &HashSet::new())
@@ -900,6 +908,42 @@ mod tests {
         let entries = config_host_entries(44, Some(&config), &written);
         let ids: Vec<&str> = entries.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, vec!["44-https"]);
+    }
+
+    #[test]
+    fn https_aliases_point_at_the_address_the_forward_listens_on() {
+        use kftray_commons::models::config_model::Config;
+
+        let config = Config {
+            id: Some(7),
+            alias: Some("api".to_owned()),
+            service: Some("api".to_owned()),
+            protocol: "tcp".to_owned(),
+            local_address: Some("127.0.0.2".to_owned()),
+            ..Config::default()
+        };
+        let written = HashSet::from(["7-https".to_owned(), "7-https-local".to_owned()]);
+        let entries = config_host_entries(7, Some(&config), &written);
+        let listener: std::net::IpAddr = "127.0.0.2".parse().unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|(id, entry)| (id.as_str(), entry.ip, entry.hostname.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("7-https", listener, "api"),
+                ("7-https-local", listener, "api.local"),
+            ]
+        );
+
+        let default_address = Config {
+            local_address: None,
+            ..config
+        };
+        let entries = config_host_entries(7, Some(&default_address), &written);
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(entries.iter().all(|(_, entry)| entry.ip == loopback));
+        assert_eq!(entries.len(), 2);
     }
 
     #[test]
