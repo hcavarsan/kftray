@@ -123,7 +123,11 @@ impl LogConfig {
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if !name.starts_with(&prefix) || !name.ends_with(&suffix) {
+            let is_rotated = name
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(&suffix))
+                .is_some_and(Self::is_rotation_stamp);
+            if !is_rotated {
                 continue;
             }
 
@@ -150,6 +154,20 @@ impl LogConfig {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default()
+    }
+
+    fn is_rotation_stamp(stamp: &str) -> bool {
+        let is_digits =
+            |part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
+        let mut parts = stamp.split('_');
+        let (Some(date), Some(time)) = (parts.next(), parts.next()) else {
+            return false;
+        };
+        let suffix_ok = match parts.next() {
+            None => true,
+            Some(suffix) => !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()),
+        };
+        is_digits(date, 8) && is_digits(time, 6) && suffix_ok && parts.next().is_none()
     }
 }
 
@@ -302,17 +320,21 @@ mod tests {
         };
         let active = touch("7_8080.http", old);
         let old_rotated = touch("7_8080_20260101_000000.http", old);
+        let old_rotated_suffix = touch("7_8080_20260101_000000_2.http", old);
         let new_rotated = touch("7_8080_20260109_000000.http", SystemTime::now());
         let other_forward = touch("7_80801_20260101_000000.http", old);
         let other_extension = touch("7_8080_20260101_000000.txt", old);
+        let user_file = touch("7_8080_backup.http", old);
 
         config.remove_expired_rotated_logs(&log_path).await.unwrap();
 
         assert!(!old_rotated.exists());
+        assert!(!old_rotated_suffix.exists());
         assert!(active.exists());
         assert!(new_rotated.exists());
         assert!(other_forward.exists());
         assert!(other_extension.exists());
+        assert!(user_file.exists());
     }
 
     #[tokio::test]

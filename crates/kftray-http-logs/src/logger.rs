@@ -9,7 +9,6 @@ use anyhow::{
     Result,
 };
 use bytes::{
-    BufMut,
     Bytes,
     BytesMut,
 };
@@ -472,43 +471,28 @@ impl HttpLogger {
             }
         }
 
-        let mut combined_buffer = BytesMut::with_capacity(total_size);
-
-        if response_count > 0 {
-            debug!("Processing {} response messages in batch", response_count);
-
-            for message in messages.iter() {
-                if message.is_response() {
-                    let bytes = message.as_bytes();
-                    combined_buffer.put_slice(bytes);
-                    trace!(
-                        "Added response message to write buffer: {} bytes",
-                        bytes.len()
-                    );
-                }
-            }
-        }
-
-        for message in messages.iter() {
-            if !message.is_response() {
-                combined_buffer.put_slice(message.as_bytes());
-            }
-        }
-
         let mut log_file = log_file.write().await;
-        if let Err(e) = Self::rotate_if_full(&mut log_file, combined_buffer.len(), rotation).await {
-            error!("Failed to rotate HTTP log file: {:?}", e);
-        }
         debug!(
-            "Acquired write lock for log file batch of {} messages (buffer size: {}B)",
+            "Acquired write lock for log file batch of {} messages ({} responses, {}B)",
             messages.len(),
-            combined_buffer.len()
+            response_count,
+            total_size
         );
 
-        log_file
-            .write_all(&combined_buffer)
-            .await
-            .context("Failed to write log entries to file")?;
+        let responses_first = messages
+            .iter()
+            .filter(|message| message.is_response())
+            .chain(messages.iter().filter(|message| !message.is_response()));
+        for message in responses_first {
+            let bytes = message.as_bytes();
+            if let Err(e) = Self::rotate_if_full(&mut log_file, bytes.len(), rotation).await {
+                error!("Failed to rotate HTTP log file: {:?}", e);
+            }
+            log_file
+                .write_all(bytes)
+                .await
+                .context("Failed to write log entries to file")?;
+        }
 
         log_file
             .flush()
@@ -529,7 +513,7 @@ impl HttpLogger {
             "Successfully wrote and flushed batch of {} messages (responses: {}, total bytes: {})",
             messages.len(),
             response_count,
-            combined_buffer.len()
+            total_size
         );
 
         Ok(())
