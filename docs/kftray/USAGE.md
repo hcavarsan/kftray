@@ -30,6 +30,7 @@ In a few simple steps, you can configure your first port forward:
 ## Forwarding behavior
 
 - Service and pod configurations use the selected pod's container port as `remote_port`. A Service's exposed port is not translated a second time.
+- Service and pod startup waits for a Ready pod during recreation. Readiness, named-port resolution and the first connection share a 60-second deadline.
 - Proxy configurations use `remote_address` and `remote_port` for the destination reached from the cluster. They do not require a `service` field.
 - Proxy startup waits for the relay's TCP listener instead of a fixed delay. Existing startup probes are preserved; an unready sidecar does not prevent a started relay from forwarding.
 - Expose waits for its server and reverse WebSocket handshake before reporting success. Kubernetes Service routing can still take time to converge after Service creation.

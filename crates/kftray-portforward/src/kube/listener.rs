@@ -87,6 +87,7 @@ struct NamedPort {
 /// leave headroom for keep-alive HTTP, gRPC, websockets, and UDP peers
 /// that each pin a permit for the life of the connection.
 const MAX_CONCURRENT_STREAMS: usize = 512;
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct PortForwarder {
     namespace: Arc<str>,
@@ -181,6 +182,68 @@ fn is_permit_exhausted(error: &anyhow::Error) -> bool {
         .any(|cause| cause.is::<StreamPermitExhausted>())
 }
 
+async fn probe_startup(
+    forwarder: &kube_portforward::Forwarder, pod_api: &Api<Pod>, target: &Target,
+) -> anyhow::Result<u16> {
+    let startup = async {
+        // Resolution and the probe have to agree on the pod for the same
+        // reason a later connection does: a rollout in between can map the
+        // name to a different number, and probing the old one would reject
+        // a startup the replacement would have served.
+        let mut last_error = None;
+        for _ in 0..3 {
+            let (port, pod) = crate::kube::target::resolve_target_port_for_pod(
+                forwarder,
+                pod_api,
+                target,
+                STARTUP_TIMEOUT,
+            )
+            .await?;
+            // Initial readiness shares the startup deadline instead of the
+            // dependency's shorter wait for an individual connection.
+            forwarder
+                .wait_for_ready_pod(STARTUP_TIMEOUT)
+                .await
+                .ok_or_else(|| anyhow::anyhow!(crate::kube::target::NO_READY_PODS_ERROR))?;
+            let connected = match forwarder.connect_on_pod(port).await {
+                Ok(connected) => connected,
+                // A number resolved on the pod that is going away can be
+                // invalid on its replacement. Resolving again reads the
+                // replacement's own mapping, so this is retried rather than
+                // rejecting a startup the new pod would serve.
+                Err(error) if pod.is_some() => {
+                    debug!("Re-resolving the named port after a failed probe: {error}");
+                    last_error = Some(error);
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let (stream, connected_pod) = connected;
+            drop(stream);
+            if pod.is_none_or(|pod| pod == connected_pod) {
+                return Ok::<_, anyhow::Error>(port);
+            }
+        }
+
+        Err(match last_error {
+            Some(error) => {
+                anyhow::Error::from(error).context("Could not open a stream for the named port")
+            }
+            None => {
+                anyhow::anyhow!("The selected pod kept changing while resolving the named port")
+            }
+        })
+    };
+    let cancellation = forwarder.cancellation_token();
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(kube_portforward::Error::Cancelled.into()),
+        result = tokio::time::timeout(STARTUP_TIMEOUT, startup) => {
+            result.map_err(|err| anyhow::Error::new(err).context("Port-forward startup timed out"))?
+        }
+    }
+}
+
 impl PortForwarder {
     /// The API server this forward reaches.
     pub fn cluster_url(&self) -> &http::Uri {
@@ -229,54 +292,7 @@ impl PortForwarder {
         .map_err(|e| anyhow::anyhow!("Failed to build port forwarder: {}", e))?;
         let forwarder = Arc::new(forwarder);
 
-        let startup = async {
-            // Resolution and the probe have to agree on the pod for the same
-            // reason a later connection does: a rollout in between can map the
-            // name to a different number, and probing the old one would reject
-            // a startup the replacement would have served.
-            let mut last_error = None;
-            for _ in 0..3 {
-                let (port, pod) = crate::kube::target::resolve_target_port_for_pod(
-                    &forwarder,
-                    &pod_api,
-                    &target,
-                    tokio::time::Duration::from_secs(5),
-                )
-                .await?;
-                let connected = match forwarder.connect_on_pod(port).await {
-                    Ok(connected) => connected,
-                    // A number resolved on the pod that is going away can be
-                    // invalid on its replacement. Resolving again reads the
-                    // replacement's own mapping, so this is retried rather than
-                    // rejecting a startup the new pod would serve.
-                    Err(error) if pod.is_some() => {
-                        debug!("Re-resolving the named port after a failed probe: {error}");
-                        last_error = Some(error);
-                        continue;
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                let (stream, connected_pod) = connected;
-                drop(stream);
-                if pod.is_none_or(|pod| pod == connected_pod) {
-                    return Ok::<_, anyhow::Error>(port);
-                }
-            }
-
-            Err(match last_error {
-                Some(error) => {
-                    anyhow::Error::from(error).context("Could not open a stream for the named port")
-                }
-                None => {
-                    anyhow::anyhow!("The selected pod kept changing while resolving the named port")
-                }
-            })
-        };
-        let target_port = match tokio::time::timeout(tokio::time::Duration::from_secs(10), startup)
-            .await
-            .map_err(|err| anyhow::Error::new(err).context("Port-forward startup timed out"))
-            .and_then(|result| result)
-        {
+        let target_port = match probe_startup(&forwarder, &pod_api, &target).await {
             Ok(port) => port,
             Err(err) => {
                 let _ = forwarder.shutdown().await;
@@ -1134,6 +1150,212 @@ mod tests {
                 upgrade_started.notify_one();
             }
             held_pending.push(send);
+        }
+    }
+
+    async fn startup_with_recreated_pod(
+        ready_delay: Duration,
+    ) -> (
+        kube_portforward::Forwarder,
+        Api<Pod>,
+        Arc<tokio::sync::Notify>,
+        JoinHandle<()>,
+    ) {
+        use k8s_openapi::api::core::v1::{
+            Container,
+            ContainerPort,
+            PodSpec,
+        };
+
+        let (service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(service, "default");
+        let upgrade_started = Arc::new(tokio::sync::Notify::new());
+        let notify = Arc::clone(&upgrade_started);
+        let driver = tokio::spawn(async move {
+            let mut ready = ready_test_pod("restarting");
+            ready.spec = Some(PodSpec {
+                containers: vec![Container {
+                    name: "web".into(),
+                    ports: Some(vec![ContainerPort {
+                        name: Some("http".into()),
+                        container_port: 8080,
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+            let mut pending = ready.clone();
+            pending
+                .status
+                .as_mut()
+                .unwrap()
+                .conditions
+                .as_mut()
+                .unwrap()[0]
+                .status = "False".into();
+            let (request, send) = handle.next_request().await.unwrap();
+            assert!(request.uri().path().ends_with("/pods"));
+            let list = serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "PodList",
+                "metadata": { "resourceVersion": "1" },
+                "items": [pending],
+            });
+            send.send_response(Response::new(Body::from(
+                serde_json::to_vec(&list).unwrap(),
+            )));
+
+            let (request, send) = handle.next_request().await.unwrap();
+            assert!(request.uri().query().unwrap().contains("watch=true"));
+            tokio::time::sleep(ready_delay).await;
+            ready.metadata.resource_version = Some("2".into());
+            let mut event = serde_json::to_vec(&serde_json::json!({
+                "type": "MODIFIED", "object": ready,
+            }))
+            .unwrap();
+            event.push(b'\n');
+            send.send_response(Response::new(Body::from(event)));
+
+            let mut held_pending = Vec::new();
+            while let Some((request, send)) = handle.next_request().await {
+                if request.uri().path().ends_with("/pods/restarting") {
+                    send.send_response(Response::new(Body::from(
+                        serde_json::to_vec(&ready).unwrap(),
+                    )));
+                } else {
+                    if request.uri().path().ends_with("/portforward") {
+                        notify.notify_one();
+                    }
+                    held_pending.push(send);
+                }
+            }
+        });
+        let forwarder = kube_portforward::Forwarder::builder(
+            client.clone(),
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name("restarting".into()))
+        .build()
+        .await
+        .unwrap();
+        (
+            forwarder,
+            Api::namespaced(client, "default"),
+            upgrade_started,
+            driver,
+        )
+    }
+
+    #[tokio::test]
+    async fn startup_waits_for_a_recreated_pod_before_probing() {
+        use crate::kube::models::{
+            Port,
+            TargetSelector,
+        };
+
+        tokio::time::pause();
+        for port in [Port::Number(8080), Port::Name("http".into())] {
+            let (forwarder, pods, upgrade_started, driver) =
+                startup_with_recreated_pod(Duration::from_secs(45)).await;
+            let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
+            let started = tokio::time::Instant::now();
+            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+            tokio::select! {
+                _ = upgrade_started.notified() => {}
+                result = &mut startup => panic!("startup rejected the restarting pod: {result:?}"),
+            }
+            assert!(started.elapsed() >= Duration::from_secs(45));
+            assert!(started.elapsed() < STARTUP_TIMEOUT);
+            forwarder.shutdown().await.unwrap();
+            assert!(matches!(
+                startup
+                    .await
+                    .unwrap_err()
+                    .downcast_ref::<kube_portforward::Error>(),
+                Some(kube_portforward::Error::Cancelled)
+            ));
+            driver.abort();
+            let _ = driver.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_readiness_and_upgrade_share_one_deadline() {
+        use crate::kube::models::{
+            Port,
+            TargetSelector,
+        };
+
+        tokio::time::pause();
+        for port in [Port::Number(8080), Port::Name("http".into())] {
+            let (forwarder, pods, _, driver) =
+                startup_with_recreated_pod(Duration::from_secs(45)).await;
+            let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
+            let error = tokio::time::timeout(
+                STARTUP_TIMEOUT + Duration::from_millis(100),
+                probe_startup(&forwarder, &pods, &target),
+            )
+            .await
+            .expect("readiness must not reset the startup deadline")
+            .unwrap_err();
+
+            assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+            forwarder.shutdown().await.unwrap();
+            driver.abort();
+            let _ = driver.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_deadline_also_bounds_a_pod_that_never_becomes_ready() {
+        use crate::kube::models::TargetSelector;
+
+        tokio::time::pause();
+        let (forwarder, pods, _, driver) = startup_with_recreated_pod(STARTUP_TIMEOUT * 2).await;
+        let target = Target::new(TargetSelector::PodLabel("app=web".into()), 8080, "default");
+        let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT + Duration::from_millis(100);
+        let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+        assert!(futures::poll!(startup.as_mut()).is_pending());
+        tokio::time::advance(Duration::from_secs(45)).await;
+        assert!(futures::poll!(startup.as_mut()).is_pending());
+        tokio::time::timeout_at(deadline, startup)
+            .await
+            .expect("an unready pod must not extend the startup deadline")
+            .unwrap_err();
+        assert!(forwarder.ready_pod_identity().is_none());
+        forwarder.shutdown().await.unwrap();
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_startup_while_waiting_for_readiness() {
+        use crate::kube::models::{
+            Port,
+            TargetSelector,
+        };
+
+        tokio::time::pause();
+        for port in [Port::Number(8080), Port::Name("http".into())] {
+            let (forwarder, pods, _, driver) =
+                startup_with_recreated_pod(STARTUP_TIMEOUT * 2).await;
+            let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
+            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+            assert!(futures::poll!(startup.as_mut()).is_pending());
+            forwarder.shutdown().await.unwrap();
+
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_millis(100), startup)
+                    .await
+                    .expect("shutdown must interrupt the readiness wait")
+                    .unwrap_err()
+                    .downcast_ref::<kube_portforward::Error>(),
+                Some(kube_portforward::Error::Cancelled)
+            ));
+            driver.abort();
+            let _ = driver.await;
         }
     }
 

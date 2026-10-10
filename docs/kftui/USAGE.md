@@ -27,6 +27,8 @@ The interface displays your configuration in the "Stopped" table on the left. Pr
 
 In the TUI, bulk actions run independent configurations concurrently in bounded batches. A configuration stays busy until its operation finishes; pressing `f` again does not submit a duplicate operation. Quitting cancels queued operations, waits for active operations, and stops the forwards before exiting.
 
+Service and pod startup waits for a Ready pod during recreation. Readiness, named-port resolution and the first connection share a 60-second deadline.
+
 ## Persistent Storage
 
 To avoid specifying the config file path repeatedly, save configurations to kftui's database:
