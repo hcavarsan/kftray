@@ -247,6 +247,8 @@ Press `L` to configure HTTP logging behavior:
 - Configure retention period (1-365 days)
 - Enable automatic cleanup of old log files
 
+When a write would push a log file past the maximum size, the current content moves to a dated copy named `<config id>_<port>_<date>_<time>.http` in the same folder, and the log file starts again empty. With automatic cleanup on, copies older than the retention period are deleted when the forward starts and after each rotation. Changed settings apply the next time the forward starts.
+
 ## Complete Keyboard Reference
 
 | Key | Function |

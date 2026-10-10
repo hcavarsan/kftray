@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 use std::sync::Arc;
 
 use anyhow::{
@@ -15,6 +18,7 @@ use chrono::{
     Utc,
 };
 use dashmap::DashMap;
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use lazy_static::lazy_static;
 use tokio::fs::{
     File,
@@ -57,12 +61,14 @@ lazy_static! {
 }
 
 const CHANNEL_CAPACITY: usize = 256;
+const LOG_WRITE_BUFFER_CAPACITY: usize = 64 * 1024;
 const BATCH_SIZE_THRESHOLD: usize = 10;
 const FLUSH_INTERVAL_MS: u64 = 100;
 const TRACE_CLEANUP_INTERVAL_SECS: u64 = 5;
 const TRACE_EXPIRY_SECS: i64 = 1800;
 
 type TraceMap = Arc<DashMap<String, TraceInfo>>;
+type Rotation<'a> = (&'a LogConfig, &'a Path);
 
 #[derive(Clone, Debug)]
 pub struct HttpLogger {
@@ -82,7 +88,7 @@ impl HttpLogger {
         let (log_sender, mut log_receiver) = mpsc::channel::<LogMessage>(CHANNEL_CAPACITY);
 
         let log_file = Arc::new(RwLock::new(BufWriter::with_capacity(
-            64 * 1024,
+            LOG_WRITE_BUFFER_CAPACITY,
             OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -91,13 +97,21 @@ impl HttpLogger {
                 .context("Failed to open log file")?,
         )));
 
+        if log_config.auto_cleanup()
+            && let Err(e) = log_config.remove_expired_rotated_logs(&log_file_path).await
+        {
+            error!("Failed to remove expired HTTP log files: {:?}", e);
+        }
+
         let trace_map: TraceMap = Arc::new(DashMap::with_capacity(1024));
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
         let mut shutdown_rx_writer = shutdown_rx.clone();
 
         let writer_task = tokio::spawn({
             let log_file = log_file.clone();
+            let log_config = log_config.clone();
             async move {
+                let rotation = (&log_config, log_file_path.as_path());
                 let mut flush_interval =
                     tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
                 let mut message_batch = Vec::with_capacity(BATCH_SIZE_THRESHOLD * 2);
@@ -125,7 +139,7 @@ impl HttpLogger {
                                 debug!("Writing log batch of {} messages (contains response: {})",
                                       batch_size, is_response);
 
-                                match Self::write_log_batch(&log_file, &message_batch).await { Err(e) => {
+                                match Self::write_log_batch(&log_file, &message_batch, rotation).await { Err(e) => {
                                     error!("Failed to write log batch: {:?}", e);
                                 } _ => {
                                     debug!("Successfully wrote log batch");
@@ -147,7 +161,7 @@ impl HttpLogger {
                                       message_batch.len(),
                                       now.signed_duration_since(last_flush).num_milliseconds());
 
-                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch).await {
+                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, rotation).await {
                                     error!("Failed to write log batch: {:?}", e);
                                 }
                                 message_batch.clear();
@@ -168,12 +182,12 @@ impl HttpLogger {
                             if !message_batch.is_empty() {
                                 debug!("Writing final batch of {} messages during shutdown", message_batch.len());
 
-                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch).await {
+                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, rotation).await {
                                     error!("Failed to write final log batch: {:?}", e);
 
                                     for (i, msg) in message_batch.iter().enumerate() {
                                         debug!("Attempting to write individual message {} during shutdown", i+1);
-                                        if let Err(e) = Self::write_single_log(&log_file, msg).await {
+                                        if let Err(e) = Self::write_single_log(&log_file, msg, rotation).await {
                                             error!("Failed to write message {}: {:?}", i+1, e);
                                         }
                                     }
@@ -233,10 +247,14 @@ impl HttpLogger {
         })
     }
 
-    pub async fn for_config(config_id: i64, local_port: u16) -> Result<Self> {
-        let log_config = LogConfig::new(LogConfig::default_log_directory()?);
+    pub async fn for_config(http_logs_config: &HttpLogsConfig, local_port: u16) -> Result<Self> {
+        let log_config = LogConfig::builder(LogConfig::default_log_directory()?)
+            .max_log_size(http_logs_config.max_file_size)
+            .retention_days(http_logs_config.retention_days)
+            .auto_cleanup(http_logs_config.auto_cleanup)
+            .build();
         let log_path = log_config
-            .create_log_file_path(config_id, local_port)
+            .create_log_file_path(http_logs_config.config_id, local_port)
             .await?;
         Self::new(log_config, log_path).await
     }
@@ -394,8 +412,51 @@ impl HttpLogger {
             .map_err(|_| anyhow::anyhow!("Failed to send flush trigger"))
     }
 
+    async fn rotate_if_full(
+        log_file: &mut BufWriter<File>, incoming: usize, (log_config, log_file_path): Rotation<'_>,
+    ) -> Result<()> {
+        let current_size = log_file
+            .get_ref()
+            .metadata()
+            .await
+            .context("Failed to read log file size")?
+            .len()
+            + log_file.buffer().len() as u64;
+        if current_size == 0 || current_size + incoming as u64 <= log_config.max_log_size() {
+            return Ok(());
+        }
+
+        log_file
+            .flush()
+            .await
+            .context("Failed to flush log file before rotation")?;
+        let rotated_path = log_config.rotated_log_path(log_file_path).await;
+        tokio::fs::copy(log_file_path, &rotated_path)
+            .await
+            .context("Failed to copy full log file")?;
+        log_file
+            .get_mut()
+            .set_len(0)
+            .await
+            .context("Failed to truncate full log file")?;
+        debug!(
+            "Rotated HTTP log {} to {} at {} bytes",
+            log_file_path.display(),
+            rotated_path.display(),
+            current_size
+        );
+
+        if log_config.auto_cleanup()
+            && let Err(e) = log_config.remove_expired_rotated_logs(log_file_path).await
+        {
+            error!("Failed to remove expired HTTP log files: {:?}", e);
+        }
+
+        Ok(())
+    }
+
     async fn write_log_batch(
-        log_file: &Arc<RwLock<BufWriter<File>>>, messages: &[LogMessage],
+        log_file: &Arc<RwLock<BufWriter<File>>>, messages: &[LogMessage], rotation: Rotation<'_>,
     ) -> Result<()> {
         if messages.is_empty() {
             return Ok(());
@@ -435,6 +496,9 @@ impl HttpLogger {
         }
 
         let mut log_file = log_file.write().await;
+        if let Err(e) = Self::rotate_if_full(&mut log_file, combined_buffer.len(), rotation).await {
+            error!("Failed to rotate HTTP log file: {:?}", e);
+        }
         debug!(
             "Acquired write lock for log file batch of {} messages (buffer size: {}B)",
             messages.len(),
@@ -472,9 +536,14 @@ impl HttpLogger {
     }
 
     async fn write_single_log(
-        log_file: &Arc<RwLock<BufWriter<File>>>, message: &LogMessage,
+        log_file: &Arc<RwLock<BufWriter<File>>>, message: &LogMessage, rotation: Rotation<'_>,
     ) -> Result<()> {
         let mut log_file = log_file.write().await;
+        if let Err(e) =
+            Self::rotate_if_full(&mut log_file, message.as_bytes().len(), rotation).await
+        {
+            error!("Failed to rotate HTTP log file: {:?}", e);
+        }
         trace!(
             "Acquired write lock for single {} message",
             message.message_type()
@@ -737,7 +806,8 @@ mod tests {
             LogMessage::Response("Test response".to_string()),
         ];
 
-        HttpLogger::write_log_batch(&log_file, &messages)
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        HttpLogger::write_log_batch(&log_file, &messages, (&config, &file_path))
             .await
             .unwrap();
 
@@ -818,7 +888,8 @@ mod tests {
 
         let message = LogMessage::Request("Single log test message".to_string());
 
-        HttpLogger::write_single_log(&log_file, &message)
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        HttpLogger::write_single_log(&log_file, &message, (&config, &file_path))
             .await
             .unwrap();
 
@@ -829,5 +900,153 @@ mod tests {
 
         let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
         assert!(contents.contains("Single log test message"));
+    }
+
+    async fn log_exchanges(
+        logger: &HttpLogger, log_dir: &Path, stem: &str, count: usize, body_len: usize,
+    ) -> LoggedFiles {
+        let body = "x".repeat(body_len);
+        let response = Bytes::from(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ));
+        for _ in 0..count {
+            let id = logger
+                .log_request(Bytes::from_static(b"GET /big HTTP/1.1\r\nHost: a\r\n\r\n"))
+                .await;
+            logger.log_response(response.clone(), id).await;
+        }
+        logger.flush().await.unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        while logged_files(log_dir, stem).logged_requests != count
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        logger.shutdown().await;
+        logged_files(log_dir, stem)
+    }
+
+    struct LoggedFiles {
+        current_size: u64,
+        rotated_sizes: Vec<u64>,
+        logged_requests: usize,
+    }
+
+    fn logged_files(log_dir: &Path, stem: &str) -> LoggedFiles {
+        let mut files = LoggedFiles {
+            current_size: 0,
+            rotated_sizes: Vec::new(),
+            logged_requests: 0,
+        };
+        for entry in std::fs::read_dir(log_dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let contents = std::fs::read_to_string(&path).unwrap();
+            files.logged_requests += contents.matches("GET /big HTTP/1.1").count();
+            if name == format!("{stem}.http") {
+                files.current_size = contents.len() as u64;
+            } else if name.starts_with(&format!("{stem}_")) {
+                files.rotated_sizes.push(contents.len() as u64);
+            }
+        }
+        files
+    }
+
+    #[tokio::test]
+    async fn http_log_rotates_before_passing_default_max_file_size() {
+        let temp_dir = tempdir().unwrap();
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            temp_dir.path().to_str().unwrap(),
+        );
+
+        let logger = HttpLogger::for_config(&HttpLogsConfig::new(7), 8080)
+            .await
+            .unwrap();
+        let files = log_exchanges(
+            &logger,
+            &temp_dir.path().join("http_logs"),
+            "7_8080",
+            600,
+            64 * 1024,
+        )
+        .await;
+        assert!(files.current_size <= crate::config::DEFAULT_MAX_LOG_SIZE);
+        assert!(files.rotated_sizes.len() >= 2, "{:?}", files.rotated_sizes);
+        assert!(
+            files
+                .rotated_sizes
+                .iter()
+                .all(|size| *size <= crate::config::DEFAULT_MAX_LOG_SIZE),
+            "{:?}",
+            files.rotated_sizes
+        );
+        assert_eq!(files.logged_requests, 600);
+    }
+
+    #[tokio::test]
+    async fn http_log_rotates_at_the_configured_max_file_size() {
+        let temp_dir = tempdir().unwrap();
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            temp_dir.path().to_str().unwrap(),
+        );
+        let max_file_size = 16 * 1024;
+        let http_logs_config = HttpLogsConfig {
+            enabled: true,
+            max_file_size,
+            ..HttpLogsConfig::new(7)
+        };
+
+        let logger = HttpLogger::for_config(&http_logs_config, 8080)
+            .await
+            .unwrap();
+        let files = log_exchanges(
+            &logger,
+            &temp_dir.path().join("http_logs"),
+            "7_8080",
+            20,
+            4 * 1024,
+        )
+        .await;
+        assert!(files.current_size <= max_file_size);
+        assert!(files.rotated_sizes.len() >= 4, "{:?}", files.rotated_sizes);
+        assert!(
+            files
+                .rotated_sizes
+                .iter()
+                .all(|size| *size <= max_file_size),
+            "{:?}",
+            files.rotated_sizes
+        );
+        assert_eq!(files.logged_requests, 20);
+    }
+
+    #[tokio::test]
+    async fn logger_start_removes_expired_rotated_logs_only_with_auto_cleanup() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("7_8080.http");
+        let expired = temp_dir.path().join("7_8080_20260101_000000.http");
+        std::fs::File::create(&expired)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60))
+            .unwrap();
+
+        for auto_cleanup in [false, true] {
+            let config = LogConfig::builder(temp_dir.path().to_path_buf())
+                .retention_days(1)
+                .auto_cleanup(auto_cleanup)
+                .build();
+            let logger = HttpLogger::new(config, file_path.clone()).await.unwrap();
+            logger.shutdown().await;
+
+            assert_eq!(
+                expired.exists(),
+                !auto_cleanup,
+                "auto_cleanup {auto_cleanup}"
+            );
+        }
     }
 }

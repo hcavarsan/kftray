@@ -2,6 +2,10 @@ use std::path::{
     Path,
     PathBuf,
 };
+use std::time::{
+    Duration,
+    SystemTime,
+};
 
 use anyhow::{
     Context,
@@ -16,11 +20,14 @@ pub const DEFAULT_LOG_RETENTION_DAYS: u64 = 7;
 
 pub const HTTP_LOG_EXTENSION: &str = "http";
 
+const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+
 #[derive(Debug, Clone)]
 pub struct LogConfig {
     log_dir: PathBuf,
     max_log_size: u64,
     retention_days: u64,
+    auto_cleanup: bool,
     file_extension: String,
 }
 
@@ -30,6 +37,7 @@ impl LogConfig {
             log_dir,
             max_log_size: DEFAULT_MAX_LOG_SIZE,
             retention_days: DEFAULT_LOG_RETENTION_DAYS,
+            auto_cleanup: true,
             file_extension: HTTP_LOG_EXTENSION.to_string(),
         }
     }
@@ -56,6 +64,10 @@ impl LogConfig {
         self.retention_days
     }
 
+    pub fn auto_cleanup(&self) -> bool {
+        self.auto_cleanup
+    }
+
     pub async fn create_log_file_path(&self, config_id: i64, local_port: u16) -> Result<PathBuf> {
         self.ensure_log_directory().await?;
 
@@ -73,14 +85,71 @@ impl LogConfig {
             .context("Failed to create log directory")
     }
 
-    pub fn create_rotated_log_path(&self, config_id: i64, local_port: u16) -> PathBuf {
-        let now = Utc::now();
-        let timestamp = now.format("%Y%m%d_%H%M%S");
+    pub async fn rotated_log_path(&self, log_file_path: &Path) -> PathBuf {
+        let stem = Self::file_stem(log_file_path);
+        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+        let dir = log_file_path.parent().unwrap_or(&self.log_dir);
 
-        self.log_dir.join(format!(
-            "{}_{}_{}.{}",
-            config_id, local_port, timestamp, self.file_extension
-        ))
+        let mut rotated = dir.join(format!("{stem}_{timestamp}.{}", self.file_extension));
+        let mut suffix = 1u32;
+        while fs::try_exists(&rotated).await.unwrap_or(false) {
+            rotated = dir.join(format!(
+                "{stem}_{timestamp}_{suffix}.{}",
+                self.file_extension
+            ));
+            suffix += 1;
+        }
+        rotated
+    }
+
+    pub async fn remove_expired_rotated_logs(&self, log_file_path: &Path) -> Result<()> {
+        let Some(dir) = log_file_path.parent() else {
+            return Ok(());
+        };
+        let prefix = format!("{}_", Self::file_stem(log_file_path));
+        let suffix = format!(".{}", self.file_extension);
+        let max_age = Duration::from_secs(self.retention_days.saturating_mul(SECONDS_PER_DAY));
+        let now = SystemTime::now();
+
+        let mut entries = fs::read_dir(dir)
+            .await
+            .context("Failed to read log directory")?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .context("Failed to read log directory entry")?
+        {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(&prefix) || !name.ends_with(&suffix) {
+                continue;
+            }
+
+            let metadata = entry
+                .metadata()
+                .await
+                .context("Failed to read rotated log metadata")?;
+            let age = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok());
+            if metadata.is_file() && age.is_some_and(|age| age > max_age) {
+                fs::remove_file(entry.path())
+                    .await
+                    .with_context(|| format!("Failed to remove {}", entry.path().display()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn file_stem(log_file_path: &Path) -> String {
+        log_file_path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 }
 
@@ -89,6 +158,7 @@ pub struct LogConfigBuilder {
     log_dir: PathBuf,
     max_log_size: Option<u64>,
     retention_days: Option<u64>,
+    auto_cleanup: Option<bool>,
     file_extension: Option<String>,
 }
 
@@ -98,8 +168,24 @@ impl LogConfigBuilder {
             log_dir,
             max_log_size: None,
             retention_days: None,
+            auto_cleanup: None,
             file_extension: None,
         }
+    }
+
+    pub fn max_log_size(mut self, max_log_size: u64) -> Self {
+        self.max_log_size = Some(max_log_size);
+        self
+    }
+
+    pub fn retention_days(mut self, retention_days: u64) -> Self {
+        self.retention_days = Some(retention_days);
+        self
+    }
+
+    pub fn auto_cleanup(mut self, auto_cleanup: bool) -> Self {
+        self.auto_cleanup = Some(auto_cleanup);
+        self
     }
 
     pub fn file_extension(mut self, extension: impl Into<String>) -> Self {
@@ -112,6 +198,7 @@ impl LogConfigBuilder {
             log_dir: self.log_dir,
             max_log_size: self.max_log_size.unwrap_or(DEFAULT_MAX_LOG_SIZE),
             retention_days: self.retention_days.unwrap_or(DEFAULT_LOG_RETENTION_DAYS),
+            auto_cleanup: self.auto_cleanup.unwrap_or(true),
             file_extension: self
                 .file_extension
                 .unwrap_or_else(|| HTTP_LOG_EXTENSION.to_string()),
@@ -144,6 +231,7 @@ mod tests {
             log_dir: log_dir.clone(),
             max_log_size: 500,
             retention_days: 3,
+            auto_cleanup: true,
             file_extension: "log".to_string(),
         };
 
@@ -179,28 +267,52 @@ mod tests {
         assert_eq!(config.file_extension, "testlog");
     }
 
-    #[test]
-    fn test_create_rotated_log_path() {
+    #[tokio::test]
+    async fn rotated_log_path_never_reuses_an_existing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        let log_path = config.create_log_file_path(99, 1234).await.unwrap();
+
+        let first = config.rotated_log_path(&log_path).await;
+        std::fs::write(&first, "first").unwrap();
+        let second = config.rotated_log_path(&log_path).await;
+
+        let first_name = first.file_name().unwrap().to_str().unwrap();
+        assert!(first_name.starts_with("99_1234_"), "{first_name}");
+        assert!(first_name.ends_with(".http"), "{first_name}");
+        assert_eq!(first.parent(), log_path.parent());
+        assert_ne!(second, first);
+        assert!(!second.exists());
+    }
+
+    #[tokio::test]
+    async fn expired_cleanup_removes_only_old_rotated_files_of_this_forward() {
         let temp_dir = TempDir::new().unwrap();
         let config = LogConfig::builder(temp_dir.path().to_path_buf())
-            .file_extension("rotated")
+            .retention_days(2)
             .build();
+        let log_path = config.create_log_file_path(7, 8080).await.unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3 * SECONDS_PER_DAY);
 
-        let rotated_path = config.create_rotated_log_path(99, 1234);
+        let touch = |name: &str, modified: SystemTime| {
+            let path = temp_dir.path().join(name);
+            let file = std::fs::File::create(&path).unwrap();
+            file.set_modified(modified).unwrap();
+            path
+        };
+        let active = touch("7_8080.http", old);
+        let old_rotated = touch("7_8080_20260101_000000.http", old);
+        let new_rotated = touch("7_8080_20260109_000000.http", SystemTime::now());
+        let other_forward = touch("7_80801_20260101_000000.http", old);
+        let other_extension = touch("7_8080_20260101_000000.txt", old);
 
-        let filename = rotated_path.file_name().unwrap().to_str().unwrap();
+        config.remove_expired_rotated_logs(&log_path).await.unwrap();
 
-        assert!(filename.starts_with("99_1234_"));
-        assert!(filename.ends_with(".rotated"));
-
-        let parts: Vec<&str> = filename.split('.').next().unwrap().split('_').collect();
-        assert_eq!(parts.len(), 4);
-        assert_eq!(parts[0], "99");
-        assert_eq!(parts[1], "1234");
-        assert_eq!(parts[2].len(), 8);
-        assert_eq!(parts[3].len(), 6);
-        assert!(parts[2].chars().all(|c| c.is_ascii_digit()));
-        assert!(parts[3].chars().all(|c| c.is_ascii_digit()));
+        assert!(!old_rotated.exists());
+        assert!(active.exists());
+        assert!(new_rotated.exists());
+        assert!(other_forward.exists());
+        assert!(other_extension.exists());
     }
 
     #[tokio::test]
