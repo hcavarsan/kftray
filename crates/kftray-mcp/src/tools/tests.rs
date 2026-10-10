@@ -603,3 +603,44 @@ async fn invalid_tags_are_rejected_without_saving() {
     );
     assert_eq!(list_services(serde_json::json!([])).await, ["billing"]);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delete_config_refuses_a_config_another_live_process_forwards() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("billing", "api", serde_json::json!({})).await;
+    let mut owner = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("failed to spawn owner process");
+    kftray_commons::utils::config_state::update_config_state(
+        &kftray_commons::models::config_state_model::ConfigState {
+            id: None,
+            config_id: id,
+            is_running: true,
+            process_id: Some(owner.id()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let refused = execute_tool("delete_config", Some(serde_json::json!({"config_id": id}))).await;
+    let still_there = execute_tool("get_config", Some(serde_json::json!({"config_id": id}))).await;
+
+    let _ = owner.kill();
+    let _ = owner.wait();
+
+    assert_eq!(refused.is_error, Some(true), "{}", result_text(&refused));
+    assert!(
+        result_text(&refused).contains("another kftray process"),
+        "{}",
+        result_text(&refused)
+    );
+    result_json(&still_there);
+
+    let deleted = execute_tool("delete_config", Some(serde_json::json!({"config_id": id}))).await;
+    result_json(&deleted);
+    let gone = execute_tool("get_config", Some(serde_json::json!({"config_id": id}))).await;
+    assert_eq!(gone.is_error, Some(true));
+}
