@@ -239,6 +239,9 @@ impl GitHubRepository {
     pub async fn process_config_content(
         config_content: &str, flush_existing: bool, mode: DatabaseMode,
     ) -> GitHubResult<()> {
+        let configs = crate::utils::config::parse_import_configs(config_content)
+            .map_err(|e| format!("Failed to import configs: {e}"))?;
+
         if flush_existing && mode == DatabaseMode::File {
             info!("Flushing existing configurations before import");
             clear_existing_configs_with_mode(mode).await?;
@@ -248,13 +251,9 @@ impl GitHubRepository {
 
         info!("Importing configurations using incremental merge");
 
-        crate::utils::config::import_configs_with_pool_and_mode(
-            config_content.to_string(),
-            &context.pool,
-            mode,
-        )
-        .await
-        .map_err(|e| format!("Failed to import configs: {e}"))?;
+        crate::utils::config::upsert_configs_with_pool_and_mode(configs, &context.pool, mode)
+            .await
+            .map_err(|e| format!("Failed to import configs: {e}"))?;
 
         info!("Configuration import completed successfully");
         Ok(())
@@ -392,6 +391,70 @@ mod tests {
 
         let result = clear_existing_configs_with_pool(&pool).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_flush_import_keeps_saved_configs_until_content_is_valid() {
+        use crate::test_utils::{
+            EnvVarGuard,
+            test_db,
+        };
+        use crate::utils::config::{
+            insert_config_with_mode,
+            read_configs_with_mode,
+        };
+
+        let _db = test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        crate::utils::db::init().await.unwrap();
+        let ctx = DatabaseManager::get_context(DatabaseMode::File)
+            .await
+            .unwrap();
+        create_db_table(&ctx.pool).await.unwrap();
+        crate::utils::migration::migrate_configs(Some(&ctx.pool))
+            .await
+            .unwrap();
+
+        insert_config_with_mode(
+            Config {
+                alias: Some("keep-me".to_string()),
+                service: Some("api".to_string()),
+                namespace: "default".to_string(),
+                ..Default::default()
+            },
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+
+        let aliases = || async {
+            read_configs_with_mode(DatabaseMode::File)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.alias.unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+
+        let ok =
+            r#"{"alias":"ok","workload_type":"service","service":"api","namespace":"default"}"#;
+        let bad = r#"{"alias":"bad","workload_type":"service","service":"api","namespace":""}"#;
+        for invalid in [
+            "not json".to_string(),
+            format!("[{bad}]"),
+            format!("[{ok},{bad}]"),
+        ] {
+            let result =
+                GitHubRepository::process_config_content(&invalid, true, DatabaseMode::File).await;
+            assert!(result.is_err(), "{invalid} should be rejected");
+            assert_eq!(aliases().await, vec!["keep-me"], "after {invalid}");
+        }
+
+        GitHubRepository::process_config_content(&format!("[{ok}]"), true, DatabaseMode::File)
+            .await
+            .unwrap();
+        assert_eq!(aliases().await, vec!["ok"]);
     }
 
     #[test]
