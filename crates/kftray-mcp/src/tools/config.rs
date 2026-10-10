@@ -560,7 +560,7 @@ impl McpTool for DeleteConfigTool {
     fn definition(&self) -> Tool {
         Tool::with_schema(
             "delete_config",
-            "Delete a port-forward configuration. If the port-forward is currently active, it will be stopped first.",
+            "Delete a port-forward configuration. If the port-forward is currently active, it will be stopped first. A configuration that another kftray or kftui process is forwarding is not deleted.",
             json!({
                 "config_id": {
                     "type": "integer",
@@ -580,25 +580,31 @@ impl McpTool for DeleteConfigTool {
             None => return CallToolResult::error("Missing required argument: config_id"),
         };
 
-        // Try to stop if running (log errors but proceed with deletion)
-        if let Err(e) = kftray_portforward::stop_port_forward(args.config_id.to_string()).await {
-            log::debug!(
-                "Failed to stop port-forward for config {} before deletion: {e}",
-                args.config_id
-            );
-        }
+        let id = args.config_id;
+        let stopped = kftray_portforward::stop_port_forward(id.to_string()).await;
+        // Deleting only removes the row, so a forward another process runs or
+        // still owes cleanup for would be left with nothing to stop it by.
+        let deleted = kftray_portforward::kube::delete_configs_if_idle(
+            &[id],
+            kftray_commons::utils::db_mode::DatabaseMode::File,
+            || async move { kftray_commons::config::delete_config(id).await },
+        )
+        .await;
 
-        match kftray_commons::config::delete_config(args.config_id).await {
-            Ok(()) => {
+        match (deleted, stopped) {
+            (Ok(()), _) => {
                 let response = DeleteConfigResponse {
                     success: true,
-                    message: format!("Configuration {} deleted successfully", args.config_id),
+                    message: format!("Configuration {id} deleted successfully"),
                 };
                 CallToolResult::json(&response).unwrap_or_else(|e| {
                     CallToolResult::error(format!("Failed to serialize response: {e}"))
                 })
             }
-            Err(e) => CallToolResult::error(format!("Failed to delete config: {e}")),
+            (Err(e), Err(stop)) => {
+                CallToolResult::error(format!("Failed to delete config: {e} ({stop})"))
+            }
+            (Err(e), Ok(_)) => CallToolResult::error(format!("Failed to delete config: {e}")),
         }
     }
 }
