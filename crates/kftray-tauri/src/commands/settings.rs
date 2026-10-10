@@ -483,19 +483,32 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
         );
     }
 
-    set_mcp_server_port(port).await.map_err(|e| {
-        error!("Failed to update MCP server port: {e}");
-        format!("Failed to update MCP server port: {e}")
-    })?;
-
     let enabled = get_mcp_server_enabled().await.map_err(|e| {
         error!("Failed to read MCP server enabled: {e}");
         format!("Failed to read MCP server enabled: {e}")
     })?;
 
-    if enabled && let Err(e) = measure(Operation::McpStart, crate::mcp::start(port)).await {
-        error!("Failed to start MCP server: {e}");
-        return Err(format!("Failed to start MCP server: {e}"));
+    let listener = if enabled {
+        measure(Operation::McpStart, crate::mcp::bind(port))
+            .await
+            .map_err(|e| {
+                error!("Failed to start MCP server: {e}");
+                format!("Failed to start MCP server: {e}")
+            })?
+    } else {
+        None
+    };
+
+    set_mcp_server_port(port).await.map_err(|e| {
+        error!("Failed to update MCP server port: {e}");
+        format!("Failed to update MCP server port: {e}")
+    })?;
+
+    if let Some(listener) = listener {
+        crate::mcp::switch_to(listener).await.map_err(|e| {
+            error!("Failed to start MCP server: {e}");
+            format!("Failed to start MCP server: {e}")
+        })?;
     }
 
     info!("Successfully updated MCP server port to {port}");
@@ -568,5 +581,58 @@ mod tests {
             .await
             .expect("MCP server should accept connections on the new port");
         crate::mcp::stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_port_change_that_cannot_bind_keeps_the_saved_port() {
+        let _db = use_test_db().await;
+        let _mcp = crate::mcp::TEST_LOCK.lock().await;
+        let running = free_port();
+        set_mcp_server_port(running).await.unwrap();
+        update_mcp_server_enabled(true).await.unwrap();
+
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = taken.local_addr().unwrap().port();
+        let result = update_mcp_server_port(busy).await;
+
+        let saved = get_mcp_server_port().await.unwrap();
+        let still_running = crate::mcp::is_running().await;
+        crate::mcp::stop().await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(saved, running, "the busy port {busy} was saved");
+        assert!(still_running);
+    }
+
+    #[tokio::test]
+    async fn a_port_change_that_cannot_be_saved_keeps_the_running_server() {
+        let _db = use_test_db().await;
+        let _mcp = crate::mcp::TEST_LOCK.lock().await;
+        let running = free_port();
+        set_mcp_server_port(running).await.unwrap();
+        update_mcp_server_enabled(true).await.unwrap();
+
+        let pool = kftray_commons::utils::db::get_db_pool().await.unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_mcp_port BEFORE UPDATE ON settings
+             WHEN NEW.key = 'mcp_server_port'
+             BEGIN SELECT RAISE(ABORT, 'disk is full'); END",
+        )
+        .execute(&*pool)
+        .await
+        .unwrap();
+
+        let result = update_mcp_server_port(free_port()).await;
+
+        let saved = get_mcp_server_port().await.unwrap();
+        let old_port_answers = tokio::net::TcpStream::connect(("127.0.0.1", running))
+            .await
+            .is_ok();
+        crate::mcp::stop().await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(saved, running);
+        assert!(
+            old_port_answers,
+            "port {running} closed although the new port was not saved"
+        );
     }
 }
