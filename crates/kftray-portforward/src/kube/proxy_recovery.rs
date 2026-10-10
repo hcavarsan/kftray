@@ -263,7 +263,8 @@ impl ProxyRecoveryManager {
 
     /// Main recovery loop — subscribe to signals, retry with backoff.
     ///
-    /// Runs until cancelled via [`cancel()`](Self::cancel). On each signal:
+    /// Runs until cancelled via [`cancel()`](Self::cancel), or until every
+    /// attempt for a signal fails, which stops the forward. On each signal:
     /// 1. Acquires the per-config recovery lock
     /// 2. Retries up to [`MAX_RECOVERY_ATTEMPTS`] times with exponential backoff
     /// 3. Updates [`ConfigState`] in the database at each step
@@ -412,8 +413,54 @@ impl ProxyRecoveryManager {
                         final_error: final_error.clone(),
                     };
                 }
+                drop(_guard);
+                drop(lock);
+                remove_recovery_lock(self.config_id);
+                // The process and its listener are still registered. Without a
+                // stop the row shows stopped while its port stays bound, and the
+                // next start is refused as already running. The stop takes the
+                // recovery lock, so it runs only after the guard is released. A
+                // stop that returns before removing the process, as when another
+                // instance holds the config lock, is retried for the same reason.
+                loop {
+                    let stopped = crate::kube::stop::stop_port_forward_with_mode(
+                        self.config_id.to_string(),
+                        self.mode,
+                    )
+                    .await;
+                    if !crate::port_forward::CHILD_PROCESSES.contains_key(&self.config_id) {
+                        if let Err(e) = stopped {
+                            log::warn!(
+                                "Stopping config {} after failed recovery: {e}",
+                                self.config_id
+                            );
+                        }
+                        break;
+                    }
+                    // A stop or start elsewhere has taken this id over since.
+                    if !RECOVERY_MANAGERS
+                        .get(&self.config_id)
+                        .is_some_and(|manager| std::ptr::eq(manager.as_ref(), self))
+                    {
+                        return;
+                    }
+                    let error = format!(
+                        "Could not stop config {} after failed recovery: {}",
+                        self.config_id,
+                        stopped.err().unwrap_or_default()
+                    );
+                    log::warn!("{error}");
+                    self.update_config_state_fields(true, false, None, Some(error))
+                        .await;
+                    tokio::time::sleep(Duration::from_secs(MAX_BACKOFF_SECS)).await;
+                }
                 self.update_config_state_fields(false, false, None, Some(final_error))
                     .await;
+                self.cancel();
+                RECOVERY_MANAGERS.remove_if(&self.config_id, |_, manager| {
+                    std::ptr::eq(manager.as_ref(), self)
+                });
+                return;
             }
             drop(_guard);
             drop(lock);
@@ -1032,7 +1079,6 @@ mod tests {
         }
         drop(state);
 
-        // Cancel the loop (it's back to waiting for next signal after Failed)
         manager.cancel();
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
         RECOVERY_LOCKS.remove(&5555);
@@ -1323,5 +1369,268 @@ mod tests {
         .await
         .unwrap();
         crate::port_forward::CHILD_PROCESSES.remove(&config.id.unwrap());
+    }
+
+    #[tokio::test]
+    async fn exhausted_recovery_stops_the_forward_and_releases_its_listener() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+
+        let mut config = Config {
+            kubeconfig: Some("/nonexistent/path/kubeconfig".to_string()),
+            namespace: "default".to_string(),
+            protocol: "tcp".to_string(),
+            workload_type: Some("proxy".to_string()),
+            remote_address: Some("db.internal".to_string()),
+            context: Some("ctx".to_string()),
+            ..Default::default()
+        };
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            config.clone(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        config.id = Some(id);
+        kftray_commons::utils::config_state::update_config_state_with_mode(
+            &kftray_commons::models::config_state_model::ConfigState::new(id, true),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _keep = listener;
+            std::future::pending::<anyhow::Result<()>>().await
+        });
+        crate::port_forward::CHILD_PROCESSES.insert(
+            id,
+            crate::port_forward::PortForwardProcess::new(task, id.to_string()),
+        );
+
+        tokio::time::pause();
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            ProxyType::BarePod,
+            DatabaseMode::Memory,
+            false,
+            "http://127.0.0.1:1/".to_string(),
+        ));
+        let runner = Arc::clone(&manager);
+        let handle = tokio::spawn(async move { runner.run_recovery_loop().await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        manager.signal_recovery(RecoverySignal::PodDied);
+        let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !handle.is_finished() {
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "Timed out (30s wall clock) waiting for the recovery loop to give up"
+            );
+            tokio::time::advance(Duration::from_millis(500)).await;
+            for _ in 0..50 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::resume();
+
+        let state =
+            kftray_commons::utils::config_state::read_config_states_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|s| s.config_id == id)
+                .unwrap();
+        let registered = crate::port_forward::CHILD_PROCESSES.contains_key(&id);
+        let rebind = std::net::TcpListener::bind(addr)
+            .map(|_| ())
+            .map_err(|e| e.kind());
+        let start = crate::kube::proxy::verify_start_preconditions(id, DatabaseMode::Memory).await;
+
+        RECOVERY_LOCKS.remove(&id);
+        if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&id) {
+            process.cleanup_and_abort().await;
+        }
+
+        assert!(matches!(
+            *manager.state.read().await,
+            RecoveryState::Failed { .. }
+        ));
+        assert!(!state.is_running);
+        assert!(
+            state
+                .last_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Recovery failed after")),
+            "{:?}",
+            state.last_error
+        );
+        assert!(
+            !registered,
+            "row shows stopped but the process is still registered"
+        );
+        assert_eq!(rebind, Ok(()));
+        assert!(start.is_ok(), "{start:?}");
+    }
+
+    #[tokio::test]
+    async fn exhausted_recovery_retries_a_stop_that_left_the_process_registered() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+
+        let mut config = Config {
+            kubeconfig: Some("/nonexistent/path/kubeconfig".to_string()),
+            namespace: "default".to_string(),
+            protocol: "tcp".to_string(),
+            workload_type: Some("proxy".to_string()),
+            remote_address: Some("db.internal".to_string()),
+            context: Some("ctx".to_string()),
+            ..Default::default()
+        };
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            config.clone(),
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+        config.id = Some(id);
+        kftray_commons::utils::config_state::update_config_state_with_mode(
+            &kftray_commons::models::config_state_model::ConfigState::new(id, true),
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _keep = listener;
+            std::future::pending::<anyhow::Result<()>>().await
+        });
+        crate::port_forward::CHILD_PROCESSES.insert(
+            id,
+            crate::port_forward::PortForwardProcess::new(task, id.to_string()),
+        );
+
+        // A file where the lock directory belongs fails every `lock_config` at
+        // once, as a lock another instance holds past the wait would.
+        let blocker = dir.path().join("locks");
+        std::fs::write(&blocker, "").unwrap();
+
+        async fn row(id: i64) -> kftray_commons::models::config_state_model::ConfigState {
+            kftray_commons::utils::config_state::read_config_states_with_mode(DatabaseMode::File)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|s| s.config_id == id)
+                .unwrap()
+        }
+        // The database answers on its own threads in real time while the
+        // clock here is paused, so each step leaves them a moment to reply.
+        async fn step() {
+            tokio::time::advance(Duration::from_millis(500)).await;
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            for _ in 0..50 {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        tokio::time::pause();
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            ProxyType::BarePod,
+            DatabaseMode::File,
+            false,
+            "http://127.0.0.1:1/".to_string(),
+        ));
+        RECOVERY_MANAGERS.insert(id, Arc::clone(&manager));
+        let runner = Arc::clone(&manager);
+        let handle = tokio::spawn(async move { runner.run_recovery_loop().await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        manager.signal_recovery(RecoverySignal::PodDied);
+
+        let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut blocked = None;
+        while !handle.is_finished() {
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "Timed out (30s wall clock) waiting for the stop after failed recovery"
+            );
+            step().await;
+            if matches!(*manager.state.read().await, RecoveryState::Failed { .. }) {
+                let state = row(id).await;
+                if state
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("after failed recovery"))
+                {
+                    blocked = Some((
+                        state,
+                        crate::port_forward::CHILD_PROCESSES.contains_key(&id),
+                    ));
+                    break;
+                }
+            }
+        }
+        if blocked.is_some() {
+            std::fs::remove_file(&blocker).unwrap();
+            while !handle.is_finished() {
+                assert!(
+                    std::time::Instant::now() < wall_deadline,
+                    "Timed out (30s wall clock) waiting for the retried stop"
+                );
+                step().await;
+            }
+        }
+        tokio::time::resume();
+
+        let state = row(id).await;
+        let registered = crate::port_forward::CHILD_PROCESSES.contains_key(&id);
+        let manager_registered = RECOVERY_MANAGERS.contains_key(&id);
+        let rebind = std::net::TcpListener::bind(addr)
+            .map(|_| ())
+            .map_err(|e| e.kind());
+        let start = crate::kube::proxy::verify_start_preconditions(id, DatabaseMode::File).await;
+
+        RECOVERY_MANAGERS.remove(&id);
+        RECOVERY_LOCKS.remove(&id);
+        if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&id) {
+            process.cleanup_and_abort().await;
+        }
+
+        let Some((blocked_state, registered_while_blocked)) = blocked else {
+            panic!(
+                "recovery gave up without retrying the failed stop; row: {state:?}, process \
+                 registered: {registered}"
+            );
+        };
+        assert!(
+            blocked_state.is_running,
+            "row shows stopped while the stop has not removed the process"
+        );
+        assert!(registered_while_blocked);
+        assert!(!state.is_running);
+        assert!(
+            state
+                .last_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Recovery failed after")),
+            "{:?}",
+            state.last_error
+        );
+        assert!(!registered, "the retried stop left the process registered");
+        assert!(!manager_registered);
+        assert_eq!(rebind, Ok(()));
+        assert!(start.is_ok(), "{start:?}");
     }
 }
