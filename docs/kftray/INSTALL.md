@@ -29,6 +29,7 @@ Linux Note:
 
 - kftray uses the StatusNotifierItem (SNI) protocol for the system tray. KDE, Cinnamon, MATE, XFCE, LXQt, and Unity show the icon out of the box. On vanilla GNOME, install the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension. Without an SNI host, kftray opens as a regular window and switches to the tray when one becomes available. See [App mode](USAGE.md#app-mode).
 - For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility.
+- AppImage updates restart from the updated AppImage file. If an older version repeats the update prompt after restarting, quit it completely and open the AppImage again once.
 
 ### Direct Downloads
 

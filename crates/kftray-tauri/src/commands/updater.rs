@@ -11,6 +11,7 @@ use log::{
 };
 use tauri::{
     AppHandle,
+    Manager,
     command,
 };
 use tauri_plugin_dialog::{
@@ -28,7 +29,8 @@ fn get_current_timestamp() -> i64 {
 }
 
 fn relaunch(app: &AppHandle) -> ! {
-    let executable = match std::env::current_exe() {
+    // current_exe still points into the old AppImage mount after installation.
+    let executable = match tauri::process::current_binary(&app.env()) {
         Ok(executable) => executable,
         Err(e) => {
             error!("Failed to locate the kftray executable for restart: {e}");
