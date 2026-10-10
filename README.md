@@ -202,7 +202,7 @@ You can import configs from:
 
 kftray supports multiple workload types for different use cases:
 
-<img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/workload_types.png" alt="Workload Types" />
+![Workload types: TCP forward, proxy forward, UDP forward and expose traffic paths side by side](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/workload-types.png)
 
 - **service** - Forward to a Kubernetes service (TCP/UDP)
 - **pod** - Forward directly to pods using label selectors (TCP/UDP)

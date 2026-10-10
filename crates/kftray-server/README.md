@@ -10,23 +10,11 @@ KFtray Server helps solve network connectivity issues by acting as an intermedia
 
 The server operates in two modes:
 
-```mermaid
-graph TD
-    subgraph TCP Mode
-        A[Kftray App] -->|TCP| B[KFtray Server]
-        B -->|TCP| C[Target Server]
-    end
-```
+![Architecture diagram of TCP mode: the Kftray App connects over TCP to the KFtray Server, which connects over TCP to the Target Server.](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/server-tcp-mode.png)
 
 In TCP mode, the server creates a direct connection between the client and target server, forwarding all traffic between them.
 
-```mermaid
-graph TD
-    subgraph UDP Mode
-        D[Kftray App] -->|TCP Connection| E[KFtray Server]
-        E -->|UDP Packets| F[Target Server]
-    end
-```
+![Architecture diagram of UDP mode: the Kftray App connects over TCP to the KFtray Server, which sends UDP packets to the Target Server.](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/server-udp-mode.png)
 
 In UDP mode, the server accepts TCP connections from clients and converts them to UDP packets before sending to the target server. This helps when UDP traffic needs to traverse networks that only allow TCP.
 

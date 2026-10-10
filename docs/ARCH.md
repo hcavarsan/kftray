@@ -8,28 +8,12 @@ KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream s
 
 - **TCP Forwarding:** A local TCP socket, similar to kubectl, can be used to communicate with a Kubernetes pod. This approach offers parallel execution and improved resilience.
 
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: Opens TCP socket, starts port-forwarding
-Kubernetes Pod-->>Application: Responds with TCP Packet
-```
+![Sequence diagram: the Local App connects to kftray on localhost:8080, kftray establishes a port-forward stream with the K8s API Server, which forwards traffic to the Target Pod; responses return along the same path.](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/tcp-forwarding.png)
 
 - **Proxy TCP Forwarding:** The local TCP connects to the kftray-server pod, which then sends TCP packet to the upstream server.
 
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: Socket to kftray-server, facilitates TCP relay
-Kubernetes Pod->>Remote Service: Relays TCP Packet
-Remote Service-->>Kubernetes Pod: Responds
-Kubernetes Pod-->>Application: Returns TCP Packet
-```
+![Sequence diagram: the Application opens a socket to kftray-server in the Kubernetes Pod, which relays the TCP packet to the Remote Service; the Remote Service responds and the Kubernetes Pod returns the TCP packet to the Application.](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/proxy-tcp-forwarding.png)
 
 - **UDP Forwarding:** The KFtray client opens a local UDP socket and connects a local TCP socket to the kftray-server pod. The TCP socket sends UDP packets over TCP, which are then forwarded to the upstream server.
 
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: UDP socket, TCP port-forward to kftray-server
-Kubernetes Pod->>Service/Remote: Converts to UDP, sends packet
-Service/Remote-->>Kubernetes Pod: Responds with UDP Packet
-Kubernetes Pod-->>Application: Relays as TCP
-```
+![Sequence diagram: the Local App sends a UDP packet to kftray, which converts it to TCP and forwards it to the in-cluster kftray-server via the Kubernetes port-forward; kftray-server converts it back to UDP for the Target Service, and the response returns to the Local App as UDP.](https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/diagrams/udp-forwarding.png)
