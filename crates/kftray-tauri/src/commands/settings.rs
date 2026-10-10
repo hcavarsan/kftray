@@ -483,11 +483,6 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
         );
     }
 
-    set_mcp_server_port(port).await.map_err(|e| {
-        error!("Failed to update MCP server port: {e}");
-        format!("Failed to update MCP server port: {e}")
-    })?;
-
     let enabled = get_mcp_server_enabled().await.map_err(|e| {
         error!("Failed to read MCP server enabled: {e}");
         format!("Failed to read MCP server enabled: {e}")
@@ -497,6 +492,11 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
         error!("Failed to start MCP server: {e}");
         return Err(format!("Failed to start MCP server: {e}"));
     }
+
+    set_mcp_server_port(port).await.map_err(|e| {
+        error!("Failed to update MCP server port: {e}");
+        format!("Failed to update MCP server port: {e}")
+    })?;
 
     info!("Successfully updated MCP server port to {port}");
     Ok(())
@@ -568,5 +568,25 @@ mod tests {
             .await
             .expect("MCP server should accept connections on the new port");
         crate::mcp::stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_port_change_that_cannot_bind_keeps_the_saved_port() {
+        let _db = use_test_db().await;
+        let _mcp = crate::mcp::TEST_LOCK.lock().await;
+        let running = free_port();
+        set_mcp_server_port(running).await.unwrap();
+        update_mcp_server_enabled(true).await.unwrap();
+
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = taken.local_addr().unwrap().port();
+        let result = update_mcp_server_port(busy).await;
+
+        let saved = get_mcp_server_port().await.unwrap();
+        let still_running = crate::mcp::is_running().await;
+        crate::mcp::stop().await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(saved, running, "the busy port {busy} was saved");
+        assert!(still_running);
     }
 }

@@ -50,20 +50,14 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
         return Err("MCP server port cannot be 0".into());
     }
 
-    // Check if already running
     {
         let state = MCP_SERVER.read().await;
-        if let Some(ref server) = *state
+        if let Some(server) = &*state
             && !server.handle.is_finished()
+            && server.port == port
         {
-            if server.port == port {
-                info!("MCP server already running on port {}", port);
-                return Ok(());
-            } else {
-                // Different port, need to restart
-                drop(state);
-                stop().await?;
-            }
+            info!("MCP server already running on port {}", port);
+            return Ok(());
         }
     }
 
@@ -72,6 +66,8 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| format!("cannot listen on {addr}: {e}"))?;
+
+    stop().await?;
 
     info!("Starting MCP server on http://{}", addr);
 
@@ -145,6 +141,37 @@ mod tests {
         let _mcp = TEST_LOCK.lock().await;
         assert!(start(0).await.is_err());
         assert!(!is_running().await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_port_change_keeps_the_running_server() {
+        let _mcp = TEST_LOCK.lock().await;
+        let free = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        start(free).await.unwrap();
+
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = taken.local_addr().unwrap().port();
+        start(busy)
+            .await
+            .expect_err("start should fail on a busy port");
+
+        let still_running = is_running().await;
+        let old_port_answers = tokio::net::TcpStream::connect(("127.0.0.1", free))
+            .await
+            .is_ok();
+        stop().await.unwrap();
+        assert!(
+            still_running,
+            "a failed switch to {busy} stopped the server"
+        );
+        assert!(
+            old_port_answers,
+            "port {free} closed after a failed switch to {busy}"
+        );
     }
 
     #[tokio::test]
