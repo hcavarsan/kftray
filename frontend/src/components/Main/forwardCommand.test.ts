@@ -81,12 +81,10 @@ describe('executeForwardCommand', () => {
     expect(applied).toEqual([[makeConfig(1, true), makeConfig(2)]])
   })
 
-  it('drops the saved connection error when a start succeeds', async () => {
+  it('keeps an error the listener saved while the start was running', async () => {
     const { deps } = setup()
     const failing: Config = {
-      ...makeConfig(1),
-      is_retrying: true,
-      retry_count: 2,
+      ...makeConfig(1, true),
       last_error: 'pod web-0 is not ready',
     }
     let applied: Config[] = []
@@ -98,11 +96,11 @@ describe('executeForwardCommand', () => {
           applied = update([failing])
         },
       },
-      failing,
+      makeConfig(1),
       'starting',
     )
 
-    expect(applied).toEqual([makeConfig(1, true)])
+    expect(applied).toEqual([failing])
   })
 
   it('releases its in-flight mark only when that mark is still its own', async () => {

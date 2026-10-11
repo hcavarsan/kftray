@@ -78,9 +78,14 @@ impl Default for ListenerConfig {
 struct ConnectionErrors {
     config_id: i64,
     mode: Option<DatabaseMode>,
-    /// Set once a failure was written, so a good connection only writes to the
-    /// database when there can be an error to clear.
+    /// Set when a failure is reported, so a good connection only takes the
+    /// lock when there can be an error to clear.
     saved: std::sync::atomic::AtomicBool,
+    /// Numbers each reported outcome in the order connections finished.
+    next: std::sync::atomic::AtomicU64,
+    /// The number of the last outcome written. Held across each write, so an
+    /// older outcome that reaches the lock late does not overwrite a newer one.
+    written: tokio::sync::Mutex<u64>,
 }
 
 impl ConnectionErrors {
@@ -89,6 +94,8 @@ impl ConnectionErrors {
             config_id,
             mode,
             saved: std::sync::atomic::AtomicBool::new(false),
+            next: std::sync::atomic::AtomicU64::new(1),
+            written: tokio::sync::Mutex::new(0),
         }
     }
 
@@ -96,22 +103,35 @@ impl ConnectionErrors {
         let Some(mode) = self.mode else {
             return;
         };
-        match set_connection_error_with_mode(self.config_id, Some(&message), mode).await {
-            Ok(()) => self.saved.store(true, std::sync::atomic::Ordering::SeqCst),
-            Err(e) => debug!(
+        self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
+        let outcome = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut written = self.written.lock().await;
+        if outcome < *written {
+            return;
+        }
+        *written = outcome;
+        if let Err(e) = set_connection_error_with_mode(self.config_id, Some(&message), mode).await {
+            debug!(
                 "Could not save the connection error for config {}: {e}",
                 self.config_id
-            ),
+            );
         }
+        self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn succeeded(&self) {
         let Some(mode) = self.mode else {
             return;
         };
-        if !self.saved.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if !self.saved.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        let outcome = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut written = self.written.lock().await;
+        if outcome < *written || !self.saved.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        *written = outcome;
         if let Err(e) = set_connection_error_with_mode(self.config_id, None, mode).await {
             self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
             debug!(
@@ -2043,6 +2063,18 @@ mod tests {
         errors.succeeded().await;
 
         assert_eq!(saved.as_deref(), Some("pod web-0 is not ready"));
+        assert_eq!(last_error_of(id).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_failure_that_reaches_the_lock_late_keeps_the_newer_outcome() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let id = running_config().await;
+        let errors = ConnectionErrors::new(id, Some(DatabaseMode::Memory));
+        *errors.written.lock().await = 2;
+
+        errors.failed("pod web-0 is not ready".to_owned()).await;
+
         assert_eq!(last_error_of(id).await, None);
     }
 }
