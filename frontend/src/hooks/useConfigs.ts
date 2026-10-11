@@ -1,19 +1,28 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
 
 import { invoke } from '@/lib/tauri'
-import type { Config } from '@/types'
+import type { Config, ForwardState } from '@/types'
+
+type ConfigStateRow = Required<ForwardState> & { config_id: number }
 
 export async function fetchConfigsWithState(): Promise<Config[]> {
   const [configs, states] = await Promise.all([
     invoke<Config[]>('get_configs_cmd'),
-    invoke<{ config_id: number; is_running: boolean }[]>('get_config_states'),
+    invoke<ConfigStateRow[]>('get_config_states'),
   ])
-  const runningById = new Map(states.map(s => [s.config_id, s.is_running]))
+  const stateById = new Map(states.map(s => [s.config_id, s]))
 
-  return configs.map(config => ({
-    ...config,
-    is_running: runningById.get(config.id) ?? false,
-  }))
+  return configs.map(config => {
+    const state = stateById.get(config.id)
+
+    return {
+      ...config,
+      is_running: state?.is_running ?? false,
+      is_retrying: state?.is_retrying ?? false,
+      retry_count: state?.retry_count ?? null,
+      last_error: state?.last_error ?? null,
+    }
+  })
 }
 
 export const configsQuery = queryOptions({

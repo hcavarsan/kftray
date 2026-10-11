@@ -61,6 +61,22 @@ export function getStatusInfo(
   }
 
   if (config.is_running) {
+    if (config.is_retrying) {
+      return {
+        color: 'warning.fg',
+        status: 'Reconnecting',
+        description: `Reconnect attempt ${config.retry_count ?? 1}`,
+      }
+    }
+
+    if (config.last_error) {
+      return {
+        color: 'warning.fg',
+        status: 'Failing',
+        description: 'Connections to the pod fail',
+      }
+    }
+
     if (activePod?.includes('pending-rollout')) {
       return {
         color: 'status.rollout',
@@ -85,6 +101,14 @@ export function getStatusInfo(
       description: activePod
         ? `Connected to ${activePod}`
         : 'Waiting for healthy pod...',
+    }
+  }
+
+  if (config.last_error) {
+    return {
+      color: 'warning.fg',
+      status: 'Stopped',
+      description: 'Port forward stopped after an error',
     }
   }
 
@@ -165,6 +189,17 @@ export function getConfigDetails(
 
   if (activePod) {
     details.push({ label: 'Active Pod', value: activePod })
+  }
+
+  if (config.is_retrying) {
+    details.push({
+      label: 'Reconnect Attempt',
+      value: String(config.retry_count ?? 1),
+    })
+  }
+
+  if (config.last_error) {
+    details.push({ label: 'Last Error', value: config.last_error })
   }
 
   return details
