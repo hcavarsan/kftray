@@ -149,11 +149,18 @@ impl ConfigImporter {
     }
 
     async fn load_from_annotations(cli: &Cli) -> Result<Vec<Config>, String> {
-        let context = cli.context.as_deref().unwrap();
-
         if cli.non_interactive {
-            println!("Discovering annotated services from context: {context}");
+            println!(
+                "Discovering annotated services from context: {}",
+                cli.context.as_deref().unwrap()
+            );
         }
+
+        Self::discover_annotated_configs(cli).await
+    }
+
+    pub(crate) async fn discover_annotated_configs(cli: &Cli) -> Result<Vec<Config>, String> {
+        let context = cli.context.as_deref().unwrap();
 
         let mut configs =
             retrieve_service_configs(context, cli.kubeconfig.clone(), cli.namespace.as_deref())

@@ -6,6 +6,7 @@ use kftray_commons::utils::migration::migrate_configs;
 use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
 use crate::cli::runner::PortForwardRunner;
+use crate::cli::watch::DiscoveryWatch;
 use crate::logging::LoggerState;
 #[cfg(target_os = "macos")]
 use crate::stdin;
@@ -130,11 +131,16 @@ impl CliHandler {
             let config_view = self
                 .cli
                 .apply_view_overrides(get_config_view_with_mode(self.mode).await);
+            let discovery = self
+                .cli
+                .watch
+                .then(|| DiscoveryWatch::spawn(self.cli.clone(), self.mode));
             run_tui(
                 self.mode,
                 self.logger_state.clone(),
                 self.cli.no_update_check,
                 config_view,
+                discovery,
             )
             .await
         }

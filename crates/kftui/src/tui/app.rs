@@ -25,6 +25,7 @@ use tokio::time::{
     Duration,
 };
 
+use crate::cli::watch::DiscoveryWatch;
 use crate::logging::LoggerState;
 use crate::tui::input::{
     App,
@@ -32,6 +33,7 @@ use crate::tui::input::{
     Consent,
     UpdateInfo,
     handle_input,
+    start_discovered_configs,
 };
 use crate::tui::ui::draw_ui;
 
@@ -41,6 +43,7 @@ pub(crate) use crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT;
 
 pub async fn run_tui(
     mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool, config_view: ConfigView,
+    mut discovery: Option<DiscoveryWatch>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -78,7 +81,20 @@ pub async fn run_tui(
         }
     }
 
-    let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
+    let res = run_app(
+        &mut terminal,
+        &mut app,
+        mode,
+        &mut update_check,
+        &mut discovery,
+    )
+    .await;
+
+    // Ended before the forwards stop, so no round adds or starts a config
+    // that the stop below would miss.
+    if let Some(discovery) = discovery {
+        discovery.stop(CLEANUP_RECONCILE_TIMEOUT).await;
+    }
 
     // Stopped before the drain below, which can run for minutes: left alive,
     // the monitor's health check reacts to exactly the symptom shutdown
@@ -145,7 +161,7 @@ async fn unanswered_consents(mode: DatabaseMode) -> VecDeque<Consent> {
 
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
-    update_check: &mut Option<UpdateCheckTask>,
+    update_check: &mut Option<UpdateCheckTask>, discovery: &mut Option<DiscoveryWatch>,
 ) -> io::Result<()>
 where
     std::io::Error: From<B::Error>,
@@ -159,6 +175,13 @@ where
         app.update_configs(&configs, &config_states);
         app.load_http_logs_states(&configs, mode).await;
         app.load_active_pods(&config_states).await;
+
+        if let Some(discovery) = discovery.as_mut() {
+            let to_start = discovery.take_to_start();
+            if !to_start.is_empty() {
+                start_discovered_configs(app, &to_start, mode);
+            }
+        }
 
         if update_check.as_ref().is_some_and(|task| task.is_finished())
             && let Some(task) = update_check.take()
