@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 use futures::stream::{
     self,
@@ -95,12 +96,12 @@ impl PortForwardRunner {
             println!("Starting {} port forward(s)", config_ids.len());
         }
 
-        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids).await;
+        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids, |_| {}).await;
 
         if failed > 0 {
             eprintln!("Warning: {failed} port forward(s) failed to start");
             if cli.non_interactive {
-                if successful_config_ids.is_empty() {
+                if successful_config_ids.is_empty() && !cli.watch {
                     eprintln!("Error: All port forwards failed to start in non-interactive mode");
                     eprintln!("Check the errors above for details");
                     Self::reconcile_before_exit(mode).await;
@@ -117,29 +118,37 @@ impl PortForwardRunner {
         Ok(successful_config_ids)
     }
 
-    /// Starts the configs a `--watch` round added in non-interactive mode and
-    /// returns the ids that started. A failure here never ends the run.
+    /// Starts the configs a `--watch` round added in non-interactive mode. Each
+    /// id goes into `started` as soon as its forward runs, so a shutdown that
+    /// stops waiting for this batch still stops the forwards it started.
+    /// A failure here never ends the run.
     pub(crate) async fn start_discovered(
-        cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>,
-    ) -> Vec<i64> {
+        cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>, started: &Mutex<Vec<i64>>,
+    ) {
         println!("Starting {} discovered port forward(s)", config_ids.len());
 
-        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids).await;
+        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids, |id| {
+            if let Ok(mut started) = started.lock() {
+                started.push(id);
+            }
+        })
+        .await;
         if failed > 0 {
             eprintln!("Warning: {failed} port forward(s) failed to start");
         }
 
-        if let Ok(started) = Self::get_configs_by_ids(mode, successful_config_ids.clone()).await {
+        if let Ok(started) = Self::get_configs_by_ids(mode, successful_config_ids).await {
             for config in &started {
                 Self::print_configuration(config);
             }
         }
-
-        successful_config_ids
     }
 
-    /// Returns the ids that started and how many failed.
-    async fn start_each(cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>) -> (Vec<i64>, usize) {
+    /// Returns the ids that started and how many failed. `on_started` gets
+    /// each id as soon as its start succeeds.
+    async fn start_each(
+        cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>, mut on_started: impl FnMut(i64),
+    ) -> (Vec<i64>, usize) {
         let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
         let ssl_override = cli.ssl && !ssl_settings_enabled;
         let mut tasks = stream::iter(config_ids)
@@ -160,7 +169,10 @@ impl PortForwardRunner {
         let mut failed = 0;
         while let Some(result) = tasks.next().await {
             match result {
-                Some(config_id) => successful_config_ids.push(config_id),
+                Some(config_id) => {
+                    on_started(config_id);
+                    successful_config_ids.push(config_id);
+                }
                 None => failed += 1,
             }
         }

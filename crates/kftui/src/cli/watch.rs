@@ -185,10 +185,7 @@ async fn run_rounds<D, F>(
         }
 
         if cli.non_interactive {
-            let ok = PortForwardRunner::start_discovered(&cli, mode, ids).await;
-            if let Ok(mut started) = started.lock() {
-                started.extend(ok);
-            }
+            PortForwardRunner::start_discovered(&cli, mode, ids, &started).await;
         } else if to_start.send(ids).is_err() {
             return;
         }
