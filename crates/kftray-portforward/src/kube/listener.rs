@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
+use kftray_commons::utils::config_state::set_connection_error_with_mode;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kube::Api;
 use tokio::io::{
     AsyncRead,
@@ -44,6 +46,7 @@ pub struct ListenerConfig {
     pub local_port: u16,
     pub protocol: Protocol,
     pub tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
+    pub state_mode: Option<DatabaseMode>,
 }
 
 impl std::fmt::Debug for ListenerConfig {
@@ -53,6 +56,7 @@ impl std::fmt::Debug for ListenerConfig {
             .field("local_port", &self.local_port)
             .field("protocol", &self.protocol)
             .field("tls_acceptor", &self.tls_acceptor.is_some())
+            .field("state_mode", &self.state_mode)
             .finish()
     }
 }
@@ -64,6 +68,56 @@ impl Default for ListenerConfig {
             local_port: 0,
             protocol: Protocol::Tcp,
             tls_acceptor: None,
+            state_mode: None,
+        }
+    }
+}
+
+/// Saves on the forward's state row why a new connection could not reach the
+/// pod, and clears it once a later connection does.
+struct ConnectionErrors {
+    config_id: i64,
+    mode: Option<DatabaseMode>,
+    /// Set once a failure was written, so a good connection only writes to the
+    /// database when there can be an error to clear.
+    saved: std::sync::atomic::AtomicBool,
+}
+
+impl ConnectionErrors {
+    fn new(config_id: i64, mode: Option<DatabaseMode>) -> Self {
+        Self {
+            config_id,
+            mode,
+            saved: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    async fn failed(&self, message: String) {
+        let Some(mode) = self.mode else {
+            return;
+        };
+        match set_connection_error_with_mode(self.config_id, Some(&message), mode).await {
+            Ok(()) => self.saved.store(true, std::sync::atomic::Ordering::SeqCst),
+            Err(e) => debug!(
+                "Could not save the connection error for config {}: {e}",
+                self.config_id
+            ),
+        }
+    }
+
+    async fn succeeded(&self) {
+        let Some(mode) = self.mode else {
+            return;
+        };
+        if !self.saved.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if let Err(e) = set_connection_error_with_mode(self.config_id, None, mode).await {
+            self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
+            debug!(
+                "Could not clear the connection error for config {}: {e}",
+                self.config_id
+            );
         }
     }
 }
@@ -520,9 +574,11 @@ impl PortForwarder {
         Ok((port, pod))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_tcp_listener(
         self: Arc<Self>, listener: TcpListener, config_id: i64, workload_type: String, port: u16,
         cancellation_token: CancellationToken, tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
+        state_mode: Option<DatabaseMode>,
     ) -> anyhow::Result<()> {
         let initial_logging_enabled =
             match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
@@ -569,6 +625,7 @@ impl PortForwarder {
         const MAX_BACKOFF_MS: u64 = 5000;
         let consecutive_stream_failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
         const MAX_STREAM_FAILURES: u32 = 5;
+        let connection_errors = Arc::new(ConnectionErrors::new(config_id, state_mode));
 
         loop {
             let (client_conn, client_addr) = tokio::select! {
@@ -667,6 +724,7 @@ impl PortForwarder {
             let connection_tasks = Arc::clone(&self.connection_tasks);
             let workers_closed = Arc::clone(&self.workers_closed);
             let stream_failures_clone = Arc::clone(&consecutive_stream_failures);
+            let connection_errors = Arc::clone(&connection_errors);
 
             let handle = tokio::spawn(async move {
                 let mut client_conn = client_conn;
@@ -683,6 +741,7 @@ impl PortForwarder {
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => {
                         stream_failures_clone.store(0, std::sync::atomic::Ordering::SeqCst);
+                        connection_errors.succeeded().await;
                         stream
                     }
                     Err(e) if is_permit_exhausted(&e) => {
@@ -704,6 +763,7 @@ impl PortForwarder {
                         }
                         error!("Failed to create stream for {}: {}", client_addr, e);
                         let _ = client_conn.shutdown().await;
+                        connection_errors.failed(format!("{e:#}")).await;
                         return;
                     }
                 };
@@ -807,6 +867,7 @@ impl PortForwarder {
         let port = listener.local_addr()?.port();
 
         let tls_acceptor = listener_config.tls_acceptor;
+        let state_mode = listener_config.state_mode;
         let handle = tokio::spawn(async move {
             self.handle_tcp_listener(
                 listener,
@@ -815,6 +876,7 @@ impl PortForwarder {
                 port,
                 cancellation_token,
                 tls_acceptor,
+                state_mode,
             )
             .await
         });
@@ -830,6 +892,7 @@ impl PortForwarder {
         let upstream = Arc::new(ForwarderUpstream {
             forwarder: Arc::clone(&self),
             failures: UdpUpstreamFailures::new(config_id),
+            errors: ConnectionErrors::new(config_id, listener_config.state_mode),
         });
         let (port, forward_future) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
@@ -983,6 +1046,7 @@ impl UdpUpstreamFailures {
 struct ForwarderUpstream {
     forwarder: Arc<PortForwarder>,
     failures: UdpUpstreamFailures,
+    errors: ConnectionErrors,
 }
 
 impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
@@ -994,7 +1058,12 @@ impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
     }
 
     async fn connect(&self, reservation: Self::Reservation) -> anyhow::Result<Self::Stream> {
-        self.forwarder.open_reserved_stream(reservation).await
+        let result = self.forwarder.open_reserved_stream(reservation).await;
+        match &result {
+            Ok(_) => self.errors.succeeded().await,
+            Err(error) => self.errors.failed(format!("{error:#}")).await,
+        }
+        result
     }
 
     fn on_connect_failure(&self, error: &anyhow::Error) {
@@ -1612,6 +1681,7 @@ mod tests {
         let udp_upstream = ForwarderUpstream {
             forwarder: Arc::clone(&port_forwarder),
             failures: UdpUpstreamFailures::new(1),
+            errors: ConnectionErrors::new(1, None),
         };
         assert!(
             udp_upstream.try_reserve().is_none(),
@@ -1890,5 +1960,89 @@ mod tests {
         drop(client);
         driver.abort();
         let _ = driver.await;
+    }
+
+    async fn running_config() -> i64 {
+        use kftray_commons::models::config_state_model::ConfigState;
+
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            kftray_commons::models::config_model::Config::default(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        kftray_commons::utils::config_state::update_config_state_with_mode(
+            &ConfigState::new(id, true),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn last_error_of(config_id: i64) -> Option<String> {
+        kftray_commons::utils::config_state::read_config_states_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|state| state.config_id == config_id)
+            .unwrap()
+            .last_error
+    }
+
+    #[tokio::test]
+    async fn a_tunnel_that_cannot_open_saves_the_error_on_the_forward() {
+        use crate::kube::udp_forwarder::UdpUpstream;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let id = running_config().await;
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let cluster_url: http::Uri = "http://127.0.0.1:1".parse().unwrap();
+        let forwarder = kube_portforward::Forwarder::builder(
+            kube::Client::new(mock_service, "default"),
+            cluster_url.clone(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name("web-0".to_owned()))
+        .build()
+        .await
+        .unwrap();
+        let upstream = ForwarderUpstream {
+            forwarder: Arc::new(PortForwarder {
+                namespace: "default".into(),
+                forwarder: Arc::new(forwarder),
+                target_port: 0,
+                named_port: None,
+                cluster_url: cluster_url.clone(),
+                cluster_identity: cluster_url.to_string().into(),
+                http_log_watcher: HttpLogStateWatcher::new(),
+                stream_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+                background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+                connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+                workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }),
+            failures: UdpUpstreamFailures::new(id),
+            errors: ConnectionErrors::new(id, Some(DatabaseMode::Memory)),
+        };
+
+        let reservation = upstream.try_reserve().unwrap();
+        let error = upstream.connect(reservation).await.err().unwrap();
+
+        assert_eq!(last_error_of(id).await, Some(format!("{error:#}")));
+        upstream.forwarder.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_good_connection_clears_the_saved_error() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let id = running_config().await;
+        let errors = ConnectionErrors::new(id, Some(DatabaseMode::Memory));
+
+        errors.failed("pod web-0 is not ready".to_owned()).await;
+        let saved = last_error_of(id).await;
+        errors.succeeded().await;
+
+        assert_eq!(saved.as_deref(), Some("pod web-0 is not ready"));
+        assert_eq!(last_error_of(id).await, None);
     }
 }

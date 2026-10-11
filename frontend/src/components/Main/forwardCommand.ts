@@ -38,9 +38,19 @@ export async function executeForwardCommand(
     ) {
       const isRunning = action === 'starting'
 
+      // A start or stop writes a fresh state row, which drops the saved error
+      // and any reconnect attempt.
       await applyConfigs(current =>
         current.map(item =>
-          item.id === config.id ? { ...item, is_running: isRunning } : item,
+          item.id === config.id
+            ? {
+                ...item,
+                is_running: isRunning,
+                is_retrying: false,
+                retry_count: null,
+                last_error: null,
+              }
+            : item,
         ),
       )
     } else {

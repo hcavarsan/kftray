@@ -124,6 +124,33 @@ pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<Confi
         })
 }
 
+/// Saves why the last connection through a forward could not reach the pod,
+/// or clears it with `None`. Only a row this process runs is changed: a write
+/// that lands after a stop must not mark the stopped forward.
+pub async fn set_connection_error_with_pool(
+    config_id: i64, error: Option<&str>, pool: &SqlitePool,
+) -> Result<(), String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE config_state SET last_error = ?1 WHERE config_id = ?2 AND is_running = 1 AND \
+         process_id = ?3 AND last_error IS NOT ?1",
+    )
+    .bind(error)
+    .bind(config_id)
+    .bind(std::process::id())
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn set_connection_error_with_mode(
+    config_id: i64, error: Option<&str>, mode: DatabaseMode,
+) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    set_connection_error_with_pool(config_id, error, &context.pool).await
+}
+
 /// Marks every configuration this process was running as stopped, except the
 /// ones in `still_owed`: a configuration whose cleanup did not complete keeps
 /// its running state, so the next run's stop-all enumerates and retries it.
@@ -902,5 +929,66 @@ mod tests {
         assert!(updated_state.is_retrying);
         assert_eq!(updated_state.retry_count, None);
         assert_eq!(updated_state.last_error, None);
+    }
+
+    async fn config_with_state(pool: &SqlitePool, is_running: bool, process_id: u32) -> i64 {
+        let id = config::insert_config_with_pool(Config::default(), pool)
+            .await
+            .unwrap();
+        update_config_state_with_pool(
+            &ConfigState {
+                config_id: id,
+                is_running,
+                process_id: Some(process_id),
+                ..Default::default()
+            },
+            pool,
+        )
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn last_error_of(pool: &SqlitePool, config_id: i64) -> Option<String> {
+        read_config_states_with_pool(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|state| state.config_id == config_id)
+            .unwrap()
+            .last_error
+    }
+
+    #[tokio::test]
+    async fn connection_error_is_saved_and_cleared_on_a_running_row() {
+        let pool = setup_test_db().await;
+        let id = config_with_state(&pool, true, std::process::id()).await;
+
+        set_connection_error_with_pool(id, Some("pod not ready"), &pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            last_error_of(&pool, id).await.as_deref(),
+            Some("pod not ready")
+        );
+
+        set_connection_error_with_pool(id, None, &pool)
+            .await
+            .unwrap();
+        assert_eq!(last_error_of(&pool, id).await, None);
+    }
+
+    #[tokio::test]
+    async fn connection_error_leaves_stopped_and_foreign_rows_alone() {
+        let pool = setup_test_db().await;
+        let stopped = config_with_state(&pool, false, std::process::id()).await;
+        let foreign = config_with_state(&pool, true, std::process::id().wrapping_add(1)).await;
+
+        for id in [stopped, foreign] {
+            set_connection_error_with_pool(id, Some("pod not ready"), &pool)
+                .await
+                .unwrap();
+            assert_eq!(last_error_of(&pool, id).await, None);
+        }
     }
 }

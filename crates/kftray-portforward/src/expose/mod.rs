@@ -184,7 +184,8 @@ pub(crate) async fn start_single_expose(
         config_id,
         "expose".to_string(),
     )
-    .expecting_destination(Some(destination.clone()));
+    .expecting_destination(Some(destination.clone()))
+    .saving_errors_to(mode);
 
     // Never raced against cancellation: dropping this future mid-flight would
     // abandon a listener task `PortForwarder` has no `Drop` to stop, leaking

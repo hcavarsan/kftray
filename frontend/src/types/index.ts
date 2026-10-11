@@ -61,7 +61,14 @@ export type StoredConfig =
   | ProxyConfig
   | ExposeConfig
 
-export type Config = StoredConfig & { is_running: boolean }
+export interface ForwardState {
+  is_running: boolean
+  is_retrying?: boolean
+  retry_count?: number | null
+  last_error?: string | null
+}
+
+export type Config = StoredConfig & ForwardState
 
 export interface ViewCondition {
   field: string

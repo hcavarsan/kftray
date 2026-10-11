@@ -11,6 +11,9 @@ export const makeConfig = (id: number, isRunning = false): Config => ({
   local_port: 8000 + id,
   remote_port: 80,
   is_running: isRunning,
+  is_retrying: false,
+  retry_count: null,
+  last_error: null,
 })
 
 export const flushPromises = () => vi.advanceTimersByTimeAsync(0)
