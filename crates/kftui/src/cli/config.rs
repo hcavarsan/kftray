@@ -155,11 +155,12 @@ impl ConfigImporter {
             println!("Discovering annotated services from context: {context}");
         }
 
-        let mut configs = retrieve_service_configs(context, cli.kubeconfig.clone())
-            .await
-            .map_err(|e| {
-                format!("Failed to retrieve annotated services from context '{context}': {e}")
-            })?;
+        let mut configs =
+            retrieve_service_configs(context, cli.kubeconfig.clone(), cli.namespace.as_deref())
+                .await
+                .map_err(|e| {
+                    format!("Failed to retrieve annotated services from context '{context}': {e}")
+                })?;
 
         for config in &mut configs {
             config.domain_enabled = Some(cli.alias_as_domain);

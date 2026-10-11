@@ -1,7 +1,15 @@
-import { useState } from 'react'
+import { type ChangeEvent, useState } from 'react'
 import ReactSelect from 'react-select'
 
-import { Dialog, Flex, Spinner, Stack, Text, VStack } from '@chakra-ui/react'
+import {
+  Dialog,
+  Flex,
+  Input,
+  Spinner,
+  Stack,
+  Text,
+  VStack,
+} from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
@@ -19,8 +27,9 @@ import {
   DEFAULT_KUBECONFIG,
   useKubeconfigPicker,
 } from '@/hooks/useKubeconfigPicker'
-import { invoke } from '@/lib/tauri'
-import type { StoredConfig, StringOption } from '@/types'
+import type { StringOption } from '@/types'
+
+import { importAnnotatedServices } from './importAnnotatedServices'
 
 interface AutoImportModalProps {
   onClose: () => void
@@ -34,6 +43,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
   const [selectedContext, setSelectedContext] = useState<StringOption | null>(
     null,
   )
+  const [namespace, setNamespace] = useState('')
   const [aliasAsDomain, setAliasAsDomain] = useState(false)
   const [enableAutoLoopback, setEnableAutoLoopback] = useState(false)
 
@@ -68,25 +78,14 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
   })
 
   const importMutation = useMutation({
-    mutationFn: async (contextName: string) => {
-      const configs = await invoke<StoredConfig[]>(
-        'get_services_with_annotations',
-        {
-          contextName,
-          kubeconfigPath: kubeConfig,
-        },
-      )
-      const json = JSON.stringify(
-        configs.map(config => ({
-          ...config,
-          domain_enabled: aliasAsDomain || config.domain_enabled,
-          auto_loopback_address:
-            enableAutoLoopback || config.auto_loopback_address,
-        })),
-      )
-
-      await invoke('import_configs_cmd', { json })
-    },
+    mutationFn: (contextName: string) =>
+      importAnnotatedServices({
+        contextName,
+        kubeconfigPath: kubeConfig,
+        namespace,
+        aliasAsDomain,
+        autoLoopback: enableAutoLoopback,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
       toaster.success({
@@ -98,9 +97,8 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
     },
     meta: {
       errorToast: {
-        title: 'Error',
-        description: 'Failed to import configs.',
-        duration: 1000,
+        title: 'Failed to import configs',
+        duration: 5000,
       },
     },
   })
@@ -210,6 +208,30 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
                 Please select a valid kubeconfig file
               </Text>
             )}
+          </Stack>
+          <Stack gap={1.5}>
+            <Text fontSize='xs' color='fg.muted'>
+              Namespace
+            </Text>
+            <Input
+              data-testid='auto-import-namespace'
+              aria-label='Namespace'
+              value={namespace}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setNamespace(e.target.value)
+              }
+              placeholder='All namespaces'
+              bg='bg.surface'
+              borderColor='border'
+              _hover={{ borderColor: 'border.strong' }}
+              height='30px'
+              fontSize='12px'
+              borderRadius='md'
+              px={2}
+            />
+            <Text fontSize='xs' color='fg.subtle'>
+              Leave empty to check every namespace you can list.
+            </Text>
           </Stack>
           <Stack>
             <Checkbox

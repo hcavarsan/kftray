@@ -106,6 +106,13 @@ pub struct Cli {
 
     #[arg(
         long,
+        help = "Namespace to check for auto-discovery, without listing all namespaces (requires --auto-discover)",
+        value_name = "NAME"
+    )]
+    pub namespace: Option<String>,
+
+    #[arg(
+        long,
         help = "Enable alias-as-domain for all discovered configs (requires --auto-discover)"
     )]
     pub alias_as_domain: bool,
@@ -205,6 +212,10 @@ impl Cli {
 
         if self.kubeconfig.is_some() && !self.auto_discover {
             return Err("--kubeconfig requires --auto-discover".to_string());
+        }
+
+        if self.namespace.is_some() && !self.auto_discover {
+            return Err("--namespace requires --auto-discover".to_string());
         }
 
         if self.context.is_some() && !self.auto_discover {

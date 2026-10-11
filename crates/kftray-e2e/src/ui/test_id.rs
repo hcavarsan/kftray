@@ -29,6 +29,7 @@ pub enum TestId {
     ConfigWorkloadType,
     ConfigProtocol,
     ConfigSave,
+    AutoImportNamespace,
 }
 
 impl TestId {
@@ -61,6 +62,7 @@ impl TestId {
             Self::ConfigWorkloadType => "config-workload-type",
             Self::ConfigProtocol => "config-protocol",
             Self::ConfigSave => "config-save",
+            Self::AutoImportNamespace => "auto-import-namespace",
         }
     }
 
