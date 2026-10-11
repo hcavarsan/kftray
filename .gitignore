@@ -58,3 +58,7 @@ fuzz/corpus/**/timeout-*
 .debug-journal.md
 **/__pycache__/
 .omo/
+
+# core dumps
+core
+core.*
