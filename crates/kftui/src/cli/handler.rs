@@ -128,9 +128,9 @@ impl CliHandler {
             PortForwardRunner::run_non_interactive_mode(&self.cli, self.mode, imported_config_ids)
                 .await
         } else {
-            let config_view = self
+            let (config_view, saved_group_by) = self
                 .cli
-                .apply_view_overrides(get_config_view_with_mode(self.mode).await);
+                .tui_view(get_config_view_with_mode(self.mode).await);
             let discovery = self
                 .cli
                 .watch
@@ -140,6 +140,7 @@ impl CliHandler {
                 self.logger_state.clone(),
                 self.cli.no_update_check,
                 config_view,
+                saved_group_by,
                 discovery,
             )
             .await
