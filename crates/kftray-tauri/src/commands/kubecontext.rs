@@ -221,13 +221,13 @@ pub async fn list_ports(
 
 #[tauri::command]
 pub async fn get_services_with_annotations(
-    context_name: String, kubeconfig_path: Option<String>,
+    context_name: String, kubeconfig_path: Option<String>, namespace: Option<String>,
 ) -> Result<Vec<Config>, String> {
     info!(
-        "get_services_with_annotations called with context: '{context_name}' and kubeconfig: {kubeconfig_path:?}"
+        "get_services_with_annotations called with context: '{context_name}', kubeconfig: {kubeconfig_path:?} and namespace: {namespace:?}"
     );
 
-    retrieve_service_configs(&context_name, kubeconfig_path).await
+    retrieve_service_configs(&context_name, kubeconfig_path, namespace.as_deref()).await
 }
 
 #[cfg(test)]
