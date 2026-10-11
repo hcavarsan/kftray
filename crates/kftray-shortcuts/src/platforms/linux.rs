@@ -449,37 +449,22 @@ impl LinuxPlatform {
     }
 
     fn matches_shortcut(pressed_keys: &HashSet<u16>, shortcut_key: &str) -> bool {
-        let parts: Vec<&str> = shortcut_key.split('+').collect();
-        let mut required_modifiers = Vec::new();
+        let modifier_groups = [
+            [EvdevKey::KEY_LEFTCTRL, EvdevKey::KEY_RIGHTCTRL],
+            [EvdevKey::KEY_LEFTSHIFT, EvdevKey::KEY_RIGHTSHIFT],
+            [EvdevKey::KEY_LEFTALT, EvdevKey::KEY_RIGHTALT],
+            [EvdevKey::KEY_LEFTMETA, EvdevKey::KEY_RIGHTMETA],
+        ];
+        let mut required_modifiers = [false; 4];
         let mut required_key = None;
 
-        for part in parts {
+        for part in shortcut_key.split('+') {
             let part = part.trim().to_lowercase();
             match part.as_str() {
-                "ctrl" | "control" => {
-                    required_modifiers.push(vec![
-                        EvdevKey::KEY_LEFTCTRL.code(),
-                        EvdevKey::KEY_RIGHTCTRL.code(),
-                    ]);
-                }
-                "shift" => {
-                    required_modifiers.push(vec![
-                        EvdevKey::KEY_LEFTSHIFT.code(),
-                        EvdevKey::KEY_RIGHTSHIFT.code(),
-                    ]);
-                }
-                "alt" => {
-                    required_modifiers.push(vec![
-                        EvdevKey::KEY_LEFTALT.code(),
-                        EvdevKey::KEY_RIGHTALT.code(),
-                    ]);
-                }
-                "super" | "cmd" | "meta" => {
-                    required_modifiers.push(vec![
-                        EvdevKey::KEY_LEFTMETA.code(),
-                        EvdevKey::KEY_RIGHTMETA.code(),
-                    ]);
-                }
+                "ctrl" | "control" => required_modifiers[0] = true,
+                "shift" => required_modifiers[1] = true,
+                "alt" => required_modifiers[2] = true,
+                "super" | "cmd" | "meta" => required_modifiers[3] = true,
                 key => {
                     if let Some(key_code) = Self::key_name_to_evdev(key) {
                         required_key = Some(key_code);
@@ -488,20 +473,15 @@ impl LinuxPlatform {
             }
         }
 
-        for modifier_codes in required_modifiers {
-            if !modifier_codes
+        let modifiers_match =
+            modifier_groups
                 .iter()
-                .any(|code| pressed_keys.contains(code))
-            {
-                return false;
-            }
-        }
+                .zip(required_modifiers)
+                .all(|(group, required)| {
+                    group.iter().any(|key| pressed_keys.contains(&key.code())) == required
+                });
 
-        if let Some(key) = required_key {
-            pressed_keys.contains(&key)
-        } else {
-            false
-        }
+        modifiers_match && required_key.is_some_and(|key| pressed_keys.contains(&key))
     }
 
     fn key_name_to_evdev(key: &str) -> Option<u16> {
@@ -765,5 +745,41 @@ mod tests {
             unmapped.is_empty(),
             "parser accepts shortcuts Linux can't register: {unmapped:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn ctrl_shift_a_does_not_fire_the_ctrl_a_shortcut() {
+        let pressed: HashSet<u16> = [
+            EvdevKey::KEY_LEFTCTRL.code(),
+            EvdevKey::KEY_LEFTSHIFT.code(),
+            EvdevKey::KEY_A.code(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(!LinuxPlatform::matches_shortcut(&pressed, "Ctrl+A"));
+
+        let shortcuts = Arc::new(Mutex::new(HashMap::from([
+            (1, "Ctrl+A".to_string()),
+            (2, "Ctrl+Shift+A".to_string()),
+        ])));
+        assert_eq!(
+            LinuxPlatform::check_shortcut_match(&pressed, &shortcuts).await,
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn a_held_right_side_modifier_outside_the_shortcut_blocks_the_match() {
+        let pressed: HashSet<u16> = [
+            EvdevKey::KEY_RIGHTCTRL.code(),
+            EvdevKey::KEY_RIGHTALT.code(),
+            EvdevKey::KEY_A.code(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(!LinuxPlatform::matches_shortcut(&pressed, "Ctrl+A"));
+        assert!(LinuxPlatform::matches_shortcut(&pressed, "Ctrl+Alt+A"));
     }
 }
