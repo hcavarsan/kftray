@@ -40,18 +40,24 @@ impl ServiceClientKey {
 struct CachedClient {
     connection: Arc<KubeConnection>,
     created_at: Instant,
+    signature: KubeconfigSignature,
 }
 
 impl CachedClient {
-    fn new(connection: KubeConnection) -> Self {
+    fn new(connection: KubeConnection, signature: KubeconfigSignature) -> Self {
         Self {
             connection: Arc::new(connection),
             created_at: Instant::now(),
+            signature,
         }
     }
 
     fn is_expired(&self, ttl: Duration) -> bool {
         self.created_at.elapsed() > ttl
+    }
+
+    fn is_fresh(&self, ttl: Duration, signature: &KubeconfigSignature) -> bool {
+        !self.is_expired(ttl) && self.signature == *signature
     }
 }
 
@@ -148,14 +154,14 @@ impl SharedClientManager {
     pub async fn get_connection(
         &self, key: ServiceClientKey,
     ) -> anyhow::Result<Arc<KubeConnection>> {
-        let key = self.resolve_key(key).await?;
+        let (key, signature) = self.resolve_key(key).await?;
         let context_name = key
             .context_name
             .as_deref()
             .expect("resolve_key always returns a key carrying a context");
 
         if let Some(cached) = self.clients.get(&key) {
-            if !cached.is_expired(self.client_ttl) {
+            if cached.is_fresh(self.client_ttl, &signature) {
                 return Ok(cached.connection.clone());
             }
             drop(cached);
@@ -176,7 +182,7 @@ impl SharedClientManager {
         let guard = lock.0.lock().await;
 
         if let Some(cached) = self.clients.get(&key) {
-            if !cached.is_expired(self.client_ttl) {
+            if cached.is_fresh(self.client_ttl, &signature) {
                 let client_arc = cached.connection.clone();
                 drop(cached);
                 drop(guard);
@@ -188,7 +194,7 @@ impl SharedClientManager {
 
         match create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await {
             Ok(connection) => {
-                let cached_client = CachedClient::new(connection);
+                let cached_client = CachedClient::new(connection, signature);
                 let client_arc = cached_client.connection.clone();
                 self.clients.insert(key.clone(), cached_client);
                 drop(guard);
@@ -218,11 +224,11 @@ impl SharedClientManager {
     /// blocking thread like the merge below, since a kubeconfig on a
     /// network/remote mount can make a stat take far longer than the
     /// syscall normally implies, and that must not stall a runtime worker.
-    async fn resolve_key(&self, key: ServiceClientKey) -> anyhow::Result<ServiceClientKey> {
-        if key.context_name.is_some() {
-            return Ok(key);
-        }
-
+    /// The signature is returned for explicit contexts too, so a cached
+    /// client is rebuilt after its kubeconfig changes.
+    async fn resolve_key(
+        &self, key: ServiceClientKey,
+    ) -> anyhow::Result<(ServiceClientKey, KubeconfigSignature)> {
         let path_option = key.kubeconfig_path.clone();
         let (current_paths, current_signature) = tokio::task::spawn_blocking(move || {
             let current_paths = get_kubeconfig_paths_from_option(path_option)?;
@@ -232,13 +238,20 @@ impl SharedClientManager {
         .await
         .map_err(|e| anyhow::anyhow!("kubeconfig path resolution task panicked: {e}"))??;
 
+        if key.context_name.is_some() {
+            return Ok((key, current_signature));
+        }
+
         if let Some(resolved) = self.resolved_contexts.get(&key.kubeconfig_path) {
             let (context_name, resolved_at, signature) = resolved.value();
             if resolved_at.elapsed() <= self.client_ttl && *signature == current_signature {
-                return Ok(ServiceClientKey {
-                    context_name: Some(context_name.clone()),
-                    kubeconfig_path: key.kubeconfig_path,
-                });
+                return Ok((
+                    ServiceClientKey {
+                        context_name: Some(context_name.clone()),
+                        kubeconfig_path: key.kubeconfig_path,
+                    },
+                    current_signature,
+                ));
             }
         }
 
@@ -276,13 +289,20 @@ impl SharedClientManager {
 
         self.resolved_contexts.insert(
             key.kubeconfig_path.clone(),
-            (current_context.clone(), Instant::now(), current_signature),
+            (
+                current_context.clone(),
+                Instant::now(),
+                current_signature.clone(),
+            ),
         );
 
-        Ok(ServiceClientKey {
-            context_name: Some(current_context),
-            kubeconfig_path: key.kubeconfig_path,
-        })
+        Ok((
+            ServiceClientKey {
+                context_name: Some(current_context),
+                kubeconfig_path: key.kubeconfig_path,
+            },
+            current_signature,
+        ))
     }
 
     /// Drops a creation lock nobody else is using. Every creation attempt —
@@ -513,7 +533,7 @@ mod tests {
             Some(kubeconfig_file.path().to_string_lossy().to_string()),
         );
 
-        let first_resolved = manager
+        let (first_resolved, _) = manager
             .resolve_key(key.clone())
             .await
             .expect("a kubeconfig with a current-context must resolve");
@@ -534,7 +554,7 @@ mod tests {
             original_mtime,
         );
 
-        let second_resolved = manager
+        let (second_resolved, _) = manager
             .resolve_key(key)
             .await
             .expect("a cache hit must resolve without needing the rewritten kubeconfig to parse");
@@ -563,7 +583,7 @@ mod tests {
             Some(kubeconfig_file.path().to_string_lossy().to_string()),
         );
 
-        let first_resolved = manager
+        let (first_resolved, _) = manager
             .resolve_key(key.clone())
             .await
             .expect("a kubeconfig with a current-context must resolve");
@@ -583,7 +603,7 @@ mod tests {
             advanced_mtime,
         );
 
-        let second_resolved = manager
+        let (second_resolved, _) = manager
             .resolve_key(key)
             .await
             .expect("the rewritten kubeconfig must still resolve");
@@ -608,10 +628,13 @@ mod tests {
 
         let make_cached_client = || {
             let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-            CachedClient::new(KubeConnection {
-                client: kube::Client::new(mock_service, "default"),
-                cluster_url: "https://example.invalid".parse().unwrap(),
-            })
+            CachedClient::new(
+                KubeConnection {
+                    client: kube::Client::new(mock_service, "default"),
+                    cluster_url: "https://example.invalid".parse().unwrap(),
+                },
+                Vec::new(),
+            )
         };
 
         let recorded_key =
@@ -753,9 +776,10 @@ mod tests {
             client: kube::Client::new(mock_service, "default"),
             cluster_url: "https://example.invalid".parse().unwrap(),
         };
-        manager
-            .clients
-            .insert(resolved_key.clone(), CachedClient::new(connection));
+        manager.clients.insert(
+            resolved_key.clone(),
+            CachedClient::new(connection, Vec::new()),
+        );
         manager.resolved_contexts.insert(
             Some(kubeconfig_path.clone()),
             (
@@ -795,10 +819,13 @@ mod tests {
 
         let make_cached_client = || {
             let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-            CachedClient::new(KubeConnection {
-                client: kube::Client::new(mock_service, "default"),
-                cluster_url: "https://example.invalid".parse().unwrap(),
-            })
+            CachedClient::new(
+                KubeConnection {
+                    client: kube::Client::new(mock_service, "default"),
+                    cluster_url: "https://example.invalid".parse().unwrap(),
+                },
+                Vec::new(),
+            )
         };
 
         let key_a = ServiceClientKey::new(Some("context-a".to_string()), kubeconfig_path.clone());
@@ -845,10 +872,13 @@ mod tests {
 
         let make_cached_client = || {
             let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-            CachedClient::new(KubeConnection {
-                client: kube::Client::new(mock_service, "default"),
-                cluster_url: "https://example.invalid".parse().unwrap(),
-            })
+            CachedClient::new(
+                KubeConnection {
+                    client: kube::Client::new(mock_service, "default"),
+                    cluster_url: "https://example.invalid".parse().unwrap(),
+                },
+                Vec::new(),
+            )
         };
 
         let key_a = ServiceClientKey::new(Some("context-a".to_string()), kubeconfig_path.clone());
@@ -892,7 +922,10 @@ mod tests {
     #[tokio::test]
     async fn cancelling_get_connection_releases_creation_lock_interest() {
         let manager = Arc::new(SharedClientManager::new());
-        let key = ServiceClientKey::new(Some("ctx".to_string()), None);
+        let key = ServiceClientKey::new(
+            Some("ctx".to_string()),
+            Some("kftray-test-cancel-kubeconfig".to_string()),
+        );
 
         // Hold the creation lock so the spawned get_connection call
         // registers interest and then blocks awaiting the mutex, mirroring
@@ -986,7 +1019,8 @@ mod tests {
         use tower_test::mock;
 
         let manager = Arc::new(SharedClientManager::new());
-        let key = ServiceClientKey::new(Some("ctx".to_string()), None);
+        let kubeconfig_path = "kftray-test-post-lock-kubeconfig";
+        let key = ServiceClientKey::new(Some("ctx".to_string()), Some(kubeconfig_path.to_string()));
 
         // Stand in for a concurrent first caller that already holds the
         // creation lock, about to finish populating the cache.
@@ -1012,9 +1046,13 @@ mod tests {
             client: kube::Client::new(mock_service, "default"),
             cluster_url: "https://example.invalid".parse().unwrap(),
         };
-        manager
-            .clients
-            .insert(key.clone(), CachedClient::new(connection));
+        manager.clients.insert(
+            key.clone(),
+            CachedClient::new(
+                connection,
+                kubeconfig_signature(&[PathBuf::from(kubeconfig_path)]),
+            ),
+        );
 
         // Release the lock the way a real creator finishing its own attempt
         // would: drop the guard, then release this caller's interest. The
@@ -1059,7 +1097,7 @@ mod tests {
         let key = ServiceClientKey::new(Some("explicit-ctx".to_string()), kubeconfig_path.clone());
         manager
             .clients
-            .insert(key.clone(), CachedClient::new(connection));
+            .insert(key.clone(), CachedClient::new(connection, Vec::new()));
         manager.resolved_contexts.insert(
             kubeconfig_path.clone(),
             ("explicit-ctx".to_string(), Instant::now(), Vec::new()),
@@ -1132,7 +1170,7 @@ mod tests {
             Some(kubeconfig_file.path().to_string_lossy().to_string()),
         );
 
-        let first = manager
+        let (first, _) = manager
             .resolve_key(key.clone())
             .await
             .expect("initial resolution must succeed");
@@ -1153,7 +1191,7 @@ mod tests {
             ),
         );
 
-        let second = manager
+        let (second, _) = manager
             .resolve_key(key)
             .await
             .expect("expired cache entry must fall back to a fresh kubeconfig read");
@@ -1162,6 +1200,70 @@ mod tests {
             Some("kftray-test-ttl-context"),
             "an expired resolved-context cache entry must not be reused; resolve_key must \
              re-read the kubeconfig instead of returning the stale recorded context"
+        );
+    }
+
+    async fn fake_api_server() -> u16 {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    let body = r#"{"major":"1","minor":"30","gitVersion":"v1.30.0","gitCommit":"x","gitTreeState":"clean","buildDate":"x","goVersion":"x","compiler":"gc","platform":"linux/amd64"}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: \
+                         {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn explicit_context_client_follows_kubeconfig_edit() {
+        crate::ssl::ensure_crypto_provider_installed();
+        let a = fake_api_server().await;
+        let b = fake_api_server().await;
+        let cfg = |port: u16| {
+            format!(
+                "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  \
+                 context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    \
+                 server: http://127.0.0.1:{port}\nusers:\n- name: u\n  user: {{}}\n"
+            )
+        };
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), cfg(a)).unwrap();
+        let manager = SharedClientManager::new();
+        let key = ServiceClientKey::new(
+            Some("ctx".to_string()),
+            Some(file.path().to_string_lossy().to_string()),
+        );
+        let first = manager.get_connection(key.clone()).await.unwrap();
+        assert_eq!(first.cluster_url.port_u16(), Some(a));
+        // Coarse-mtime file systems need the rewrite to land in a later second.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        std::fs::write(file.path(), cfg(b)).unwrap();
+        let second = manager.get_connection(key).await.unwrap();
+        assert_eq!(
+            second.cluster_url.port_u16(),
+            Some(b),
+            "served the cached cluster {} after the kubeconfig moved to port {b}",
+            second.cluster_url
         );
     }
 }
