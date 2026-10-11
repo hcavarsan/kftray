@@ -694,6 +694,48 @@ pub async fn upsert_configs_with_pool_and_mode(
     Ok(ids)
 }
 
+/// Saves only the configs that match no saved one and returns their new ids.
+///
+/// Saved configs are left as they are, unlike an upsert: a running forward
+/// keeps the fields it wrote at start, such as an allocated loopback address
+/// that its stop still has to release.
+pub async fn insert_new_configs_with_mode(
+    configs: Vec<Config>, mode: DatabaseMode,
+) -> Result<Vec<i64>, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    insert_new_configs_with_pool_and_mode(configs, &context.pool, mode).await
+}
+
+async fn insert_new_configs_with_pool_and_mode(
+    configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<Vec<i64>, String> {
+    let mut known = read_configs_with_pool(pool).await?;
+
+    let mut ids = Vec::new();
+    for mut config in configs {
+        if known
+            .iter()
+            .any(|existing| configs_match_identity(existing, &config))
+        {
+            continue;
+        }
+        let id = insert_config_with_pool_and_mode(config.clone(), pool, mode)
+            .await
+            .map_err(|e| format!("Failed to insert config: {e}"))?;
+        config.id = Some(id);
+        known.push(config);
+        ids.push(id);
+    }
+
+    if !ids.is_empty()
+        && let Err(e) = migrate_configs(Some(pool)).await
+    {
+        return Err(format!("Error migrating configs: {e}"));
+    }
+
+    Ok(ids)
+}
+
 pub async fn read_configs_with_mode(mode: DatabaseMode) -> Result<Vec<Config>, String> {
     let context = DatabaseManager::get_context(mode).await?;
     read_configs_with_pool(&context.pool).await
@@ -2235,5 +2277,70 @@ mod tests {
                 .all(|c| c.service == Some("my-service".to_string())),
             "All configs should have the same service name"
         );
+    }
+
+    #[tokio::test]
+    async fn insert_new_configs_adds_unknown_services_once_and_leaves_saved_ones_alone() {
+        let pool = setup_test_db().await;
+        let discovered = |service: &str, local_port: u16| Config {
+            context: Some("ctx".to_string()),
+            namespace: "default".to_string(),
+            service: Some(service.to_string()),
+            alias: Some(service.to_string()),
+            local_port: Some(local_port),
+            remote_port: Some(80),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            ..Config::default()
+        };
+
+        let first = insert_new_configs_with_pool_and_mode(
+            vec![discovered("api", 18080)],
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.len(), 1);
+
+        let mut running = get_config_with_pool(first[0], &pool).await.unwrap();
+        running.local_address = Some("127.0.0.5".to_string());
+        update_config_with_pool(running, &pool).await.unwrap();
+
+        let second = insert_new_configs_with_pool_and_mode(
+            vec![
+                discovered("api", 18080),
+                discovered("web", 18081),
+                discovered("web", 18081),
+            ],
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs.len(), 2);
+        let api = configs
+            .iter()
+            .find(|c| c.service.as_deref() == Some("api"))
+            .unwrap();
+        let web = configs
+            .iter()
+            .find(|c| c.service.as_deref() == Some("web"))
+            .unwrap();
+        assert_eq!(second, vec![web.id.unwrap()]);
+        assert_eq!(api.id, Some(first[0]));
+        assert_eq!(api.local_address.as_deref(), Some("127.0.0.5"));
+
+        let third = insert_new_configs_with_pool_and_mode(
+            vec![discovered("api", 18080), discovered("web", 18081)],
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+        assert!(third.is_empty());
+        assert_eq!(read_configs_with_pool(&pool).await.unwrap().len(), 2);
     }
 }

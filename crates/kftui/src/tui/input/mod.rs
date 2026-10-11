@@ -1894,13 +1894,6 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         })
         .collect();
 
-    for config in &selected_configs {
-        if let Some(id) = config.id {
-            app.configs_being_processed
-                .insert(id, Arc::new(PendingForward::new(id)));
-        }
-    }
-
     if app.active_table == ActiveTable::Stopped {
         app.running_configs.extend(selected_configs.clone());
         app.stopped_configs
@@ -1911,6 +1904,46 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
             .retain(|config| !selected_configs.contains(config));
     }
 
+    spawn_forwarding_tasks(app, &selected_configs, is_starting, mode);
+
+    match app.active_table {
+        ActiveTable::Stopped => app.selected_rows_stopped.clear(),
+        ActiveTable::Running => app.selected_rows_running.clear(),
+    }
+
+    Ok(())
+}
+
+/// Starts the configs that a `--watch` discovery round added with
+/// `--auto-start`. A config that already runs or is still in progress is
+/// skipped.
+pub fn start_discovered_configs(app: &mut App, ids: &[i64], mode: DatabaseMode) {
+    let configs: Vec<Config> = app
+        .all_configs
+        .iter()
+        .filter(|config| {
+            config.id.is_some_and(|id| {
+                ids.contains(&id)
+                    && !app
+                        .configs_being_processed
+                        .get(&id)
+                        .is_some_and(|pending| pending.is_active())
+                    && !app
+                        .running_configs
+                        .iter()
+                        .any(|running| running.id == Some(id))
+            })
+        })
+        .cloned()
+        .collect();
+    spawn_forwarding_tasks(app, &configs, true, mode);
+}
+
+/// Marks each config as in progress and spawns its start or stop on the
+/// forwarding task set, so the shutdown drain waits for it.
+fn spawn_forwarding_tasks(
+    app: &mut App, configs: &[Config], is_starting: bool, mode: DatabaseMode,
+) {
     let error_sender = app.error_sender.clone();
     let slots = if is_starting {
         app.forwarding_slots.clone()
@@ -1919,11 +1952,12 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     };
     let cancel = app.forwarding_cancel.clone();
 
-    let dispatch: Vec<(Config, Arc<PendingForward>)> = selected_configs
+    let dispatch: Vec<(Config, Arc<PendingForward>)> = configs
         .iter()
         .filter_map(|config| {
             let id = config.id?;
-            let pending = app.configs_being_processed.get(&id)?.clone();
+            let pending = Arc::new(PendingForward::new(id));
+            app.configs_being_processed.insert(id, pending.clone());
             Some((config.clone(), pending))
         })
         .collect();
@@ -1982,13 +2016,6 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         app.task_configs
             .insert(task_id, TaskInfo::new(config_id, !is_starting));
     }
-
-    match app.active_table {
-        ActiveTable::Stopped => app.selected_rows_stopped.clear(),
-        ActiveTable::Running => app.selected_rows_running.clear(),
-    }
-
-    Ok(())
 }
 
 pub fn show_delete_confirmation(app: &mut App) {

@@ -1,6 +1,7 @@
 pub mod test_app;
 pub mod test_cli_config;
 pub mod test_cli_runner;
+pub mod test_cli_watch;
 pub mod test_config_view;
 pub mod test_draw;
 pub mod test_file_explorer;

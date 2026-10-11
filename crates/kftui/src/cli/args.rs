@@ -21,7 +21,7 @@ impl FromStr for GroupBy {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(name = "kftui")]
 #[command(about = "KFtray TUI - Manage kubectl port forward configurations")]
 #[command(version)]
@@ -124,6 +124,12 @@ pub struct Cli {
     pub auto_loopback: bool,
 
     #[arg(
+        long,
+        help = "Repeat auto-discovery every 30s while kftui runs: add newly annotated services, and start them with --auto-start (requires --auto-discover)"
+    )]
+    pub watch: bool,
+
+    #[arg(
         long = "filter",
         value_name = "COND",
         help = "Filter configs, e.g. tag:env=dev or namespace=a,b (repeatable, AND-ed)"
@@ -222,6 +228,10 @@ impl Cli {
             return Err("--context requires --auto-discover".to_string());
         }
 
+        if self.watch && !self.auto_discover {
+            return Err("--watch requires --auto-discover".to_string());
+        }
+
         if self.non_interactive {
             if !self.auto_start && !self.save {
                 return Err(
@@ -283,5 +293,18 @@ mod tests {
     fn parses_no_update_check_flag() {
         let cli = Cli::try_parse_from(["kftui", "--no-update-check"]).unwrap();
         assert!(cli.no_update_check);
+    }
+
+    #[test]
+    fn watch_requires_auto_discover() {
+        let cli = Cli::try_parse_from(["kftui", "--watch"]).unwrap();
+        assert_eq!(
+            cli.validate(),
+            Err("--watch requires --auto-discover".to_string())
+        );
+
+        let cli = Cli::try_parse_from(["kftui", "--auto-discover", "--context", "ctx", "--watch"])
+            .unwrap();
+        assert_eq!(cli.validate(), Ok(()));
     }
 }
