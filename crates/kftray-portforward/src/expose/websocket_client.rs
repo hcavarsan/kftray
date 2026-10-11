@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures::{
     SinkExt,
@@ -23,6 +25,7 @@ use log::{
     warn,
 };
 use tokio::sync::oneshot;
+use tokio::task::JoinSet;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -140,7 +143,44 @@ impl WebSocketTunnelClient {
         http_connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
         let http_client = LegacyClient::builder(TokioExecutor::new()).build(http_connector);
 
-        while let Some(msg) = ws_read.next().await {
+        let target = Arc::new(Self::new(
+            self.websocket_port,
+            self.local_service_address.clone(),
+            self.local_service_port,
+        ));
+        let mut requests = JoinSet::new();
+
+        loop {
+            let msg = tokio::select! {
+                Some(joined) = requests.join_next(), if !requests.is_empty() => {
+                    let response_msg: TunnelMessage = match joined {
+                        Ok(response_msg) => response_msg,
+                        Err(e) => {
+                            error!("Request task failed: {}", e);
+                            continue;
+                        }
+                    };
+                    match response_msg.serialize() {
+                        Ok(response_data) => {
+                            if let Err(e) =
+                                ws_write.send(Message::Binary(response_data.into())).await
+                            {
+                                error!("Failed to send response through WebSocket: {}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to serialize response: {}", e);
+                        }
+                    }
+                    continue;
+                }
+                msg = ws_read.next() => match msg {
+                    Some(msg) => msg,
+                    None => break,
+                },
+            };
+
             match msg {
                 Ok(Message::Binary(data)) => match TunnelMessage::deserialize(&data) {
                     Ok(TunnelMessage::HttpRequest {
@@ -152,30 +192,20 @@ impl WebSocketTunnelClient {
                     }) => {
                         debug!("Received HTTP request: {} {}", method, path);
 
-                        let response_msg = self
-                            .forward_to_local_service(
-                                &http_client,
-                                id.clone(),
-                                method,
-                                path,
-                                headers,
-                                body,
-                            )
-                            .await;
-
-                        match response_msg.serialize() {
-                            Ok(response_data) => {
-                                if let Err(e) =
-                                    ws_write.send(Message::Binary(response_data.into())).await
-                                {
-                                    error!("Failed to send response through WebSocket: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to serialize response: {}", e);
-                            }
-                        }
+                        let target = Arc::clone(&target);
+                        let http_client = http_client.clone();
+                        requests.spawn(async move {
+                            target
+                                .forward_to_local_service(
+                                    &http_client,
+                                    id,
+                                    method,
+                                    path,
+                                    headers,
+                                    body,
+                                )
+                                .await
+                        });
                     }
                     Ok(TunnelMessage::Ping) => {
                         debug!("Received ping, sending pong");
@@ -542,5 +572,101 @@ mod tests {
             }
             other => panic!("expected HTTP response, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn open_response_does_not_hold_up_other_requests() {
+        use futures::{
+            SinkExt,
+            StreamExt,
+        };
+        use tokio::io::AsyncReadExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app_port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = app.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap();
+                    if buf[..n].starts_with(b"GET /events") {
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: 1\n\n",
+                            )
+                            .await
+                            .unwrap();
+                        std::future::pending::<()>().await;
+                    } else {
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                            )
+                            .await
+                            .unwrap();
+                    }
+                });
+            }
+        });
+
+        let request = |id: &str, path: &str| {
+            super::TunnelMessage::HttpRequest {
+                id: id.to_owned(),
+                method: "GET".to_owned(),
+                path: path.to_owned(),
+                headers: Vec::new(),
+                body: Vec::new(),
+            }
+            .serialize()
+            .unwrap()
+        };
+
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            ws_listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            app_port,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let _task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (socket, _) = ws_listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+        ready_rx.await.unwrap().unwrap();
+
+        ws.send(Message::Binary(request("sse", "/events").into()))
+            .await
+            .unwrap();
+        ws.send(Message::Binary(request("fast", "/health").into()))
+            .await
+            .unwrap();
+        ws.send(Message::Binary(
+            super::TunnelMessage::Ping.serialize().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+
+        let mut replies = Vec::new();
+        while replies.len() < 2 {
+            let reply = tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .expect("no reply to /health or ping within 3s while /events is open")
+                .unwrap()
+                .unwrap();
+            replies.push(super::TunnelMessage::deserialize(&reply.into_data()).unwrap());
+        }
+        assert!(replies.iter().any(|reply| matches!(
+            reply,
+            super::TunnelMessage::HttpResponse { id, status: 200, body, .. }
+                if id == "fast" && body == b"ok"
+        )));
+        assert!(
+            replies
+                .iter()
+                .any(|reply| matches!(reply, super::TunnelMessage::Pong))
+        );
     }
 }
