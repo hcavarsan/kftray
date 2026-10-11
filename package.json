@@ -2,7 +2,7 @@
   "name": "kftray",
   "version": "0.30.4",
   "private": true,
-  "packageManager": "pnpm@12.9.1",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "build": "pnpm --filter @kftray/ui run build",
     "build:analyze": "pnpm --filter @kftray/ui run build:analyze",
@@ -29,6 +29,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@tauri-apps/cli": "^2.12.1",
-    "knip": "6.39.0"
+    "knip": "6.41.0"
   }
 }
