@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io;
 
 use crossterm::event::KeyCode;
@@ -113,7 +114,11 @@ pub async fn handle_view_settings_input(
             false
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            items[app.view_selected].apply(&mut app.config_view);
+            let item = &items[app.view_selected];
+            if matches!(item, ViewItem::GroupBy(_)) {
+                app.saved_group_by = None;
+            }
+            item.apply(&mut app.config_view);
             true
         }
         KeyCode::Char('c') => {
@@ -127,7 +132,14 @@ pub async fn handle_view_settings_input(
         return Ok(());
     }
     clear_marked_rows(app);
-    if let Err(e) = set_config_view_with_mode(&app.config_view, mode).await {
+    let view = match &app.saved_group_by {
+        Some(group_by) => Cow::Owned(ConfigView {
+            group_by: group_by.clone(),
+            filters: app.config_view.filters.clone(),
+        }),
+        None => Cow::Borrowed(&app.config_view),
+    };
+    if let Err(e) = set_config_view_with_mode(&view, mode).await {
         app.error_message = Some(format!("Failed to save view: {e}"));
         app.state = AppState::ShowErrorPopup;
     }

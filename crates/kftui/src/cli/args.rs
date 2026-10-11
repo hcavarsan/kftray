@@ -178,6 +178,13 @@ impl Cli {
         view
     }
 
+    /// Returns the view the TUI shows and, when `--group-by` replaced the
+    /// saved grouping for this session, the saved grouping to keep on save.
+    pub fn tui_view(&self, saved: ConfigView) -> (ConfigView, Option<Option<Field>>) {
+        let saved_group_by = self.group_by.as_ref().map(|_| saved.group_by.clone());
+        (self.apply_view_overrides(saved), saved_group_by)
+    }
+
     pub fn get_config_path(&self) -> Option<&str> {
         self.configs_path.as_deref()
     }

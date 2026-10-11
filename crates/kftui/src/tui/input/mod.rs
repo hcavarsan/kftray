@@ -26,7 +26,10 @@ use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
-use kftray_commons::utils::config_view::ConfigView;
+use kftray_commons::utils::config_view::{
+    ConfigView,
+    Field,
+};
 use kftray_commons::utils::db_mode::DatabaseMode;
 pub use popup::*;
 use ratatui::widgets::ListState;
@@ -328,6 +331,9 @@ pub struct App {
     pub filtered_running_configs: Vec<Config>,
     pub all_configs: Vec<Config>,
     pub config_view: ConfigView,
+    /// The saved grouping while `--group-by` shows another one. View popup
+    /// saves write it back until the user picks a grouping in the popup.
+    pub saved_group_by: Option<Option<Field>>,
     pub group_labels: HashMap<i64, String>,
     pub view_selected: usize,
     pub tag_editor_config: Option<Config>,
@@ -436,6 +442,7 @@ impl App {
             filtered_running_configs: Vec::new(),
             all_configs: Vec::new(),
             config_view: ConfigView::default(),
+            saved_group_by: None,
             group_labels: HashMap::new(),
             view_selected: 0,
             tag_editor_config: None,

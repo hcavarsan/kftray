@@ -11,6 +11,8 @@ use kftray_commons::utils::config::{
 use kftray_commons::utils::config_view::{
     ConfigView,
     Field,
+    get_config_view_with_mode,
+    set_config_view_with_mode,
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
 use ratatui::Terminal;
@@ -326,6 +328,58 @@ fn cli_parses_filter_and_group_by() {
 
     assert!(Cli::try_parse_from(["kftui", "--filter", "bogus=1"]).is_err());
     assert!(Cli::try_parse_from(["kftui", "--group-by", "alias"]).is_err());
+}
+
+async fn tui_with_cli_group_by_over_context(mode: DatabaseMode) -> App {
+    let saved = ConfigView {
+        group_by: Some(Field::Context),
+        filters: Vec::new(),
+    };
+    set_config_view_with_mode(&saved, mode).await.unwrap();
+
+    let cli = Cli::parse_from(["kftui", "--group-by", "namespace"]);
+    let mut app = App::new(test_logger_state());
+    (app.config_view, app.saved_group_by) = cli.tui_view(get_config_view_with_mode(mode).await);
+    app.all_configs = vec![config(1, "a", &[("team", "core")])];
+    app.state = AppState::ShowViewSettings;
+    app
+}
+
+#[tokio::test]
+async fn cli_group_by_is_not_saved_by_a_filter_change() {
+    let _db = kftray_commons::test_utils::test_db().await;
+    let mode = DatabaseMode::Memory;
+    let mut app = tui_with_cli_group_by_over_context(mode).await;
+
+    handle_view_settings_input(&mut app, KeyCode::Char('c'), mode)
+        .await
+        .unwrap();
+
+    let after = get_config_view_with_mode(mode).await;
+    assert_eq!(after.group_by, Some(Field::Context), "{after:?}");
+    assert_eq!(app.config_view.group_by, Some(Field::Namespace));
+}
+
+#[tokio::test]
+async fn cli_group_by_gives_way_to_a_grouping_picked_in_the_popup() {
+    let _db = kftray_commons::test_utils::test_db().await;
+    let mode = DatabaseMode::Memory;
+    let mut app = tui_with_cli_group_by_over_context(mode).await;
+    let team = ViewItem::GroupBy(Some(Field::Tag("team".into())));
+    app.view_selected = view_items(&app.all_configs)
+        .iter()
+        .position(|item| *item == team)
+        .unwrap();
+
+    handle_view_settings_input(&mut app, KeyCode::Enter, mode)
+        .await
+        .unwrap();
+    handle_view_settings_input(&mut app, KeyCode::Char('c'), mode)
+        .await
+        .unwrap();
+
+    let after = get_config_view_with_mode(mode).await;
+    assert_eq!(after.group_by, Some(Field::Tag("team".into())), "{after:?}");
 }
 
 #[test]
