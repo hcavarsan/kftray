@@ -46,15 +46,18 @@ impl PortForwardRunner {
         Ok(successful_config_ids)
     }
 
+    /// Returns the exit code of the command given after `--`, when one ran.
     pub async fn run_non_interactive_mode(
         cli: &Cli, mode: DatabaseMode, imported_config_ids: Vec<i64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
         if cli.auto_start {
             let successful_config_ids =
                 Self::auto_start_port_forwards(cli, mode, imported_config_ids).await?;
             Self::handle_auto_start_non_interactive(cli, mode, successful_config_ids).await
         } else {
-            Self::handle_save_only_non_interactive(cli, mode).await
+            Self::handle_save_only_non_interactive(cli, mode)
+                .await
+                .map(|()| None)
         }
     }
 
@@ -101,7 +104,7 @@ impl PortForwardRunner {
         if failed > 0 {
             eprintln!("Warning: {failed} port forward(s) failed to start");
             if cli.non_interactive {
-                if successful_config_ids.is_empty() && !cli.watch {
+                if successful_config_ids.is_empty() && !cli.may_start_empty() {
                     eprintln!("Error: All port forwards failed to start in non-interactive mode");
                     eprintln!("Check the errors above for details");
                     Self::reconcile_before_exit(mode).await;
@@ -182,25 +185,211 @@ impl PortForwardRunner {
 
     async fn handle_auto_start_non_interactive(
         cli: &Cli, mode: DatabaseMode, successful_config_ids: Vec<i64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
         let started_configs = Self::get_configs_by_ids(mode, successful_config_ids).await?;
 
-        if started_configs.is_empty() && !cli.watch {
+        if started_configs.is_empty() && !cli.may_start_empty() {
             eprintln!("Error: No configurations found");
             eprintln!("Ensure config source contains valid port forward configurations");
             Self::reconcile_before_exit(mode).await;
             return Err("no configurations found to run in non-interactive mode".into());
         }
 
-        if started_configs.is_empty() {
+        if cli.runs_command() {
+            Self::print_active_configurations(&started_configs);
+        } else if started_configs.is_empty() {
             println!("No port forwards started yet");
             println!("\nWatching for newly annotated services (press Ctrl+C to stop)");
         } else {
             Self::print_active_configurations(&started_configs);
+            println!("\nRunning in non-interactive mode (press Ctrl+C to stop)");
+            println!("Keeping port forwards active");
         }
         let discovery = cli.watch.then(|| DiscoveryWatch::spawn(cli.clone(), mode));
+        if cli.runs_command() {
+            return Self::run_command(&cli.command, started_configs, discovery, mode)
+                .await
+                .map(Some);
+        }
         Self::wait_for_shutdown_signal(started_configs, discovery, mode).await?;
-        Ok(())
+        Ok(None)
+    }
+
+    /// Runs the command given after `--` while the forwards are up, then
+    /// stops them. Returns the command's exit code, or 127 or 126 the way a
+    /// shell does when the command can't start. A command that exits 0 still
+    /// fails the run when the stop leaves work behind.
+    pub(crate) async fn run_command(
+        command: &[String], configs: Vec<Config>, discovery: Option<DiscoveryWatch>,
+        mode: DatabaseMode,
+    ) -> Result<i32, Box<dyn std::error::Error>> {
+        let (program, args) = command.split_first().ok_or("no command given after --")?;
+        println!("\nRunning {}", command.join(" "));
+        let mut child = tokio::process::Command::new(program);
+        child.args(args);
+        let (code, interrupted) = match Self::run_child(child).await {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("Error: Failed to run {program}: {error}");
+                let code = if error.kind() == std::io::ErrorKind::NotFound {
+                    127
+                } else {
+                    126
+                };
+                (code, false)
+            }
+        };
+
+        // As with --non-interactive, the first signal asks for the teardown
+        // and only the next one aborts it. A signal during the command
+        // counts as the first.
+        println!("\nStopping port forwards");
+        let stopped = Self::stop_unless_interrupted(
+            Self::stop_all_started(configs, discovery, mode),
+            Self::interrupts(if interrupted { 1 } else { 2 }),
+        )
+        .await;
+        match stopped {
+            Err(error) if code == 0 => Err(error),
+            _ => Ok(code),
+        }
+    }
+
+    /// Ctrl+C in the terminal reaches the command too, so kftui keeps waiting
+    /// and lets the command decide when to exit. A SIGTERM sent to kftui
+    /// alone goes on to the command. The handlers go in before the spawn, so
+    /// an early Ctrl+C can't kill kftui and leave the forwards behind.
+    /// Returns the exit code and whether kftui got a signal meanwhile. Fails
+    /// only when the command can't start.
+    async fn run_child(mut command: tokio::process::Command) -> std::io::Result<(i32, bool)> {
+        let mut interrupted = false;
+        #[cfg(unix)]
+        let status = {
+            let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+                .map_err(|error| warn!("Failed to install SIGINT handler: {error}"))
+                .ok();
+            let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                .map_err(|error| warn!("Failed to install SIGTERM handler: {error}"))
+                .ok();
+            let mut child = command.spawn()?;
+            loop {
+                tokio::select! {
+                    status = child.wait() => break status,
+                    _ = Self::recv_signal(&mut sigint) => interrupted = true,
+                    _ = Self::recv_signal(&mut sigterm) => {
+                        interrupted = true;
+                        if let Some(pid) = child.id() {
+                            // SAFETY: kill only sends a signal to the pid of a
+                            // child this process has not reaped yet.
+                            unsafe {
+                                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(windows)]
+        let status = {
+            let mut ctrl_c = signal::windows::ctrl_c()
+                .map_err(|error| warn!("Failed to install Ctrl+C handler: {error}"))
+                .ok();
+            let mut child = command.spawn()?;
+            loop {
+                tokio::select! {
+                    status = child.wait() => break status,
+                    received = async {
+                        match ctrl_c.as_mut() {
+                            Some(ctrl_c) => ctrl_c.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        if received.is_none() {
+                            break child.wait().await;
+                        }
+                        interrupted = true;
+                    }
+                }
+            }
+        };
+
+        let code = match status {
+            Ok(status) => Self::exit_code(status),
+            Err(error) => {
+                eprintln!("Error: Failed to wait for the command: {error}");
+                1
+            }
+        };
+        Ok((code, interrupted))
+    }
+
+    /// A command killed by a signal exits with 128 plus the signal number,
+    /// the way a shell reports it.
+    fn exit_code(status: std::process::ExitStatus) -> i32 {
+        #[cfg(unix)]
+        if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+            return 128 + signal;
+        }
+        status.code().unwrap_or(1)
+    }
+
+    #[cfg(unix)]
+    async fn recv_signal(signal: &mut Option<signal::unix::Signal>) {
+        if let Some(signal) = signal
+            && signal.recv().await.is_some()
+        {
+            return;
+        }
+        std::future::pending::<()>().await
+    }
+
+    /// Resolves after `count` Ctrl+C or SIGTERM signals. A signal that
+    /// arrived before the call does not count.
+    async fn interrupts(count: usize) {
+        #[cfg(unix)]
+        {
+            let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt()).ok();
+            let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate()).ok();
+            for _ in 0..count {
+                tokio::select! {
+                    _ = Self::recv_signal(&mut sigint) => {}
+                    _ = Self::recv_signal(&mut sigterm) => {}
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            let mut ctrl_c = signal::windows::ctrl_c().ok();
+            for _ in 0..count {
+                let received = match ctrl_c.as_mut() {
+                    Some(ctrl_c) => ctrl_c.recv().await,
+                    None => None,
+                };
+                if received.is_none() {
+                    std::future::pending::<()>().await
+                }
+            }
+        }
+    }
+
+    /// Races the stop against a second interrupt instead of letting tokio's
+    /// still-installed handlers swallow it: a user stuck on a stalled
+    /// recovery lock or cluster delete can then abort short of SIGKILL.
+    async fn stop_unless_interrupted(
+        stop: impl Future<Output = Result<(), Box<dyn std::error::Error>>>,
+        interrupt: impl Future<Output = ()>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        tokio::select! {
+            result = stop => result,
+            _ = interrupt => {
+                eprintln!(
+                    "Warning: a second interrupt was received; exiting without waiting \
+                     for the stop to finish. Stops already dispatched keep running \
+                     detached in the background."
+                );
+                Err("shutdown interrupted by a second signal before stopping finished".into())
+            }
+        }
     }
 
     /// Reconciles anything a start abandoned before an early, non-interactive
@@ -261,9 +450,6 @@ impl PortForwardRunner {
         for config in configs {
             Self::print_configuration(config);
         }
-
-        println!("\nRunning in non-interactive mode (press Ctrl+C to stop)");
-        println!("Keeping port forwards active");
     }
 
     fn print_configuration(config: &Config) {
@@ -330,36 +516,20 @@ impl PortForwardRunner {
             }
             println!("\nStopping port forwards");
 
-            // A second signal during the stop below is raced against it
-            // instead of being silently swallowed by tokio's still-installed
-            // handlers: without this, a user stuck waiting on a stalled
-            // recovery lock or cluster delete has no way to abort short of
-            // SIGKILL.
-            let stop = Self::stop_all_started(configs, discovery, mode);
-            tokio::pin!(stop);
-            tokio::select! {
-                result = &mut stop => result,
-                _ = async {
-                    match sigterm.as_mut() {
-                        Some(sigterm) => {
-                            tokio::select! {
-                                _ = signal::ctrl_c() => {}
-                                _ = sigterm.recv() => {}
-                            }
-                        }
-                        None => {
-                            let _ = signal::ctrl_c().await;
+            Self::stop_unless_interrupted(Self::stop_all_started(configs, discovery, mode), async {
+                match sigterm.as_mut() {
+                    Some(sigterm) => {
+                        tokio::select! {
+                            _ = signal::ctrl_c() => {}
+                            _ = sigterm.recv() => {}
                         }
                     }
-                } => {
-                    eprintln!(
-                        "Warning: a second interrupt was received; exiting without waiting \
-                         for the stop to finish. Stops already dispatched keep running \
-                         detached in the background."
-                    );
-                    Err("shutdown interrupted by a second signal before stopping finished".into())
+                    None => {
+                        let _ = signal::ctrl_c().await;
+                    }
                 }
-            }
+            })
+            .await
         }
         #[cfg(not(unix))]
         {
@@ -374,19 +544,10 @@ impl PortForwardRunner {
             }
             println!("\nStopping port forwards");
 
-            let stop = Self::stop_all_started(configs, discovery, mode);
-            tokio::pin!(stop);
-            tokio::select! {
-                result = &mut stop => result,
-                _ = signal::ctrl_c() => {
-                    eprintln!(
-                        "Warning: a second interrupt was received; exiting without waiting \
-                         for the stop to finish. Stops already dispatched keep running \
-                         detached in the background."
-                    );
-                    Err("shutdown interrupted by a second signal before stopping finished".into())
-                }
-            }
+            Self::stop_unless_interrupted(Self::stop_all_started(configs, discovery, mode), async {
+                let _ = signal::ctrl_c().await;
+            })
+            .await
         }
     }
 

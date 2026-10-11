@@ -142,6 +142,13 @@ pub struct Cli {
         help = "Group configs by context, namespace, kubeconfig, workload_type, protocol, tag:<key> or none"
     )]
     pub group_by: Option<GroupBy>,
+
+    #[arg(
+        last = true,
+        value_name = "COMMAND",
+        help = "Command to run once the port forwards start, given after --. kftui runs it without the TUI, stops the forwards when it exits and exits with its exit code (requires --auto-start)"
+    )]
+    pub command: Vec<String>,
 }
 
 impl Cli {
@@ -159,6 +166,16 @@ impl Cli {
             || self.json.is_some()
             || self.stdin
             || self.auto_discover
+    }
+
+    pub fn runs_command(&self) -> bool {
+        !self.command.is_empty()
+    }
+
+    /// A `--watch` run may start with no forward and wait for discovery to
+    /// add one. A command after `--` never runs without a forward.
+    pub fn may_start_empty(&self) -> bool {
+        self.watch && !self.runs_command()
     }
 
     pub fn filter_view(&self) -> ConfigView {
@@ -239,6 +256,10 @@ impl Cli {
             return Err("--watch requires --auto-discover".to_string());
         }
 
+        if self.runs_command() && !self.auto_start {
+            return Err("a command after -- requires --auto-start".to_string());
+        }
+
         if self.non_interactive {
             if !self.auto_start && !self.save {
                 return Err(
@@ -312,6 +333,25 @@ mod tests {
 
         let cli = Cli::try_parse_from(["kftui", "--auto-discover", "--context", "ctx", "--watch"])
             .unwrap();
+        assert_eq!(cli.validate(), Ok(()));
+    }
+
+    #[test]
+    fn flags_after_double_dash_belong_to_the_command() {
+        let cli = Cli::try_parse_from([
+            "kftui", "--json", "[]", "--", "sh", "-c", "exit 3", "--save",
+        ])
+        .unwrap();
+        assert_eq!(cli.command, ["sh", "-c", "exit 3", "--save"]);
+        assert_eq!(cli.configs_path, None);
+        assert!(!cli.save);
+        assert_eq!(
+            cli.validate(),
+            Err("a command after -- requires --auto-start".to_string())
+        );
+
+        let cli =
+            Cli::try_parse_from(["kftui", "--json", "[]", "--auto-start", "--", "true"]).unwrap();
         assert_eq!(cli.validate(), Ok(()));
     }
 }
