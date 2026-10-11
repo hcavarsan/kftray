@@ -227,22 +227,26 @@ impl PortForwardRunner {
         println!("\nRunning {}", command.join(" "));
         let mut child = tokio::process::Command::new(program);
         child.args(args);
-        let code = match Self::run_child(child).await {
-            Ok(code) => code,
+        let (code, interrupted) = match Self::run_child(child).await {
+            Ok(result) => result,
             Err(error) => {
                 eprintln!("Error: Failed to run {program}: {error}");
-                if error.kind() == std::io::ErrorKind::NotFound {
+                let code = if error.kind() == std::io::ErrorKind::NotFound {
                     127
                 } else {
                     126
-                }
+                };
+                (code, false)
             }
         };
 
+        // As with --non-interactive, the first signal asks for the teardown
+        // and only the next one aborts it. A signal during the command
+        // counts as the first.
         println!("\nStopping port forwards");
         let stopped = Self::stop_unless_interrupted(
             Self::stop_all_started(configs, discovery, mode),
-            Self::next_interrupt(),
+            Self::interrupts(if interrupted { 1 } else { 2 }),
         )
         .await;
         match stopped {
@@ -254,9 +258,11 @@ impl PortForwardRunner {
     /// Ctrl+C in the terminal reaches the command too, so kftui keeps waiting
     /// and lets the command decide when to exit. A SIGTERM sent to kftui
     /// alone goes on to the command. The handlers go in before the spawn, so
-    /// an early Ctrl+C can't kill kftui and leave the forwards behind. Fails
+    /// an early Ctrl+C can't kill kftui and leave the forwards behind.
+    /// Returns the exit code and whether kftui got a signal meanwhile. Fails
     /// only when the command can't start.
-    async fn run_child(mut command: tokio::process::Command) -> std::io::Result<i32> {
+    async fn run_child(mut command: tokio::process::Command) -> std::io::Result<(i32, bool)> {
+        let mut interrupted = false;
         #[cfg(unix)]
         let status = {
             let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
@@ -269,8 +275,9 @@ impl PortForwardRunner {
             loop {
                 tokio::select! {
                     status = child.wait() => break status,
-                    _ = Self::recv_signal(&mut sigint) => {}
+                    _ = Self::recv_signal(&mut sigint) => interrupted = true,
                     _ = Self::recv_signal(&mut sigterm) => {
+                        interrupted = true;
                         if let Some(pid) = child.id() {
                             // SAFETY: kill only sends a signal to the pid of a
                             // child this process has not reaped yet.
@@ -300,18 +307,20 @@ impl PortForwardRunner {
                         if received.is_none() {
                             break child.wait().await;
                         }
+                        interrupted = true;
                     }
                 }
             }
         };
 
-        Ok(match status {
+        let code = match status {
             Ok(status) => Self::exit_code(status),
             Err(error) => {
                 eprintln!("Error: Failed to wait for the command: {error}");
                 1
             }
-        })
+        };
+        Ok((code, interrupted))
     }
 
     /// A command killed by a signal exits with 128 plus the signal number,
@@ -334,24 +343,32 @@ impl PortForwardRunner {
         std::future::pending::<()>().await
     }
 
-    /// Resolves on the next Ctrl+C, or SIGTERM on unix. A signal that arrived
-    /// before the call does not count.
-    async fn next_interrupt() {
+    /// Resolves after `count` Ctrl+C or SIGTERM signals. A signal that
+    /// arrived before the call does not count.
+    async fn interrupts(count: usize) {
         #[cfg(unix)]
         {
+            let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt()).ok();
             let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate()).ok();
-            tokio::select! {
-                result = signal::ctrl_c() => {
-                    if result.is_err() {
-                        Self::recv_signal(&mut sigterm).await;
-                    }
+            for _ in 0..count {
+                tokio::select! {
+                    _ = Self::recv_signal(&mut sigint) => {}
+                    _ = Self::recv_signal(&mut sigterm) => {}
                 }
-                _ = Self::recv_signal(&mut sigterm) => {}
             }
         }
-        #[cfg(not(unix))]
-        if signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await
+        #[cfg(windows)]
+        {
+            let mut ctrl_c = signal::windows::ctrl_c().ok();
+            for _ in 0..count {
+                let received = match ctrl_c.as_mut() {
+                    Some(ctrl_c) => ctrl_c.recv().await,
+                    None => None,
+                };
+                if received.is_none() {
+                    std::future::pending::<()>().await
+                }
+            }
         }
     }
 
