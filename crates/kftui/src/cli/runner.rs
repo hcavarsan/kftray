@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 use futures::stream::{
     self,
@@ -26,6 +27,7 @@ use log::{
 use tokio::signal;
 
 use crate::cli::args::Cli;
+use crate::cli::watch::DiscoveryWatch;
 use crate::core;
 
 pub struct PortForwardRunner;
@@ -52,7 +54,7 @@ impl PortForwardRunner {
                 Self::auto_start_port_forwards(cli, mode, imported_config_ids).await?;
             Self::handle_auto_start_non_interactive(cli, mode, successful_config_ids).await
         } else {
-            Self::handle_save_only_non_interactive().await
+            Self::handle_save_only_non_interactive(cli, mode).await
         }
     }
 
@@ -87,42 +89,19 @@ impl PortForwardRunner {
         cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>,
     ) -> Result<Vec<i64>, Box<dyn std::error::Error>> {
         if cli.ssl {
-            Self::ensure_ssl_setup_with_configs(&config_ids, mode).await?;
+            Self::ensure_ssl_setup_with_configs(&config_ids, mode, true).await?;
         }
 
         if cli.non_interactive {
             println!("Starting {} port forward(s)", config_ids.len());
         }
 
-        let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
-        let ssl_override = cli.ssl && !ssl_settings_enabled;
-        let mut errors = Vec::new();
-        let mut tasks = stream::iter(config_ids)
-            .map(|config_id| async move {
-                match core::port_forward::start_port_forward(config_id, mode, ssl_override).await {
-                    Ok(()) => Ok(config_id),
-                    Err(error) => {
-                        eprintln!(
-                            "Error: Failed to start port forward for config {config_id}: {error}"
-                        );
-                        Err((config_id, error))
-                    }
-                }
-            })
-            .buffer_unordered(16);
+        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids, |_| {}).await;
 
-        let mut successful_config_ids = Vec::new();
-        while let Some(result) = tasks.next().await {
-            match result {
-                Ok(config_id) => successful_config_ids.push(config_id),
-                Err((config_id, e)) => errors.push((config_id, e)),
-            }
-        }
-
-        if !errors.is_empty() {
-            eprintln!("Warning: {} port forward(s) failed to start", errors.len());
+        if failed > 0 {
+            eprintln!("Warning: {failed} port forward(s) failed to start");
             if cli.non_interactive {
-                if successful_config_ids.is_empty() {
+                if successful_config_ids.is_empty() && !cli.watch {
                     eprintln!("Error: All port forwards failed to start in non-interactive mode");
                     eprintln!("Check the errors above for details");
                     Self::reconcile_before_exit(mode).await;
@@ -139,20 +118,88 @@ impl PortForwardRunner {
         Ok(successful_config_ids)
     }
 
+    /// Starts the configs a `--watch` round added in non-interactive mode. Each
+    /// id goes into `started` as soon as its forward runs, so a shutdown that
+    /// stops waiting for this batch still stops the forwards it started.
+    /// A failure here never ends the run.
+    pub(crate) async fn start_discovered(
+        cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>, started: &Mutex<Vec<i64>>,
+    ) {
+        println!("Starting {} discovered port forward(s)", config_ids.len());
+
+        let (successful_config_ids, failed) = Self::start_each(cli, mode, config_ids, |id| {
+            if let Ok(mut started) = started.lock() {
+                started.push(id);
+            }
+        })
+        .await;
+        if failed > 0 {
+            eprintln!("Warning: {failed} port forward(s) failed to start");
+        }
+
+        if let Ok(started) = Self::get_configs_by_ids(mode, successful_config_ids).await {
+            for config in &started {
+                Self::print_configuration(config);
+            }
+        }
+    }
+
+    /// Returns the ids that started and how many failed. `on_started` gets
+    /// each id as soon as its start succeeds.
+    async fn start_each(
+        cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>, mut on_started: impl FnMut(i64),
+    ) -> (Vec<i64>, usize) {
+        let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
+        let ssl_override = cli.ssl && !ssl_settings_enabled;
+        let mut tasks = stream::iter(config_ids)
+            .map(|config_id| async move {
+                match core::port_forward::start_port_forward(config_id, mode, ssl_override).await {
+                    Ok(()) => Some(config_id),
+                    Err(error) => {
+                        eprintln!(
+                            "Error: Failed to start port forward for config {config_id}: {error}"
+                        );
+                        None
+                    }
+                }
+            })
+            .buffer_unordered(16);
+
+        let mut successful_config_ids = Vec::new();
+        let mut failed = 0;
+        while let Some(result) = tasks.next().await {
+            match result {
+                Some(config_id) => {
+                    on_started(config_id);
+                    successful_config_ids.push(config_id);
+                }
+                None => failed += 1,
+            }
+        }
+
+        (successful_config_ids, failed)
+    }
+
     async fn handle_auto_start_non_interactive(
-        _cli: &Cli, mode: DatabaseMode, successful_config_ids: Vec<i64>,
+        cli: &Cli, mode: DatabaseMode, successful_config_ids: Vec<i64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let started_configs = Self::get_configs_by_ids(mode, successful_config_ids).await?;
 
-        if started_configs.is_empty() {
+        if started_configs.is_empty() && !cli.watch {
             eprintln!("Error: No configurations found");
             eprintln!("Ensure config source contains valid port forward configurations");
             Self::reconcile_before_exit(mode).await;
             return Err("no configurations found to run in non-interactive mode".into());
         }
 
-        Self::print_active_configurations(&started_configs);
-        Self::wait_for_shutdown_signal(&started_configs, mode).await?;
+        if started_configs.is_empty() {
+            println!("No port forwards started yet");
+            println!("\nWatching for newly annotated services (press Ctrl+C to stop)");
+        } else {
+            Self::print_active_configurations(&started_configs);
+        }
+        let discovery = cli.watch.then(|| DiscoveryWatch::spawn(cli.clone(), mode));
+        Self::wait_for_shutdown_signal(started_configs, discovery, mode).await?;
         Ok(())
     }
 
@@ -179,9 +226,17 @@ impl PortForwardRunner {
         }
     }
 
-    async fn handle_save_only_non_interactive() -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_save_only_non_interactive(
+        cli: &Cli, mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         println!("Configurations processed");
-        Ok(())
+        if !cli.watch {
+            return Ok(());
+        }
+
+        println!("\nWatching for newly annotated services (press Ctrl+C to stop)");
+        let discovery = DiscoveryWatch::spawn(cli.clone(), mode);
+        Self::wait_for_shutdown_signal(Vec::new(), Some(discovery), mode).await
     }
 
     async fn get_configs_by_ids(
@@ -204,30 +259,34 @@ impl PortForwardRunner {
         println!("Active configurations: {}", configs.len());
 
         for config in configs {
-            let alias = config.alias.as_deref().unwrap_or("unnamed");
-            let local_port = config.local_port.unwrap_or(0);
-            let remote_port = config.remote_port.unwrap_or(0);
-            let namespace = &config.namespace;
-            let service_or_target = match config.workload_type.as_deref() {
-                Some("proxy") => config.remote_address.as_deref().unwrap_or("unknown"),
-                Some("pod") => config.target.as_deref().unwrap_or("unknown"),
-                Some("service") => config.service.as_deref().unwrap_or("unknown"),
-                _ => config.service.as_deref().unwrap_or("unknown"),
-            };
-
-            println!(
-                "  {alias} {local_port}:{remote_port} -> {service_or_target}:{remote_port} ({namespace})"
-            );
+            Self::print_configuration(config);
         }
 
         println!("\nRunning in non-interactive mode (press Ctrl+C to stop)");
         println!("Keeping port forwards active");
     }
 
+    fn print_configuration(config: &Config) {
+        let alias = config.alias.as_deref().unwrap_or("unnamed");
+        let local_port = config.local_port.unwrap_or(0);
+        let remote_port = config.remote_port.unwrap_or(0);
+        let namespace = &config.namespace;
+        let service_or_target = match config.workload_type.as_deref() {
+            Some("proxy") => config.remote_address.as_deref().unwrap_or("unknown"),
+            Some("pod") => config.target.as_deref().unwrap_or("unknown"),
+            Some("service") => config.service.as_deref().unwrap_or("unknown"),
+            _ => config.service.as_deref().unwrap_or("unknown"),
+        };
+
+        println!(
+            "  {alias} {local_port}:{remote_port} -> {service_or_target}:{remote_port} ({namespace})"
+        );
+    }
+
     /// Fails when teardown left something behind, so a script running this
     /// mode can tell an incomplete shutdown from a clean one by the exit code.
     async fn wait_for_shutdown_signal(
-        configs: &[Config], mode: DatabaseMode,
+        configs: Vec<Config>, discovery: Option<DiscoveryWatch>, mode: DatabaseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         {
@@ -252,7 +311,7 @@ impl PortForwardRunner {
                                     "Error: no shutdown signal handler could be installed; \
                                      stopping port forwards and exiting"
                                 );
-                                Self::stop_all_port_forwards(configs, mode).await?;
+                                Self::stop_all_started(configs, discovery, mode).await?;
                                 return Err(
                                     "no shutdown signal handler could be installed".into()
                                 );
@@ -276,7 +335,7 @@ impl PortForwardRunner {
             // handlers: without this, a user stuck waiting on a stalled
             // recovery lock or cluster delete has no way to abort short of
             // SIGKILL.
-            let stop = Self::stop_all_port_forwards(configs, mode);
+            let stop = Self::stop_all_started(configs, discovery, mode);
             tokio::pin!(stop);
             tokio::select! {
                 result = &mut stop => result,
@@ -310,12 +369,12 @@ impl PortForwardRunner {
                     "Error: no shutdown signal handler could be installed; stopping port \
                      forwards and exiting"
                 );
-                Self::stop_all_port_forwards(configs, mode).await?;
+                Self::stop_all_started(configs, discovery, mode).await?;
                 return Err("no shutdown signal handler could be installed".into());
             }
             println!("\nStopping port forwards");
 
-            let stop = Self::stop_all_port_forwards(configs, mode);
+            let stop = Self::stop_all_started(configs, discovery, mode);
             tokio::pin!(stop);
             tokio::select! {
                 result = &mut stop => result,
@@ -329,6 +388,24 @@ impl PortForwardRunner {
                 }
             }
         }
+    }
+
+    /// Stops the `--watch` rounds first, so the forwards they started are
+    /// stopped together with the ones started at launch.
+    async fn stop_all_started(
+        mut configs: Vec<Config>, discovery: Option<DiscoveryWatch>, mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(discovery) = discovery {
+            let started_ids = discovery
+                .stop(crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT)
+                .await;
+            if !started_ids.is_empty()
+                && let Ok(started) = Self::get_configs_by_ids(mode, started_ids).await
+            {
+                configs.extend(started);
+            }
+        }
+        Self::stop_all_port_forwards(&configs, mode).await
     }
 
     async fn stop_all_port_forwards(
@@ -486,8 +563,10 @@ impl PortForwardRunner {
         (results, completed_ids, drained_ok)
     }
 
-    async fn ensure_ssl_setup_with_configs(
-        config_ids: &[i64], mode: DatabaseMode,
+    /// `announce` prints the outcome on stdout. The TUI passes `false`, since
+    /// output there would land on top of the drawn screen.
+    pub(crate) async fn ensure_ssl_setup_with_configs(
+        config_ids: &[i64], mode: DatabaseMode, announce: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let ssl_already_enabled = get_ssl_enabled().await.unwrap_or(false);
 
@@ -537,17 +616,23 @@ impl PortForwardRunner {
                 match cert_manager.ensure_ca_installed_and_trusted().await {
                     Ok(_) => {
                         info!("CA certificate installed and trusted");
-                        println!("SSL/HTTPS enabled for port forwarding");
-                        println!("CA certificate installed and trusted in system");
-                        println!("You may need to restart your browser to take effect");
+                        if announce {
+                            println!("SSL/HTTPS enabled for port forwarding");
+                            println!("CA certificate installed and trusted in system");
+                            println!("You may need to restart your browser to take effect");
 
-                        let example_url = Self::get_example_https_url(config_ids, mode).await;
-                        println!("Access your services via HTTPS (e.g., {})", example_url);
+                            let example_url = Self::get_example_https_url(config_ids, mode).await;
+                            println!("Access your services via HTTPS (e.g., {})", example_url);
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to install CA certificate: {}", e);
-                        println!("SSL enabled but CA certificate installation failed");
-                        println!("You may need to manually trust the certificate in your browser");
+                        if announce {
+                            println!("SSL enabled but CA certificate installation failed");
+                            println!(
+                                "You may need to manually trust the certificate in your browser"
+                            );
+                        }
                     }
                 }
             }
