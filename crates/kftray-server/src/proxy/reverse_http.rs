@@ -110,7 +110,12 @@ impl ReverseHttpProxy {
         let headers: Vec<(String, String)> = req
             .headers()
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                )
+            })
             .collect();
 
         let body_bytes = match req.into_body().collect().await {
@@ -332,6 +337,75 @@ mod tests {
                 && response.contains("set-cookie: csrf=xyz; Path=/\r\n"),
             "{response}"
         );
+
+        shutdown.notify_waiters();
+        ws_task.abort();
+        http_task.abort();
+    }
+
+    #[tokio::test]
+    async fn non_ascii_header_crosses_the_tunnel() {
+        use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        async fn free_port() -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        }
+
+        let ws_port = free_port().await;
+        let http_port = free_port().await;
+        let tunnel_server = Arc::new(WebSocketTunnelServer::new(ws_port));
+        let shutdown = Arc::new(Notify::new());
+        let ws_task = tokio::spawn({
+            let tunnel_server = tunnel_server.clone();
+            let shutdown = shutdown.clone();
+            async move { tunnel_server.start(shutdown).await }
+        });
+        let http_task = tokio::spawn({
+            let proxy = ReverseHttpProxy::new(tunnel_server.clone(), http_port);
+            let shutdown = shutdown.clone();
+            async move { proxy.start(shutdown).await }
+        });
+
+        let ws_addr = format!("127.0.0.1:{ws_port}").parse().unwrap();
+        assert!(test_utils::wait_for_port(ws_addr).await);
+        let (mut ws_client, _) = tokio_tungstenite::connect_async(format!("ws://{ws_addr}"))
+            .await
+            .unwrap();
+        while !tunnel_server.is_connected().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let http_addr = format!("127.0.0.1:{http_port}").parse().unwrap();
+        assert!(test_utils::wait_for_port(http_addr).await);
+
+        let mut stream = TcpStream::connect(http_addr).await.unwrap();
+        stream
+            .write_all(
+                "GET /x HTTP/1.1\r\nHost: app\r\nX-Name: caf\u{e9}\r\nConnection: close\r\n\r\n"
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+
+        let request = tokio::time::timeout(Duration::from_secs(5), ws_client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let Message::Binary(data) = request else {
+            panic!("expected a binary tunnel message, got {request:?}");
+        };
+        let TunnelMessage::HttpRequest { headers, .. } = TunnelMessage::deserialize(&data).unwrap()
+        else {
+            panic!("expected an HTTP request");
+        };
+        let name = headers
+            .iter()
+            .find(|(k, _)| k == "x-name")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(name, Some("caf\u{e9}"), "{headers:?}");
 
         shutdown.notify_waiters();
         ws_task.abort();
