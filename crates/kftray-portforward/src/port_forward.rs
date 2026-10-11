@@ -267,12 +267,19 @@ impl PortForward {
             config_id,
             workload_type,
             expected_destination: None,
+            state_mode: None,
         }
     }
 
     /// Requires the connection this forward resolves to reach `destination`.
     pub fn expecting_destination(mut self, destination: Option<String>) -> Self {
         self.expected_destination = destination;
+        self
+    }
+
+    /// Saves connection errors on the forward's state row in `mode`.
+    pub fn saving_errors_to(mut self, mode: kftray_commons::utils::db_mode::DatabaseMode) -> Self {
+        self.state_mode = Some(mode);
         self
     }
 
@@ -361,6 +368,7 @@ impl PortForward {
             local_port: self.local_port(),
             protocol: Protocol::Tcp,
             tls_acceptor,
+            state_mode: self.state_mode,
         };
 
         let forwarder_clone = direct_forwarder.clone();
@@ -422,6 +430,7 @@ impl PortForward {
             local_port: self.local_port(),
             protocol: Protocol::Udp,
             tls_acceptor: None,
+            state_mode: self.state_mode,
         };
 
         let forwarder_clone = direct_forwarder.clone();

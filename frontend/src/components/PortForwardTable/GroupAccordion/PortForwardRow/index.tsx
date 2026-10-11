@@ -1,5 +1,10 @@
 import { memo, useState } from 'react'
-import { ClipboardIcon, ExternalLinkIcon, Info } from 'lucide-react'
+import {
+  ClipboardIcon,
+  ExternalLinkIcon,
+  Info,
+  TriangleAlert,
+} from 'lucide-react'
 
 import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -176,6 +181,33 @@ function PortForwardRowComponent({
                 </Text>
               </Flex>
             </Tooltip>
+
+            {config.last_error && (
+              <Tooltip
+                content={
+                  <Box p={1} maxWidth='320px'>
+                    <Text fontSize='xs' fontWeight='medium'>
+                      {config.is_running
+                        ? 'Connections to the pod fail'
+                        : 'Stopped after an error'}
+                    </Text>
+                    <Text fontSize='xs' color='fg.muted' wordBreak='break-word'>
+                      {config.last_error}
+                    </Text>
+                  </Box>
+                }
+              >
+                <Box
+                  as={TriangleAlert}
+                  data-testid='config-error'
+                  aria-label={`Connection error for ${config.alias}`}
+                  width='12px'
+                  height='12px'
+                  flexShrink={0}
+                  color='warning.fg'
+                />
+              </Tooltip>
+            )}
           </Flex>
         </Table.Cell>
 

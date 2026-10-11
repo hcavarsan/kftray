@@ -67,11 +67,11 @@ pub fn draw_configs_table(
         .iter()
         .enumerate()
         .map(|(i, config)| {
-            let state = config_states
+            let config_state = config_states
                 .iter()
-                .find(|s| s.config_id == config.id.unwrap_or_default())
-                .map(|s| s.is_running)
-                .unwrap_or(false);
+                .find(|s| s.config_id == config.id.unwrap_or_default());
+            let state = config_state.is_some_and(|s| s.is_running);
+            let failing = config_state.is_some_and(|s| s.is_retrying || s.last_error.is_some());
 
             let is_processing = config.id.is_some_and(|id| {
                 configs_being_processed
@@ -81,6 +81,8 @@ pub fn draw_configs_table(
 
             let base_style = if is_processing {
                 Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
+            } else if state && failing {
+                Style::default().fg(YELLOW)
             } else if state {
                 Style::default().fg(GREEN)
             } else {
@@ -98,6 +100,8 @@ pub fn draw_configs_table(
                     % throbber_widgets_tui::BRAILLE_SIX.symbols.len();
                 let symbol = throbber_widgets_tui::BRAILLE_SIX.symbols[index];
                 format!("{} {}", symbol, config.alias.clone().unwrap_or_default())
+            } else if failing {
+                format!("! {}", config.alias.clone().unwrap_or_default())
             } else {
                 config.alias.clone().unwrap_or_default()
             };
@@ -188,11 +192,10 @@ pub fn render_details(
     f: &mut Frame, app: &mut App, config: &Config, config_states: &[ConfigState], area: Rect,
     has_focus: bool,
 ) {
-    let state = config_states
+    let config_state = config_states
         .iter()
-        .find(|s| s.config_id == config.id.unwrap_or_default())
-        .map(|s| s.is_running)
-        .unwrap_or(false);
+        .find(|s| s.config_id == config.id.unwrap_or_default());
+    let state = config_state.is_some_and(|s| s.is_running);
 
     let http_logs_enabled = if let Some(config_id) = config.id {
         *app.http_logs_enabled.get(&config_id).unwrap_or(&false)
@@ -252,6 +255,30 @@ pub fn render_details(
             ),
             Span::styled(active_pod, Style::default().fg(Color::Green)),
         ]));
+    }
+
+    if let Some(config_state) = config_state {
+        if config_state.is_retrying {
+            details.push(Line::from(vec![
+                Span::styled(
+                    "Reconnecting: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("attempt {}", config_state.retry_count.unwrap_or(1)),
+                    Style::default().fg(YELLOW),
+                ),
+            ]));
+        }
+        if let Some(last_error) = &config_state.last_error {
+            details.push(Line::from(vec![
+                Span::styled(
+                    "Last Error: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(last_error, Style::default().fg(RED)),
+            ]));
+        }
     }
 
     details.push(Line::from(""));

@@ -79,6 +79,13 @@ impl ConfigRow<'_> {
         self.wait_state("stopped").await
     }
 
+    /// Waits for the warning a row shows when connections to the pod fail.
+    pub async fn wait_connection_error(&self) -> Result<()> {
+        let limit = self.desktop.timeouts().forward;
+        let warning = By::Css(format!("{} {}", self.selector, TestId::ConfigError.css()));
+        self.desktop.wait_present(&warning, limit).await
+    }
+
     async fn toggle_from(&self, state: &str) -> Result<()> {
         let limit = self.desktop.timeouts().ui;
         self.desktop

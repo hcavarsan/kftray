@@ -120,6 +120,9 @@ pub struct PortForward {
     /// same operation already resolved it: a relay created on one server must
     /// not be forwarded to on another the context has since come to mean.
     pub expected_destination: Option<String>,
+    /// The database holding the forward's state row. Connection errors are
+    /// saved there for the clients to show. `None` saves nothing.
+    pub state_mode: Option<kftray_commons::utils::db_mode::DatabaseMode>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -179,6 +179,83 @@ mod tests {
         assert!(!buffer.content.is_empty());
     }
 
+    fn failing_state() -> ConfigState {
+        ConfigState {
+            is_retrying: true,
+            retry_count: Some(2),
+            last_error: Some("pod web-0 is not ready".to_string()),
+            ..create_test_config_state()
+        }
+    }
+
+    fn table_line(state: ConfigState) -> (String, Color) {
+        let mut terminal = Terminal::new(TestBackend::new(100, 5)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_configs_table(
+                    frame,
+                    frame.area(),
+                    &[create_test_config()],
+                    &[state],
+                    &mut TableState::default(),
+                    "Test Table",
+                    true,
+                    &HashSet::new(),
+                    &std::collections::HashMap::new(),
+                    &throbber_widgets_tui::ThrobberState::default(),
+                    None,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let line = (0..buffer.area.width)
+            .map(|x| buffer[(x, 2)].symbol())
+            .collect();
+        (line, buffer[(1, 2)].fg)
+    }
+
+    #[test]
+    fn a_failing_forward_is_marked_in_the_table() {
+        let (failing, failing_color) = table_line(failing_state());
+        let (healthy, healthy_color) = table_line(create_test_config_state());
+
+        assert!(failing.starts_with("│! test-alias"), "{failing}");
+        assert_eq!(failing_color, crate::tui::ui::YELLOW);
+        assert!(healthy.starts_with("│test-alias"), "{healthy}");
+        assert_eq!(healthy_color, crate::tui::ui::GREEN);
+    }
+
+    #[test]
+    fn details_show_the_reconnect_attempt_and_the_last_error() {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut app = create_test_app();
+        terminal
+            .draw(|frame| {
+                render_details(
+                    frame,
+                    &mut app,
+                    &create_test_config(),
+                    &[failing_state()],
+                    frame.area(),
+                    true,
+                );
+            })
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(screen.contains("Reconnecting: attempt 2"), "{screen}");
+        assert!(
+            screen.contains("Last Error: pod web-0 is not ready"),
+            "{screen}"
+        );
+    }
+
     #[test]
     fn test_style_bold() {
         let style = style_bold();

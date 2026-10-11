@@ -1044,7 +1044,8 @@ pub(super) async fn start_config_cancellable(
         actual_config.id.unwrap_or_default(),
         actual_config.workload_type.clone().unwrap_or_default(),
     )
-    .expecting_destination(expected_destination);
+    .expecting_destination(expected_destination)
+    .saving_errors_to(mode);
 
     let tls_acceptor = if protocol == "tcp" && should_use_ssl {
         if let Some(settings) = &settings {
