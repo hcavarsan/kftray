@@ -1,6 +1,90 @@
 use std::time::Duration;
 
+use clap::Parser;
+use kftray_commons::test_utils::{
+    EnvVarGuard,
+    test_db,
+};
+use kftray_commons::utils::db_mode::DatabaseMode;
+
+use crate::cli::CliHandler;
+use crate::cli::args::Cli;
 use crate::cli::runner::PortForwardRunner;
+use crate::logging::{
+    LogConfig,
+    LoggerState,
+};
+
+#[cfg(unix)]
+#[tokio::test]
+async fn run_command_exits_with_the_code_of_the_command() {
+    let _db = test_db().await;
+    let cases: [(&[&str], i32); 4] = [
+        (&["sh", "-c", "exit 0"], 0),
+        (&["sh", "-c", "exit 3"], 3),
+        (&["sh", "-c", "kill -9 $$"], 137),
+        (&["kftui-no-such-command"], 127),
+    ];
+    for (command, expected) in cases {
+        let command: Vec<String> = command.iter().map(|arg| arg.to_string()).collect();
+        let code = PortForwardRunner::run_command(&command, Vec::new(), None, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(code, expected, "exit code of {command:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_command_does_not_run_when_no_forward_starts() {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let _db = test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let kubeconfig = dir.path().join("kubeconfig");
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: dev\nclusters:\n- name: fake\n  \
+             cluster:\n    server: http://{closed}\ncontexts:\n- name: dev\n  context:\n    \
+             cluster: fake\n    user: dev\nusers:\n- name: dev\n  user:\n    token: fake\n"
+        ),
+    )
+    .unwrap();
+    let configs = serde_json::json!([{
+        "alias": "web",
+        "service": "web",
+        "namespace": "default",
+        "local_port": 0,
+        "remote_port": 80,
+        "protocol": "tcp",
+        "workload_type": "service",
+        "context": "dev",
+        "kubeconfig": kubeconfig,
+    }])
+    .to_string();
+    let marker = dir.path().join("ran");
+    let cli = Cli::parse_from([
+        "kftui",
+        "--json",
+        &configs,
+        "--auto-start",
+        "--",
+        "touch",
+        marker.to_str().unwrap(),
+    ]);
+
+    let result = CliHandler::new(cli, LoggerState::new(LogConfig::new(log::LevelFilter::Off)))
+        .run()
+        .await;
+
+    assert!(result.is_err());
+    assert!(!marker.exists());
+}
 
 /// A stop still in flight when `drain_stop_tasks`'s deadline elapses must
 /// keep running to completion, detached, rather than being aborted: only the

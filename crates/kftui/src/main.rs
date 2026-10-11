@@ -36,10 +36,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // returns, rather than awaiting it further.
     runtime.shutdown_timeout(crate::core::port_forward::CLEANUP_RECONCILE_TIMEOUT);
 
-    result
+    if let Some(code) = result? {
+        std::process::exit(code);
+    }
+    Ok(())
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<Option<i32>, Box<dyn std::error::Error>> {
     let _telemetry = kftray_telemetry::init(concat!("kftui@", env!("CARGO_PKG_VERSION")));
     kftray_portforward::ssl::install_default_keyring_store();
     kftray_portforward::ssl::ensure_crypto_provider_installed();

@@ -19,7 +19,8 @@ pub struct CliHandler {
 }
 
 impl CliHandler {
-    pub fn new(cli: Cli, logger_state: LoggerState) -> Self {
+    pub fn new(mut cli: Cli, logger_state: LoggerState) -> Self {
+        cli.non_interactive |= cli.runs_command();
         let mode = Self::determine_database_mode(&cli);
         Self {
             cli,
@@ -28,7 +29,7 @@ impl CliHandler {
         }
     }
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self) -> Result<Option<i32>, Box<dyn std::error::Error>> {
         self.validate_args()?;
         self.initialize_database().await?;
         kftray_telemetry::load_setting_with_mode(self.mode).await;
@@ -123,7 +124,7 @@ impl CliHandler {
 
     async fn handle_execution_mode(
         &self, imported_config_ids: Vec<i64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
         if self.cli.non_interactive {
             PortForwardRunner::run_non_interactive_mode(&self.cli, self.mode, imported_config_ids)
                 .await
@@ -143,7 +144,8 @@ impl CliHandler {
                 saved_group_by,
                 discovery,
             )
-            .await
+            .await?;
+            Ok(None)
         }
     }
 }
