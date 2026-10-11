@@ -25,7 +25,7 @@ pub async fn handle_auto_add_configs(app: &mut App) {
 }
 
 pub async fn handle_context_selection(app: &mut App, context: &str, mode: DatabaseMode) {
-    let mut configs = match retrieve_service_configs(context, None).await {
+    let mut configs = match retrieve_service_configs(context, None, None).await {
         Ok(configs) => configs,
         Err(e) => {
             app.error_message = Some(format!(

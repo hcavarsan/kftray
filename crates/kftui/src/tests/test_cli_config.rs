@@ -1,3 +1,9 @@
+use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
+
 use clap::Parser;
 use kftray_commons::test_utils::{
     EnvVarGuard,
@@ -10,6 +16,14 @@ use kftray_commons::utils::config::{
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
 use tempfile::TempDir;
+use tokio::io::{
+    AsyncReadExt,
+    AsyncWriteExt,
+};
+use tokio::net::{
+    TcpListener,
+    TcpStream,
+};
 
 use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
@@ -135,4 +149,118 @@ async fn import_returns_ids_of_saved_and_new_configs() {
         .unwrap();
     assert_eq!(configs.len(), 2);
     assert_eq!(ids, vec![saved_id, new_id]);
+}
+
+async fn answer_api_requests(mut stream: TcpStream, listed_namespaces: Arc<AtomicBool>) {
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        while !buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => buffer.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let end = buffer.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let head = String::from_utf8_lossy(&buffer[..end]).to_string();
+        buffer.drain(..end);
+        let target = head.split_whitespace().nth(1).unwrap_or_default();
+        let path = target.split('?').next().unwrap_or_default().to_string();
+        if path == "/api/v1/namespaces" {
+            listed_namespaces.store(true, Ordering::SeqCst);
+        }
+
+        let (status, body) = match path.as_str() {
+            "/version" => ("200 OK", serde_json::json!({"major": "1", "minor": "30"})),
+            "/api/v1/namespaces/team-a/services" => (
+                "200 OK",
+                serde_json::json!({
+                    "kind": "ServiceList",
+                    "apiVersion": "v1",
+                    "metadata": {},
+                    "items": [{
+                        "metadata": {
+                            "name": "web",
+                            "namespace": "team-a",
+                            "annotations": {
+                                "kftray.app/enabled": "true",
+                                "kftray.app/configs": "web-18090-80"
+                            }
+                        },
+                        "spec": {"ports": [{"port": 80, "targetPort": 80}]}
+                    }]
+                }),
+            ),
+            _ => (
+                "403 Forbidden",
+                serde_json::json!({
+                    "kind": "Status",
+                    "apiVersion": "v1",
+                    "status": "Failure",
+                    "message": "forbidden",
+                    "reason": "Forbidden",
+                    "code": 403
+                }),
+            ),
+        };
+        let body = body.to_string();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        if stream.write_all(response.as_bytes()).await.is_err() {
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn auto_discover_with_namespace_imports_without_listing_namespaces() {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let db = db_with_saved_config().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let listed_namespaces = Arc::new(AtomicBool::new(false));
+    let server_flag = Arc::clone(&listed_namespaces);
+    let server = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(answer_api_requests(stream, Arc::clone(&server_flag)));
+        }
+    });
+    let kubeconfig = db.dir.path().join("kubeconfig");
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: dev\nclusters:\n- name: fake\n  \
+             cluster:\n    server: http://{address}\ncontexts:\n- name: dev\n  context:\n    \
+             cluster: fake\n    user: dev\nusers:\n- name: dev\n  user:\n    token: fake\n"
+        ),
+    )
+    .unwrap();
+    let cli = Cli::parse_from([
+        "kftui",
+        "--save",
+        "--auto-discover",
+        "--context",
+        "dev",
+        "--kubeconfig",
+        kubeconfig.to_str().unwrap(),
+        "--namespace",
+        "team-a",
+    ]);
+
+    ConfigImporter::import_configs(&cli, DatabaseMode::File)
+        .await
+        .unwrap();
+    server.abort();
+
+    let imported: Vec<_> = read_configs_with_mode(DatabaseMode::File)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.alias.as_deref() == Some("web"))
+        .map(|c| (c.namespace, c.local_port))
+        .collect();
+    assert_eq!(imported, vec![("team-a".to_string(), Some(18090))]);
+    assert!(!listed_namespaces.load(Ordering::SeqCst));
 }
