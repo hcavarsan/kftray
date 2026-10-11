@@ -1,15 +1,21 @@
 use std::time::Duration;
 
+#[cfg(unix)]
 use clap::Parser;
+#[cfg(unix)]
 use kftray_commons::test_utils::{
     EnvVarGuard,
     test_db,
 };
+#[cfg(unix)]
 use kftray_commons::utils::db_mode::DatabaseMode;
 
+#[cfg(unix)]
 use crate::cli::CliHandler;
+#[cfg(unix)]
 use crate::cli::args::Cli;
 use crate::cli::runner::PortForwardRunner;
+#[cfg(unix)]
 use crate::logging::{
     LogConfig,
     LoggerState,
