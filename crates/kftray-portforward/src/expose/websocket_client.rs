@@ -307,7 +307,12 @@ impl WebSocketTunnelClient {
                 let response_headers: Vec<(String, String)> = response
                     .headers()
                     .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .map(|(k, v)| {
+                        (
+                            k.to_string(),
+                            String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                        )
+                    })
                     .collect();
 
                 match response.into_body().collect().await {
@@ -569,6 +574,67 @@ mod tests {
                     .map(|(_, value)| value.as_str())
                     .collect();
                 assert_eq!(cookies, ["session=abc; Path=/", "csrf=xyz; Path=/"]);
+            }
+            other => panic!("expected HTTP response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn non_ascii_response_header_crosses_the_tunnel() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper_util::client::legacy::Client;
+        use hyper_util::rt::TokioExecutor;
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            9999,
+            "127.0.0.1".to_owned(),
+            listener.local_addr().unwrap().port(),
+        );
+        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(
+                    "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf\u{e9}.txt\"\
+                     \r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.forward_to_local_service(
+                &http_client,
+                "request".to_owned(),
+                "GET".to_owned(),
+                "/file".to_owned(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+        let wire = response.serialize().unwrap();
+        match super::TunnelMessage::deserialize(&wire).unwrap() {
+            super::TunnelMessage::HttpResponse { headers, .. } => {
+                let disposition = headers
+                    .iter()
+                    .find(|(name, _)| name == "content-disposition")
+                    .map(|(_, value)| value.as_str());
+                assert_eq!(
+                    disposition,
+                    Some("attachment; filename=\"caf\u{e9}.txt\""),
+                    "{headers:?}"
+                );
             }
             other => panic!("expected HTTP response, got {other:?}"),
         }
