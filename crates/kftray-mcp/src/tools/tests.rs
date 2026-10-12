@@ -644,3 +644,128 @@ async fn delete_config_refuses_a_config_another_live_process_forwards() {
     let gone = execute_tool("get_config", Some(serde_json::json!({"config_id": id}))).await;
     assert_eq!(gone.is_error, Some(true));
 }
+
+async fn serve_forbidding_kube_api() -> (
+    std::net::SocketAddr,
+    std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+) {
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    };
+
+    let requests = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let seen = std::sync::Arc::clone(&requests);
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let seen = std::sync::Arc::clone(&seen);
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let line = request.lines().next().unwrap_or_default().to_string();
+                let (status, body) = if line.contains("/version") {
+                    ("200 OK", serde_json::json!({"major": "1", "minor": "30"}))
+                } else {
+                    (
+                        "403 Forbidden",
+                        serde_json::json!({
+                            "kind": "Status", "apiVersion": "v1", "metadata": {},
+                            "status": "Failure", "reason": "Forbidden", "code": 403,
+                            "message": "forbidden"
+                        }),
+                    )
+                };
+                seen.lock().await.push(line);
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    (addr, requests)
+}
+
+#[tokio::test]
+async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let _db = temp_config_db().await;
+    let (api, requests) = serve_forbidding_kube_api().await;
+    let dir = tempfile::tempdir().unwrap();
+    let kubeconfig = dir.path().join("kubeconfig");
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: dev\nclusters:\n- name: dev\n  cluster:\n    server: http://{api}\ncontexts:\n- name: dev\n  context:\n    cluster: dev\n    user: dev\nusers:\n- name: dev\n  user:\n    token: test\n"
+        ),
+    )
+    .unwrap();
+    let kubeconfig = kubeconfig.to_str().unwrap();
+    let base = serde_json::json!({
+        "context": "dev",
+        "namespace": "team-a",
+        "remote_port": 53,
+        "kubeconfig": kubeconfig,
+    });
+    let with = |extra: serde_json::Value| {
+        let mut args = base.clone();
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        args
+    };
+    let saved = |extra: serde_json::Value| async move {
+        let created = execute_tool("create_config", Some(extra)).await;
+        serde_json::json!({"config_id": result_json(&created)["config_id"]})
+    };
+
+    let cases = [
+        (
+            "saved udp service",
+            saved(with(
+                serde_json::json!({"service": "dns", "protocol": "udp"}),
+            ))
+            .await,
+        ),
+        (
+            "saved proxy",
+            saved(with(serde_json::json!({
+                "workload_type": "proxy",
+                "remote_address": "db.internal",
+            })))
+            .await,
+        ),
+        (
+            "new udp service",
+            with(serde_json::json!({"service": "dns", "protocol": "udp"})),
+        ),
+    ];
+
+    for (case, args) in cases {
+        requests.lock().await.clear();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            execute_tool("start_port_forward", Some(args)),
+        )
+        .await;
+        let seen = requests.lock().await.clone();
+        assert!(
+            seen.iter()
+                .any(|line| line.starts_with("POST /apis/apps/v1/namespaces/team-a/deployments")),
+            "{case}: no relay deployment requested, finished: {}, requests: {seen:?}",
+            result.is_ok()
+        );
+        let result = result.expect("start_port_forward did not return within 30s");
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "{case}: {}",
+            result_text(&result)
+        );
+    }
+}

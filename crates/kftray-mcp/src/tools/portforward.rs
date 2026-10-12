@@ -4,6 +4,7 @@
 //! forwards, starting new ones, and stopping existing ones.
 
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::response::CustomResponse;
 use serde::{
     Deserialize,
     Serialize,
@@ -18,6 +19,17 @@ use crate::protocol::{
     Tool,
 };
 use crate::tools::McpTool;
+
+async fn start_config(config: Config) -> Result<Vec<CustomResponse>, String> {
+    let workload_type = config.workload_type.as_deref();
+    let direct = workload_type == Some("expose")
+        || (matches!(workload_type, None | Some("service" | "pod")) && config.protocol == "tcp");
+    if direct {
+        kftray_portforward::start_port_forward(vec![config], "tcp").await
+    } else {
+        kftray_portforward::deploy_and_forward_pod(vec![config]).await
+    }
+}
 
 // ============================================================================
 // List Active Port Forwards Tool
@@ -209,14 +221,7 @@ impl McpTool for StartPortForwardTool {
         if let Some(config_id) = args.config_id {
             match kftray_commons::config::get_config(config_id).await {
                 Ok(config) => {
-                    let protocol = config.protocol.clone();
-                    let configs = vec![config];
-
-                    let result = if protocol == "udp" {
-                        kftray_portforward::start_port_forward(configs, "udp").await
-                    } else {
-                        kftray_portforward::start_port_forward(configs, "tcp").await
-                    };
+                    let result = start_config(config).await;
 
                     match result {
                         Ok(responses) => {
@@ -323,15 +328,8 @@ impl McpTool for StartPortForwardTool {
                 Err(e) => return CallToolResult::error(format!("Failed to get config: {e}")),
             };
 
-            let protocol = new_config.protocol.clone();
             let config_id = new_config.id;
-            let configs = vec![new_config];
-
-            let result = if protocol == "udp" {
-                kftray_portforward::start_port_forward(configs, "udp").await
-            } else {
-                kftray_portforward::start_port_forward(configs, "tcp").await
-            };
+            let result = start_config(new_config).await;
 
             match result {
                 Ok(responses) => {
