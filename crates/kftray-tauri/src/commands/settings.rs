@@ -303,10 +303,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
         .as_ref()
         .map(|h| format!("{}/.kube/config", h))
         .unwrap_or_default();
-    let kubeconfig_exists = kubeconfig
-        .as_ref()
-        .map(|p| std::path::Path::new(p).exists())
-        .unwrap_or_else(|_| std::path::Path::new(&default_kubeconfig).exists());
+    let kubeconfig_exists = kftray_commons::utils::config_dir::get_kubeconfig_paths().is_ok();
     checks.push(DiagnosticResult {
         name: "KUBECONFIG".into(),
         status: if kubeconfig_exists {
@@ -634,5 +631,47 @@ mod tests {
             old_port_answers,
             "port {running} closed although the new port was not saved"
         );
+    }
+
+    async fn kubeconfig_check(
+        kubeconfig: &std::ffi::OsStr, home: &std::path::Path,
+    ) -> DiagnosticResult {
+        let _home = kftray_commons::test_utils::EnvVarGuard::set("HOME", home.to_str().unwrap());
+        let _kubeconfig = kftray_commons::test_utils::EnvVarGuard::set(
+            "KUBECONFIG",
+            kubeconfig.to_str().unwrap(),
+        );
+        let report = run_diagnostics().await.unwrap();
+        report
+            .checks
+            .into_iter()
+            .find(|check| check.name == "KUBECONFIG")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_kubeconfig_path_list_with_existing_files_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.yaml");
+        let b = dir.path().join("b.yaml");
+        std::fs::write(&a, "apiVersion: v1\n").unwrap();
+        std::fs::write(&b, "apiVersion: v1\n").unwrap();
+        let list = std::env::join_paths([&a, &dir.path().join("missing.yaml"), &b]).unwrap();
+
+        let check = kubeconfig_check(&list, dir.path()).await;
+
+        assert_eq!(check.status, "ok", "hint: {}", check.hint);
+    }
+
+    #[tokio::test]
+    async fn a_kubeconfig_path_list_with_no_existing_file_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let list =
+            std::env::join_paths([dir.path().join("a.yaml"), dir.path().join("b.yaml")]).unwrap();
+
+        let check = kubeconfig_check(&list, dir.path()).await;
+
+        assert_eq!(check.status, "warning");
+        assert_eq!(check.hint, "Kubeconfig file not found");
     }
 }
