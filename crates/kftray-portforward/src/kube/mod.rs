@@ -53,7 +53,6 @@ pub use stop::{
     stop_port_forward,
     stop_port_forward_with_mode,
 };
-pub use target::NO_READY_PODS_ERROR;
 
 /// Whether a startup for `config_id` is currently registered, queued or
 /// running, regardless of workload type. Covers both the TCP-direct path in
