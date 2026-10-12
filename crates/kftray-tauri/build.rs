@@ -37,8 +37,19 @@ fn main() {
             .to_path_buf()
     });
 
-    let helper_bin = workspace_root
-        .join("target")
+    let target_dir = match env::var_os("CARGO_TARGET_DIR") {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            }
+        }
+        None => workspace_root.join("target"),
+    };
+
+    let helper_bin = target_dir
         .join("release")
         .join(format!("kftray-helper{extension}"));
 
@@ -93,6 +104,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
     println!("cargo:rerun-if-changed={}", helper_bin.display());
     let frontend_dist = Path::new(&manifest_dir).join("../../frontend/dist");
     fs::create_dir_all(&frontend_dist).expect("Failed to create frontend dist directory");
