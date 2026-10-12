@@ -76,6 +76,8 @@ async fn main() -> anyhow::Result<()> {
         .format_timestamp_secs()
         .init();
 
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+
     kftray_mcp::init_database().await?;
 
     let addr = SocketAddr::new(args.host, args.port);
