@@ -217,6 +217,19 @@ struct PersistedTarget {
     destination: Option<String>,
 }
 
+/// Reads a durable cleanup record. Records from before the destination was
+/// kept hold a bare configuration and are read as one with no destination.
+/// A value with a `config` field is always the wrapper: read as a bare
+/// configuration, a malformed one would drop the alias it names.
+fn parse_persisted_target(value: &str) -> Option<(Config, Option<String>)> {
+    let value: serde_json::Value = serde_json::from_str(value).ok()?;
+    if value.get("config").is_some() {
+        let persisted: PersistedTarget = serde_json::from_value(value).ok()?;
+        return Some((persisted.config, persisted.destination));
+    }
+    Some((serde_json::from_value(value).ok()?, None))
+}
+
 async fn persist_uncertain_target(
     id: i64, config: &Config, destination: Option<&str>, mode: DatabaseMode,
 ) -> Result<(), String> {
@@ -380,14 +393,8 @@ async fn restore_uncertain_targets(mode: DatabaseMode) {
         else {
             continue;
         };
-        // Records from before the destination was kept hold a bare
-        // configuration; they are read as one with no destination.
-        let (config, destination) = match serde_json::from_str::<PersistedTarget>(&value) {
-            Ok(persisted) => (persisted.config, persisted.destination),
-            Err(_) => match serde_json::from_str::<Config>(&value) {
-                Ok(config) => (config, None),
-                Err(_) => continue,
-            },
+        let Some((config, destination)) = parse_persisted_target(&value) else {
+            continue;
         };
         // Restored with a fresh window: a process can restart seconds after
         // abandoning a create, and elapsed wall time is no more proof here than
@@ -735,10 +742,7 @@ pub(crate) async fn recorded_configs(id: i64, mode: DatabaseMode) -> Option<Vec<
     .await
     .ok()?;
     for (_, value) in uncertain {
-        let config = match serde_json::from_str::<PersistedTarget>(&value) {
-            Ok(persisted) => persisted.config,
-            Err(_) => serde_json::from_str::<Config>(&value).ok()?,
-        };
+        let (config, _) = parse_persisted_target(&value)?;
         configs.push(config);
     }
     let local =
@@ -3042,6 +3046,47 @@ mod tests {
 
         settle_local_cleanup(id, &config, mode).await;
         assert!(recorded_configs(id, mode).await.unwrap().is_empty());
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_cleanup_record_is_unknown_not_an_alias_free_config() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = -9_315;
+        PENDING_CLEANUP.remove(&id);
+        let mode = DatabaseMode::Memory;
+        let config = Config {
+            id: Some(id),
+            service: Some("relay".to_string()),
+            alias: Some("relay.local".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        let mut record = serde_json::to_value(PersistedTarget {
+            config: config.clone(),
+            destination: None,
+        })
+        .unwrap();
+        // A wrapper whose destination no longer parses: read as a bare
+        // configuration it would name no alias at all.
+        record["destination"] = serde_json::json!(1);
+        kftray_commons::utils::settings::set_setting_with_mode(
+            &uncertain_create_key(id, &config, None, mode),
+            &record.to_string(),
+            mode,
+        )
+        .await
+        .unwrap();
+
+        assert!(recorded_configs(id, mode).await.is_none());
+
+        kftray_commons::utils::settings::delete_setting_with_mode(
+            &uncertain_create_key(id, &config, None, mode),
+            mode,
+        )
+        .await
+        .unwrap();
         PENDING_CLEANUP.remove(&id);
     }
 
