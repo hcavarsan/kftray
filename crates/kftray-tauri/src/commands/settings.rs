@@ -248,31 +248,42 @@ fn get_command_path(cmd: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-fn is_executable(path: &Path) -> bool {
+/// The file `Command::new(path)` runs on Windows: std appends `.exe` to a
+/// path without an extension and never tries `.cmd` or `.bat`.
+#[cfg(any(not(unix), test))]
+fn windows_spawn_target(path: &Path) -> PathBuf {
+    let mut target = path.as_os_str().to_owned();
+    if path.extension().is_none() {
+        target.push(".exe");
+    }
+    PathBuf::from(target)
+}
+
+/// Returns the file the exec plugin spawn would run for `path`, if it exists.
+fn find_executable(path: &Path) -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         path.metadata()
             .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .then(|| path.to_path_buf())
     }
     #[cfg(not(unix))]
     {
-        path.is_file()
-            || ["exe", "cmd", "bat"]
-                .iter()
-                .any(|ext| Path::new(&format!("{}.{ext}", path.display())).is_file())
+        Some(windows_spawn_target(path)).filter(|target| target.is_file())
     }
 }
 
 /// Mirrors how the exec credential plugin gets spawned: a command with a
 /// path separator is used as is, a bare name is looked up on `path`.
+/// kube-client makes relative commands that contain a separator absolute
+/// against the kubeconfig directory when it reads the file, so commands
+/// coming from `Kubeconfig::read_from` are already resolved here.
 fn resolve_command(command: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     if command.contains('/') || command.contains(std::path::MAIN_SEPARATOR) {
-        return is_executable(Path::new(command)).then(|| PathBuf::from(command));
+        return find_executable(Path::new(command));
     }
-    std::env::split_paths(path)
-        .map(|dir| dir.join(command))
-        .find(|candidate| is_executable(candidate))
+    std::env::split_paths(path).find_map(|dir| find_executable(&dir.join(command)))
 }
 
 /// One check per distinct `users[].user.exec.command` in the kubeconfigs.
@@ -752,7 +763,7 @@ mod tests {
         assert_eq!(check.hint, "Kubeconfig file not found");
     }
 
-    fn write_kubeconfig(dir: &std::path::Path, command: &str) -> std::path::PathBuf {
+    pub(super) fn write_kubeconfig(dir: &std::path::Path, command: &str) -> std::path::PathBuf {
         let file = dir.join("kubeconfig.yaml");
         std::fs::write(
             &file,
@@ -804,5 +815,63 @@ mod tests {
         assert_eq!(checks[0].status, "ok");
         assert_eq!(checks[0].value, plugin.to_str().unwrap());
         assert!(checks[0].hint.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod exec_plugin_resolution_tests {
+    #[cfg(unix)]
+    use super::tests::write_kubeconfig;
+    use super::*;
+
+    #[test]
+    fn windows_spawn_appends_exe_only_without_an_extension() {
+        assert_eq!(
+            windows_spawn_target(Path::new("bin/plugin")),
+            PathBuf::from("bin/plugin.exe")
+        );
+        assert_eq!(
+            windows_spawn_target(Path::new("bin/plugin.cmd")),
+            PathBuf::from("bin/plugin.cmd")
+        );
+        assert_eq!(
+            windows_spawn_target(Path::new("plugin.v2")),
+            PathBuf::from("plugin.v2")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_command_resolves_against_the_kubeconfig_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "./bin/plugin");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let plugin = bin.join("plugin");
+        std::fs::write(&plugin, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let checks = exec_plugin_checks(&[kubeconfig], std::ffi::OsStr::new(""));
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, "ok");
+        assert_eq!(
+            checks[0].value,
+            dir.path().join("./bin/plugin").to_str().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_command_missing_next_to_the_kubeconfig_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "./bin/plugin");
+
+        let checks = exec_plugin_checks(&[kubeconfig], std::ffi::OsStr::new(""));
+
+        assert_eq!(checks[0].status, "warning");
+        assert_eq!(checks[0].value, "<not found>");
     }
 }
