@@ -1,9 +1,12 @@
 use std::env;
 
 use anyhow::Result;
-use log::info;
 #[cfg(unix)]
 use log::warn;
+use log::{
+    error,
+    info,
+};
 use tokio::sync::OnceCell;
 
 use super::KubeConnection;
@@ -319,16 +322,21 @@ pub async fn create_client_with_specific_context(
         }
     }
 
+    // The environment goes to the local log only: in the returned error its
+    // `KUBECONFIG=` text made every client failure look like a kubeconfig problem.
+    error!(
+        "Failed to create Kubernetes client for context '{context_name}'. Environment: {}",
+        env_debug_info()
+    );
+
     Err(anyhow::anyhow!(
         "Failed to create Kubernetes client.\n\
-         Errors:\n{}\n\
-         Environment: {}",
+         Errors:\n{}",
         errors
             .iter()
             .map(|e| format!("  • {e}"))
             .collect::<Vec<_>>()
-            .join("\n"),
-        env_debug_info()
+            .join("\n")
     ))
 }
 
@@ -372,30 +380,60 @@ mod tests {
         assert_eq!(merged, "/opt/homebrew/bin:/usr/bin:/usr/local/sbin");
     }
 
-    #[tokio::test]
-    async fn unicode_path_does_not_panic_on_client_error() {
-        init_path().await;
-        let dir = tempfile::tempdir().unwrap();
-        let kubeconfig = dir.path().join("config");
-        std::fs::write(
-            &kubeconfig,
-            "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n",
-        )
-        .unwrap();
+    #[test]
+    fn unicode_path_does_not_panic_in_env_debug_info() {
         let path = format!("{}x/home/joão/.local/bin:/usr/bin", "/x".repeat(35));
         assert!(!path.is_char_boundary(80));
         let _guard = kftray_commons::test_utils::EnvVarGuard::set("PATH", &path);
 
+        let expected = format!("PATH={}... |", &path[..79]);
+        assert!(env_debug_info().contains(&expected));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod client_failure_tests {
+    use kftray_telemetry::{
+        FailureKind,
+        classify,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn unreachable_api_server_classifies_as_connection() {
+        crate::ssl::ensure_crypto_provider_installed();
+        init_path().await;
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = dir.path().join("config");
+        std::fs::write(
+            &kubeconfig,
+            format!(
+                "apiVersion: v1\nkind: Config\n\
+                 clusters:\n- name: c\n  cluster:\n    server: http://127.0.0.1:{port}\n\
+                 contexts:\n- name: ctx\n  context:\n    cluster: c\n    user: u\n\
+                 users:\n- name: u\n  user:\n    token: t\n\
+                 current-context: ctx\n"
+            ),
+        )
+        .unwrap();
+        let _guard = kftray_commons::test_utils::EnvVarGuard::set("KUBECONFIG", "/tmp/x");
+
         let Err(error) = create_client_with_specific_context(
             Some(kubeconfig.to_string_lossy().into_owned()),
-            "missing",
+            "ctx",
         )
         .await
         else {
-            panic!("a missing context must fail");
+            panic!("a closed port must fail");
         };
 
-        let expected = format!("PATH={}... |", &path[..79]);
-        assert!(error.to_string().contains(&expected), "{error}");
+        let text = error.to_string();
+        assert!(!text.contains("Environment:"), "{text}");
+        assert_eq!(classify(&text), FailureKind::Connection, "{text}");
     }
 }
