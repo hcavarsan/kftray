@@ -68,4 +68,22 @@ describe('forwardBatchState', () => {
     expect(stopped.startDisabled).toBe(false)
     expect(stopped.stopDisabled).toBe(true)
   })
+
+  it('does not offer a stop for forwards another process runs', () => {
+    const elsewhere = { ...makeConfig(1, true), owned_elsewhere: true }
+    const own = makeConfig(2, true)
+
+    const onlyElsewhere = forwardBatchState(
+      [elsewhere],
+      [elsewhere],
+      [elsewhere],
+    )
+    const allElsewhere = forwardBatchState([elsewhere], [], [elsewhere])
+    const mixed = forwardBatchState([elsewhere, own], [], [elsewhere, own])
+
+    expect(onlyElsewhere.stopSelected).toBe(false)
+    expect(onlyElsewhere.stopDisabled).toBe(true)
+    expect(allElsewhere.stopDisabled).toBe(true)
+    expect(mixed.stopDisabled).toBe(false)
+  })
 })

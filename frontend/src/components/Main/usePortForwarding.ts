@@ -111,7 +111,7 @@ export function usePortForwarding() {
 
   const stopSelectedPortForwarding = async (selected: Config[]) => {
     const configsToStop = currentConfigs(selected).filter(
-      config => config.is_running,
+      config => config.is_running && !config.owned_elsewhere,
     )
 
     if (configsToStop.length > 0) {
@@ -124,7 +124,9 @@ export function usePortForwarding() {
   }
 
   const stopAllPortForwarding = async () => {
-    const configsToStop = configsRef.current.filter(config => config.is_running)
+    const configsToStop = configsRef.current.filter(
+      config => config.is_running && !config.owned_elsewhere,
+    )
 
     if (configsToStop.length > 0) {
       await runPortForwardBatch(

@@ -346,6 +346,15 @@ pub fn process_is_alive(pid: u32) -> bool {
     }
 }
 
+/// Whether a row marked running was recorded by another process that is
+/// still alive. Such a forward cannot be started or stopped from here.
+pub fn is_owned_by_other_live_process(state: &ConfigState) -> bool {
+    state.is_running
+        && state
+            .process_id
+            .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;
