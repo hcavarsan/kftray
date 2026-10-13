@@ -366,9 +366,8 @@ pub fn process_is_alive(pid: u32, recorded_start: Option<i64>) -> bool {
     if pid == 0 {
         return false;
     }
-    if pid == std::process::id() {
-        return true;
-    }
+    // No shortcut for this process's own pid: a row from an earlier process
+    // that had the same number must fail the identity check like any other.
     #[cfg(unix)]
     let exists = {
         let Ok(pid) = libc::pid_t::try_from(pid) else {
@@ -1112,6 +1111,23 @@ mod tests {
         assert!(matching, "the process that wrote the row is still running");
         assert!(
             legacy,
+            "a row without an identity keeps the pid-only reading"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn this_pid_with_another_start_identity_is_a_stale_row() {
+        let pid = std::process::id();
+        let own = process_start_identity(pid).expect("this process's start identity");
+
+        assert!(
+            !process_is_alive(pid, Some(own + 1)),
+            "a row left by an earlier process that had this pid"
+        );
+        assert!(process_is_alive(pid, Some(own)), "a row this process wrote");
+        assert!(
+            process_is_alive(pid, None),
             "a row without an identity keeps the pid-only reading"
         );
     }
