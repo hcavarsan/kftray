@@ -938,6 +938,11 @@ impl PortForwarder {
                 addr.port(),
                 Protocol::Tcp,
             ),
+            std::io::ErrorKind::AddrNotAvailable => crate::local_port::address_unavailable(
+                &listener_config.local_address,
+                addr.port(),
+                Protocol::Tcp,
+            ),
             _ => anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e),
         })?;
         let port = listener.local_addr()?.port();

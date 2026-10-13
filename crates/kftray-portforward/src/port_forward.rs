@@ -611,4 +611,42 @@ mod tests {
             "{error}"
         );
     }
+
+    #[tokio::test]
+    async fn a_denied_local_port_fails_before_the_cluster_is_contacted() {
+        if std::net::TcpListener::bind("127.0.0.1:80")
+            .err()
+            .map(|error| error.kind())
+            != Some(std::io::ErrorKind::PermissionDenied)
+        {
+            return;
+        }
+        let forward = PortForward::new(
+            Target::new(
+                crate::kube::models::TargetSelector::ServiceName("web".to_owned()),
+                80,
+                "default",
+            ),
+            Some(80),
+            Some("127.0.0.1".to_owned()),
+            Some("unreachable".to_owned()),
+            Some("/nonexistent/kubeconfig".to_owned()),
+            1,
+            "service".to_owned(),
+        );
+
+        let error = match forward.port_forward_tcp(None).await {
+            Ok(_) => panic!("the start must fail on a denied port"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(
+            error.contains("access denied or the port is reserved"),
+            "{error}"
+        );
+        assert!(
+            crate::local_port::free_port_in_error(&error).is_some(),
+            "{error}"
+        );
+    }
 }

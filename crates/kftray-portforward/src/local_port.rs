@@ -8,7 +8,7 @@ use std::net::{
 use crate::kube::listener::Protocol;
 
 const FREE_PORT_SEARCH: u16 = 100;
-const FREE_PORT_MARKER: &str = " is already in use. Port ";
+const FREE_PORT_OFFER: &str = ". Port ";
 
 fn protocol_name(protocol: Protocol) -> &'static str {
     match protocol {
@@ -40,25 +40,49 @@ pub(crate) fn port_in_use(ip: IpAddr, port: u16, protocol: Protocol) -> anyhow::
     let name = protocol_name(protocol);
     match next_free_port(ip, port, protocol) {
         Some(free) => {
-            anyhow::anyhow!("Local {name} port {port} on {ip}{FREE_PORT_MARKER}{free} is free.")
+            anyhow::anyhow!(
+                "Local {name} port {port} on {ip} is already in use{FREE_PORT_OFFER}{free} is free."
+            )
         }
         None => anyhow::anyhow!("Local {name} port {port} on {ip} is already in use."),
     }
 }
 
 /// The error for a local port the operating system refuses to bind: a
-/// privileged port without the privilege, or a range Windows reserves. Unlike
-/// a busy port, no other process holds it and a nearby port is not offered.
+/// privileged port without the privilege, or a range Windows reserves. No
+/// other process holds it, so the message does not say so, but it still
+/// names a port that binds for the clients to offer.
 pub(crate) fn bind_denied(address: &str, port: u16, protocol: Protocol) -> anyhow::Error {
     let name = protocol_name(protocol);
+    let offer = address
+        .parse::<IpAddr>()
+        .ok()
+        .and_then(|ip| next_free_port(ip, port, protocol));
+    match offer {
+        Some(free) => anyhow::anyhow!(
+            "Local {name} port {port} on {address} cannot be bound: access denied or the port \
+             is reserved by the system{FREE_PORT_OFFER}{free} is free."
+        ),
+        None => anyhow::anyhow!(
+            "Local {name} port {port} on {address} cannot be bound: access denied or the port \
+             is reserved by the system."
+        ),
+    }
+}
+
+/// The error for a local address that is not configured on this machine,
+/// such as a loopback alias that was never set up.
+pub(crate) fn address_unavailable(address: &str, port: u16, protocol: Protocol) -> anyhow::Error {
+    let name = protocol_name(protocol);
     anyhow::anyhow!(
-        "Local {name} port {port} on {address} cannot be bound: access denied or the port is \
-         reserved by the system"
+        "Local {name} port {port} cannot be bound: address {address} is not configured on this \
+         machine."
     )
 }
 
 /// Fails before any cluster call when another process already holds the local
-/// port. Every other bind error is left to the real bind, which reports it.
+/// port or the system refuses to bind it. Every other bind error is left to
+/// the real bind, which reports it.
 pub(crate) fn ensure_free(address: &str, port: u16, protocol: Protocol) -> anyhow::Result<()> {
     if port == 0 {
         return Ok(());
@@ -68,14 +92,16 @@ pub(crate) fn ensure_free(address: &str, port: u16, protocol: Protocol) -> anyho
     };
     match bind(ip, port, protocol) {
         Err(error) if error.kind() == ErrorKind::AddrInUse => Err(port_in_use(ip, port, protocol)),
+        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+            Err(bind_denied(address, port, protocol))
+        }
         _ => Ok(()),
     }
 }
 
-/// The free port a busy-port start error named, so a client can offer to
-/// start on it.
+/// The free port a bind error named, so a client can offer to start on it.
 pub fn free_port_in_error(message: &str) -> Option<u16> {
-    let (_, rest) = message.split_once(FREE_PORT_MARKER)?;
+    let (_, rest) = message.split_once(FREE_PORT_OFFER)?;
     let (port, _) = rest.split_once(" is free")?;
     port.parse().ok()
 }
@@ -109,17 +135,66 @@ mod tests {
     }
 
     #[test]
-    fn a_denied_bind_is_reported_as_denied_not_as_a_busy_port() {
+    fn a_denied_port_offers_a_free_port_without_blaming_another_process() {
         for protocol in [Protocol::Tcp, Protocol::Udp] {
-            let message = bind_denied("127.0.0.1", 80, protocol).to_string();
+            let denied = bind(LOCALHOST, 80, protocol)
+                .is_err_and(|error| error.kind() == ErrorKind::PermissionDenied);
+            if !denied {
+                continue;
+            }
 
-            assert!(free_port_in_error(&message).is_none(), "{message}");
+            let message = ensure_free("127.0.0.1", 80, protocol)
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                message.contains("access denied or the port is reserved"),
+                "{message}"
+            );
+            assert!(!message.contains("already in use"), "{message}");
+            let free = free_port_in_error(&message).expect(&message);
+            assert!(bind(LOCALHOST, free, protocol).is_ok(), "{message}");
             assert_eq!(
                 kftray_telemetry::classify(&message),
                 kftray_telemetry::FailureKind::BindDenied,
                 "{message}"
             );
         }
+    }
+
+    #[test]
+    fn a_denied_port_on_an_unparsed_address_offers_nothing() {
+        let message = bind_denied("localhost", 80, Protocol::Tcp).to_string();
+
+        assert!(free_port_in_error(&message).is_none(), "{message}");
+        assert_eq!(
+            kftray_telemetry::classify(&message),
+            kftray_telemetry::FailureKind::BindDenied,
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_address_this_machine_lacks_has_its_own_message_and_kind() {
+        let lacks = Ipv4Addr::new(192, 0, 2, 1);
+        let error = TcpListener::bind((lacks, 8080)).err();
+        if error.map(|error| error.kind()) != Some(ErrorKind::AddrNotAvailable) {
+            return;
+        }
+
+        let message = address_unavailable("192.0.2.1", 8080, Protocol::Tcp).to_string();
+
+        assert_eq!(
+            message,
+            "Local TCP port 8080 cannot be bound: address 192.0.2.1 is not configured on this \
+             machine."
+        );
+        assert!(free_port_in_error(&message).is_none(), "{message}");
+        assert_eq!(
+            kftray_telemetry::classify(&message),
+            kftray_telemetry::FailureKind::AddressAllocation,
+            "{message}"
+        );
     }
 
     #[test]
