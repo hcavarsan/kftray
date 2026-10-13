@@ -185,7 +185,15 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
                 Err(e) => errors.push(format!("Failed to read kubeconfig from {path:?}: {e}")),
             }
         }
-        if contexts.is_empty() && !errors.is_empty() {
+        if contexts.is_empty() {
+            if errors.is_empty() {
+                let listed = paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anyhow::bail!("{listed} has no contexts");
+            }
             anyhow::bail!(errors.join("\n"));
         }
         if !errors.is_empty() {
@@ -204,7 +212,7 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
 
     if contexts.is_empty() {
         return Err(KubeClientError::config_error(
-            "No kubeconfig found or no contexts available. Please check your kubeconfig file exists and contains valid contexts",
+            "No contexts found in the kubeconfig. Set KUBECONFIG or pick a kubeconfig file.",
         ));
     }
 
@@ -582,6 +590,22 @@ mod tests {
     async fn test_list_kube_contexts_empty() {
         let result = list_kube_contexts(Some("invalid".to_string())).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_without_contexts_names_the_file() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let kubeconfig_path = temp_dir.path().join("empty-kubeconfig");
+        std::fs::write(&kubeconfig_path, "apiVersion: v1\nkind: Config\n").unwrap();
+
+        let err = list_kube_contexts(Some(kubeconfig_path.to_string_lossy().to_string()))
+            .await
+            .err()
+            .expect("a kubeconfig without contexts must fail");
+
+        assert!(err.to_string().contains(kubeconfig_path.to_str().unwrap()));
     }
 
     #[tokio::test]

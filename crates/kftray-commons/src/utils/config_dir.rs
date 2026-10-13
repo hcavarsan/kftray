@@ -661,8 +661,9 @@ pub fn get_window_state_path() -> Result<PathBuf, String> {
 
 pub fn get_kubeconfig_paths() -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
+    let kubeconfig_env = env::var("KUBECONFIG").ok();
 
-    if let Ok(kubeconfig_paths) = env::var("KUBECONFIG") {
+    if let Some(kubeconfig_paths) = &kubeconfig_env {
         for path in kubeconfig_paths.split(if cfg!(windows) { ';' } else { ':' }) {
             let path_buf = PathBuf::from(path);
             if path_buf.exists() {
@@ -671,17 +672,24 @@ pub fn get_kubeconfig_paths() -> Result<Vec<PathBuf>> {
         }
     }
 
+    let home_kubeconfig = dirs::home_dir().map(|home| home.join(".kube/config"));
     if paths.is_empty()
-        && let Some(mut config_path) = dirs::home_dir()
+        && let Some(config_path) = &home_kubeconfig
+        && config_path.exists()
     {
-        config_path.push(".kube/config");
-        if config_path.exists() {
-            paths.push(config_path);
-        }
+        paths.push(config_path.clone());
     }
 
     if paths.is_empty() {
-        Err(anyhow::anyhow!("Unable to determine kubeconfig path"))
+        let env_desc = kubeconfig_env.as_deref().unwrap_or("not set");
+        let home_desc = home_kubeconfig
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<home directory unknown>/.kube/config".to_string());
+        Err(anyhow::anyhow!(
+            "No kubeconfig found. Looked at KUBECONFIG ({env_desc}) and {home_desc}. Set \
+             KUBECONFIG or pick a kubeconfig file."
+        ))
     } else {
         Ok(paths)
     }
@@ -1018,7 +1026,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path().to_str().unwrap();
         let _guard_home = EnvVarGuard::set("HOME", home_path);
-        let _guard_kube = EnvVarGuard::remove("KUBECONFIG");
+        let missing_kubeconfig = temp_dir.path().join("missing-kubeconfig");
+        let _guard_kube = EnvVarGuard::set("KUBECONFIG", missing_kubeconfig.to_str().unwrap());
 
         let kube_dir = temp_dir.path().join(".kube");
         if kube_dir.exists() {
@@ -1035,7 +1044,9 @@ mod tests {
         );
 
         let error_msg = result.unwrap_err().to_string();
-        assert_eq!(error_msg, "Unable to determine kubeconfig path");
+        let home_kubeconfig = dirs::home_dir().unwrap().join(".kube/config");
+        assert!(error_msg.contains(missing_kubeconfig.to_str().unwrap()));
+        assert!(error_msg.contains(home_kubeconfig.to_str().unwrap()));
     }
 
     #[test]
