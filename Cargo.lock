@@ -3842,6 +3842,7 @@ name = "kftray-commons"
 version = "0.31.0"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "dirs",
  "futures",
  "git2",
