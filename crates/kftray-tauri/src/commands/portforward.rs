@@ -19,10 +19,7 @@ use kftray_portforward::kube::{
     stop_port_forward,
     stop_proxy_forward,
 };
-use kftray_telemetry::{
-    Operation,
-    measure,
-};
+use kftray_telemetry::Operation;
 use log::error;
 use log::info;
 use serde_json::json;
@@ -40,6 +37,11 @@ use tokio::sync::Mutex;
 use tokio::time::{
     Duration,
     interval,
+};
+
+use crate::commands::measured::{
+    MeasuredError,
+    measured,
 };
 
 pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
@@ -214,47 +216,47 @@ fn hide_for_exit(app: &AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
-) -> Result<Vec<CustomResponse>, String> {
-    measure(Operation::StartForward, start_port_forward(configs, "udp")).await
+) -> Result<Vec<CustomResponse>, MeasuredError> {
+    measured(Operation::StartForward, start_port_forward(configs, "udp")).await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
-) -> Result<Vec<CustomResponse>, String> {
-    measure(Operation::StartForward, start_port_forward(configs, "tcp")).await
+) -> Result<Vec<CustomResponse>, MeasuredError> {
+    measured(Operation::StartForward, start_port_forward(configs, "tcp")).await
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
     _app_handle: tauri::AppHandle<Wry>,
-) -> Result<Vec<CustomResponse>, String> {
-    measure(Operation::StopAllForwards, stop_all_port_forward()).await
+) -> Result<Vec<CustomResponse>, MeasuredError> {
+    measured(Operation::StopAllForwards, stop_all_port_forward()).await
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
-) -> Result<CustomResponse, String> {
-    measure(Operation::StopForward, stop_port_forward(config_id)).await
+) -> Result<CustomResponse, MeasuredError> {
+    measured(Operation::StopForward, stop_port_forward(config_id)).await
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
-) -> Result<Vec<CustomResponse>, String> {
-    measure(Operation::StartForward, deploy_and_forward_pod(configs)).await
+) -> Result<Vec<CustomResponse>, MeasuredError> {
+    measured(Operation::StartForward, deploy_and_forward_pod(configs)).await
 }
 
 #[tauri::command]
 pub async fn stop_proxy_forward_cmd(
     config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle<Wry>,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse, MeasuredError> {
     let config_id = config_id
         .parse::<i64>()
         .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
-    measure(
+    measured(
         Operation::StopForward,
         stop_proxy_forward(config_id, namespace, service_name),
     )

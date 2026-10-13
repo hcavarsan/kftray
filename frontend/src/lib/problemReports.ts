@@ -33,6 +33,22 @@ export const attachProblemReportContext = (
   return failure
 }
 
+// A measured command that failed rejects with `{ message, eventId }` once the
+// backend has reported the failure itself; the id links the problem report
+// to that event so the webview does not report the same failure again.
+export const backendReportedFailure = (
+  error: unknown,
+): { message: string; eventId: string } | undefined => {
+  if (error === null || typeof error !== 'object') {
+    return undefined
+  }
+  const { message, eventId } = error as Record<string, unknown>
+
+  return typeof message === 'string' && typeof eventId === 'string'
+    ? { message, eventId }
+    : undefined
+}
+
 export const getProblemReportContext = (
   error: unknown,
 ): ProblemReportContext =>
