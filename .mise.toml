@@ -30,7 +30,7 @@ run = "bash hacks/server/test_proxy.sh"
 
 [tasks."test:back"]
 description = "Run Rust backend tests with coverage"
-run = "INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests"
+run = "cargo build --bin kftray-helper --release && INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests"
 
 [tasks.check]
 description = "Run frontend type checking"
@@ -42,7 +42,7 @@ run = "pnpm --filter @kftray/ui run lint"
 
 [tasks."lint:back"]
 description = "Lint backend code with Clippy (with auto-fix)"
-run = "cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings"
+run = "cargo build --bin kftray-helper --release && cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings"
 
 [tasks.lint]
 description = "Lint both frontend and backend (with auto-fix)"
@@ -78,7 +78,7 @@ run = ["mise run format", "mise run lint", "mise run sbom:scan-all", "mise run t
 
 [tasks."precommit:hook"]
 description = "Run git pre-commit hook (format, check, git add)"
-run = ["mise run format", "cargo check --workspace --all-targets --all-features", "git add -u"]
+run = ["mise run format", "cargo build --bin kftray-helper --release", "cargo check --workspace --all-targets --all-features", "git add -u"]
 
 [tasks."generate-icons"]
 description = "Generate application icons"
