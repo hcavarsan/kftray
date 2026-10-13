@@ -255,6 +255,13 @@ impl UdpForwarder {
                     local_port,
                     crate::kube::listener::Protocol::Udp,
                 ),
+                (std::io::ErrorKind::AddrNotAvailable, _) => {
+                    crate::local_port::address_unavailable(
+                        &local_address,
+                        local_port,
+                        crate::kube::listener::Protocol::Udp,
+                    )
+                }
                 _ => anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}"),
             }
         })?;
