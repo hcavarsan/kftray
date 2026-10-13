@@ -20,15 +20,17 @@ use kftray_commons::utils::settings::{
     get_disconnect_timeout,
     get_network_monitor,
 };
-use kftray_telemetry::{
-    Operation,
-    measure,
-};
+use kftray_telemetry::Operation;
 use log::{
     error,
     info,
 };
 use serde::Serialize;
+
+use crate::commands::measured::{
+    MeasuredError,
+    measured,
+};
 
 #[tauri::command]
 pub async fn get_settings() -> Result<HashMap<String, String>, String> {
@@ -439,7 +441,7 @@ pub async fn get_mcp_server_status() -> Result<HashMap<String, String>, String> 
 }
 
 #[tauri::command]
-pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
+pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), MeasuredError> {
     info!("Updating MCP server enabled to {enabled}");
 
     set_mcp_server_enabled(enabled).await.map_err(|e| {
@@ -449,15 +451,18 @@ pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
 
     if enabled {
         let port = get_mcp_server_port().await.unwrap_or(3000);
-        if let Err(e) = measure(Operation::McpStart, crate::mcp::start(port)).await {
+        if let Err(e) = measured(Operation::McpStart, crate::mcp::start(port)).await {
             error!("Failed to start MCP server: {e}");
-            return Err(format!("Failed to start MCP server: {e}"));
+            return Err(MeasuredError {
+                message: format!("Failed to start MCP server: {e}"),
+                ..e
+            });
         }
     } else if crate::mcp::is_running().await
         && let Err(e) = crate::mcp::stop().await
     {
         error!("Failed to stop MCP server: {e}");
-        return Err(format!("Failed to stop MCP server: {e}"));
+        return Err(format!("Failed to stop MCP server: {e}").into());
     }
 
     info!("Successfully updated MCP server enabled to {enabled}");
@@ -465,12 +470,12 @@ pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
+pub async fn update_mcp_server_port(port: u16) -> Result<(), MeasuredError> {
     info!("Updating MCP server port to {port}");
 
     // Validate port range (1-65535, with 0 being invalid)
     if port == 0 {
-        return Err("Port cannot be 0".to_string());
+        return Err("Port cannot be 0".to_string().into());
     }
 
     // Warn about privileged ports (below 1024)
@@ -486,11 +491,14 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
     })?;
 
     let listener = if enabled {
-        measure(Operation::McpStart, crate::mcp::bind(port))
+        measured(Operation::McpStart, crate::mcp::bind(port))
             .await
             .map_err(|e| {
                 error!("Failed to start MCP server: {e}");
-                format!("Failed to start MCP server: {e}")
+                MeasuredError {
+                    message: format!("Failed to start MCP server: {e}"),
+                    ..e
+                }
             })?
     } else {
         None
