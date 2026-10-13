@@ -99,15 +99,21 @@ impl ConfigManager {
             .iter()
             .map(|(id, _, _)| {
                 let id = *id;
-                tokio::spawn(async move {
+                let stop = tokio::spawn(async move {
                     kftray_portforward::kube::stop_port_forward(id.to_string()).await
-                })
+                });
+                (id, stop)
             })
             .collect();
 
-        for stop_task in stop_tasks {
-            if let Err(e) = stop_task.await {
-                log::warn!("Stop task failed: {e}");
+        for (id, stop_task) in stop_tasks {
+            match stop_task.await {
+                Ok(Ok(_)) => {}
+                // The forward is torn down either way, so the restart still
+                // runs. A listener that kept the port makes it fail with the
+                // port-in-use message, and this says why.
+                Ok(Err(e)) => log::warn!("Stopping config {id} before its restart failed: {e}"),
+                Err(e) => log::warn!("Stop task failed: {e}"),
             }
         }
 
