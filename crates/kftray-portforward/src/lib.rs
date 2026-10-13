@@ -3,6 +3,7 @@ pub mod hostfile_direct;
 pub mod hostfile_helper;
 pub mod hostsfile;
 pub mod kube;
+pub mod local_port;
 pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
@@ -34,3 +35,4 @@ pub use kube::{
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };
+pub use local_port::free_port_in_error;

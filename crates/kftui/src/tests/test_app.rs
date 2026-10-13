@@ -716,4 +716,66 @@ mod tests {
             "start permits must still be held while the stop completes"
         );
     }
+
+    #[tokio::test]
+    async fn a_start_on_a_busy_port_offers_the_free_port_and_p_saves_it() {
+        use kftray_commons::utils::config::{
+            get_config_with_mode,
+            insert_config_with_mode,
+        };
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _guard = lock_forwarding_globals().await;
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = held.local_addr().unwrap().port();
+        let mut config = create_test_config(0);
+        config.id = None;
+        config.workload_type = Some("service".to_string());
+        config.local_port = Some(busy);
+        config.alias = Some("web".to_string());
+        config.kubeconfig = Some("/nonexistent/kubeconfig".to_string());
+        let id = insert_config_with_mode(config, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let stored = get_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let mut app = App::new(test_logger_state());
+        app.all_configs = vec![stored.clone()];
+        app.stopped_configs = vec![stored.clone()];
+        crate::tui::input::handle_port_forwarding(&mut app, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            app.forwarding_tasks.join_next(),
+        )
+        .await
+        .unwrap();
+        app.update_configs(std::slice::from_ref(&stored), &[]);
+
+        let free = app.port_retries.first().map(|retry| retry.port).unwrap();
+        let shown = app.error_message.clone().unwrap();
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert!(
+            shown.contains(&format!("Press p to start web on port {free}")),
+            "{shown}"
+        );
+
+        // The second start would go on to the cluster, which this test has
+        // none of. Cancelled, it still saves the port and dispatches.
+        app.forwarding_cancel.cancel();
+        crate::tui::input::start_on_free_ports(&mut app, DatabaseMode::Memory).await;
+
+        let saved = get_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(saved.local_port, Some(free));
+        assert!(app.configs_being_processed.contains_key(&id));
+        assert_eq!(app.state, AppState::Normal);
+        assert!(app.port_retries.is_empty());
+        app.forwarding_tasks.join_next().await.unwrap().unwrap();
+    }
 }
