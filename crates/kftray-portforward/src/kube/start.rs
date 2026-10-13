@@ -1385,10 +1385,7 @@ pub(super) fn finish_start_batch(
         return Err(errors.join("; "));
     }
     for failed in responses.iter().filter(|r| r.failed()) {
-        kftray_telemetry::report_failure(
-            kftray_telemetry::Operation::StartForward,
-            kftray_telemetry::classify(&failed.stderr),
-        );
+        kftray_telemetry::report_failure(kftray_telemetry::Operation::StartForward, &failed.stderr);
     }
     Ok(responses)
 }

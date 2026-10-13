@@ -46,6 +46,17 @@ pub(crate) fn port_in_use(ip: IpAddr, port: u16, protocol: Protocol) -> anyhow::
     }
 }
 
+/// The error for a local port the operating system refuses to bind: a
+/// privileged port without the privilege, or a range Windows reserves. Unlike
+/// a busy port, no other process holds it and a nearby port is not offered.
+pub(crate) fn bind_denied(address: &str, port: u16, protocol: Protocol) -> anyhow::Error {
+    let name = protocol_name(protocol);
+    anyhow::anyhow!(
+        "Local {name} port {port} on {address} cannot be bound: access denied or the port is \
+         reserved by the system"
+    )
+}
+
 /// Fails before any cluster call when another process already holds the local
 /// port. Every other bind error is left to the real bind, which reports it.
 pub(crate) fn ensure_free(address: &str, port: u16, protocol: Protocol) -> anyhow::Result<()> {
@@ -95,6 +106,20 @@ mod tests {
         let free = free_port_in_error(&error).unwrap();
         assert_ne!(free, busy);
         TcpListener::bind((LOCALHOST, free)).unwrap();
+    }
+
+    #[test]
+    fn a_denied_bind_is_reported_as_denied_not_as_a_busy_port() {
+        for protocol in [Protocol::Tcp, Protocol::Udp] {
+            let message = bind_denied("127.0.0.1", 80, protocol).to_string();
+
+            assert!(free_port_in_error(&message).is_none(), "{message}");
+            assert_eq!(
+                kftray_telemetry::classify(&message),
+                kftray_telemetry::FailureKind::BindDenied,
+                "{message}"
+            );
+        }
     }
 
     #[test]

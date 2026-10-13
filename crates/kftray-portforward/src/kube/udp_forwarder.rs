@@ -250,6 +250,11 @@ impl UdpForwarder {
                     local_port,
                     crate::kube::listener::Protocol::Udp,
                 ),
+                (std::io::ErrorKind::PermissionDenied, _) => crate::local_port::bind_denied(
+                    &local_address,
+                    local_port,
+                    crate::kube::listener::Protocol::Udp,
+                ),
                 _ => anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}"),
             }
         })?;
@@ -1493,6 +1498,34 @@ pub(crate) mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("upstream UDP tunnel"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_port_the_os_denies_is_reported_as_denied_not_as_busy() {
+        // Only meaningful where an unprivileged process cannot bind port 80.
+        let denied = std::net::UdpSocket::bind(("127.0.0.1", 80))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+        if !denied {
+            return;
+        }
+
+        let started = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            80,
+            Arc::new(UnreachableUpstream),
+            CancellationToken::new(),
+        )
+        .await;
+        let error = match started {
+            Ok(_) => panic!("a denied port must fail the listener startup"),
+            Err(error) => error.to_string(),
+        };
+
+        assert_eq!(
+            kftray_telemetry::classify(&error),
+            kftray_telemetry::FailureKind::BindDenied,
+            "{error}"
+        );
     }
 
     #[tokio::test]
