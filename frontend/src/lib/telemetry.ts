@@ -95,6 +95,7 @@ export const scrub = (event: ErrorEvent): ErrorEvent | null => {
     release: event.release,
     environment: event.environment,
     tags: event.tags,
+    fingerprint: event.fingerprint,
     debug_meta: event.debug_meta,
     exception: {
       values: exceptions.map(
@@ -152,7 +153,9 @@ export const invokeSpan = <T>(command: string, run: () => Promise<T>) =>
   Sentry.startSpan({ name: command, op: 'tauri.invoke' }, run)
 
 // A rejected invoke, reported as the fixed type `InvokeError` tagged with
-// the command name. The rejection value is a message from Rust that can
+// the command name. Every one is captured at the same stack, so the
+// fingerprint is what keeps one command's failures from grouping with
+// another's. The rejection value is a message from Rust that can
 // carry a cluster or resource name, so it is not attached.
 export class InvokeError extends Error {
   constructor(readonly command: string) {
@@ -172,6 +175,7 @@ export const captureInvokeFailure = (command: string): ProblemReportContext => {
   return {
     eventId: Sentry.captureException(new InvokeError(command), {
       tags: { command },
+      fingerprint: ['tauri.invoke', command],
     }),
   }
 }
