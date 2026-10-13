@@ -309,7 +309,12 @@ fn classify_failure(message: &str) -> Failure {
         ),
         (
             FailureKind::AddressAllocation,
-            &["allocat", "loopback", "still being released"],
+            &[
+                "allocat",
+                "loopback",
+                "still being released",
+                "is not configured on this machine",
+            ],
         ),
         (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
         // Ahead of the kubeconfig rule: the Windows text for error 10013
@@ -1019,6 +1024,17 @@ mod tests {
         assert_eq!(
             classify("Failed to bind TCP listener to 127.0.0.1:8080: Address already in use"),
             FailureKind::PortInUse
+        );
+    }
+
+    #[test]
+    fn an_unconfigured_local_address_is_an_address_allocation_failure() {
+        assert_eq!(
+            classify(
+                "Local TCP port 8080 cannot be bound: address 192.0.2.1 is not configured on \
+                 this machine."
+            ),
+            FailureKind::AddressAllocation
         );
     }
 
