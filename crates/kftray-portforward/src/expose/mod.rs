@@ -291,6 +291,7 @@ pub(crate) async fn start_single_expose(
         is_retrying: false,
         retry_count: None,
         last_error: None,
+        process_start: None,
     };
     let recorded =
         kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode).await;
