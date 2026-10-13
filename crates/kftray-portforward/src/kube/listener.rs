@@ -5,6 +5,7 @@ use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::utils::config_state::set_connection_error_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kube::Api;
+use kube_portforward::PodSelector;
 use tokio::io::{
     AsyncRead,
     AsyncReadExt,
@@ -162,6 +163,11 @@ struct NamedPort {
 /// that each pin a permit for the life of the connection.
 const MAX_CONCURRENT_STREAMS: usize = 512;
 const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long the startup probe lets the pod watcher wait for a ready pod. The
+/// probe's own `STARTUP_TIMEOUT` has to be what ends the wait: a wait with the
+/// same length can end in the same timer tick, and reports "no ready pods"
+/// without the stage and the reason the timeout carries.
+const READINESS_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 pub struct PortForwarder {
     namespace: Arc<str>,
@@ -300,8 +306,70 @@ impl StartupProgress {
     }
 }
 
+/// The message of a startup that ran out of time. A timeout while waiting for
+/// a pod says why the selected pods are not ready, which the timeout alone
+/// leaves the user to dig out of the cluster.
+async fn startup_timeout_error(
+    elapsed: tokio::time::error::Elapsed, stage: StartupStage,
+    forwarder: &kube_portforward::Forwarder, pod_api: &Api<Pod>, selector: &PodSelector,
+) -> anyhow::Error {
+    // A named port is resolved in the first stage, and that waits for the
+    // pod too: with none ready, readiness is what ran out of time.
+    let stage = match stage {
+        StartupStage::Resolving if forwarder.ready_pod().is_none() => {
+            StartupStage::AwaitingReadyPod
+        }
+        stage => stage,
+    };
+    let mut message = stage.timeout_message().to_string();
+    if matches!(stage, StartupStage::AwaitingReadyPod)
+        && let Some(reason) = crate::kube::pod_status::explain_unready_pods(pod_api, selector).await
+    {
+        message = format!("{message}: {reason}");
+    }
+    anyhow::Error::new(elapsed).context(message)
+}
+
+/// Turns a refused port-forward upgrade into a message that says what to do:
+/// the dependency's text names an HTTP status, which reads as an internal
+/// failure when it is really the cluster rejecting this user. The original
+/// error stays in the chain.
+fn connect_failure(error: kube_portforward::Error) -> anyhow::Error {
+    let message = match &error {
+        kube_portforward::Error::UpgradeFailed {
+            status: Some(401), ..
+        } => "The cluster rejected the credentials for the port-forward connection (HTTP 401 \
+              Unauthorized): check the kubeconfig user"
+            .to_string(),
+        kube_portforward::Error::UpgradeFailed {
+            status: Some(403), ..
+        } => "The cluster refused the port-forward connection (HTTP 403 Forbidden): check RBAC \
+              for pods/portforward"
+            .to_string(),
+        kube_portforward::Error::UpgradeFailed { status, message } => {
+            let status = status.map_or_else(String::new, |status| format!(" (HTTP {status})"));
+            format!(
+                "The cluster could not open a port-forward stream to the pod{status}: {message}"
+            )
+        }
+        _ => return error.into(),
+    };
+    anyhow::Error::from(error).context(message)
+}
+
+/// The failure of a connection opened on a pod whose named port was resolved.
+/// A refused upgrade is reported as such; anything else only says the stream
+/// could not be opened.
+fn named_port_failure(error: kube_portforward::Error) -> anyhow::Error {
+    match error {
+        error @ kube_portforward::Error::UpgradeFailed { .. } => connect_failure(error),
+        error => anyhow::Error::from(error).context("Could not open a stream for the named port"),
+    }
+}
+
 async fn probe_startup(
-    forwarder: &kube_portforward::Forwarder, pod_api: &Api<Pod>, target: &Target,
+    forwarder: &kube_portforward::Forwarder, pod_api: &Api<Pod>, selector: &PodSelector,
+    target: &Target,
 ) -> anyhow::Result<u16> {
     let stage = StartupProgress::new();
     let startup = async {
@@ -316,14 +384,14 @@ async fn probe_startup(
                 forwarder,
                 pod_api,
                 target,
-                STARTUP_TIMEOUT,
+                READINESS_WAIT,
             )
             .await?;
             // Initial readiness shares the startup deadline instead of the
             // dependency's shorter wait for an individual connection.
             stage.set(StartupStage::AwaitingReadyPod);
             forwarder
-                .wait_for_ready_pod(STARTUP_TIMEOUT)
+                .wait_for_ready_pod(READINESS_WAIT)
                 .await
                 .ok_or_else(|| anyhow::anyhow!(crate::kube::target::NO_READY_PODS_ERROR))?;
             stage.set(StartupStage::OpeningConnection);
@@ -338,7 +406,7 @@ async fn probe_startup(
                     last_error = Some(error);
                     continue;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(connect_failure(error)),
             };
             let (stream, connected_pod) = connected;
             drop(stream);
@@ -348,9 +416,7 @@ async fn probe_startup(
         }
 
         Err(match last_error {
-            Some(error) => {
-                anyhow::Error::from(error).context("Could not open a stream for the named port")
-            }
+            Some(error) => named_port_failure(error),
             None => {
                 anyhow::anyhow!("The selected pod kept changing while resolving the named port")
             }
@@ -360,8 +426,11 @@ async fn probe_startup(
     tokio::select! {
         biased;
         _ = cancellation.cancelled() => Err(kube_portforward::Error::Cancelled.into()),
-        result = tokio::time::timeout(STARTUP_TIMEOUT, startup) => {
-            result.map_err(|err| anyhow::Error::new(err).context(stage.get().timeout_message()))?
+        result = tokio::time::timeout(STARTUP_TIMEOUT, startup) => match result {
+            Ok(result) => result,
+            Err(elapsed) => Err(
+                startup_timeout_error(elapsed, stage.get(), forwarder, pod_api, selector).await,
+            ),
         }
     }
 }
@@ -407,14 +476,14 @@ impl PortForwarder {
             connection.cluster_url.clone(),
             namespace,
         )
-        .pod_selector(pod_selector)
+        .pod_selector(pod_selector.clone())
         .pod_readiness(pod_readiness)
         .build()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to build port forwarder: {}", e))?;
         let forwarder = Arc::new(forwarder);
 
-        let target_port = match probe_startup(&forwarder, &pod_api, &target).await {
+        let target_port = match probe_startup(&forwarder, &pod_api, &pod_selector, &target).await {
             Ok(port) => port,
             Err(err) => {
                 let _ = forwarder.shutdown().await;
@@ -554,7 +623,11 @@ impl PortForwarder {
         const ACQUIRE_ATTEMPTS: usize = 3;
 
         let Some(named) = &self.named_port else {
-            return Ok(self.forwarder.connect(self.target_port).await?);
+            return self
+                .forwarder
+                .connect(self.target_port)
+                .await
+                .map_err(connect_failure);
         };
 
         let mut last_error = None;
@@ -599,9 +672,7 @@ impl PortForwarder {
         // permission to open a port-forward fails every attempt, and reporting
         // pod churn instead would hide the cause.
         Err(match last_error {
-            Some(error) => {
-                anyhow::Error::from(error).context("Could not open a stream for the named port")
-            }
+            Some(error) => named_port_failure(error),
             None => {
                 anyhow::anyhow!("The selected pod kept changing while resolving the named port")
             }
@@ -1261,6 +1332,16 @@ mod tests {
         );
     }
 
+    fn web_selector() -> PodSelector {
+        PodSelector::Labels {
+            selector: "app=web".into(),
+        }
+    }
+
+    fn restarting_selector() -> PodSelector {
+        PodSelector::Name("restarting".into())
+    }
+
     fn ready_test_pod(name: &str) -> Pod {
         use k8s_openapi::api::core::v1::{
             PodCondition,
@@ -1431,7 +1512,8 @@ mod tests {
                 startup_with_recreated_pod(Duration::from_secs(45)).await;
             let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
             let started = tokio::time::Instant::now();
-            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+            let selector = restarting_selector();
+            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &selector, &target));
             tokio::select! {
                 _ = upgrade_started.notified() => {}
                 result = &mut startup => panic!("startup rejected the restarting pod: {result:?}"),
@@ -1465,7 +1547,7 @@ mod tests {
             let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
             let error = tokio::time::timeout(
                 STARTUP_TIMEOUT + Duration::from_millis(100),
-                probe_startup(&forwarder, &pods, &target),
+                probe_startup(&forwarder, &pods, &restarting_selector(), &target),
             )
             .await
             .expect("readiness must not reset the startup deadline")
@@ -1485,8 +1567,13 @@ mod tests {
         tokio::time::pause();
         let (forwarder, pods, _, driver) = startup_with_recreated_pod(STARTUP_TIMEOUT * 2).await;
         let target = Target::new(TargetSelector::PodLabel("app=web".into()), 8080, "default");
-        let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT + Duration::from_millis(100);
-        let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+        // Reading the pod to explain the timeout is bounded and comes after it.
+        let deadline = tokio::time::Instant::now()
+            + STARTUP_TIMEOUT
+            + crate::kube::pod_status::LOOKUP_TIMEOUT
+            + Duration::from_millis(100);
+        let selector = restarting_selector();
+        let mut startup = Box::pin(probe_startup(&forwarder, &pods, &selector, &target));
         assert!(futures::poll!(startup.as_mut()).is_pending());
         tokio::time::advance(Duration::from_secs(45)).await;
         assert!(futures::poll!(startup.as_mut()).is_pending());
@@ -1512,7 +1599,8 @@ mod tests {
             let (forwarder, pods, _, driver) =
                 startup_with_recreated_pod(STARTUP_TIMEOUT * 2).await;
             let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
-            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &target));
+            let selector = restarting_selector();
+            let mut startup = Box::pin(probe_startup(&forwarder, &pods, &selector, &target));
             assert!(futures::poll!(startup.as_mut()).is_pending());
             forwarder.shutdown().await.unwrap();
 
@@ -1524,6 +1612,204 @@ mod tests {
                     .downcast_ref::<kube_portforward::Error>(),
                 Some(kube_portforward::Error::Cancelled)
             ));
+            driver.abort();
+            let _ = driver.await;
+        }
+    }
+
+    fn crash_looping_pod(name: &str) -> Pod {
+        use k8s_openapi::api::core::v1::{
+            ContainerState,
+            ContainerStateTerminated,
+            ContainerStateWaiting,
+            ContainerStatus,
+            PodCondition,
+        };
+
+        let mut pod = ready_test_pod(name);
+        let status = pod.status.as_mut().unwrap();
+        status.conditions = Some(vec![PodCondition {
+            type_: "Ready".into(),
+            status: "False".into(),
+            ..Default::default()
+        }]);
+        status.container_statuses = Some(vec![ContainerStatus {
+            name: "app".into(),
+            restart_count: 7,
+            state: Some(ContainerState {
+                waiting: Some(ContainerStateWaiting {
+                    reason: Some("CrashLoopBackOff".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            last_state: Some(ContainerState {
+                terminated: Some(ContainerStateTerminated {
+                    exit_code: 1,
+                    reason: Some("Error".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+        pod
+    }
+
+    /// Answers pod list and get requests from `pods`, and every port-forward
+    /// upgrade with `upgrade_status`. Watches are held open.
+    async fn serve_pods(
+        mut handle: mock::Handle<Request<Body>, Response<Body>>, pods: Vec<Pod>,
+        upgrade_status: u16,
+    ) {
+        let mut held = Vec::new();
+        while let Some((request, send)) = handle.next_request().await {
+            let path = request.uri().path().to_string();
+            let watching = request
+                .uri()
+                .query()
+                .is_some_and(|query| query.contains("watch=true"));
+            let named = pods.iter().find(|pod| {
+                path.ends_with(&format!("/pods/{}", pod.metadata.name.as_ref().unwrap()))
+            });
+            if path.ends_with("/portforward") {
+                send.send_response(
+                    Response::builder()
+                        .status(upgrade_status)
+                        .body(Body::empty())
+                        .unwrap(),
+                );
+            } else if path.ends_with("/pods") && !watching {
+                let list = serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "PodList",
+                    "metadata": { "resourceVersion": "1" },
+                    "items": pods,
+                });
+                send.send_response(Response::new(Body::from(
+                    serde_json::to_vec(&list).unwrap(),
+                )));
+            } else if let Some(pod) = named {
+                send.send_response(Response::new(Body::from(serde_json::to_vec(pod).unwrap())));
+            } else {
+                held.push(send);
+            }
+        }
+    }
+
+    async fn startup_against(
+        pods: Vec<Pod>, upgrade_status: u16,
+    ) -> (kube_portforward::Forwarder, Api<Pod>, JoinHandle<()>) {
+        let (service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(service, "default");
+        let driver = tokio::spawn(serve_pods(handle, pods, upgrade_status));
+        let forwarder = kube_portforward::Forwarder::builder(
+            client.clone(),
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(web_selector())
+        .build()
+        .await
+        .unwrap();
+        (forwarder, Api::namespaced(client, "default"), driver)
+    }
+
+    #[tokio::test]
+    async fn a_start_timeout_says_why_the_pod_is_not_ready() {
+        use kftray_telemetry::{
+            FailureKind,
+            classify,
+        };
+
+        use crate::kube::models::{
+            Port,
+            TargetSelector,
+        };
+
+        tokio::time::pause();
+        for port in [Port::Number(8080), Port::Name("http".into())] {
+            let (forwarder, pods, driver) =
+                startup_against(vec![crash_looping_pod("web-1")], 101).await;
+            let target = Target::new(TargetSelector::PodLabel("app=web".into()), port, "default");
+            let error = probe_startup(&forwarder, &pods, &web_selector(), &target)
+                .await
+                .unwrap_err();
+
+            let message = error.to_string();
+            assert!(
+                message.starts_with("Timed out waiting for a ready pod"),
+                "{message}"
+            );
+            assert!(message.contains("web-1"), "{message}");
+            assert!(message.contains("CrashLoopBackOff"), "{message}");
+            assert_eq!(classify(&message), FailureKind::PodNotReady);
+            assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+            forwarder.shutdown().await.unwrap();
+            driver.abort();
+            let _ = driver.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_start_timeout_says_when_no_pod_matches() {
+        use crate::kube::models::TargetSelector;
+
+        tokio::time::pause();
+        let (forwarder, pods, driver) = startup_against(Vec::new(), 101).await;
+        let target = Target::new(TargetSelector::PodLabel("app=web".into()), 8080, "default");
+        let message = probe_startup(&forwarder, &pods, &web_selector(), &target)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            message.starts_with("Timed out waiting for a ready pod"),
+            "{message}"
+        );
+        assert!(message.contains("no pod matches app=web"), "{message}");
+        forwarder.shutdown().await.unwrap();
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_port_forward_upgrade_is_classified_by_its_status() {
+        use kftray_telemetry::{
+            FailureKind,
+            classify,
+        };
+
+        use crate::kube::models::TargetSelector;
+
+        tokio::time::pause();
+        for (status, kind) in [
+            (401, FailureKind::Kubeconfig),
+            (403, FailureKind::Kubeconfig),
+            (502, FailureKind::Connection),
+        ] {
+            let (forwarder, pods, driver) =
+                startup_against(vec![ready_test_pod("web-1")], status).await;
+            let target = Target::new(TargetSelector::PodLabel("app=web".into()), 8080, "default");
+            let error = probe_startup(&forwarder, &pods, &web_selector(), &target)
+                .await
+                .unwrap_err();
+
+            let message = error.to_string();
+            assert!(message.contains(&format!("HTTP {status}")), "{message}");
+            assert_eq!(classify(&message), kind, "{message}");
+            if status == 403 {
+                assert!(message.contains("pods/portforward"), "{message}");
+            }
+            assert!(
+                matches!(
+                    error.downcast_ref::<kube_portforward::Error>(),
+                    Some(kube_portforward::Error::UpgradeFailed { status: Some(code), .. })
+                        if *code == status
+                ),
+                "the dependency error must stay in the chain: {error:#}"
+            );
+            forwarder.shutdown().await.unwrap();
             driver.abort();
             let _ = driver.await;
         }
