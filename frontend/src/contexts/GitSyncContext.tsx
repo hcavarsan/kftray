@@ -64,8 +64,6 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
     },
     meta: { errorToast: { title: 'Sync Failed', duration: 3000 } },
-    retry: 2,
-    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
   })
 
   const saveMutation = useMutation({
