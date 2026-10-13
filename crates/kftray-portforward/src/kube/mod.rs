@@ -3,6 +3,7 @@ pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
 pub mod operations;
+mod pod_status;
 pub(crate) mod proxy;
 pub mod proxy_recovery;
 mod service;
