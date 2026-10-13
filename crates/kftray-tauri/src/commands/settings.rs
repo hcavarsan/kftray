@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::path::{
+    Path,
+    PathBuf,
+};
 use std::process::Command;
 
 use kftray_commons::utils::settings::{
@@ -246,6 +250,83 @@ fn get_command_path(cmd: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// The file `Command::new(path)` runs on Windows: std appends `.exe` to a
+/// path without an extension and never tries `.cmd` or `.bat`.
+#[cfg(any(not(unix), test))]
+fn windows_spawn_target(path: &Path) -> PathBuf {
+    let mut target = path.as_os_str().to_owned();
+    if path.extension().is_none() {
+        target.push(".exe");
+    }
+    PathBuf::from(target)
+}
+
+/// Returns the file the exec plugin spawn would run for `path`, if it exists.
+fn find_executable(path: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .then(|| path.to_path_buf())
+    }
+    #[cfg(not(unix))]
+    {
+        Some(windows_spawn_target(path)).filter(|target| target.is_file())
+    }
+}
+
+/// Mirrors how the exec credential plugin gets spawned: a command with a
+/// path separator is used as is, a bare name is looked up on `path`.
+/// kube-client makes relative commands that contain a separator absolute
+/// against the kubeconfig directory when it reads the file, so commands
+/// coming from `Kubeconfig::read_from` are already resolved here.
+fn resolve_command(command: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    if command.contains('/') || command.contains(std::path::MAIN_SEPARATOR) {
+        return find_executable(Path::new(command));
+    }
+    std::env::split_paths(path).find_map(|dir| find_executable(&dir.join(command)))
+}
+
+/// One check per distinct `users[].user.exec.command` in the kubeconfigs.
+fn exec_plugin_checks(kubeconfigs: &[PathBuf], path: &std::ffi::OsStr) -> Vec<DiagnosticResult> {
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for kubeconfig in kubeconfigs {
+        let Ok(config) = kube::config::Kubeconfig::read_from(kubeconfig) else {
+            continue;
+        };
+        for user in config.auth_infos {
+            let command = user
+                .auth_info
+                .and_then(|info| info.exec)
+                .and_then(|exec| exec.command);
+            if let Some(command) = command
+                && !seen.iter().any(|(c, _)| *c == command)
+            {
+                seen.push((command, user.name));
+            }
+        }
+    }
+
+    seen.into_iter()
+        .map(|(command, user)| {
+            let resolved = resolve_command(&command, path);
+            DiagnosticResult {
+                name: format!("Exec plugin: {command}"),
+                status: if resolved.is_some() { "ok" } else { "warning" }.into(),
+                hint: if resolved.is_some() {
+                    String::new()
+                } else {
+                    format!("Required by kubeconfig user '{user}' but not found in PATH")
+                },
+                value: resolved
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<not found>".into()),
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn truncate_for_display(value: String, max_bytes: usize) -> String {
     if value.len() > max_bytes {
         format!("{}...", &value[..value.floor_char_boundary(max_bytes)])
@@ -336,6 +417,13 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
             String::new()
         },
     });
+
+    let kubeconfig_paths =
+        kftray_commons::utils::config_dir::get_kubeconfig_paths().unwrap_or_default();
+    checks.extend(exec_plugin_checks(
+        &kubeconfig_paths,
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
 
     let aws_exists = check_command_exists("aws");
     let aws_profile = std::env::var("AWS_PROFILE").ok();
@@ -681,5 +769,117 @@ mod tests {
 
         assert_eq!(check.status, "warning");
         assert_eq!(check.hint, "Kubeconfig file not found");
+    }
+
+    pub(super) fn write_kubeconfig(dir: &std::path::Path, command: &str) -> std::path::PathBuf {
+        let file = dir.join("kubeconfig.yaml");
+        std::fs::write(
+            &file,
+            format!(
+                "apiVersion: v1\nkind: Config\nusers:\n- name: gke-user\n  user:\n    exec:\n      \
+                 apiVersion: client.authentication.k8s.io/v1beta1\n      command: {command}\n"
+            ),
+        )
+        .unwrap();
+        file
+    }
+
+    #[test]
+    fn an_exec_plugin_missing_from_path_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "gke-gcloud-auth-plugin");
+        let empty_bin = dir.path().join("bin");
+        std::fs::create_dir(&empty_bin).unwrap();
+
+        let checks = exec_plugin_checks(&[kubeconfig], empty_bin.as_os_str());
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "Exec plugin: gke-gcloud-auth-plugin");
+        assert_eq!(checks[0].status, "warning");
+        assert_eq!(checks[0].value, "<not found>");
+        assert!(
+            checks[0].hint.contains("gke-user"),
+            "hint: {}",
+            checks[0].hint
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_exec_plugin_present_on_path_is_found() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "gke-gcloud-auth-plugin");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let plugin = bin.join("gke-gcloud-auth-plugin");
+        std::fs::write(&plugin, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let checks = exec_plugin_checks(&[kubeconfig], bin.as_os_str());
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, "ok");
+        assert_eq!(checks[0].value, plugin.to_str().unwrap());
+        assert!(checks[0].hint.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod exec_plugin_resolution_tests {
+    #[cfg(unix)]
+    use super::tests::write_kubeconfig;
+    use super::*;
+
+    #[test]
+    fn windows_spawn_appends_exe_only_without_an_extension() {
+        assert_eq!(
+            windows_spawn_target(Path::new("bin/plugin")),
+            PathBuf::from("bin/plugin.exe")
+        );
+        assert_eq!(
+            windows_spawn_target(Path::new("bin/plugin.cmd")),
+            PathBuf::from("bin/plugin.cmd")
+        );
+        assert_eq!(
+            windows_spawn_target(Path::new("plugin.v2")),
+            PathBuf::from("plugin.v2")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_command_resolves_against_the_kubeconfig_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "./bin/plugin");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let plugin = bin.join("plugin");
+        std::fs::write(&plugin, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let checks = exec_plugin_checks(&[kubeconfig], std::ffi::OsStr::new(""));
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, "ok");
+        assert_eq!(
+            checks[0].value,
+            dir.path().join("./bin/plugin").to_str().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_command_missing_next_to_the_kubeconfig_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let kubeconfig = write_kubeconfig(dir.path(), "./bin/plugin");
+
+        let checks = exec_plugin_checks(&[kubeconfig], std::ffi::OsStr::new(""));
+
+        assert_eq!(checks[0].status, "warning");
+        assert_eq!(checks[0].value, "<not found>");
     }
 }
