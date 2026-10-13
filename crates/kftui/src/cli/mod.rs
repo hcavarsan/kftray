@@ -1,6 +1,7 @@
 pub mod args;
 pub mod config;
 pub mod handler;
+pub mod output;
 pub mod runner;
 pub mod watch;
 

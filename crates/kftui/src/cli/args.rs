@@ -6,6 +6,7 @@ use kftray_commons::utils::config_view::{
     ConfigView,
     Field,
 };
+use log::LevelFilter;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupBy(pub Option<Field>);
@@ -69,7 +70,11 @@ pub struct Cli {
     #[arg(long, help = "Run in non-interactive mode (don't show TUI)")]
     pub non_interactive: bool,
 
-    #[arg(long, help = "Set the global log level", value_name = "LEVEL")]
+    #[arg(
+        long,
+        help = "Level for logs and for the messages kftui prints outside the TUI: error, warn, info, debug, trace or off (default: error when a command runs after --)",
+        value_name = "LEVEL"
+    )]
     pub log_level: Option<String>,
 
     #[arg(
@@ -146,7 +151,7 @@ pub struct Cli {
     #[arg(
         last = true,
         value_name = "COMMAND",
-        help = "Command to run once the port forwards start, given after --. kftui runs it without the TUI, stops the forwards when it exits and exits with its exit code (requires --auto-start)"
+        help = "Command to run once the port forwards start, given after --. kftui runs it without the TUI, stops the forwards when it exits and exits with its exit code. kftui writes only to stderr, and only errors unless --log-level is set (requires --auto-start)"
     )]
     pub command: Vec<String>,
 }
@@ -176,6 +181,28 @@ impl Cli {
     /// add one. A command after `--` never runs without a forward.
     pub fn may_start_empty(&self) -> bool {
         self.watch && !self.runs_command()
+    }
+
+    /// `--log-level` when given. Otherwise warn, or error when a command
+    /// runs after `--`.
+    pub fn log_level(&self) -> LevelFilter {
+        self.level_or(LevelFilter::Warn)
+    }
+
+    /// Level for the messages kftui prints outside the TUI: `--log-level`
+    /// when given. Otherwise info, or error when a command runs after `--`,
+    /// so the command's output can go to a pipe or file without kftui's
+    /// status lines.
+    pub fn message_level(&self) -> LevelFilter {
+        self.level_or(LevelFilter::Info)
+    }
+
+    fn level_or(&self, default: LevelFilter) -> LevelFilter {
+        match self.log_level.as_deref() {
+            Some(level) => crate::logging::parse_level(level),
+            None if self.runs_command() => LevelFilter::Error,
+            None => default,
+        }
     }
 
     pub fn filter_view(&self) -> ConfigView {
@@ -314,6 +341,7 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use log::LevelFilter;
 
     use super::Cli;
 
@@ -353,5 +381,22 @@ mod tests {
         let cli =
             Cli::try_parse_from(["kftui", "--json", "[]", "--auto-start", "--", "true"]).unwrap();
         assert_eq!(cli.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_command_defaults_to_errors_only_unless_log_level_is_set() {
+        let cli = Cli::try_parse_from(["kftui", "--auto-start", "--", "true"]).unwrap();
+        assert_eq!(cli.log_level(), LevelFilter::Error);
+        assert_eq!(cli.message_level(), LevelFilter::Error);
+
+        let cli =
+            Cli::try_parse_from(["kftui", "--auto-start", "--log-level", "info", "--", "true"])
+                .unwrap();
+        assert_eq!(cli.log_level(), LevelFilter::Info);
+        assert_eq!(cli.message_level(), LevelFilter::Info);
+
+        let cli = Cli::try_parse_from(["kftui", "--auto-start", "--non-interactive"]).unwrap();
+        assert_eq!(cli.log_level(), LevelFilter::Warn);
+        assert_eq!(cli.message_level(), LevelFilter::Info);
     }
 }

@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
+use crate::cli::output;
 use crate::cli::runner::PortForwardRunner;
 
 pub const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
@@ -194,7 +195,7 @@ async fn run_rounds<D, F>(
 
 fn say(non_interactive: bool, message: &str) {
     if non_interactive {
-        println!("{message}");
+        output::status!("{message}");
     } else {
         info!("{message}");
     }
@@ -202,7 +203,7 @@ fn say(non_interactive: bool, message: &str) {
 
 fn warn_user(non_interactive: bool, message: &str) {
     if non_interactive {
-        eprintln!("Warning: {message}");
+        output::warning!("Warning: {message}");
     } else {
         warn!("{message}");
     }

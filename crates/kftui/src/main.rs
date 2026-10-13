@@ -56,11 +56,8 @@ async fn run() -> Result<Option<i32>, Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    let mut config = if let Some(level_str) = cli.log_level.as_ref() {
-        LogConfig::new(logging::parse_level(level_str))
-    } else {
-        LogConfig::with_default_level(log::LevelFilter::Warn)
-    };
+    cli::output::init(cli.message_level(), cli.runs_command());
+    let mut config = LogConfig::new(cli.log_level());
 
     let initializer: Box<dyn LoggerInitializer>;
 

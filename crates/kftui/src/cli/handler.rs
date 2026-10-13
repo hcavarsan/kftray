@@ -5,6 +5,7 @@ use kftray_commons::utils::migration::migrate_configs;
 
 use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
+use crate::cli::output;
 use crate::cli::runner::PortForwardRunner;
 use crate::cli::watch::DiscoveryWatch;
 use crate::logging::LoggerState;
@@ -59,7 +60,7 @@ impl CliHandler {
 
     fn validate_args(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = self.cli.validate() {
-            eprintln!("Error: {e}");
+            output::error!("Error: {e}");
             std::process::exit(1);
         }
         Ok(())
@@ -71,21 +72,21 @@ impl CliHandler {
         }
 
         if self.cli.non_interactive {
-            println!("Initializing database");
+            output::status!("Initializing database");
         }
 
         if let Err(e) = init_db().await {
-            eprintln!("Error: Database initialization failed: {e}");
+            output::error!("Error: Database initialization failed: {e}");
             return Err(e);
         }
 
         if let Err(e) = migrate_configs(None).await {
-            eprintln!("Error: Database migration failed: {e}");
+            output::error!("Error: Database migration failed: {e}");
             return Err(e.into());
         }
 
         if self.cli.non_interactive {
-            println!("Database initialized");
+            output::status!("Database initialized");
         }
 
         Ok(())
@@ -100,7 +101,7 @@ impl CliHandler {
             Ok(ids) if self.cli.auto_start => Ok(ids),
             Ok(_) => Ok(Vec::new()),
             Err(e) => {
-                eprintln!("Error: Failed to import configurations: {e}");
+                output::error!("Error: Failed to import configurations: {e}");
                 std::process::exit(1);
             }
         }
@@ -114,7 +115,7 @@ impl CliHandler {
         #[cfg(target_os = "macos")]
         {
             if let Err(e) = stdin::redirect_stdin_to_tty() {
-                eprintln!("Error: Failed to redirect stdin to tty: {e}");
+                output::error!("Error: Failed to redirect stdin to tty: {e}");
                 return Err(e);
             }
         }

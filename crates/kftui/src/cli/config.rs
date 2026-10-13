@@ -16,6 +16,7 @@ use kftray_portforward::kube::{
 };
 
 use crate::cli::args::Cli;
+use crate::cli::output;
 use crate::stdin;
 
 pub struct ConfigImporter;
@@ -40,7 +41,7 @@ impl ConfigImporter {
     async fn handle_flush_if_needed(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
         if cli.flush && mode == DatabaseMode::File {
             if cli.non_interactive {
-                println!("Clearing existing configurations");
+                output::status!("Clearing existing configurations");
             }
 
             if let Err(e) =
@@ -50,7 +51,7 @@ impl ConfigImporter {
             }
 
             if let Err(e) = stop_all_port_forward_with_mode(mode).await {
-                eprintln!("Warning: Failed to stop all port forwards during flush: {e:?}");
+                output::warning!("Warning: Failed to stop all port forwards during flush: {e:?}");
             }
         }
         Ok(())
@@ -64,25 +65,25 @@ impl ConfigImporter {
         let (mode_text, location_text) = Self::get_mode_text(mode);
 
         if cli.auto_discover {
-            println!(
+            output::status!(
                 "{} configurations from Kubernetes annotations (context: {}) {}",
                 mode_text,
                 cli.context.as_deref().unwrap(),
                 location_text
             );
         } else if cli.is_github_import() {
-            println!(
+            output::status!(
                 "{} configurations from GitHub: {} {}",
                 mode_text,
                 cli.get_github_url().unwrap(),
                 location_text
             );
         } else if let Some(config_path) = cli.get_config_path() {
-            println!("{mode_text} configurations from file: {config_path} {location_text}");
+            output::status!("{mode_text} configurations from file: {config_path} {location_text}");
         } else if cli.get_json().is_some() {
-            println!("{mode_text} configurations from JSON {location_text}");
+            output::status!("{mode_text} configurations from JSON {location_text}");
         } else if cli.stdin {
-            println!("{mode_text} configurations from stdin {location_text}");
+            output::status!("{mode_text} configurations from stdin {location_text}");
         }
     }
 
@@ -92,7 +93,7 @@ impl ConfigImporter {
         }
 
         let action_text = Self::get_action_text(mode);
-        println!(
+        output::status!(
             "Configurations {} from {}",
             action_text,
             Self::get_source_description(cli)
@@ -150,7 +151,7 @@ impl ConfigImporter {
 
     async fn load_from_annotations(cli: &Cli) -> Result<Vec<Config>, String> {
         if cli.non_interactive {
-            println!(
+            output::status!(
                 "Discovering annotated services from context: {}",
                 cli.context.as_deref().unwrap()
             );
