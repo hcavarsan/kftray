@@ -43,21 +43,19 @@ async fn init_path() {
                 let current = env::var("PATH").unwrap_or_default();
                 tokio::task::spawn_blocking({
                     let current = current.clone();
-                    move || match shell_path() {
-                        Some(p) => {
-                            info!("init_path: using shell PATH");
-                            merge_paths(&p, &current)
-                        }
-                        None => {
-                            info!("init_path: using fallback paths");
-                            with_fallback(&current)
-                        }
+                    move || {
+                        let shell = shell_path();
+                        info!("init_path: shell PATH found: {}", shell.is_some());
+                        with_fallback(
+                            &merge_paths(shell.as_deref().unwrap_or_default(), &current),
+                            &fallback_paths(),
+                        )
                     }
                 })
                 .await
                 .unwrap_or_else(|e| {
                     warn!("init_path: spawn_blocking failed ({e}), falling back to current PATH");
-                    with_fallback(&current)
+                    with_fallback(&current, &fallback_paths())
                 })
             };
 
@@ -136,6 +134,19 @@ fn merge_shell_paths(paths: &[String]) -> Option<String> {
     })
 }
 
+/// Login shells may print a motd or `echo` from their rc files before our
+/// command runs, so the PATH is wrapped in markers and parsed out of stdout.
+#[cfg(unix)]
+const PATH_MARKER: &str = "__KFTRAY_PATH__";
+
+#[cfg(unix)]
+fn extract_marked_path(stdout: &str) -> Option<String> {
+    let (_, rest) = stdout.split_once(PATH_MARKER)?;
+    let (path, _) = rest.split_once(PATH_MARKER)?;
+    let path = path.trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 #[cfg(unix)]
 fn try_shell_path(shell: &str, home: &str) -> Option<String> {
     use std::io::Read;
@@ -150,15 +161,14 @@ fn try_shell_path(shell: &str, home: &str) -> Option<String> {
 
     use log::warn;
 
-    let is_fish = shell.ends_with("/fish");
-    let cmd = if is_fish {
-        "string join : $PATH"
+    let cmd = if shell.ends_with("/fish") {
+        format!("printf '{PATH_MARKER}%s{PATH_MARKER}' (string join : $PATH)")
     } else {
-        "echo $PATH"
+        format!("printf '{PATH_MARKER}%s{PATH_MARKER}' \"$PATH\"")
     };
 
     let mut child = Command::new(shell)
-        .args(["-lc", cmd])
+        .args(["-lc", &cmd])
         .env("DISABLE_AUTO_UPDATE", "true")
         .current_dir(home)
         .stdout(Stdio::piped())
@@ -181,8 +191,8 @@ fn try_shell_path(shell: &str, home: &str) -> Option<String> {
                     return None;
                 }
 
-                let path = stdout.trim().to_string();
-                return (!path.is_empty() && path.contains('/')).then_some(path);
+                let path = extract_marked_path(&stdout)?;
+                return path.contains('/').then_some(path);
             }
             Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
@@ -209,23 +219,21 @@ fn merge_paths(shell: &str, current: &str) -> String {
 }
 
 #[cfg(unix)]
-fn with_fallback(current: &str) -> String {
+fn with_fallback(path: &str, fallbacks: &[String]) -> String {
     use std::collections::HashSet;
     use std::path::Path;
 
-    let existing: HashSet<_> = current.split(':').collect();
-    let paths = fallback_paths();
-    let new: Vec<_> = paths
+    let mut seen: HashSet<&str> = path.split(':').collect();
+    let extra = fallbacks
         .iter()
-        .filter(|p| !existing.contains(p.as_str()) && Path::new(p).exists())
-        .map(String::as_str)
-        .collect();
+        .filter(|p| Path::new(p).exists() && seen.insert(p.as_str()))
+        .map(String::as_str);
 
-    if new.is_empty() {
-        current.to_string()
-    } else {
-        format!("{}:{current}", new.join(":"))
-    }
+    path.split(':')
+        .filter(|p| !p.is_empty())
+        .chain(extra)
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 #[cfg(target_os = "macos")]
@@ -378,6 +386,40 @@ mod tests {
     fn merge_paths_prefers_shell_entries_and_appends_new_process_entries() {
         let merged = merge_paths("/opt/homebrew/bin:/usr/bin", "/usr/bin:/usr/local/sbin");
         assert_eq!(merged, "/opt/homebrew/bin:/usr/bin:/usr/local/sbin");
+    }
+
+    #[test]
+    fn shell_startup_chatter_does_not_leak_into_the_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir.path().join("noisy-shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\necho 'Welcome back /to/the/motd'\nPATH=/opt/tools/bin:/usr/bin\neval \"$2\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let path = try_shell_path(shell.to_str().unwrap(), dir.path().to_str().unwrap());
+
+        assert_eq!(path.as_deref(), Some("/opt/tools/bin:/usr/bin"));
+    }
+
+    #[test]
+    fn fallback_dirs_that_exist_are_appended_after_the_shell_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("present");
+        let in_shell = dir.path().join("in-shell");
+        std::fs::create_dir(&present).unwrap();
+        std::fs::create_dir(&in_shell).unwrap();
+        let missing = dir.path().join("missing");
+        let fallbacks = [&missing, &present, &in_shell].map(|p| p.to_str().unwrap().to_string());
+        let shell = format!("/usr/bin:{}", in_shell.display());
+
+        let merged = with_fallback(&merge_paths(&shell, "/bin"), &fallbacks);
+
+        assert_eq!(merged, format!("{shell}:/bin:{}", present.display()));
     }
 
     #[test]
