@@ -36,22 +36,27 @@ pub const NAMESPACE: &str = "e2e";
 
 const HTTP_ECHO_IMAGE: &str = "hashicorp/http-echo:1.0.0";
 const SOCAT_IMAGE: &str = "alpine/socat:1.8.0.3";
+// Go port of httpbin: /json, /get, /status/<n>, /delay/<s>, /headers, /stream/<n>, /gzip.
+// A JSON-speaking HTTP target for scenarios that need more than a fixed echo body.
+const HTTPBIN_IMAGE: &str = "mccutchen/go-httpbin:2.25.0";
 
 #[derive(Clone, Copy, Debug)]
 pub enum Workload {
     EchoHttp,
     EchoUdp,
+    Httpbin,
 }
 
 impl Workload {
     pub fn all() -> &'static [Workload] {
-        &[Self::EchoHttp, Self::EchoUdp]
+        &[Self::EchoHttp, Self::EchoUdp, Self::Httpbin]
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Self::EchoHttp => "echo-http",
             Self::EchoUdp => "echo-udp",
+            Self::Httpbin => "httpbin",
         }
     }
 
@@ -59,6 +64,7 @@ impl Workload {
         match self {
             Self::EchoHttp => 5678,
             Self::EchoUdp => 5353,
+            Self::Httpbin => 8080,
         }
     }
 
@@ -72,7 +78,7 @@ impl Workload {
 
     fn protocol(self) -> &'static str {
         match self {
-            Self::EchoHttp => "TCP",
+            Self::EchoHttp | Self::Httpbin => "TCP",
             Self::EchoUdp => "UDP",
         }
     }
@@ -92,6 +98,10 @@ impl Workload {
                     format!("UDP4-LISTEN:{},fork", self.port()),
                     "EXEC:cat".to_owned(),
                 ],
+            ),
+            Self::Httpbin => (
+                HTTPBIN_IMAGE,
+                vec!["-port".to_owned(), self.port().to_string()],
             ),
         };
         Container {
