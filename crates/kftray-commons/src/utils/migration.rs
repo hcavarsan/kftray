@@ -234,6 +234,29 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
         info!("last_error column already exists, skipping migration");
     }
 
+    let process_start_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('config_state') WHERE name = 'process_start'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check process_start column: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !process_start_exists {
+        info!("Adding process_start column to config_state table");
+        sqlx::query("ALTER TABLE config_state ADD COLUMN process_start INTEGER")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to add process_start column: {e}");
+                e.to_string()
+            })?;
+    }
+
     migrate_http_logs_config_table(&mut conn).await?;
 
     migrate_shortcuts_table(&mut conn).await?;

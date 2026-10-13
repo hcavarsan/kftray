@@ -15,12 +15,19 @@ pub async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,
 ) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-    sqlx::query("UPDATE config_state SET is_running = ?1, process_id = ?2, is_retrying = ?3, retry_count = ?4, last_error = ?5 WHERE config_id = ?6")
+    // A row this process claims carries this process's own identity; one
+    // written on behalf of another process keeps what the caller read.
+    let process_start = match config_state.process_id {
+        Some(pid) if pid == std::process::id() => process_start_identity(pid),
+        _ => config_state.process_start,
+    };
+    sqlx::query("UPDATE config_state SET is_running = ?1, process_id = ?2, is_retrying = ?3, retry_count = ?4, last_error = ?5, process_start = ?6 WHERE config_id = ?7")
         .bind(config_state.is_running)
         .bind(config_state.process_id)
         .bind(config_state.is_retrying)
         .bind(config_state.retry_count)
         .bind(&config_state.last_error)
+        .bind(process_start)
         .bind(config_state.config_id)
         .execute(&mut *conn)
         .await
@@ -40,7 +47,7 @@ pub async fn read_config_states_with_pool(
         error!("Failed to acquire database connection: {e}");
         e
     })?;
-    let rows = sqlx::query("SELECT id, config_id, is_running, process_id, is_retrying, retry_count, last_error FROM config_state")
+    let rows = sqlx::query("SELECT id, config_id, is_running, process_id, is_retrying, retry_count, last_error, process_start FROM config_state")
         .fetch_all(&mut *conn)
         .await
         .map_err(|e| {
@@ -64,6 +71,7 @@ pub async fn read_config_states_with_pool(
             let is_retrying: bool = row.try_get("is_retrying").ok().unwrap_or(false);
             let retry_count: Option<i32> = row.try_get("retry_count").ok().flatten();
             let last_error: Option<String> = row.try_get("last_error").ok().flatten();
+            let process_start: Option<i64> = row.try_get("process_start").ok().flatten();
             Ok(ConfigState {
                 id,
                 config_id,
@@ -72,6 +80,7 @@ pub async fn read_config_states_with_pool(
                 is_retrying,
                 retry_count,
                 last_error,
+                process_start,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -190,7 +199,7 @@ pub async fn cleanup_current_process_config_states_with_mode(
     }
 
     let mut query = sqlx::QueryBuilder::new(
-        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ",
+        "UPDATE config_state SET is_running = false, process_id = NULL, process_start = NULL WHERE process_id = ",
     );
     query.push_bind(current_process_id);
     if !still_owed.is_empty() {
@@ -281,15 +290,79 @@ pub async fn running_snapshot(
     serde_json::from_str(&stored).ok()
 }
 
+/// Identifies when a process started, so a pid can be told apart from a later
+/// process that was given the same number. The value is only meaningful when
+/// compared with another read of the same platform: clock ticks since boot on
+/// Linux, microseconds since the epoch on macOS, a FILETIME on Windows. `None`
+/// when the process is gone or the platform offers no way to read it.
+pub fn process_start_identity(pid: u32) -> Option<i64> {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The command name comes first and may hold spaces and parentheses;
+        // everything after the last ')' is plain fields, starting at field 3.
+        let after_name = &stat[stat.rfind(')')? + 1..];
+        after_name.split_whitespace().nth(19)?.parse().ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: `info` is a writable buffer of exactly `size` bytes.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                libc::pid_t::try_from(pid).ok()?,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                std::ptr::addr_of_mut!(info).cast(),
+                size,
+            )
+        };
+        (written == size)
+            .then(|| i64::try_from(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec).ok())
+            .flatten()
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{
+            CloseHandle,
+            FILETIME,
+        };
+        use windows::Win32::System::Threading::{
+            GetProcessTimes,
+            OpenProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+        let (mut created, mut exited, mut kernel, mut user) = (
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+        );
+        let times =
+            unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) };
+        let _ = unsafe { CloseHandle(handle) };
+        times.ok()?;
+        i64::try_from((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+            .ok()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// Whether a process that recorded itself as running a forward still exists.
 ///
 /// A row whose process is gone is this process's to clean up; one whose
 /// process is alive belongs to it, and its listener cannot be stopped from
-/// here. Only existence is checked: a reused pid is possible but a process
-/// that exited cleanly clears its rows first, so a stale row with a live pid
-/// means a crash followed by pid reuse, and leaving it alone is the safe
-/// reading.
-pub fn process_is_alive(pid: u32) -> bool {
+/// here. A live pid alone is not enough: after a crash the number can be
+/// given to an unrelated process, so when the row recorded a start identity
+/// it must match the live process's. A row without one, or a platform that
+/// cannot read it, falls back to existence.
+pub fn process_is_alive(pid: u32, recorded_start: Option<i64>) -> bool {
     if pid == 0 {
         return false;
     }
@@ -297,7 +370,7 @@ pub fn process_is_alive(pid: u32) -> bool {
         return true;
     }
     #[cfg(unix)]
-    {
+    let exists = {
         let Ok(pid) = libc::pid_t::try_from(pid) else {
             return false;
         };
@@ -307,9 +380,9 @@ pub fn process_is_alive(pid: u32) -> bool {
         // process id.
         let result = unsafe { libc::kill(pid, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
+    };
     #[cfg(windows)]
-    {
+    let exists = {
         use windows::Win32::Foundation::{
             CloseHandle,
             ERROR_ACCESS_DENIED,
@@ -339,20 +412,24 @@ pub fn process_is_alive(pid: u32) -> bool {
             // unrelated COM `E_ACCESSDENIED` constant.
             Err(error) => error.code() == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0),
         }
-    }
+    };
     #[cfg(not(any(unix, windows)))]
-    {
-        true
-    }
+    let exists = true;
+
+    exists
+        && match (recorded_start, process_start_identity(pid)) {
+            (Some(recorded), Some(live)) => recorded == live,
+            _ => true,
+        }
 }
 
 /// Whether a row marked running was recorded by another process that is
 /// still alive. Such a forward cannot be started or stopped from here.
 pub fn is_owned_by_other_live_process(state: &ConfigState) -> bool {
     state.is_running
-        && state
-            .process_id
-            .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
+        && state.process_id.is_some_and(|pid| {
+            pid != std::process::id() && process_is_alive(pid, state.process_start)
+        })
 }
 
 #[cfg(test)]
@@ -837,6 +914,7 @@ mod tests {
             is_retrying: true,
             retry_count: Some(3),
             last_error: Some("Connection timeout".to_string()),
+            process_start: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let deserialized: ConfigState = serde_json::from_str(&json).unwrap();
@@ -878,6 +956,7 @@ mod tests {
             is_retrying: true,
             retry_count: Some(3),
             last_error: Some("Pod restart detected".to_string()),
+            process_start: None,
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -925,6 +1004,7 @@ mod tests {
             is_retrying: true,
             retry_count: None,
             last_error: None,
+            process_start: None,
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -999,5 +1079,58 @@ mod tests {
                 .unwrap();
             assert_eq!(last_error_of(&pool, id).await, None);
         }
+    }
+
+    #[cfg(unix)]
+    fn owned_state(pid: u32, process_start: Option<i64>) -> ConfigState {
+        ConfigState {
+            config_id: 1,
+            is_running: true,
+            process_id: Some(pid),
+            process_start,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reused_pid_with_another_start_identity_is_not_an_owner() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("failed to spawn helper process");
+        let pid = child.id();
+        let live = process_start_identity(pid).expect("the child's start identity");
+
+        let stale = is_owned_by_other_live_process(&owned_state(pid, Some(live + 1)));
+        let matching = is_owned_by_other_live_process(&owned_state(pid, Some(live)));
+        let legacy = is_owned_by_other_live_process(&owned_state(pid, None));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(!stale, "a row recorded by an earlier process with this pid");
+        assert!(matching, "the process that wrote the row is still running");
+        assert!(
+            legacy,
+            "a row without an identity keeps the pid-only reading"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_claimed_by_this_process_records_its_start_identity() {
+        let pool = setup_test_db().await;
+        let id = config_with_state(&pool, true, std::process::id()).await;
+
+        let state = read_config_states_with_pool(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|state| state.config_id == id)
+            .unwrap();
+
+        assert_eq!(
+            state.process_start,
+            process_start_identity(std::process::id())
+        );
     }
 }
