@@ -487,12 +487,9 @@ pub(crate) async fn running_in_another_process(id: i64, mode: DatabaseMode) -> O
     let states = get_configs_state_with_mode(mode).await.ok()?;
     states
         .into_iter()
-        .find(|state| state.config_id == id && state.is_running)
+        .find(|state| state.config_id == id)
+        .filter(kftray_commons::utils::config_state::is_owned_by_other_live_process)
         .and_then(|state| state.process_id)
-        .filter(|pid| {
-            *pid != std::process::id()
-                && kftray_commons::utils::config_state::process_is_alive(*pid)
-        })
 }
 
 /// The configurations still forwarding, as they were when they started: the
@@ -508,7 +505,6 @@ pub(crate) async fn forwarding_configs(mode: DatabaseMode) -> Vec<Config> {
     if mode != DatabaseMode::File {
         return configs;
     }
-    let this_process = std::process::id();
     let elsewhere =
         match kftray_commons::utils::config_state::get_configs_state_with_mode(mode).await {
             Ok(states) => states,
@@ -517,12 +513,10 @@ pub(crate) async fn forwarding_configs(mode: DatabaseMode) -> Vec<Config> {
                 return configs;
             }
         };
-    for state in elsewhere.into_iter().filter(|state| {
-        state.is_running
-            && state.process_id.is_some_and(|pid| {
-                pid != this_process && kftray_commons::utils::config_state::process_is_alive(pid)
-            })
-    }) {
+    for state in elsewhere
+        .into_iter()
+        .filter(kftray_commons::utils::config_state::is_owned_by_other_live_process)
+    {
         // The snapshot it started with, not the row: the row can be edited
         // while the forward runs, and the address and aliases it actually
         // holds are the ones recorded when it registered. A row without one
@@ -1698,18 +1692,11 @@ where
     // terminal and the desktop application both use the file database, and
     // neither sees the other's registries. Its persisted state is the only
     // signal, and it stays authoritative until that process clears it.
-    let this_process = std::process::id();
     let running_elsewhere: HashSet<i64> = if mode == DatabaseMode::File {
         kftray_commons::utils::config_state::get_configs_state_with_mode(mode)
             .await?
             .into_iter()
-            .filter(|state| {
-                state.is_running
-                    && state.process_id.is_some_and(|pid| {
-                        pid != this_process
-                            && kftray_commons::utils::config_state::process_is_alive(pid)
-                    })
-            })
+            .filter(kftray_commons::utils::config_state::is_owned_by_other_live_process)
             .map(|state| state.config_id)
             .collect()
     } else {
@@ -1970,17 +1957,13 @@ async fn collect_stop_all_targets(
     let configs_result = read_configs_with_mode(mode).await;
     let states_result = get_configs_state_with_mode(mode).await;
     if let Ok(states) = &states_result {
-        let this_process = std::process::id();
         for state in states {
             if !state.is_running {
                 continue;
             }
             let owned_elsewhere = mode == DatabaseMode::File
                 && !CHILD_PROCESSES.contains_key(&state.config_id)
-                && state.process_id.is_some_and(|pid| {
-                    pid != this_process
-                        && kftray_commons::utils::config_state::process_is_alive(pid)
-                });
+                && kftray_commons::utils::config_state::is_owned_by_other_live_process(state);
             if owned_elsewhere {
                 // That process's row to stop and to report on: a forward it
                 // still owns is not this stop-all's failure to surface.

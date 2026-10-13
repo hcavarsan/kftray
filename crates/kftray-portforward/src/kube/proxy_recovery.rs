@@ -571,6 +571,7 @@ impl ProxyRecoveryManager {
             is_retrying,
             retry_count,
             last_error,
+            process_start: None,
         };
         if let Err(e) =
             kftray_commons::utils::config_state::update_config_state_with_mode(&state, self.mode)
