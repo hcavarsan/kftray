@@ -139,18 +139,30 @@ mod tests {
     }
 
     #[test]
-    fn test_update_configs_with_selected_rows() {
+    fn marked_rows_follow_their_configs_when_rows_move() {
         let mut app = App::new(test_logger_state());
-        let (configs, config_states) = create_test_configs(3, &[0, 2]);
-
-        app.selected_rows_stopped.insert(0);
-        app.selected_rows_stopped.insert(2);
-        app.selected_rows_running.insert(1);
-
+        let (configs, config_states) = create_test_configs(4, &[2, 3]);
         app.update_configs(&configs, &config_states);
 
-        assert_eq!(app.selected_rows_stopped, [0].into());
-        assert_eq!(app.selected_rows_running, [1].into());
+        app.selected_rows_stopped = [1].into();
+        app.selected_rows_running = [0, 1].into();
+
+        let (configs, config_states) = create_test_configs(4, &[0, 3]);
+        app.update_configs(&configs, &config_states);
+
+        let marked_ids = |rows: &std::collections::HashSet<usize>, configs: &[Config]| {
+            let mut ids: Vec<i64> = rows.iter().filter_map(|&row| configs[row].id).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            marked_ids(&app.selected_rows_stopped, &app.stopped_configs),
+            [2]
+        );
+        assert_eq!(
+            marked_ids(&app.selected_rows_running, &app.running_configs),
+            [4]
+        );
     }
 
     #[test]

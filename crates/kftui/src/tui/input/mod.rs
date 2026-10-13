@@ -878,6 +878,16 @@ impl App {
             .filter(|state| state.is_running)
             .map(|state| state.config_id)
             .collect();
+        let (shown_stopped, shown_running) = if self.search_query.is_empty() {
+            (&self.stopped_configs, &self.running_configs)
+        } else {
+            (
+                &self.filtered_stopped_configs,
+                &self.filtered_running_configs,
+            )
+        };
+        let marked_stopped = marked_config_ids(&self.selected_rows_stopped, shown_stopped);
+        let marked_running = marked_config_ids(&self.selected_rows_running, shown_running);
         self.all_configs = configs.to_vec();
         self.group_labels.clear();
         let by_id: HashMap<i64, &Config> = configs
@@ -902,6 +912,10 @@ impl App {
         }
 
         self.update_filtered_configs();
+        self.selected_rows_stopped =
+            rows_of_config_ids(&marked_stopped, &self.filtered_stopped_configs);
+        self.selected_rows_running =
+            rows_of_config_ids(&marked_running, &self.filtered_running_configs);
 
         let mut reports = Vec::new();
         self.configs_being_processed.retain(|_, pending| {
@@ -1074,6 +1088,24 @@ impl App {
             }
         }
     }
+}
+
+fn marked_config_ids(rows: &HashSet<usize>, configs: &[Config]) -> HashSet<i64> {
+    rows.iter()
+        .filter_map(|&row| configs.get(row)?.id)
+        .collect()
+}
+
+fn rows_of_config_ids(ids: &HashSet<i64>, configs: &[Config]) -> HashSet<usize> {
+    if ids.is_empty() {
+        return HashSet::new();
+    }
+    configs
+        .iter()
+        .enumerate()
+        .filter(|(_, config)| config.id.is_some_and(|id| ids.contains(&id)))
+        .map(|(row, _)| row)
+        .collect()
 }
 
 pub fn toggle_select_all(app: &mut App) {
