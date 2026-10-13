@@ -1167,7 +1167,7 @@ pub(super) async fn start_config_cancellable(
             crate::kube::stop::settle_local_cleanup(config_id, &config, mode).await;
             let timeout_callback = create_static_timeout_callback(mode);
 
-            if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
+            if let Err(e) = start_timeout_for_forward(config_id, timeout_callback, mode).await {
                 error!("Failed to start timeout for config {config_id}: {e}");
             }
 

@@ -7,7 +7,8 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use crate::utils::settings::get_disconnect_timeout;
+use crate::utils::db_mode::DatabaseMode;
+use crate::utils::settings::get_disconnect_timeout_with_mode;
 
 lazy_static::lazy_static! {
     static ref TIMEOUT_HANDLES: Arc<RwLock<HashMap<i64, JoinHandle<()>>>> =
@@ -15,9 +16,9 @@ lazy_static::lazy_static! {
 }
 
 pub async fn start_timeout_for_forward(
-    config_id: i64, stop_callback: Arc<dyn Fn(i64) + Send + Sync>,
+    config_id: i64, stop_callback: Arc<dyn Fn(i64) + Send + Sync>, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Some(timeout_minutes) = get_disconnect_timeout().await?
+    if let Some(timeout_minutes) = get_disconnect_timeout_with_mode(mode).await?
         && timeout_minutes > 0
     {
         info!("Starting timeout for config_id {config_id} ({timeout_minutes} minutes)");
@@ -50,10 +51,10 @@ pub async fn get_active_timeout_count() -> usize {
     timeouts.len()
 }
 
-pub async fn get_timeout_info_for_forward(config_id: i64) -> Option<u32> {
+pub async fn get_timeout_info_for_forward(config_id: i64, mode: DatabaseMode) -> Option<u32> {
     let timeouts = TIMEOUT_HANDLES.read().await;
     if timeouts.contains_key(&config_id) {
-        get_disconnect_timeout().await.unwrap_or(None)
+        get_disconnect_timeout_with_mode(mode).await.unwrap_or(None)
     } else {
         None
     }
@@ -77,7 +78,11 @@ mod tests {
         create_db_table,
         set_db_pool,
     };
-    use crate::utils::settings::set_disconnect_timeout;
+    use crate::utils::db_mode::DatabaseMode;
+    use crate::utils::settings::{
+        set_disconnect_timeout,
+        set_disconnect_timeout_with_mode,
+    };
 
     async fn setup_test_db() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -99,22 +104,46 @@ mod tests {
             callback_called_clone.store(true, Ordering::Relaxed);
         });
 
-        let result = start_timeout_for_forward(1, callback).await;
+        let result = start_timeout_for_forward(1, callback, DatabaseMode::File).await;
         assert!(result.is_ok());
 
         // Verify timeout was started
         assert_eq!(get_active_timeout_count().await, 1);
-        assert_eq!(get_timeout_info_for_forward(1).await, Some(1));
+        assert_eq!(
+            get_timeout_info_for_forward(1, DatabaseMode::File).await,
+            Some(1)
+        );
 
         // Cancel timeout
         cancel_timeout_for_forward(1).await;
 
         // Verify timeout was cancelled
         assert_eq!(get_active_timeout_count().await, 0);
-        assert_eq!(get_timeout_info_for_forward(1).await, None);
+        assert_eq!(
+            get_timeout_info_for_forward(1, DatabaseMode::File).await,
+            None
+        );
 
         sleep(Duration::from_millis(10)).await;
 
         assert!(!callback_called.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn a_memory_mode_forward_uses_the_memory_mode_timeout() {
+        let _db = crate::test_utils::test_db().await;
+        setup_test_db().await;
+        set_disconnect_timeout(1).await.unwrap();
+        set_disconnect_timeout_with_mode(5, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        start_timeout_for_forward(42, Arc::new(|_config_id: i64| {}), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let minutes = get_timeout_info_for_forward(42, DatabaseMode::Memory).await;
+        cancel_timeout_for_forward(42).await;
+
+        assert_eq!(minutes, Some(5));
     }
 }
