@@ -110,7 +110,7 @@ fn shrinking_the_list_clamps_selection() {
     let mut app = App::new(test_logger_state());
     let configs = sample();
     app.update_configs(&configs, &stopped_states(&configs));
-    app.selected_rows_stopped = [0, 3].into();
+    app.selected_rows_stopped = [2, 3].into();
     app.selected_row_stopped = 3;
     app.table_state_stopped.select(Some(3));
 

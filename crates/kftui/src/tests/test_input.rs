@@ -424,6 +424,32 @@ mod tests {
         assert_eq!(remaining, ["alpha", "beta"]);
     }
 
+    #[tokio::test]
+    async fn delete_after_another_config_starts_removes_the_marked_config() {
+        use kftray_commons::models::config_state_model::ConfigState;
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = app_with_saved_configs(&["alpha", "beta", "gamma"]).await;
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        let states = |running: &str| -> Vec<ConfigState> {
+            configs
+                .iter()
+                .map(|c| ConfigState {
+                    config_id: c.id.unwrap(),
+                    is_running: c.alias.as_deref() == Some(running),
+                    ..Default::default()
+                })
+                .collect()
+        };
+        app.update_configs(&configs, &states(""));
+
+        app.table_state_stopped.select(Some(1));
+        toggle_row_selection(&mut app);
+        app.update_configs(&configs, &states("alpha"));
+
+        let remaining = confirm_delete(&mut app).await;
+        assert_eq!(remaining, ["alpha", "gamma"]);
+    }
+
     async fn searching_for_gamma() -> (App, Option<i64>) {
         let mut app = app_with_saved_configs(&["alpha", "beta", "gamma"]).await;
         app.search_query = "gamma".to_string();
