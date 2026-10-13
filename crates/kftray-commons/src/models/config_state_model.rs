@@ -15,6 +15,11 @@ pub struct ConfigState {
     pub retry_count: Option<i32>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// When `process_id` started, as `process_start_identity` reports it, so a
+    /// pid reused after a crash is not mistaken for the process that wrote the
+    /// row. `None` for rows written by versions that recorded none.
+    #[serde(default)]
+    pub process_start: Option<i64>,
 }
 
 impl ConfigState {
@@ -27,6 +32,7 @@ impl ConfigState {
             is_retrying: false,
             retry_count: None,
             last_error: None,
+            process_start: None,
         }
     }
 
@@ -39,6 +45,7 @@ impl ConfigState {
             is_retrying: false,
             retry_count: None,
             last_error: None,
+            process_start: None,
         }
     }
 }
