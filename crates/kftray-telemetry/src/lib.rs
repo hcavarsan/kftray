@@ -262,7 +262,12 @@ pub fn classify(message: &str) -> FailureKind {
         ),
         (
             FailureKind::PortInUse,
-            &["address already in use", "address in use", "failed to bind"],
+            &[
+                "address already in use",
+                "address in use",
+                "failed to bind",
+                "is already in use",
+            ],
         ),
         (
             FailureKind::HostsFile,
@@ -856,6 +861,13 @@ mod tests {
         );
         assert_eq!(
             classify("Failed to bind TCP listener to 127.0.0.1:8080: Address already in use"),
+            FailureKind::PortInUse
+        );
+        assert_eq!(
+            classify(
+                "Failed to start TCP port forwarding for service api: Local TCP port 8080 on \
+                 127.0.0.1 is already in use. Port 8081 is free."
+            ),
             FailureKind::PortInUse
         );
         assert_eq!(

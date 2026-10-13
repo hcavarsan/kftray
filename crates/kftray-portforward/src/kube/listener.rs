@@ -881,9 +881,13 @@ impl PortForwarder {
             })?;
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
 
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e))?;
+        let listener = TcpListener::bind(addr).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                crate::local_port::port_in_use(ip, addr.port(), Protocol::Tcp)
+            } else {
+                anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e)
+            }
+        })?;
         let port = listener.local_addr()?.port();
 
         let tls_acceptor = listener_config.tls_acceptor;

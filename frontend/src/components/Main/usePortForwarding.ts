@@ -7,6 +7,7 @@ import { useTauriEvent } from '@/hooks/useTauriEvent'
 import { errorMessage } from '@/lib/errors'
 import type { Config, PortForwardToggleAction } from '@/types'
 
+import { freePortFromError, moveToFreePort } from './freePort'
 import { PRIVILEGE_ERROR } from './privilegeGate'
 import { useConfigCache } from './useConfigCache'
 import { useConfigMutations } from './useConfigMutations'
@@ -14,6 +15,8 @@ import { useForwardCommand } from './useForwardCommand'
 import { usePendingActions } from './usePendingActions'
 import { usePortForwardBatch } from './usePortForwardBatch'
 import { usePrivilegeGate } from './usePrivilegeGate'
+
+const FREE_PORT_TOAST_DURATION = 10000
 
 export function usePortForwarding() {
   const { data: configs = [] } = useConfigs()
@@ -78,6 +81,27 @@ export function usePortForwarding() {
       if (action === 'starting' && !(await ensurePrivileges([config]))) {
         return
       }
+      // Saves the free port only once the user picked it from the toast.
+      const startOnFreePort = async (failed: Config, port: number) => {
+        if (isBusy(failed.id)) {
+          // Reports the busy row without saving the port.
+          await toggleConfigForward(failed, 'starting')
+
+          return
+        }
+        try {
+          const moved = await moveToFreePort(failed, port)
+
+          await toggleConfigForward(moved, 'starting')
+        } catch (error) {
+          showErrorToast(error, {
+            errorToast: {
+              title: `Error saving port ${port}`,
+              duration: 2000,
+            },
+          })
+        }
+      }
       // A start refused for lack of privileges is offered once more after
       // the user has had the chance to install the helper or accept the
       // prompts. The row is released between the two attempts so the retry
@@ -100,15 +124,30 @@ export function usePortForwarding() {
           ) {
             refused = message
           } else {
-            showErrorToast(error, {
-              errorToast: {
-                title:
-                  action === 'starting'
-                    ? 'Error starting port forwarding'
-                    : 'Error stopping port forwarding',
-                duration: 1000,
-              },
-            })
+            const freePort =
+              action === 'starting' ? freePortFromError(message) : undefined
+
+            if (freePort === undefined) {
+              showErrorToast(error, {
+                errorToast: {
+                  title:
+                    action === 'starting'
+                      ? 'Error starting port forwarding'
+                      : 'Error stopping port forwarding',
+                  duration: 1000,
+                },
+              })
+            } else {
+              toaster.error({
+                title: 'Error starting port forwarding',
+                description: message,
+                duration: FREE_PORT_TOAST_DURATION,
+                action: {
+                  label: `Use port ${freePort}`,
+                  onClick: () => void startOnFreePort(config, freePort),
+                },
+              })
+            }
           }
         } finally {
           clearPending(config.id, token)
