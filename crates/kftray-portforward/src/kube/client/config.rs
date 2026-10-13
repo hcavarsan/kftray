@@ -92,8 +92,28 @@ pub async fn create_config_with_context(
     info!("Creating configuration for context: {context_name}");
     let mut kubeconfig = kubeconfig.clone();
 
+    let context_to_use = if context_name == "@current" {
+        kubeconfig.current_context.clone()
+    } else {
+        Some(context_name.to_owned())
+    };
+
+    // Only the selected context's user is converted, so a bad key on an unrelated user
+    // cannot reject a context that never uses it.
+    let selected_user = context_to_use.as_deref().and_then(|name| {
+        kubeconfig
+            .contexts
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.context.as_ref())
+            .and_then(|c| c.user.clone())
+    });
+
     for auth_info in &mut kubeconfig.auth_infos {
-        if let Some(ref mut auth_info_data) = auth_info.auth_info
+        if selected_user.as_deref() != Some(auth_info.name.as_str()) {
+            continue;
+        }
+        if let Some(auth_info_data) = &mut auth_info.auth_info
             && let Some(client_key_data) = &auth_info_data.client_key_data
         {
             let decoded_key = decode_block(client_key_data.expose_secret())
@@ -108,12 +128,6 @@ pub async fn create_config_with_context(
             }
         }
     }
-
-    let context_to_use = if context_name == "@current" {
-        kubeconfig.current_context.clone()
-    } else {
-        Some(context_name.to_owned())
-    };
 
     Config::from_custom_kubeconfig(
         kubeconfig,
@@ -330,6 +344,64 @@ users:
 
         let result = create_config_with_context(&kubeconfig, "token-context").await;
         assert!(result.is_ok(), "{:#}", result.unwrap_err());
+    }
+
+    fn kubeconfig_with_bad_key_on(user_with_bad_key: &str) -> Kubeconfig {
+        Kubeconfig::from_yaml(
+            r#"
+apiVersion: v1
+kind: Config
+clusters:
+- name: test-cluster
+  cluster:
+    server: https://test-server.com
+contexts:
+- name: selected-context
+  context:
+    cluster: test-cluster
+    user: selected-user
+current-context: selected-context
+users:
+- name: selected-user
+  user:
+    token: test-token
+- name: other-user
+  user:
+    token: other-token
+"#,
+        )
+        .map(|mut kubeconfig| {
+            let user = kubeconfig
+                .auth_infos
+                .iter_mut()
+                .find(|u| u.name == user_with_bad_key)
+                .and_then(|u| u.auth_info.as_mut())
+                .unwrap();
+            user.client_key_data = Some("%%not-base64%%".to_string().into());
+            kubeconfig
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_create_config_ignores_invalid_key_on_unselected_user() {
+        let kubeconfig = kubeconfig_with_bad_key_on("other-user");
+
+        let result = create_config_with_context(&kubeconfig, "selected-context").await;
+        assert!(result.is_ok(), "{:#}", result.unwrap_err());
+
+        let result = create_config_with_context(&kubeconfig, "@current").await;
+        assert!(result.is_ok(), "{:#}", result.unwrap_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_config_rejects_invalid_key_on_selected_user() {
+        let kubeconfig = kubeconfig_with_bad_key_on("selected-user");
+
+        let err = create_config_with_context(&kubeconfig, "selected-context")
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("Failed to decode client key data"));
     }
 
     #[test]
