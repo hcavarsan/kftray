@@ -276,7 +276,11 @@ impl UdpForwarder {
                 upstream
                     .connect(reservation)
                     .await
-                    .context("Failed to open the upstream UDP tunnel")?,
+                    // The cause goes into the text: callers print the error with
+                    // `{}`, which shows only the outermost context.
+                    .map_err(|error| {
+                        anyhow::anyhow!("Failed to open the upstream UDP tunnel: {error:#}")
+                    })?,
             )),
             None => {
                 debug!("Skipping the startup UDP tunnel probe: no free upstream capacity");
@@ -1498,6 +1502,10 @@ pub(crate) mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("upstream UDP tunnel"), "{error}");
+        assert!(
+            error.to_string().contains("no relay pod"),
+            "the cause must stay in the message: {error}"
+        );
     }
 
     #[tokio::test]
