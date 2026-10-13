@@ -256,9 +256,54 @@ fn is_permit_exhausted(error: &anyhow::Error) -> bool {
         .any(|cause| cause.is::<StreamPermitExhausted>())
 }
 
+/// The step of the startup probe in progress, so a timeout says which step ran
+/// out of time instead of one message for all of them.
+#[derive(Clone, Copy)]
+enum StartupStage {
+    Resolving,
+    AwaitingReadyPod,
+    OpeningConnection,
+}
+
+impl StartupStage {
+    fn timeout_message(self) -> &'static str {
+        match self {
+            Self::Resolving => "Port-forward startup timed out",
+            Self::AwaitingReadyPod => "Timed out waiting for a ready pod",
+            Self::OpeningConnection => "Timed out opening the first connection to the pod",
+        }
+    }
+}
+
+/// The current [`StartupStage`], readable after the probe future is dropped.
+/// Atomic because the future must stay `Send`.
+struct StartupProgress(std::sync::atomic::AtomicU8);
+
+impl StartupProgress {
+    fn new() -> Self {
+        Self(std::sync::atomic::AtomicU8::new(
+            StartupStage::Resolving as u8,
+        ))
+    }
+
+    fn set(&self, stage: StartupStage) {
+        self.0
+            .store(stage as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get(&self) -> StartupStage {
+        match self.0.load(std::sync::atomic::Ordering::Relaxed) {
+            x if x == StartupStage::AwaitingReadyPod as u8 => StartupStage::AwaitingReadyPod,
+            x if x == StartupStage::OpeningConnection as u8 => StartupStage::OpeningConnection,
+            _ => StartupStage::Resolving,
+        }
+    }
+}
+
 async fn probe_startup(
     forwarder: &kube_portforward::Forwarder, pod_api: &Api<Pod>, target: &Target,
 ) -> anyhow::Result<u16> {
+    let stage = StartupProgress::new();
     let startup = async {
         // Resolution and the probe have to agree on the pod for the same
         // reason a later connection does: a rollout in between can map the
@@ -266,6 +311,7 @@ async fn probe_startup(
         // a startup the replacement would have served.
         let mut last_error = None;
         for _ in 0..3 {
+            stage.set(StartupStage::Resolving);
             let (port, pod) = crate::kube::target::resolve_target_port_for_pod(
                 forwarder,
                 pod_api,
@@ -275,10 +321,12 @@ async fn probe_startup(
             .await?;
             // Initial readiness shares the startup deadline instead of the
             // dependency's shorter wait for an individual connection.
+            stage.set(StartupStage::AwaitingReadyPod);
             forwarder
                 .wait_for_ready_pod(STARTUP_TIMEOUT)
                 .await
                 .ok_or_else(|| anyhow::anyhow!(crate::kube::target::NO_READY_PODS_ERROR))?;
+            stage.set(StartupStage::OpeningConnection);
             let connected = match forwarder.connect_on_pod(port).await {
                 Ok(connected) => connected,
                 // A number resolved on the pod that is going away can be
@@ -313,7 +361,7 @@ async fn probe_startup(
         biased;
         _ = cancellation.cancelled() => Err(kube_portforward::Error::Cancelled.into()),
         result = tokio::time::timeout(STARTUP_TIMEOUT, startup) => {
-            result.map_err(|err| anyhow::Error::new(err).context("Port-forward startup timed out"))?
+            result.map_err(|err| anyhow::Error::new(err).context(stage.get().timeout_message()))?
         }
     }
 }
@@ -881,12 +929,16 @@ impl PortForwarder {
             })?;
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
 
-        let listener = TcpListener::bind(addr).await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AddrInUse {
+        let listener = TcpListener::bind(addr).await.map_err(|e| match e.kind() {
+            std::io::ErrorKind::AddrInUse => {
                 crate::local_port::port_in_use(ip, addr.port(), Protocol::Tcp)
-            } else {
-                anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e)
             }
+            std::io::ErrorKind::PermissionDenied => crate::local_port::bind_denied(
+                &listener_config.local_address,
+                addr.port(),
+                Protocol::Tcp,
+            ),
+            _ => anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e),
         })?;
         let port = listener.local_addr()?.port();
 
@@ -1183,6 +1235,31 @@ mod tests {
     use tower_test::mock;
 
     use super::*;
+
+    #[test]
+    fn a_startup_timeout_names_the_step_that_ran_out_of_time() {
+        use kftray_telemetry::{
+            FailureKind,
+            classify,
+        };
+
+        assert_eq!(
+            classify(StartupStage::AwaitingReadyPod.timeout_message()),
+            FailureKind::PodNotReady
+        );
+        assert_eq!(
+            classify(StartupStage::OpeningConnection.timeout_message()),
+            FailureKind::Timeout
+        );
+        assert_eq!(
+            classify(StartupStage::Resolving.timeout_message()),
+            FailureKind::Timeout
+        );
+        assert_eq!(
+            classify(crate::kube::target::NO_READY_PODS_ERROR),
+            FailureKind::PodNotReady
+        );
+    }
 
     fn ready_test_pod(name: &str) -> Pod {
         use k8s_openapi::api::core::v1::{
