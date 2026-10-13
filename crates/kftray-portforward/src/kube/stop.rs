@@ -2219,6 +2219,7 @@ async fn stop_config(
     let existed = process.is_some();
     let mut retained = None;
     let mut retained_destination = None;
+    let mut listener_held = None;
     if let Some((_, mut process)) = process {
         retained = process.config().cloned();
         retained_destination = process.destination();
@@ -2239,7 +2240,15 @@ async fn stop_config(
             );
         }
         let phase = kftray_telemetry::phase(Phase::Shutdown);
-        process.cleanup_and_abort().await;
+        // The process is out of the registry whatever this finds, so the
+        // registry never holds an entry no later stop could settle: the
+        // listener not shutting down in time is reported with the stop result
+        // instead, and a restart that rebinds the port meets the free-port
+        // check rather than a registered forward.
+        listener_held = process.cleanup_and_abort().await.err();
+        if listener_held.is_some() {
+            phase.fail();
+        }
         drop(phase);
     }
     // The snapshot taken at startup describes the resources that actually
@@ -2317,7 +2326,13 @@ async fn stop_config(
             );
         }
 
-        let mut errors: Vec<String> = Vec::new();
+        // Reported first and with the rest: success must not be claimed for a
+        // forward whose listener may still hold the port, whatever else the
+        // cleanup below settles.
+        let mut errors: Vec<String> = listener_held
+            .map(|held| format!("Stopped config {id}, but {held}"))
+            .into_iter()
+            .collect();
         let mut settled: Vec<PendingTarget> = Vec::new();
         // Targets whose create was never answered, so an empty list is not
         // proof that nothing was created.
@@ -2488,10 +2503,14 @@ async fn stop_config(
             Err(errors.join("; "))
         }
     } else if existed {
-        Err(format!(
+        let mut error = format!(
             "Stopped the local process for config {id} but could not load its configuration, so \
              cluster resources, loopback addresses and host entries were left in place"
-        ))
+        );
+        if let Some(held) = listener_held {
+            error = format!("{error}; {held}");
+        }
+        Err(error)
     } else {
         Err(nothing_forwarding_error(id))
     };
@@ -2600,6 +2619,83 @@ mod tests {
 
         let _tcp = TcpListener::bind(tcp_address).await.unwrap();
         let _udp = UdpSocket::bind(udp_address).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_reports_a_listener_that_did_not_shut_down_in_time() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            Config {
+                id: None,
+                ..local_config(0)
+            },
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        update_config_state_with_mode(&ConfigState::new(id, true), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        // A blocking task cannot be aborted once it runs: it stands in for an
+        // owner that stays inside a poll and keeps the listener until it
+        // returns.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let owner = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _listener = listener;
+            let _ = started.send(());
+            let _ = held.recv();
+            Ok(())
+        });
+        running.await.unwrap();
+        let mut process = PortForwardProcess::new(owner, id.to_string());
+        process.set_config(local_config(id));
+        CHILD_PROCESSES.insert(id, process);
+
+        let error = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .expect_err("a stop must not report success while the listener may still be bound");
+
+        assert!(error.contains("may still be in use"), "{error}");
+        assert!(
+            std::net::TcpListener::bind(address).is_err(),
+            "the listener still holds the port, so success would have been false"
+        );
+        assert!(
+            !CHILD_PROCESSES.contains_key(&id),
+            "the registry must not keep an entry that no later stop can settle"
+        );
+        let states = get_configs_state_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert!(
+            states
+                .iter()
+                .any(|state| state.config_id == id && !state.is_running),
+            "the forward is cancelled, so it must not stay marked running"
+        );
+        // Nothing is registered to wedge a later stop on, so repeating it
+        // completes instead of finding the old process or hanging on it.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory),
+        )
+        .await
+        .expect("a later stop must not wait on the lingering listener")
+        .expect("with nothing registered, stopping the stopped row is a no-op");
+
+        drop(release);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::net::TcpListener::bind(address).is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "the port is released once the owner returns"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     #[tokio::test]
@@ -2768,7 +2864,7 @@ mod tests {
         );
 
         if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
-            process.cleanup_and_abort().await;
+            let _ = process.cleanup_and_abort().await;
         }
         PENDING_CLEANUP.remove(&id);
     }

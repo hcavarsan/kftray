@@ -589,10 +589,18 @@ impl ProxyRecoveryManager {
 // T7: Bare Pod Recovery
 // ============================================================================
 
-async fn cleanup_child_processes_for_config(config_id: i64) {
+/// Stops the registered forward before a re-deployment binds its local port
+/// again. A listener that outlasted the shutdown bound would still hold that
+/// port, so the attempt fails here, clearly and before a new relay is created
+/// for it; the next attempt finds the registry empty and meets the free-port
+/// check, by which time the listener has usually returned.
+async fn cleanup_child_processes_for_config(config_id: i64) -> anyhow::Result<()> {
     if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&config_id) {
-        process.cleanup_and_abort().await;
+        process.cleanup_and_abort().await.map_err(|held| {
+            anyhow::anyhow!("Re-deployment of config {config_id} stopped: {held}")
+        })?;
     }
+    Ok(())
 }
 
 /// Recover a bare pod proxy by fully re-deploying.
@@ -616,7 +624,7 @@ pub async fn recover_bare_pod(
     crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id, mode)
         .await
         .map_err(anyhow::Error::msg)?;
-    cleanup_child_processes_for_config(config_id).await;
+    cleanup_child_processes_for_config(config_id).await?;
 
     // Registered in STARTING_PROXIES for the whole redeploy: between the
     // CHILD_PROCESSES cleanup above and the fresh entry `start_proxy_config`
@@ -897,7 +905,7 @@ pub async fn recover_deployment(
             };
             if crate::kube::proxy::relay_started(Some(&pod), &container_name, customized) {
                 if config.protocol.eq_ignore_ascii_case("udp") {
-                    cleanup_child_processes_for_config(config_id).await;
+                    cleanup_child_processes_for_config(config_id).await?;
                     // Registered for the whole restart: between the
                     // CHILD_PROCESSES cleanup above and the fresh entry this
                     // call inserts, nothing else marks this config active,
@@ -1003,6 +1011,35 @@ mod tests {
             .await
             .expect("Loop should exit within 5 seconds")
             .expect("Loop task should not panic");
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_redeploy_while_the_old_listener_holds_the_port() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_091;
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let owner = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _ = started.send(());
+            let _ = held.recv();
+            Ok(())
+        });
+        running.await.unwrap();
+        crate::port_forward::CHILD_PROCESSES.insert(
+            id,
+            crate::port_forward::PortForwardProcess::new(owner, id.to_string()),
+        );
+
+        let error = cleanup_child_processes_for_config(id)
+            .await
+            .expect_err("a redeploy would bind the port the old listener still holds");
+
+        assert!(error.to_string().contains("may still be in use"), "{error}");
+        assert!(!crate::port_forward::CHILD_PROCESSES.contains_key(&id));
+        drop(release);
+        cleanup_child_processes_for_config(id)
+            .await
+            .expect("with nothing registered the next attempt may proceed");
     }
 
     // ====================================================================
@@ -1450,7 +1487,7 @@ mod tests {
 
         RECOVERY_LOCKS.remove(&id);
         if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&id) {
-            process.cleanup_and_abort().await;
+            let _ = process.cleanup_and_abort().await;
         }
 
         assert!(matches!(
@@ -1609,7 +1646,7 @@ mod tests {
         RECOVERY_MANAGERS.remove(&id);
         RECOVERY_LOCKS.remove(&id);
         if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&id) {
-            process.cleanup_and_abort().await;
+            let _ = process.cleanup_and_abort().await;
         }
 
         let Some((blocked_state, registered_while_blocked)) = blocked else {
