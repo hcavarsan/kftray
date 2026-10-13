@@ -21,6 +21,7 @@ export async function fetchConfigsWithState(): Promise<Config[]> {
       is_retrying: state?.is_retrying ?? false,
       retry_count: state?.retry_count ?? null,
       last_error: state?.last_error ?? null,
+      owned_elsewhere: state?.owned_elsewhere ?? false,
     }
   })
 }

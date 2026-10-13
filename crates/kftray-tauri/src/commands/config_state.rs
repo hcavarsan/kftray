@@ -1,12 +1,45 @@
-use kftray_commons::config_state::get_configs_state;
+use std::ops::Deref;
+
+use kftray_commons::config_state::{
+    get_configs_state,
+    is_owned_by_other_live_process,
+};
 use kftray_commons::models::config_state_model::ConfigState;
+use serde::Serialize;
+
+/// A config state as the UI sees it: whether another live kftray process
+/// owns the running forward decides if this one may stop it.
+#[derive(Serialize)]
+pub struct ConfigStateView {
+    #[serde(flatten)]
+    state: ConfigState,
+    owned_elsewhere: bool,
+}
+
+impl From<ConfigState> for ConfigStateView {
+    fn from(state: ConfigState) -> Self {
+        let owned_elsewhere = is_owned_by_other_live_process(&state);
+        Self {
+            state,
+            owned_elsewhere,
+        }
+    }
+}
+
+impl Deref for ConfigStateView {
+    type Target = ConfigState;
+
+    fn deref(&self) -> &ConfigState {
+        &self.state
+    }
+}
 
 #[tauri::command]
-pub async fn get_config_states() -> Result<Vec<ConfigState>, String> {
+pub async fn get_config_states() -> Result<Vec<ConfigStateView>, String> {
     log::info!("get_configs state called");
     let configs = get_configs_state().await?;
     log::info!("{configs:?}");
-    Ok(configs)
+    Ok(configs.into_iter().map(ConfigStateView::from).collect())
 }
 
 #[cfg(test)]
@@ -122,5 +155,41 @@ mod tests {
             states.is_empty(),
             "Should have no config states when no configs exist"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_ui_state_marks_only_running_rows_another_live_process_owns() {
+        use kftray_commons::models::config_state_model::ConfigState;
+
+        use super::ConfigStateView;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("failed to spawn helper process");
+        let row = |config_id, is_running, process_id| {
+            serde_json::to_value(ConfigStateView::from(ConfigState {
+                config_id,
+                is_running,
+                process_id,
+                ..Default::default()
+            }))
+            .unwrap()
+        };
+
+        let foreign = row(1, true, Some(child.id()));
+        let stopped = row(2, false, Some(child.id()));
+        let ours = row(3, true, Some(std::process::id()));
+        let unowned = row(4, true, None);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(foreign["owned_elsewhere"], true);
+        assert_eq!(foreign["config_id"], 1);
+        assert_eq!(foreign["is_running"], true);
+        assert_eq!(stopped["owned_elsewhere"], false);
+        assert_eq!(ours["owned_elsewhere"], false);
+        assert_eq!(unowned["owned_elsewhere"], false);
     }
 }

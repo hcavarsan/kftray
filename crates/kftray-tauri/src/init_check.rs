@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use kftray_commons::config::get_config;
 use kftray_commons::config_state::{
     get_configs_state,
-    process_is_alive,
+    is_owned_by_other_live_process,
     update_config_state,
 };
 use kftray_commons::config_state_model::ConfigState;
@@ -124,10 +124,19 @@ async fn fetch_configs_in_parallel(
 
 pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result<(), String> {
     let running_configs = match port_ops.get_configs_state().await {
-        Ok(states) => states
-            .into_iter()
-            .filter(|state| state.is_running)
-            .collect::<Vec<_>>(),
+        Ok(states) => {
+            let (elsewhere, running): (Vec<_>, Vec<_>) = states
+                .into_iter()
+                .filter(|state| state.is_running)
+                .partition(is_owned_by_other_live_process);
+            for state in &elsewhere {
+                info!(
+                    "Config {} is running in another kftray process (pid {:?}); not restoring it",
+                    state.config_id, state.process_id
+                );
+            }
+            running
+        }
         Err(e) => {
             error!("Failed to retrieve config states: {e:?}");
             return Err(e);
@@ -259,10 +268,7 @@ async fn start_port_forwarding(
             match port_ops.get_configs_state().await {
                 Ok(states) => {
                     if let Some(state) = states.iter().find(|s| s.config_id == config_id)
-                        && state.is_running
-                        && state
-                            .process_id
-                            .is_some_and(|pid| pid != std::process::id() && process_is_alive(pid))
+                        && is_owned_by_other_live_process(state)
                     {
                         debug!(
                             "Config {config_id} is owned by another live process (pid {:?}); \
@@ -348,7 +354,7 @@ mod tests {
             id: None,
             config_id: id,
             is_running,
-            process_id: if is_running { Some(1234) } else { None },
+            process_id: None,
             ..Default::default()
         }
     }
@@ -739,5 +745,60 @@ mod tests {
         // The zombie stays alive until reaped; clean it up now that the
         // check ran.
         let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_row_owned_by_another_live_process_is_not_restored() {
+        // Regression: every running row was restored without looking at who
+        // recorded it, so each row another live kftray process was already
+        // forwarding went through a start that its ownership guard refused,
+        // and the refusal was reported as an autostart failure.
+        use std::sync::mpsc;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("failed to spawn helper process");
+        let other_pid = child.id();
+
+        let foreign = ConfigState {
+            config_id: 1,
+            is_running: true,
+            process_id: Some(other_pid),
+            ..Default::default()
+        };
+        let own = create_config_state(2, true);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+
+        let mut mock = MockPortOperations::new();
+        mock.expect_get_configs_state()
+            .returning(move || Ok(vec![foreign.clone(), own.clone()]));
+        mock.expect_get_config().returning(|id| {
+            Ok(create_test_config(
+                id,
+                8080 + id as u16,
+                "tcp",
+                Some("service"),
+            ))
+        });
+        mock.expect_find_process_by_port().returning(|_| None);
+        mock.expect_dispatch_start().returning(move |config| {
+            started_tx.send(config.id.unwrap()).unwrap();
+            Ok(())
+        });
+        mock.expect_update_config_state().returning(move |state| {
+            written_tx.send(state.config_id).unwrap();
+            Ok(())
+        });
+
+        let result = check_and_manage_ports(Arc::new(mock)).await;
+
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(result.is_ok());
+        assert_eq!(started_rx.try_iter().collect::<Vec<_>>(), vec![2]);
+        assert_eq!(written_rx.try_iter().collect::<Vec<_>>(), vec![2]);
     }
 }

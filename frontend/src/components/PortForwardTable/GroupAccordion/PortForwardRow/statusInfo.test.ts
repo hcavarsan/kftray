@@ -51,6 +51,20 @@ describe('getStatusInfo', () => {
 
     expect(status.status).toBe('Running')
   })
+
+  it('shows a forward another kftray process runs as running elsewhere', () => {
+    const status = getStatusInfo(
+      { ...makeConfig(1, true), owned_elsewhere: true },
+      null,
+      null,
+    )
+
+    expect(status).toEqual({
+      color: 'fg.muted',
+      status: 'Running elsewhere',
+      description: 'Running in another kftray process',
+    })
+  })
 })
 
 describe('getConfigDetails', () => {

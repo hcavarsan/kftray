@@ -4,6 +4,7 @@ import {
   ExternalLinkIcon,
   Info,
   TriangleAlert,
+  Users,
 } from 'lucide-react'
 
 import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
@@ -208,6 +209,20 @@ function PortForwardRowComponent({
                 />
               </Tooltip>
             )}
+
+            {config.owned_elsewhere && (
+              <Tooltip content='Running in another kftray process. Stop it there.'>
+                <Box
+                  as={Users}
+                  data-testid='config-owned-elsewhere'
+                  aria-label={`${config.alias} runs in another kftray process`}
+                  width='12px'
+                  height='12px'
+                  flexShrink={0}
+                  color='fg.muted'
+                />
+              </Tooltip>
+            )}
           </Flex>
         </Table.Cell>
 
@@ -224,7 +239,7 @@ function PortForwardRowComponent({
               onCheckedChange={state =>
                 void togglePortForwarding(state.checked)
               }
-              disabled={isPending}
+              disabled={isPending || config.owned_elsewhere}
               data-loading={isPending ? '' : undefined}
               unstyled={true}
               className='switch'
