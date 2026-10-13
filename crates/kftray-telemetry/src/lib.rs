@@ -183,19 +183,29 @@ impl Phase {
 /// clusters, namespaces and services. Classified from the error text by
 /// [`classify`]; the first matching rule wins, so the order below is the
 /// priority order.
+///
+/// A failure whose rollback could not finish keeps the kind of the failure
+/// that caused the rollback; the leftover is reported separately, as the
+/// `cleanup_incomplete` tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
-    /// The operation was cancelled or failed and its rollback could not
-    /// finish, leaving a relay pod, loopback alias or hosts entry behind.
-    CleanupIncomplete,
     /// The user or a concurrent stop cancelled the operation.
     Cancelled,
-    /// The forward was already running, here or in another kftray process.
+    /// Another kftray process is forwarding the config. An expected refusal:
+    /// the forward has to be stopped there.
+    OwnedElsewhere,
+    /// The forward is already running, or starting, in this process.
     AlreadyRunning,
-    /// A step did not finish in time (pod readiness, stream, allocation).
-    Timeout,
-    /// Choosing or claiming a loopback address.
+    /// No pod behind the target became ready in time, or none was ready.
+    PodNotReady,
+    /// Choosing or claiming a loopback address, including running out of time
+    /// doing so.
     AddressAllocation,
+    /// A step did not finish in time (first connection, stream, relay).
+    Timeout,
+    /// The operating system refused to bind the local port: access denied
+    /// (a privileged port on Unix) or a port the system reserves (Windows).
+    BindDenied,
     /// The local port could not be bound.
     PortInUse,
     /// Writing or removing the hosts-file alias.
@@ -210,13 +220,15 @@ pub enum FailureKind {
     Connection,
     /// Creating, reading or deleting the relay pod or its service.
     RelayPod,
-    /// The configuration itself is invalid (no id, bad protocol or address).
+    /// The configuration itself is invalid or gone (no id, bad protocol or
+    /// address, deleted while starting, malformed file in a synced repository).
     InvalidConfig,
     /// Reading or writing the local database.
     Database,
     /// Talking to the privileged helper.
     Helper,
-    /// Cloning, fetching or authenticating against the git repository.
+    /// Cloning, fetching or authenticating against the git repository, or
+    /// reading a config file from it.
     Git,
     Other,
 }
@@ -224,11 +236,13 @@ pub enum FailureKind {
 impl FailureKind {
     pub fn name(self) -> &'static str {
         match self {
-            Self::CleanupIncomplete => "cleanup_incomplete",
             Self::Cancelled => "cancelled",
+            Self::OwnedElsewhere => "owned_elsewhere",
             Self::AlreadyRunning => "already_running",
-            Self::Timeout => "timeout",
+            Self::PodNotReady => "pod_not_ready",
             Self::AddressAllocation => "address_allocation",
+            Self::Timeout => "timeout",
+            Self::BindDenied => "bind_denied",
             Self::PortInUse => "port_in_use",
             Self::HostsFile => "hosts_file",
             Self::Tls => "tls",
@@ -245,20 +259,68 @@ impl FailureKind {
     }
 }
 
+/// A classified error message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Failure {
+    kind: FailureKind,
+    /// The rollback of the failed operation could not finish, leaving a relay
+    /// pod, loopback alias or hosts entry behind.
+    cleanup_incomplete: bool,
+}
+
+impl Failure {
+    /// A cancellation that left nothing behind is expected and not an error.
+    fn is_clean_cancellation(self) -> bool {
+        self.kind == FailureKind::Cancelled && !self.cleanup_incomplete
+    }
+}
+
+/// What the rollback of a failed start appends to the original message:
+/// `<original>; cleanup incomplete: <detail>`.
+const CLEANUP_INCOMPLETE: &str = "cleanup incomplete";
+
 /// Maps an error message to a [`FailureKind`]. Only the kind leaves the
-/// process; the message is used here and dropped.
+/// process; the message is used here and dropped. Text after a
+/// `cleanup incomplete` marker describes the rollback, not the failure, and
+/// does not decide the kind.
 pub fn classify(message: &str) -> FailureKind {
+    classify_failure(message).kind
+}
+
+fn classify_failure(message: &str) -> Failure {
+    // Ordered by priority. The two repository-file rules sit right after
+    // cancellation because their messages embed a file name chosen by the
+    // user, which could otherwise match any later needle ("auth.json").
     const RULES: &[(FailureKind, &[&str])] = &[
-        (FailureKind::CleanupIncomplete, &["cleanup incomplete"]),
         (FailureKind::Cancelled, &["cancelled", "canceled"]),
+        (FailureKind::Git, &["failed to read config file at"]),
+        (
+            FailureKind::InvalidConfig,
+            &["failed to parse config file at"],
+        ),
+        (FailureKind::OwnedElsewhere, &["being forwarded by another"]),
         (
             FailureKind::AlreadyRunning,
-            &["already running", "being forwarded by another"],
+            &["already running", "already in progress"],
         ),
-        (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
+        (
+            FailureKind::PodNotReady,
+            &["no ready pod", "waiting for a ready pod"],
+        ),
         (
             FailureKind::AddressAllocation,
             &["allocat", "loopback", "still being released"],
+        ),
+        (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
+        // Ahead of the kubeconfig rule: the Windows text for error 10013
+        // contains "forbidden".
+        (
+            FailureKind::BindDenied,
+            &[
+                "access denied or the port is reserved",
+                "forbidden by its access permissions",
+                "os error 10013",
+            ],
         ),
         (
             FailureKind::PortInUse,
@@ -331,6 +393,7 @@ pub fn classify(message: &str) -> FailureKind {
                 "invalid ip",
                 "invalid port",
                 "no label selector",
+                "no longer exists",
             ],
         ),
         (
@@ -344,10 +407,18 @@ pub fn classify(message: &str) -> FailureKind {
         ),
     ];
     let message = message.to_ascii_lowercase();
-    RULES
+    let (cause, cleanup_incomplete) = match message.find(CLEANUP_INCOMPLETE) {
+        Some(at) => (&message[..at], true),
+        None => (message.as_str(), false),
+    };
+    let kind = RULES
         .iter()
-        .find(|(_, needles)| needles.iter().any(|needle| message.contains(needle)))
-        .map_or(FailureKind::Other, |(kind, _)| *kind)
+        .find(|(_, needles)| needles.iter().any(|needle| cause.contains(needle)))
+        .map_or(FailureKind::Other, |(kind, _)| *kind);
+    Failure {
+        kind,
+        cleanup_incomplete,
+    }
 }
 
 /// Child span of the operation currently being measured; finishes on drop.
@@ -459,9 +530,11 @@ pub async fn load_setting_with_mode(mode: DatabaseMode) {
 
 /// Runs `future` as a transaction named after `operation`. Code awaited
 /// inside it (not spawned from it) can attach child spans with [`phase`].
-/// A failure is classified into a [`FailureKind`] and tagged on the transaction.
+/// A failure is classified into a [`FailureKind`] and tagged on the transaction,
+/// with `cleanup_incomplete` when its rollback could not finish.
 /// Cancellations get a cancelled status and an informational breadcrumb.
-/// Other failures also produce an error event.
+/// Other failures also produce an error event, as does a cancellation that
+/// left something behind.
 pub async fn measure<T, E: Display>(
     operation: Operation, future: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
@@ -488,14 +561,17 @@ pub async fn measure<T, E: Display>(
             );
         }
         Err(error) => {
-            let kind = classify(&error.to_string());
-            transaction.set_status(if kind == FailureKind::Cancelled {
+            let failure = classify_failure(&error.to_string());
+            transaction.set_status(if failure.is_clean_cancellation() {
                 SpanStatus::Cancelled
             } else {
                 SpanStatus::InternalError
             });
-            transaction.set_tag("failure_kind", kind.name());
-            report_failure_on(&hub, operation, kind);
+            transaction.set_tag("failure_kind", failure.kind.name());
+            if failure.cleanup_incomplete {
+                transaction.set_tag("cleanup_incomplete", "true");
+            }
+            report_failure_on(&hub, operation, failure);
             finish_unless_opted_out(transaction);
         }
     }
@@ -515,26 +591,35 @@ fn finish_unless_opted_out(transaction: Transaction) {
 /// `<operation>: <kind>` and keeps it as a breadcrumb. For callers that see
 /// failures inside an operation that still succeeded as a whole (a mixed
 /// start batch); `measure` reports its own result on the operation's hub.
-/// Cancellations leave an informational breadcrumb without an error event.
-pub fn report_failure(operation: Operation, kind: FailureKind) {
-    report_failure_on(&Hub::current(), operation, kind);
+/// Cancellations that left nothing behind leave an informational breadcrumb
+/// without an error event.
+pub fn report_failure(operation: Operation, message: &str) {
+    report_failure_on(&Hub::current(), operation, classify_failure(message));
 }
 
-fn report_failure_on(hub: &Hub, operation: Operation, kind: FailureKind) {
-    let cancelled = kind == FailureKind::Cancelled;
+fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) {
+    let quiet = failure.is_clean_cancellation();
     push_breadcrumb(
         "portforward",
-        format!("{} {}", operation.name(), kind.name()),
-        if cancelled { Level::Info } else { Level::Error },
+        if failure.cleanup_incomplete {
+            format!(
+                "{} {} cleanup_incomplete",
+                operation.name(),
+                failure.kind.name()
+            )
+        } else {
+            format!("{} {}", operation.name(), failure.kind.name())
+        },
+        if quiet { Level::Info } else { Level::Error },
     );
-    if cancelled {
+    if quiet {
         return;
     }
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
             ty: operation.name().into(),
-            value: Some(kind.name().into()),
+            value: Some(failure.kind.name().into()),
             mechanism: Some(Mechanism {
                 ty: "operation".into(),
                 handled: Some(true),
@@ -548,7 +633,14 @@ fn report_failure_on(hub: &Hub, operation: Operation, kind: FailureKind) {
     event
         .tags
         .insert("operation".into(), operation.name().into());
-    event.tags.insert("failure_kind".into(), kind.name().into());
+    event
+        .tags
+        .insert("failure_kind".into(), failure.kind.name().into());
+    if failure.cleanup_incomplete {
+        event
+            .tags
+            .insert("cleanup_incomplete".into(), "true".into());
+    }
     hub.capture_event(event);
 }
 
@@ -809,7 +901,10 @@ mod tests {
 
     #[test]
     fn scrub_attaches_recorded_events_as_breadcrumbs() {
-        report_failure(Operation::StartForward, FailureKind::Timeout);
+        report_failure(
+            Operation::StartForward,
+            "Timed out waiting for proxy listener in pod kftray-proxy-x",
+        );
         breadcrumb(AppEvent::LogViewerOpened);
 
         let event = scrub(true, event_from("laptop")).unwrap();
@@ -878,6 +973,144 @@ mod tests {
     }
 
     #[test]
+    fn another_process_owning_the_config_is_not_a_duplicate_start() {
+        assert_eq!(
+            classify("Config 7 is being forwarded by another kftray process (4242); stop it there"),
+            FailureKind::OwnedElsewhere
+        );
+        assert_eq!(
+            classify("Port forwarding is already running for config 7"),
+            FailureKind::AlreadyRunning
+        );
+        assert_eq!(
+            classify("Startup is already in progress for config 7"),
+            FailureKind::AlreadyRunning
+        );
+    }
+
+    #[test]
+    fn a_denied_bind_is_not_a_busy_port() {
+        assert_eq!(
+            classify(
+                "Failed to start TCP port forwarding for service api: Local TCP port 80 on \
+                 127.0.0.1 cannot be bound: access denied or the port is reserved by the system"
+            ),
+            FailureKind::BindDenied
+        );
+        // The raw Windows text says "forbidden", which is also a kubeconfig needle.
+        assert_eq!(
+            classify(
+                "Failed to bind TCP listener to 127.0.0.1:80: An attempt was made to access a \
+                 socket in a way forbidden by its access permissions. (os error 10013)"
+            ),
+            FailureKind::BindDenied
+        );
+        assert_eq!(
+            classify("Failed to bind TCP listener to 127.0.0.1:8080: Address already in use"),
+            FailureKind::PortInUse
+        );
+    }
+
+    #[test]
+    fn timeouts_are_classified_by_the_step_that_ran_out_of_time() {
+        assert_eq!(
+            classify("Timed out allocating a local address for config 3"),
+            FailureKind::AddressAllocation
+        );
+        assert_eq!(
+            classify("Timed out waiting for a ready pod"),
+            FailureKind::PodNotReady
+        );
+        assert_eq!(
+            classify("No ready pods available to resolve port name 'http'"),
+            FailureKind::PodNotReady
+        );
+        assert_eq!(
+            classify("Failed to build port forwarder: configuration error: no ready pod available"),
+            FailureKind::PodNotReady
+        );
+        assert_eq!(
+            classify("Timed out opening the first connection to the pod"),
+            FailureKind::Timeout
+        );
+        assert_eq!(
+            classify("Port-forward startup timed out"),
+            FailureKind::Timeout
+        );
+    }
+
+    #[test]
+    fn only_a_missing_service_is_target_not_found() {
+        assert_eq!(
+            classify("Service 'api' not found: ApiError: services \"api\" not found"),
+            FailureKind::TargetNotFound
+        );
+        assert_eq!(
+            classify("Failed to get Service 'api': error trying to connect: connection refused"),
+            FailureKind::Connection
+        );
+    }
+
+    #[test]
+    fn a_deleted_config_and_unreadable_repository_files_have_their_own_kinds() {
+        assert_eq!(
+            classify("Config 9 no longer exists"),
+            FailureKind::InvalidConfig
+        );
+        assert_eq!(
+            classify("Config 9 no longer exists; not recovering it"),
+            FailureKind::InvalidConfig
+        );
+        // The file name is chosen by the user and must not decide the kind.
+        assert_eq!(
+            classify(
+                "Failed to read config file at /tmp/.tmpAb/configs/auth.json: No such file or \
+                 directory (os error 2)"
+            ),
+            FailureKind::Git
+        );
+        assert_eq!(
+            classify(
+                "Failed to parse config file at /tmp/.tmpAb/tls.json: expected value at line 1 \
+                 column 1"
+            ),
+            FailureKind::InvalidConfig
+        );
+    }
+
+    #[test]
+    fn incomplete_cleanup_is_recorded_beside_the_original_cause() {
+        let failure = classify_failure(
+            "Failed to start TCP port forwarding for service api: Local TCP port 8080 on \
+             127.0.0.1 is already in use. Port 8081 is free.; cleanup incomplete: hosts file busy",
+        );
+        assert_eq!(
+            failure,
+            Failure {
+                kind: FailureKind::PortInUse,
+                cleanup_incomplete: true
+            }
+        );
+        // Only the text before the marker decides the kind, not the cleanup detail.
+        assert_eq!(
+            classify_failure(
+                "Startup cancelled for config 2; cleanup incomplete: relay delete failed"
+            ),
+            Failure {
+                kind: FailureKind::Cancelled,
+                cleanup_incomplete: true
+            }
+        );
+        assert_eq!(
+            classify_failure("Timed out waiting for the relay to start"),
+            Failure {
+                kind: FailureKind::Timeout,
+                cleanup_incomplete: false
+            }
+        );
+    }
+
+    #[test]
     fn failed_measure_reports_the_kind_not_the_message() {
         let envelopes = envelopes_with_consent(true, || {
             let result: Result<(), String> =
@@ -904,6 +1137,8 @@ mod tests {
         assert_eq!(event.tags["failure_kind"], "target_not_found");
         let transaction = captured_transaction(&envelopes);
         assert_eq!(transaction.tags["failure_kind"], "target_not_found");
+        assert!(!event.tags.contains_key("cleanup_incomplete"));
+        assert!(!transaction.tags.contains_key("cleanup_incomplete"));
         // Linked to the measured transaction, so GlitchTip shows them together.
         let trace_id_of =
             |contexts: &sentry::protocol::Map<String, sentry::protocol::Context>| match contexts
@@ -1083,9 +1318,11 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(event.tags["failure_kind"], "cleanup_incomplete");
+        assert_eq!(event.tags["failure_kind"], "cancelled");
+        assert_eq!(event.tags["cleanup_incomplete"], "true");
         let transaction = captured_transaction(&envelopes);
-        assert_eq!(transaction.tags["failure_kind"], "cleanup_incomplete");
+        assert_eq!(transaction.tags["failure_kind"], "cancelled");
+        assert_eq!(transaction.tags["cleanup_incomplete"], "true");
         assert_eq!(
             transaction
                 .contexts
@@ -1099,10 +1336,42 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_cleanup_does_not_hide_the_failure_that_caused_the_rollback() {
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), &str> = futures::executor::block_on(measure(
+                Operation::StartForward,
+                async {
+                    Err(
+                        "Timed out waiting for a ready pod; cleanup incomplete: relay delete failed",
+                    )
+                },
+            ));
+            assert!(result.is_err());
+        });
+        let event = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .find_map(|item| match item {
+                EnvelopeItem::Event(event) => Some(event),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(event.tags["failure_kind"], "pod_not_ready");
+        assert_eq!(event.tags["cleanup_incomplete"], "true");
+        assert_eq!(
+            captured_transaction(&envelopes).tags["failure_kind"],
+            "pod_not_ready"
+        );
+    }
+
+    #[test]
     fn cancelled_batch_item_does_not_hide_another_failure() {
         let envelopes = envelopes_with_consent(true, || {
-            report_failure(Operation::StartForward, FailureKind::Cancelled);
-            report_failure(Operation::StartForward, FailureKind::Timeout);
+            report_failure(Operation::StartForward, "Startup cancelled for config 1");
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x",
+            );
         });
         let failures: Vec<_> = envelopes
             .iter()

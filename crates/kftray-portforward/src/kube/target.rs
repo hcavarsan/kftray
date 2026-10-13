@@ -43,7 +43,7 @@ pub async fn resolve_pod_selector(
             let service = service_api
                 .get(service_name)
                 .await
-                .map_err(|e| anyhow::anyhow!("Service '{}' not found: {}", service_name, e))?;
+                .map_err(|e| service_lookup_error(service_name, &e))?;
 
             let selector = service
                 .spec
@@ -56,6 +56,17 @@ pub async fn resolve_pod_selector(
                 selector: service_label_selector(selector),
             })
         }
+    }
+}
+
+/// Only a 404 means the Service is missing. Forbidden, a server error or an
+/// unreachable API server are different problems and must not read as one.
+fn service_lookup_error(service_name: &str, error: &kube::Error) -> anyhow::Error {
+    match error {
+        kube::Error::Api(status) if status.code == 404 => {
+            anyhow::anyhow!("Service '{service_name}' not found: {error}")
+        }
+        _ => anyhow::anyhow!("Failed to get Service '{service_name}': {error}"),
     }
 }
 
@@ -534,5 +545,67 @@ mod tests {
             elapsed < Duration::from_secs(1),
             "elapsed {elapsed:?} implies the pod GET was not bounded by the remaining deadline"
         );
+    }
+
+    async fn service_lookup_failure(code: u16, reason: &str, message: &str) -> String {
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let target = Target::new(
+            TargetSelector::ServiceName("api".to_string()),
+            8080,
+            "default",
+        );
+
+        let body = serde_json::to_vec(&serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "status": "Failure",
+            "message": message,
+            "reason": reason,
+            "code": code,
+        }))
+        .unwrap();
+        let server = tokio::spawn(async move {
+            let (_request, send) = handle.next_request().await.unwrap();
+            let response = Response::builder()
+                .status(code)
+                .body(Body::from(body))
+                .unwrap();
+            send.send_response(response);
+        });
+
+        let error = resolve_pod_selector(&client, "default", &target)
+            .await
+            .expect_err("a failed Service GET must not resolve a selector");
+        server.await.unwrap();
+        error.to_string()
+    }
+
+    #[tokio::test]
+    async fn only_a_404_reports_the_service_as_not_found() {
+        let missing = service_lookup_failure(404, "NotFound", "services \"api\" not found").await;
+        assert!(
+            missing.starts_with("Service 'api' not found: "),
+            "{missing}"
+        );
+
+        let forbidden = service_lookup_failure(
+            403,
+            "Forbidden",
+            "services \"api\" is forbidden: cannot get resource",
+        )
+        .await;
+        assert!(
+            forbidden.starts_with("Failed to get Service 'api': "),
+            "{forbidden}"
+        );
+        assert!(!forbidden.contains("not found"), "{forbidden}");
+
+        let unavailable = service_lookup_failure(500, "InternalError", "etcd unavailable").await;
+        assert!(
+            unavailable.starts_with("Failed to get Service 'api': "),
+            "{unavailable}"
+        );
+        assert!(!unavailable.contains("not found"), "{unavailable}");
     }
 }
