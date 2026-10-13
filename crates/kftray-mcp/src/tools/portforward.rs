@@ -31,6 +31,15 @@ async fn start_config(config: Config) -> Result<Vec<CustomResponse>, String> {
     }
 }
 
+/// Tells the agent how to retry when the start failed because the local port
+/// is busy and the error named a free one.
+fn with_retry_hint(message: String, retry: impl FnOnce(u16) -> String) -> String {
+    match kftray_portforward::free_port_in_error(&message) {
+        Some(port) => format!("{message} To start on port {port}, {}.", retry(port)),
+        None => message,
+    }
+}
+
 // ============================================================================
 // List Active Port Forwards Tool
 // ============================================================================
@@ -252,9 +261,16 @@ impl McpTool for StartPortForwardTool {
                                 CallToolResult::error("No response received from port-forward")
                             }
                         }
-                        Err(e) => {
-                            CallToolResult::error(format!("Failed to start port-forward: {e}"))
-                        }
+                        Err(e) => CallToolResult::error(with_retry_hint(
+                            format!("Failed to start port-forward: {e}"),
+                            |port| {
+                                format!(
+                                    "call update_config with config_id {config_id} and \
+                                     local_port {port}, then call start_port_forward with \
+                                     config_id {config_id}"
+                                )
+                            },
+                        )),
                     }
                 }
                 Err(e) => CallToolResult::error(format!("Config not found: {e}")),
@@ -383,7 +399,10 @@ impl McpTool for StartPortForwardTool {
                             inserted_id
                         );
                     }
-                    CallToolResult::error(format!("Failed to start port-forward: {e}"))
+                    CallToolResult::error(with_retry_hint(
+                        format!("Failed to start port-forward: {e}"),
+                        |port| format!("call start_port_forward again with local_port {port}"),
+                    ))
                 }
             }
         }

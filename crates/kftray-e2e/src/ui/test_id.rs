@@ -30,6 +30,7 @@ pub enum TestId {
     ConfigProtocol,
     ConfigSave,
     AutoImportNamespace,
+    ToastAction,
 }
 
 impl TestId {
@@ -63,6 +64,7 @@ impl TestId {
             Self::ConfigProtocol => "config-protocol",
             Self::ConfigSave => "config-save",
             Self::AutoImportNamespace => "auto-import-namespace",
+            Self::ToastAction => "toast-action",
         }
     }
 

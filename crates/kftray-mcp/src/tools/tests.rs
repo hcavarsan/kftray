@@ -769,3 +769,42 @@ async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
         );
     }
 }
+
+#[tokio::test]
+async fn start_port_forward_on_a_busy_port_tells_the_agent_how_to_retry() {
+    let _db = temp_config_db().await;
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let busy = held.local_addr().unwrap().port();
+    let args = serde_json::json!({
+        "context": "dev",
+        "namespace": "team-a",
+        "service": "web",
+        "remote_port": 80,
+        "local_port": busy,
+        "kubeconfig": "/nonexistent/kubeconfig",
+    });
+    let created = execute_tool("create_config", Some(args.clone())).await;
+    let id = result_json(&created)["config_id"].as_i64().unwrap();
+
+    let saved = execute_tool(
+        "start_port_forward",
+        Some(serde_json::json!({"config_id": id})),
+    )
+    .await;
+    let new = execute_tool("start_port_forward", Some(args)).await;
+
+    let saved = result_text(&saved);
+    let free = kftray_portforward::free_port_in_error(saved).expect(saved);
+    assert!(
+        saved.ends_with(&format!(
+            "To start on port {free}, call update_config with config_id {id} and local_port \
+             {free}, then call start_port_forward with config_id {id}."
+        )),
+        "{saved}"
+    );
+    let new = result_text(&new);
+    assert!(
+        new.contains("call start_port_forward again with local_port "),
+        "{new}"
+    );
+}

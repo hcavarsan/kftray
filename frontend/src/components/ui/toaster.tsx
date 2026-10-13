@@ -79,6 +79,7 @@ export function Toaster() {
             </Stack>
             {toast.action && (
               <Toast.ActionTrigger
+                data-testid='toast-action'
                 fontSize='xs'
                 color='fg.secondary'
                 _hover={{ color: 'fg.secondary' }}
