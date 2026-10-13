@@ -1,5 +1,8 @@
 use std::path::Path;
+use std::process::Command;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use log::{
     error,
     info,
@@ -117,7 +120,13 @@ impl GitHubRepository {
             }
             Err(e) => {
                 warn!("Repository clone failed: {e}, trying fallback with system git command");
-                Self::try_clone_with_system_git(repo_url, temp_dir.path(), config_paths)
+                Self::try_clone_with_system_git(
+                    repo_url,
+                    temp_dir.path(),
+                    config_paths,
+                    use_system_credentials,
+                    github_token.as_deref(),
+                )
             }
         }
     }
@@ -143,27 +152,30 @@ impl GitHubRepository {
     }
 
     fn try_clone_with_system_git(
-        repo_url: &str, path: &Path, config_paths: &[String],
+        repo_url: &str, path: &Path, config_paths: &[String], use_system_credentials: bool,
+        token: Option<&str>,
     ) -> GitHubResult<String> {
-        use std::process::Command;
+        let token = token.filter(|t| !t.is_empty());
+        let existing_config_entries = std::env::var("GIT_CONFIG_COUNT")
+            .ok()
+            .and_then(|count| count.trim().parse().ok())
+            .unwrap_or(0);
 
-        let output = Command::new("git")
-            .arg("clone")
-            .arg("--depth=1")
-            .arg("--single-branch")
-            .arg("--no-tags")
-            .arg("--filter=blob:none")
-            .arg("--recurse-submodules=no")
-            .arg(repo_url)
-            .arg(path)
-            .output()
-            .map_err(|e| format!("Failed to execute git command: {e}"))?;
+        let output = system_git_command(
+            repo_url,
+            path,
+            use_system_credentials,
+            token,
+            existing_config_entries,
+        )
+        .output()
+        .map_err(|e| format!("Failed to execute git command: {e}"))?;
 
         if output.status.success() {
             info!("Successfully cloned repository using system git");
             Self::read_config_files(path, config_paths)
         } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
+            let error_msg = redact_token(&String::from_utf8_lossy(&output.stderr), token);
             error!("System git clone failed: {error_msg}");
             Err(format!(
                 "Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"
@@ -260,6 +272,110 @@ impl GitHubRepository {
     }
 }
 
+const SYSTEM_GIT_TOKEN_USER: &str = "git";
+
+/// Builds the `git clone` fallback. The token only travels in environment
+/// variables (`GIT_CONFIG_*`), never in argv or the URL, and
+/// `GIT_TERMINAL_PROMPT=0` keeps a missing credential from blocking the sync.
+fn system_git_command(
+    repo_url: &str, path: &Path, use_system_credentials: bool, token: Option<&str>,
+    existing_config_entries: usize,
+) -> Command {
+    let mut command = Command::new("git");
+    command
+        .args([
+            "clone",
+            "--depth=1",
+            "--single-branch",
+            "--no-tags",
+            "--filter=blob:none",
+            "--recurse-submodules=no",
+        ])
+        .arg(repo_url)
+        .arg(path)
+        .env("GIT_TERMINAL_PROMPT", "0");
+
+    let settings = system_git_settings(repo_url, use_system_credentials, token);
+
+    if !settings.is_empty() {
+        command.env(
+            "GIT_CONFIG_COUNT",
+            (existing_config_entries + settings.len()).to_string(),
+        );
+
+        for (offset, (key, value)) in settings.iter().enumerate() {
+            let index = existing_config_entries + offset;
+            command
+                .env(format!("GIT_CONFIG_KEY_{index}"), key)
+                .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+        }
+    }
+
+    command
+}
+
+/// Mirrors the git2 path: the token is only for HTTPS (or plain HTTP to the
+/// local machine), and stored credential helpers are only consulted when
+/// the user chose system credentials.
+fn system_git_settings(
+    repo_url: &str, use_system_credentials: bool, token: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut settings = Vec::new();
+
+    if !use_system_credentials {
+        settings.push(("credential.helper".to_owned(), String::new()));
+    }
+
+    if let Some(token) = token
+        && let Some(origin) = token_origin(repo_url)
+    {
+        settings.push((
+            format!("http.{origin}/.extraHeader"),
+            format!("Authorization: {}", authorization_value(token)),
+        ));
+    }
+
+    settings
+}
+
+/// The scheme and host the token may be sent to. Scoping the header to it
+/// keeps it from following a redirect to another host.
+fn token_origin(repo_url: &str) -> Option<String> {
+    let (scheme, rest) = repo_url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host_port = authority.rsplit('@').next()?;
+    let host = match host_port.strip_prefix('[') {
+        Some(ipv6) => ipv6.split(']').next()?,
+        None => host_port.split(':').next()?,
+    };
+    let scheme = scheme.to_ascii_lowercase();
+
+    let allowed = match scheme.as_str() {
+        "https" => !host.is_empty(),
+        "http" => matches!(host, "localhost" | "127.0.0.1" | "::1"),
+        _ => false,
+    };
+
+    allowed.then(|| format!("{scheme}://{host_port}"))
+}
+
+fn authorization_value(token: &str) -> String {
+    format!(
+        "Basic {}",
+        STANDARD.encode(format!("{SYSTEM_GIT_TOKEN_USER}:{token}"))
+    )
+}
+
+fn redact_token(text: &str, token: Option<&str>) -> String {
+    let Some(token) = token else {
+        return text.to_owned();
+    };
+    let encoded = STANDARD.encode(format!("{SYSTEM_GIT_TOKEN_USER}:{token}"));
+
+    text.replace(&encoded, "[redacted]")
+        .replace(token, "[redacted]")
+}
+
 /// Clear existing configurations from database
 async fn clear_existing_configs_with_pool(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
@@ -318,6 +434,19 @@ pub fn build_github_api_url(repo_url: &str, config_path: &str) -> Result<String,
 
 #[cfg(test)]
 mod tests {
+    use std::io::{
+        Read,
+        Write,
+    };
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{
+        AtomicBool,
+        Ordering,
+    };
+    use std::time::Duration;
+
+    use parking_lot::Mutex;
     use sqlx::SqlitePool;
 
     use super::*;
@@ -660,5 +789,252 @@ mod tests {
                 .unwrap_err()
                 .contains("URL must be a GitHub repository URL")
         );
+    }
+
+    const TOKEN: &str = "ghp_sup3rS3cretT0ken";
+
+    struct HttpStub {
+        port: u16,
+        requests: Arc<Mutex<Vec<String>>>,
+        stop: Arc<AtomicBool>,
+        handle: std::thread::JoinHandle<()>,
+    }
+
+    impl HttpStub {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let stop = Arc::new(AtomicBool::new(false));
+
+            let handle = {
+                let requests = requests.clone();
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::SeqCst) {
+                        let Ok((mut stream, _)) = listener.accept() else {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        };
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        let mut request = Vec::new();
+                        let mut buf = [0u8; 1024];
+                        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                            match stream.read(&mut buf) {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => request.extend_from_slice(&buf[..n]),
+                            }
+                        }
+                        requests
+                            .lock()
+                            .push(String::from_utf8_lossy(&request).into_owned());
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                })
+            };
+
+            Self {
+                port,
+                requests,
+                stop,
+                handle,
+            }
+        }
+
+        fn url(&self) -> String {
+            format!("http://127.0.0.1:{}/org/repo.git", self.port)
+        }
+
+        fn finish(self) -> Vec<String> {
+            self.stop.store(true, Ordering::SeqCst);
+            self.handle.join().unwrap();
+            self.requests.lock().clone()
+        }
+    }
+
+    fn expected_authorization(token: &str) -> String {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("git:{token}"))
+        )
+    }
+
+    fn authorization(request: &str) -> Option<&str> {
+        request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim())
+        })
+    }
+
+    #[test]
+    fn fallback_clone_authenticates_with_the_saved_token_and_keeps_it_out_of_errors() {
+        let stub = HttpStub::start();
+        let url = stub.url();
+        let dest = tempfile::TempDir::new().unwrap();
+
+        let err = GitHubRepository::try_clone_with_system_git(
+            &url,
+            dest.path(),
+            &["config.json".to_string()],
+            false,
+            Some(TOKEN),
+        )
+        .unwrap_err();
+
+        let requests = stub.finish();
+        assert!(!requests.is_empty(), "git never reached the stub");
+        for request in &requests {
+            assert_eq!(
+                authorization(request),
+                Some(expected_authorization(TOKEN).as_str()),
+                "request: {request}"
+            );
+        }
+        assert!(err.contains("not found"), "stderr cause was lost: {err}");
+        assert!(!err.contains(TOKEN), "token leaked into error: {err}");
+    }
+
+    #[test]
+    fn fallback_clone_without_a_token_sends_no_authorization() {
+        let stub = HttpStub::start();
+        let url = stub.url();
+        let dest = tempfile::TempDir::new().unwrap();
+
+        let err = GitHubRepository::try_clone_with_system_git(
+            &url,
+            dest.path(),
+            &["config.json".to_string()],
+            true,
+            None,
+        )
+        .unwrap_err();
+
+        let requests = stub.finish();
+        assert!(!requests.is_empty(), "git never reached the stub");
+        for request in &requests {
+            assert_eq!(authorization(request), None, "request: {request}");
+        }
+        assert!(err.contains("not found"), "stderr cause was lost: {err}");
+    }
+
+    fn env_of(command: &Command) -> std::collections::HashMap<String, String> {
+        command
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn system_git_command_passes_the_token_only_through_the_environment() {
+        let url = "https://github.com/org/repo.git";
+        let command = system_git_command(url, Path::new("/tmp/dest"), false, Some(TOKEN), 0);
+
+        let argv: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(argv.iter().all(|a| !a.contains(TOKEN)), "argv: {argv:?}");
+        assert!(argv.contains(&url.to_string()));
+
+        let env = env_of(&command);
+        assert_eq!(env["GIT_TERMINAL_PROMPT"], "0");
+        assert_eq!(env["GIT_CONFIG_COUNT"], "2");
+        assert_eq!(env["GIT_CONFIG_KEY_0"], "credential.helper");
+        assert_eq!(env["GIT_CONFIG_VALUE_0"], "");
+        assert_eq!(
+            env["GIT_CONFIG_KEY_1"],
+            "http.https://github.com/.extraHeader"
+        );
+        assert_eq!(
+            env["GIT_CONFIG_VALUE_1"],
+            format!("Authorization: {}", expected_authorization(TOKEN))
+        );
+    }
+
+    #[test]
+    fn system_git_command_appends_to_config_entries_already_in_the_environment() {
+        let command = system_git_command(
+            "https://github.com/org/repo.git",
+            Path::new("/tmp/dest"),
+            true,
+            Some(TOKEN),
+            3,
+        );
+
+        let env = env_of(&command);
+        assert_eq!(env["GIT_CONFIG_COUNT"], "4");
+        assert!(!env.contains_key("GIT_CONFIG_KEY_0"));
+        assert_eq!(
+            env["GIT_CONFIG_KEY_3"],
+            "http.https://github.com/.extraHeader"
+        );
+    }
+
+    #[test]
+    fn system_git_command_keeps_system_credentials_when_no_token_is_saved() {
+        let command = system_git_command(
+            "https://github.com/org/repo.git",
+            Path::new("/tmp/dest"),
+            true,
+            None,
+            0,
+        );
+
+        let env = env_of(&command);
+        assert_eq!(env["GIT_TERMINAL_PROMPT"], "0");
+        assert!(!env.contains_key("GIT_CONFIG_COUNT"));
+    }
+
+    #[test]
+    fn token_origin_only_allows_https_and_local_http() {
+        assert_eq!(
+            token_origin("https://github.com/org/repo.git").as_deref(),
+            Some("https://github.com")
+        );
+        assert_eq!(
+            token_origin("HTTPS://user@git.example.com:8443/org/repo").as_deref(),
+            Some("https://git.example.com:8443")
+        );
+        assert_eq!(
+            token_origin("http://127.0.0.1:9000/repo.git").as_deref(),
+            Some("http://127.0.0.1:9000")
+        );
+        assert_eq!(
+            token_origin("http://[::1]:9000/repo.git").as_deref(),
+            Some("http://[::1]:9000")
+        );
+        assert_eq!(token_origin("http://github.com/org/repo.git"), None);
+        assert_eq!(token_origin("git@github.com:org/repo.git"), None);
+        assert_eq!(token_origin("ssh://git@github.com/org/repo.git"), None);
+        assert_eq!(token_origin("https:///repo.git"), None);
+    }
+
+    #[test]
+    fn redact_token_removes_the_token_and_its_basic_auth_form() {
+        let stderr = format!(
+            "fatal: bad header Authorization: {} for {TOKEN}",
+            expected_authorization(TOKEN)
+        );
+
+        let redacted = redact_token(&stderr, Some(TOKEN));
+
+        assert!(!redacted.contains(TOKEN), "{redacted}");
+        assert!(
+            !redacted.contains(&expected_authorization(TOKEN)),
+            "{redacted}"
+        );
+        assert!(redacted.starts_with("fatal: bad header"));
     }
 }
