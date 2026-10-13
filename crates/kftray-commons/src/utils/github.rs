@@ -275,8 +275,10 @@ impl GitHubRepository {
 const SYSTEM_GIT_TOKEN_USER: &str = "git";
 
 /// Builds the `git clone` fallback. The token only travels in environment
-/// variables (`GIT_CONFIG_*`), never in argv or the URL, and
-/// `GIT_TERMINAL_PROMPT=0` keeps a missing credential from blocking the sync.
+/// variables (`GIT_CONFIG_*`), never in argv or the URL. A missing credential
+/// fails the sync instead of blocking it: `GIT_TERMINAL_PROMPT=0` stops the
+/// terminal prompt, and an empty `GIT_ASKPASS` stops git from running an
+/// askpass GUI found in `core.askPass` or `SSH_ASKPASS`.
 fn system_git_command(
     repo_url: &str, path: &Path, use_system_credentials: bool, token: Option<&str>,
     existing_config_entries: usize,
@@ -293,7 +295,8 @@ fn system_git_command(
         ])
         .arg(repo_url)
         .arg(path)
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "");
 
     let settings = system_git_settings(repo_url, use_system_credentials, token);
 
@@ -802,6 +805,12 @@ mod tests {
 
     impl HttpStub {
         fn start() -> Self {
+            Self::answering(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+        }
+
+        fn answering(response: &'static [u8]) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let port = listener.local_addr().unwrap().port();
@@ -832,9 +841,7 @@ mod tests {
                         requests
                             .lock()
                             .push(String::from_utf8_lossy(&request).into_owned());
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
+                        let _ = stream.write_all(response);
                     }
                 })
             };
@@ -922,6 +929,36 @@ mod tests {
             assert_eq!(authorization(request), None, "request: {request}");
         }
         assert!(err.contains("not found"), "stderr cause was lost: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_clone_fails_without_running_an_inherited_askpass_helper() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let stub = HttpStub::answering(
+            b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"repo\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let url = stub.url();
+        let dest = tempfile::TempDir::new().unwrap();
+        let scratch = tempfile::TempDir::new().unwrap();
+        let marker = scratch.path().join("asked");
+        let helper = scratch.path().join("askpass.sh");
+        std::fs::write(
+            &helper,
+            format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // A desktop session's askpass GUI, as git would find it.
+        let mut command = system_git_command(&url, dest.path(), false, None, 0);
+        command.env("SSH_ASKPASS", &helper);
+        let output = command.output().unwrap();
+        stub.finish();
+
+        assert!(!output.status.success());
+        assert!(!marker.exists(), "git ran the inherited askpass helper");
     }
 
     fn env_of(command: &Command) -> std::collections::HashMap<String, String> {
