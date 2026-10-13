@@ -141,4 +141,29 @@ pub mod test_utils {
             }
         }
     }
+
+    static HOSTS_FILE_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Makes the hosts-file helpers (`edit_hosts`, `read_hosts`,
+    /// `HostsFile::write`) use `path` instead of the platform hosts file for
+    /// as long as it lives. The path need not exist: a missing or unusable
+    /// hosts file is how a test makes every hosts access fail. Serialized
+    /// like [`EnvVarGuard`], since the override is global to the process.
+    pub struct HostsFileGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl HostsFileGuard {
+        pub fn point_at(path: &std::path::Path) -> Self {
+            let lock = HOSTS_FILE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            crate::utils::hostsfile::override_default_hosts_path(Some(path.to_path_buf()));
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for HostsFileGuard {
+        fn drop(&mut self) {
+            crate::utils::hostsfile::override_default_hosts_path(None);
+        }
+    }
 }

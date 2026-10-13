@@ -11,6 +11,7 @@ use std::{
         Path,
         PathBuf,
     },
+    sync::Mutex,
 };
 
 pub type Result<T, E = HostsFileError> = std::result::Result<T, E>;
@@ -1189,8 +1190,26 @@ impl<'a> AtomicFileWriter<'a> {
     }
 }
 
+/// Where [`get_default_hosts_path`] resolves instead of the platform hosts
+/// file. Only [`crate::test_utils::HostsFileGuard`] sets it; nothing in
+/// production does, so the platform path is always the one used there.
+static DEFAULT_HOSTS_PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+pub(crate) fn override_default_hosts_path(path: Option<PathBuf>) {
+    *DEFAULT_HOSTS_PATH_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = path;
+}
+
 fn get_default_hosts_path() -> Result<PathBuf> {
-    let path = get_platform_hosts_path()?;
+    let overridden = DEFAULT_HOSTS_PATH_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let path = match overridden {
+        Some(path) => path,
+        None => get_platform_hosts_path()?,
+    };
 
     if !path.exists() {
         return Err(HostsFileError::InvalidPath(format!(

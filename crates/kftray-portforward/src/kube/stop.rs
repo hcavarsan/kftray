@@ -720,6 +720,43 @@ fn pending_cleanup_targets(id: i64) -> Vec<PendingTarget> {
         .unwrap_or_default()
 }
 
+/// Every configuration snapshot recording what `id` may have left behind:
+/// the cleanup registry, the obligations persisted by an earlier run (a
+/// start does not reload those, only the stop paths do), and the snapshot a
+/// forward that never stopped cleanly left running.
+///
+/// `None` when a persisted record cannot be read or understood: what it
+/// named is then unknown, which a caller must not mistake for nothing.
+pub(crate) async fn recorded_configs(id: i64, mode: DatabaseMode) -> Option<Vec<Config>> {
+    let mut configs: Vec<Config> = pending_cleanup_targets(id)
+        .into_iter()
+        .map(|target| target.config)
+        .collect();
+    let scope = kftray_commons::utils::settings::mode_scope(mode);
+    let uncertain = kftray_commons::utils::settings::get_settings_with_prefix_and_mode(
+        &format!("{UNCERTAIN_CREATE_PREFIX}{scope}:{id}:"),
+        mode,
+    )
+    .await
+    .ok()?;
+    for (_, value) in uncertain {
+        let config = match serde_json::from_str::<PersistedTarget>(&value) {
+            Ok(persisted) => persisted.config,
+            Err(_) => serde_json::from_str::<Config>(&value).ok()?,
+        };
+        configs.push(config);
+    }
+    let local =
+        kftray_commons::utils::settings::get_setting_with_mode(&local_cleanup_key(id, mode), mode)
+            .await
+            .ok()?;
+    if let Some(value) = local {
+        configs.push(serde_json::from_str::<Config>(&value).ok()?);
+    }
+    configs.extend(running_snapshot(id, mode).await);
+    Some(configs)
+}
+
 /// Records created cluster resources so a dropped startup future still leaves a
 /// trail for stop-all.
 ///
@@ -2895,6 +2932,36 @@ mod tests {
                 .is_none(),
             "settling must forget the durable record too"
         );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn recorded_configs_include_obligations_only_a_restart_left_on_disk() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = -9_314;
+        PENDING_CLEANUP.remove(&id);
+        let mode = DatabaseMode::Memory;
+        let config = Config {
+            id: Some(id),
+            service: Some("relay".to_string()),
+            alias: Some("relay.local".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        };
+        assert_eq!(recorded_configs(id, mode).await.unwrap().len(), 0);
+
+        record_local_cleanup(id, config.clone(), mode).await;
+        // A restart: the registry is empty and only the durable record is left,
+        // and a start does not reload it.
+        PENDING_CLEANUP.remove(&id);
+
+        let recorded = recorded_configs(id, mode).await.unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].alias, config.alias);
+
+        settle_local_cleanup(id, &config, mode).await;
+        assert!(recorded_configs(id, mode).await.unwrap().is_empty());
         PENDING_CLEANUP.remove(&id);
     }
 

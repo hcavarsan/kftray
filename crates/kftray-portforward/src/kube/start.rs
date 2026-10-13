@@ -239,7 +239,7 @@ async fn rollback_local_resources(
     let snapshot = config.clone();
     let in_use = crate::kube::stop::forwarding_configs(mode).await;
     let hosts =
-        crate::hostsfile::remove_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
+        crate::hostsfile::rollback_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
     match hosts {
         Ok(()) => {}
         Err(error) => errors.push(error.to_string()),
@@ -1767,6 +1767,84 @@ mod tests {
         if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
             process.cleanup_and_abort().await;
         }
+    }
+
+    #[tokio::test]
+    async fn a_rollback_ignores_the_hosts_file_of_a_start_that_never_wrote_an_alias() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let config = Config {
+            id: Some(410_170),
+            domain_enabled: Some(false),
+            ..setup_test_config()
+        };
+
+        let message = rollback_local_resources(
+            &config,
+            "127.0.0.1",
+            "start failed".to_owned(),
+            DatabaseMode::Memory,
+        )
+        .await;
+
+        assert_eq!(message, "start failed");
+    }
+
+    #[tokio::test]
+    async fn a_rollback_of_a_start_that_wrote_an_alias_stays_incomplete_without_a_hosts_file() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let config = Config {
+            id: Some(410_171),
+            ..setup_config_with_domain()
+        };
+
+        let message = rollback_local_resources(
+            &config,
+            "127.0.0.1",
+            "start failed".to_owned(),
+            DatabaseMode::Memory,
+        )
+        .await;
+
+        assert!(message.contains("cleanup incomplete"), "{message}");
+        crate::kube::stop::settle_local_cleanup(410_171, &config, DatabaseMode::Memory).await;
+    }
+
+    #[tokio::test]
+    async fn a_rollback_still_verifies_an_alias_only_an_earlier_snapshot_names() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let mode = DatabaseMode::Memory;
+        let id = 410_172;
+        // The row was edited to drop its domain alias after a cleanup of the
+        // old one was left owing; only that snapshot still names the line.
+        let earlier = Config {
+            id: Some(id),
+            ..setup_config_with_domain()
+        };
+        crate::kube::stop::record_local_cleanup(id, earlier.clone(), mode).await;
+        let edited = Config {
+            id: Some(id),
+            domain_enabled: Some(false),
+            ..setup_test_config()
+        };
+
+        let message =
+            rollback_local_resources(&edited, "127.0.0.1", "start failed".to_owned(), mode).await;
+
+        assert!(message.contains("cleanup incomplete"), "{message}");
+        crate::kube::stop::settle_local_cleanup(id, &earlier, mode).await;
+        crate::kube::stop::settle_local_cleanup(id, &edited, mode).await;
     }
 
     #[test]

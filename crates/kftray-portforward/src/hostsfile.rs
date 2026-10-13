@@ -77,6 +77,22 @@ impl HostfileManager {
             .filter(|helper| helper.is_available())
     }
 
+    /// Whether this run wrote, or handed the helper, a line under any of
+    /// `ids`. A removal that verified them gone forgets them, so what is
+    /// left is a write whose line may still be on disk.
+    fn wrote_any(&self, ids: &[String]) -> bool {
+        let handed = self
+            .handed_to_helper
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let written = self
+            .ssl_ids_written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handed.iter().any(|(owner, _)| ids.contains(owner))
+            || ids.iter().any(|id| written.contains(id))
+    }
+
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> std::io::Result<()> {
         if let Some(helper) = self.helper() {
             match helper.add_host_entry(id.clone(), entry.clone()) {
@@ -513,6 +529,16 @@ fn attributable_lines(
         .collect()
 }
 
+/// Whether the configuration asks for a domain alias in the hosts file.
+fn names_domain_alias(config: &kftray_commons::models::config_model::Config) -> bool {
+    config.domain_enabled.unwrap_or_default()
+        && config.service.is_some()
+        && config
+            .alias
+            .as_deref()
+            .is_some_and(|alias| !alias.is_empty())
+}
+
 /// Every alias a configuration may have written, keyed by the id each was
 /// written under.
 ///
@@ -539,7 +565,7 @@ fn config_host_entries(
         return Vec::new();
     };
     let mut entries = Vec::new();
-    if config.domain_enabled.unwrap_or_default() && config.service.is_some() {
+    if names_domain_alias(config) {
         entries.push((
             id.to_string(),
             HostEntry {
@@ -731,6 +757,64 @@ pub async fn remove_config_host_entries(
     forget_ssl_id_written(&https_local_id, mode).await;
 
     Ok(())
+}
+
+/// [`remove_config_host_entries`] for a start that is being rolled back,
+/// which skips the hosts file when nothing can have been written to it.
+///
+/// Reading, locking and recovering the platform hosts file can fail for
+/// reasons unrelated to the start (no write access to complete an
+/// interrupted rewrite, a locked or unreadable file), and a start that never
+/// wrote an alias would then report an incomplete cleanup for lines that do
+/// not exist. The hosts file is skipped only on positive evidence that no
+/// alias can exist for `id`: the configuration and every recorded snapshot
+/// of it name no domain alias, no HTTPS id was written (in this run or a
+/// persisted one), and nothing was handed to the helper. Anything else, or
+/// anything that cannot be read, keeps the verification and its durable
+/// retry; a failure of that verification, a refused permission included,
+/// still fails the rollback.
+pub async fn rollback_config_host_entries(
+    id: i64, config: Option<&kftray_commons::models::config_model::Config>,
+    in_use: &[kftray_commons::models::config_model::Config], mode: DatabaseMode,
+) -> std::io::Result<()> {
+    if !alias_may_exist(id, config, mode).await {
+        return Ok(());
+    }
+    remove_config_host_entries(id, config, in_use, mode).await
+}
+
+async fn alias_may_exist(
+    id: i64, config: Option<&kftray_commons::models::config_model::Config>, mode: DatabaseMode,
+) -> bool {
+    let Some(config) = config else {
+        return true;
+    };
+    if names_domain_alias(config) {
+        return true;
+    }
+    let ids = [
+        id.to_string(),
+        format!("{id}-https"),
+        format!("{id}-https-local"),
+    ];
+    if HOSTFILE_MANAGER.wrote_any(&ids) {
+        return true;
+    }
+    for full_id in &ids[1..] {
+        match kftray_commons::utils::settings::get_setting_with_mode(
+            &ssl_hosts_written_key(full_id, mode),
+            mode,
+        )
+        .await
+        {
+            Ok(None) => {}
+            Ok(Some(_)) | Err(_) => return true,
+        }
+    }
+    match crate::kube::stop::recorded_configs(id, mode).await {
+        Some(recorded) => recorded.iter().any(names_domain_alias),
+        None => true,
+    }
 }
 
 pub async fn add_ssl_host_entry(
@@ -1118,5 +1202,107 @@ mod tests {
             }
             other => panic!("expected Retryable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn this_run_remembers_what_it_wrote_under_an_id() {
+        let entry = HostEntry {
+            ip: "127.0.0.1".parse().unwrap(),
+            hostname: "app.local".to_owned(),
+        };
+        let manager = HostfileManager::without_helper();
+        let ids = [
+            "51".to_owned(),
+            "51-https".to_owned(),
+            "51-https-local".to_owned(),
+        ];
+        assert!(!manager.wrote_any(&ids));
+
+        manager
+            .handed_to_helper
+            .lock()
+            .unwrap()
+            .insert(("51".to_owned(), entry));
+        assert!(manager.wrote_any(&ids));
+        assert!(!manager.wrote_any(&["52".to_owned()]));
+
+        let manager = HostfileManager::without_helper();
+        manager
+            .ssl_ids_written
+            .lock()
+            .unwrap()
+            .insert("51-https-local".to_owned());
+        assert!(manager.wrote_any(&ids));
+    }
+
+    #[tokio::test]
+    async fn an_alias_is_ruled_out_only_by_evidence_that_none_can_exist() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let id = 410_190;
+        let config = kftray_commons::models::config_model::Config {
+            id: Some(id),
+            service: Some("app".to_owned()),
+            alias: Some("app.local".to_owned()),
+            domain_enabled: Some(false),
+            protocol: "tcp".to_owned(),
+            ..Default::default()
+        };
+
+        assert!(!alias_may_exist(id, Some(&config), mode).await);
+        assert!(
+            alias_may_exist(id, None, mode).await,
+            "without the configuration nothing rules an alias out"
+        );
+        let domain = kftray_commons::models::config_model::Config {
+            domain_enabled: Some(true),
+            ..config.clone()
+        };
+        assert!(alias_may_exist(id, Some(&domain), mode).await);
+
+        persist_ssl_id_written(&format!("{id}-https"), mode).await;
+        assert!(
+            alias_may_exist(id, Some(&config), mode).await,
+            "a persisted HTTPS id is a write whose line may be on disk"
+        );
+        forget_ssl_id_written(&format!("{id}-https"), mode).await;
+        assert!(!alias_may_exist(id, Some(&config), mode).await);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hosts_file_that_cannot_be_opened_still_fails_the_rollback_of_a_written_alias() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let hosts = dir.path().join("hosts");
+        std::fs::write(&hosts, "127.0.0.1 localhost\n").unwrap();
+        std::fs::set_permissions(&hosts, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&hosts).is_ok() {
+            // Running as root: permissions do not stop this process.
+            return;
+        }
+        let _hosts = kftray_commons::test_utils::HostsFileGuard::point_at(&hosts);
+        let config = kftray_commons::models::config_model::Config {
+            id: Some(410_191),
+            service: Some("app".to_owned()),
+            alias: Some("app.local".to_owned()),
+            domain_enabled: Some(true),
+            protocol: "tcp".to_owned(),
+            ..Default::default()
+        };
+
+        let error = rollback_config_host_entries(410_191, Some(&config), &[], DatabaseMode::Memory)
+            .await
+            .expect_err("a refused permission must stay a failure");
+
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{error}"
+        );
     }
 }
