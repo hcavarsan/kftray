@@ -60,6 +60,14 @@ export function getStatusInfo(
     }
   }
 
+  if (config.owned_elsewhere) {
+    return {
+      color: 'fg.muted',
+      status: 'Running elsewhere',
+      description: 'Running in another kftray process',
+    }
+  }
+
   if (config.is_running) {
     if (config.is_retrying) {
       return {

@@ -66,6 +66,7 @@ export interface ForwardState {
   is_retrying?: boolean
   retry_count?: number | null
   last_error?: string | null
+  owned_elsewhere?: boolean
 }
 
 export type Config = StoredConfig & ForwardState

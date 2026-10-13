@@ -16,7 +16,9 @@ export function forwardBatchState(
   const selectedIds = new Set(selectedConfigs.map(config => config.id))
   const selected = configs.filter(config => selectedIds.has(config.id))
   const startSelected = selected.some(config => !config.is_running)
-  const stopSelected = selected.some(config => config.is_running)
+  const stopSelected = selected.some(
+    config => config.is_running && !config.owned_elsewhere,
+  )
 
   if (selected.length > 0) {
     return {
@@ -33,6 +35,8 @@ export function forwardBatchState(
     startSelected,
     stopSelected,
     startDisabled: configs.every(config => config.is_running),
-    stopDisabled: allConfigs.every(config => !config.is_running),
+    stopDisabled: !allConfigs.some(
+      config => config.is_running && !config.owned_elsewhere,
+    ),
   }
 }
