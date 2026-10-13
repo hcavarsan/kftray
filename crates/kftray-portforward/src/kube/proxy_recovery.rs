@@ -1568,7 +1568,11 @@ mod tests {
             );
             step().await;
             if matches!(*manager.state.read().await, RecoveryState::Failed { .. }) {
+                // A paused clock jumps ahead while the test waits on the pool, which
+                // fires its acquire timeout before the database answers.
+                tokio::time::resume();
                 let state = row(id).await;
+                tokio::time::pause();
                 if state
                     .last_error
                     .as_deref()
