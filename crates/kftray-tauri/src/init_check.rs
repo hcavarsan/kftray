@@ -264,7 +264,7 @@ fn is_transient_failure(message: &str) -> bool {
 async fn dispatch_until_reachable(
     port_ops: &Arc<dyn PortOperations>, config: &Config, config_id: i64, backoff: &[Duration],
 ) -> Result<Restored, String> {
-    let mut stops_before = None;
+    let stops_before = port_ops.stop_generation(config_id);
     let mut waits = backoff.iter();
     loop {
         let error = match port_ops.dispatch_start(config).await {
@@ -274,10 +274,6 @@ async fn dispatch_until_reachable(
         let Some(wait) = waits.next().filter(|_| is_transient_failure(&error)) else {
             return Err(error);
         };
-        // Read after the first failure, not before the first attempt: a stop
-        // that lands earlier either cancels that attempt (not transient) or
-        // clears the row, which `restore_superseded` also checks.
-        let stops_before = *stops_before.get_or_insert_with(|| port_ops.stop_generation(config_id));
         warn!("Config {config_id} is not reachable yet ({error}); retrying in {wait:?}");
         tokio::time::sleep(*wait).await;
         if restore_superseded(port_ops, config_id, stops_before).await {
@@ -435,6 +431,12 @@ mod tests {
 
     use super::*;
 
+    fn mock_ops() -> MockPortOperations {
+        let mut mock = MockPortOperations::new();
+        mock.expect_stop_generation().returning(|_| 0);
+        mock
+    }
+
     fn create_test_config(
         id: i64, port: u16, protocol: &str, workload_type: Option<&str>,
     ) -> Config {
@@ -460,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_ports_no_running_configs() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         mock.expect_get_configs_state()
             .times(1)
             .returning(|| Ok(vec![]));
@@ -471,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_ports_with_configs() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config_states = vec![create_config_state(1, true)];
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
@@ -501,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_ports_get_states_error() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         mock.expect_get_configs_state()
             .times(1)
             .returning(|| Err("Failed to get config states".to_string()));
@@ -513,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_ports_get_config_error() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config_states = vec![create_config_state(1, true)];
 
         mock.expect_get_configs_state()
@@ -532,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_port_existing_process() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
@@ -553,7 +555,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_port_internal_process() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
@@ -567,7 +569,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_port_kftui_process() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
@@ -581,7 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_port_update_state_error() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
@@ -599,7 +601,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_and_manage_port_zero_port() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 0, "tcp", Some("service"));
 
         mock.expect_find_process_by_port()
@@ -619,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forwarding_success() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
@@ -637,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forwarding_proxy_workload() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("proxy"));
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
@@ -655,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_start_that_lost_to_a_live_forward_leaves_its_state_alone() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -673,7 +675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forwarding_failure() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -703,7 +705,7 @@ mod tests {
         // a state-read error used to reach the unconditional clear below it,
         // marking the config stopped on a read failure that says nothing
         // about who owns it.
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -723,7 +725,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forwarding_update_state_error() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
@@ -738,7 +740,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_configs_in_parallel() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config_states = vec![create_config_state(1, true), create_config_state(2, true)];
 
         let config1 = create_test_config(1, 8080, "tcp", None);
@@ -775,7 +777,7 @@ mod tests {
         // The row's process_id equals this process's own pid: that is
         // stale data from an earlier attempt in this same process, not
         // another live owner, so it must still be cleared.
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -816,7 +818,7 @@ mod tests {
             .expect("failed to spawn helper process");
         let other_pid = child.id();
 
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start().times(1).returning(move |_| {
@@ -871,7 +873,7 @@ mod tests {
         let (started_tx, started_rx) = mpsc::channel();
         let (written_tx, written_rx) = mpsc::channel();
 
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         mock.expect_get_configs_state()
             .returning(move || Ok(vec![foreign.clone(), own.clone()]));
         mock.expect_get_config().returning(|id| {
@@ -915,7 +917,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_restore_that_finds_the_cluster_unreachable_is_retried_until_it_starts() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
         let mut attempts = mockall::Sequence::new();
 
@@ -943,7 +945,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_restore_gives_up_after_the_backoff_and_marks_the_config_stopped() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -973,13 +975,12 @@ mod tests {
             "Failed to bind 127.0.0.1:80: Permission denied (os error 13)",
             "Failed to bind 127.0.0.1:8080: Address already in use (os error 98)",
         ] {
-            let mut mock = MockPortOperations::new();
+            let mut mock = mock_ops();
             let config = create_test_config(1, 8080, "tcp", Some("service"));
 
             mock.expect_dispatch_start()
                 .times(1)
                 .returning(move |_| Err(message.to_string()));
-            mock.expect_stop_generation().times(0);
             mock.expect_is_forward_registered().returning(|_| false);
             mock.expect_get_configs_state().returning(|| Ok(vec![]));
             mock.expect_update_config_state()
@@ -1018,7 +1019,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_row_cleared_while_waiting_to_retry_cancels_the_restore() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -1037,7 +1038,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_start_while_waiting_to_retry_cancels_the_restore() {
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
@@ -1061,7 +1062,7 @@ mod tests {
             .expect("failed to spawn helper process");
         let other_pid = child.id();
 
-        let mut mock = MockPortOperations::new();
+        let mut mock = mock_ops();
         let config = create_test_config(1, 8080, "tcp", Some("service"));
 
         mock.expect_dispatch_start()
