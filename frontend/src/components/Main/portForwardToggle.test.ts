@@ -82,4 +82,33 @@ describe('executeToggle', () => {
     expect(runForwardCommand).not.toHaveBeenCalled()
     expect(registry.isBusy(1)).toBe(false)
   })
+
+  it('skips the retry after a privilege refusal when the row was started again during the prompt', async () => {
+    const { deps, preflights, runForwardCommand } = setup()
+    const config = makeConfig(1)
+    const decision = Promise.withResolvers<'continue'>()
+    const secondStart = Promise.withResolvers<undefined>()
+
+    deps.askAfterRefusal = () => decision.promise
+    runForwardCommand
+      .mockRejectedValueOnce(
+        new Error('loopback address configuration cancelled'),
+      )
+      .mockImplementationOnce(() => secondStart.promise)
+
+    const first = executeToggle(deps, config, 'starting')
+
+    preflights[0].resolve(true)
+    await flushPromises()
+    const second = executeToggle(deps, config, 'starting')
+
+    preflights[1].resolve(true)
+    await flushPromises()
+    decision.resolve('continue')
+    await flushPromises()
+    secondStart.resolve(undefined)
+    await Promise.all([first, second])
+
+    expect(runForwardCommand).toHaveBeenCalledTimes(2)
+  })
 })

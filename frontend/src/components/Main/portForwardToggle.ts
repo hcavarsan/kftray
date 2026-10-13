@@ -88,6 +88,9 @@ export async function executeToggle(
   // failure.
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt > 0) {
+      if (isBusy(config.id)) {
+        return
+      }
       token = markPending(config.id, action)
     }
     let refused: string | null = null
