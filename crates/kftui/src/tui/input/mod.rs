@@ -249,6 +249,12 @@ pub enum AppState {
     ShowRestartNotification,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortRetry {
+    pub config_id: i64,
+    pub port: u16,
+}
+
 pub struct App {
     pub details_scroll_offset: usize,
     pub details_scroll_max_offset: usize,
@@ -325,6 +331,11 @@ pub struct App {
     pub forwarding_cancel: tokio_util::sync::CancellationToken,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Starts that failed on a busy local port, each with the free port its
+    /// error named. `p` in the error popup starts them on those ports.
+    pub port_retries: Vec<PortRetry>,
+    pub port_retry_receiver: tokio::sync::mpsc::UnboundedReceiver<PortRetry>,
+    pub port_retry_sender: tokio::sync::mpsc::UnboundedSender<PortRetry>,
     pub search_query: String,
     pub search_focused: bool,
     pub filtered_stopped_configs: Vec<Config>,
@@ -364,6 +375,7 @@ impl App {
         let export_file_explorer = FileExplorerBuilder::build_with_theme(theme).unwrap();
         let tui_logger_state = TuiWidgetState::new();
         let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (port_retry_sender, port_retry_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         Self {
             details_scroll_offset: 0,
@@ -436,6 +448,9 @@ impl App {
             forwarding_cancel: tokio_util::sync::CancellationToken::new(),
             error_receiver: Some(error_receiver),
             error_sender: Some(error_sender),
+            port_retries: Vec::new(),
+            port_retry_receiver,
+            port_retry_sender,
             search_query: String::new(),
             search_focused: false,
             filtered_stopped_configs: Vec::new(),
@@ -878,6 +893,16 @@ impl App {
             .filter(|state| state.is_running)
             .map(|state| state.config_id)
             .collect();
+        let (shown_stopped, shown_running) = if self.search_query.is_empty() {
+            (&self.stopped_configs, &self.running_configs)
+        } else {
+            (
+                &self.filtered_stopped_configs,
+                &self.filtered_running_configs,
+            )
+        };
+        let marked_stopped = marked_config_ids(&self.selected_rows_stopped, shown_stopped);
+        let marked_running = marked_config_ids(&self.selected_rows_running, shown_running);
         self.all_configs = configs.to_vec();
         self.group_labels.clear();
         let by_id: HashMap<i64, &Config> = configs
@@ -902,6 +927,10 @@ impl App {
         }
 
         self.update_filtered_configs();
+        self.selected_rows_stopped =
+            rows_of_config_ids(&marked_stopped, &self.filtered_stopped_configs);
+        self.selected_rows_running =
+            rows_of_config_ids(&marked_running, &self.filtered_running_configs);
 
         let mut reports = Vec::new();
         self.configs_being_processed.retain(|_, pending| {
@@ -960,6 +989,18 @@ impl App {
             while let Ok(error_msg) = receiver.try_recv() {
                 new_errors.push(error_msg);
             }
+        }
+        while let Ok(retry) = self.port_retry_receiver.try_recv() {
+            let name = self
+                .all_configs
+                .iter()
+                .find(|config| config.id == Some(retry.config_id))
+                .and_then(|config| config.alias.clone())
+                .unwrap_or_else(|| format!("config {}", retry.config_id));
+            new_errors.push(format!("Press p to start {name} on port {}", retry.port));
+            self.port_retries
+                .retain(|pending| pending.config_id != retry.config_id);
+            self.port_retries.push(retry);
         }
 
         if !new_errors.is_empty() {
@@ -1076,6 +1117,24 @@ impl App {
     }
 }
 
+fn marked_config_ids(rows: &HashSet<usize>, configs: &[Config]) -> HashSet<i64> {
+    rows.iter()
+        .filter_map(|&row| configs.get(row)?.id)
+        .collect()
+}
+
+fn rows_of_config_ids(ids: &HashSet<i64>, configs: &[Config]) -> HashSet<usize> {
+    if ids.is_empty() {
+        return HashSet::new();
+    }
+    configs
+        .iter()
+        .enumerate()
+        .filter(|(_, config)| config.id.is_some_and(|id| ids.contains(&id)))
+        .map(|(row, _)| row)
+        .collect()
+}
+
 pub fn toggle_select_all(app: &mut App) {
     let (selected_rows, configs) = match app.active_table {
         ActiveTable::Stopped => (
@@ -1119,7 +1178,11 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
             match app.state {
                 AppState::ShowErrorPopup => {
                     log::debug!("Handling ShowErrorPopup state");
-                    handle_error_popup_input(app, key.code)?;
+                    if key.code == KeyCode::Char('p') && !app.port_retries.is_empty() {
+                        start_on_free_ports(app, mode).await;
+                    } else {
+                        handle_error_popup_input(app, key.code)?;
+                    }
                 }
                 AppState::ShowConfirmationPopup => {
                     log::debug!("Handling ShowConfirmationPopup state");
@@ -1974,6 +2037,7 @@ fn spawn_forwarding_tasks(
         let slots = slots.clone();
         let cancel = cancel.clone();
         let task = pending.clone();
+        let retries = app.port_retry_sender.clone();
         let config_id = pending.config_id;
         let handle = app.forwarding_tasks.spawn(async move {
             use kftray_telemetry::{
@@ -2011,10 +2075,15 @@ fn spawn_forwarding_tasks(
                 measure(Operation::StopForward, stop_port_forwarding(config, mode)).await
             };
 
-            if let Err(error_msg) = result
-                && let Some(sender) = sender
-            {
-                let _ = sender.send(error_msg);
+            if let Err(error_msg) = result {
+                let free_port =
+                    kftray_portforward::free_port_in_error(&error_msg).filter(|_| is_starting);
+                if let Some(sender) = sender {
+                    let _ = sender.send(error_msg);
+                }
+                if let Some(port) = free_port {
+                    let _ = retries.send(PortRetry { config_id, port });
+                }
             }
 
             drop(finished);
@@ -2023,6 +2092,58 @@ fn spawn_forwarding_tasks(
         app.task_configs
             .insert(task_id, TaskInfo::new(config_id, !is_starting));
     }
+}
+
+/// Saves each offered free port as the config's local port and starts the
+/// config on it. Only an offer the user accepted changes a saved config.
+pub async fn start_on_free_ports(app: &mut App, mode: DatabaseMode) {
+    use kftray_commons::utils::config::{
+        get_config_with_mode,
+        update_config_with_mode,
+    };
+
+    app.state = AppState::Normal;
+    app.error_message = None;
+    app.error_scroll = 0;
+
+    let mut moved = Vec::new();
+    for retry in std::mem::take(&mut app.port_retries) {
+        if app
+            .configs_being_processed
+            .get(&retry.config_id)
+            .is_some_and(|pending| pending.is_active())
+        {
+            continue;
+        }
+        let saved = match get_config_with_mode(retry.config_id, mode).await {
+            Ok(mut config) => {
+                config.local_port = Some(retry.port);
+                update_config_with_mode(config.clone(), mode)
+                    .await
+                    .map(|()| config)
+            }
+            Err(error) => Err(error),
+        };
+        match saved {
+            Ok(config) => moved.push(config),
+            Err(error) => {
+                if let Some(sender) = &app.error_sender {
+                    let _ = sender.send(format!(
+                        "Failed to save port {} for config {}: {error}",
+                        retry.port, retry.config_id
+                    ));
+                }
+            }
+        }
+    }
+
+    let ids: Vec<i64> = moved.iter().filter_map(|config| config.id).collect();
+    app.stopped_configs
+        .retain(|config| !config.id.is_some_and(|id| ids.contains(&id)));
+    app.running_configs
+        .retain(|config| !config.id.is_some_and(|id| ids.contains(&id)));
+    app.running_configs.extend(moved.iter().cloned());
+    spawn_forwarding_tasks(app, &moved, true, mode);
 }
 
 pub fn show_delete_confirmation(app: &mut App) {
@@ -3065,6 +3186,7 @@ pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             app.state = AppState::Normal;
             app.error_message = None;
             app.error_scroll = 0;
+            app.port_retries.clear();
         }
         // Clamped to what the last render could actually show: banking
         // increments past the end would make the first key press back up do

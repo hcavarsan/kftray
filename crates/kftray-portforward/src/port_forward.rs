@@ -348,6 +348,7 @@ impl PortForward {
             .unwrap_or("127.0.0.1")
             .to_owned();
 
+        crate::local_port::ensure_free(&local_addr, self.local_port(), Protocol::Tcp)?;
         let namespace = self.target.namespace.name_any();
 
         let phase = kftray_telemetry::phase(Phase::Connect);
@@ -410,6 +411,7 @@ impl PortForward {
             .unwrap_or("127.0.0.1")
             .to_owned();
 
+        crate::local_port::ensure_free(&local_addr, self.local_port(), Protocol::Udp)?;
         let namespace = self.target.namespace.name_any();
 
         let phase = kftray_telemetry::phase(Phase::Connect);
@@ -579,5 +581,34 @@ mod tests {
         assert!(cancellation.is_cancelled());
         assert!(forwarding_task.is_finished());
         assert!(websocket_task.is_finished());
+    }
+
+    #[tokio::test]
+    async fn a_busy_local_port_fails_before_the_cluster_is_contacted() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = held.local_addr().unwrap().port();
+        let forward = PortForward::new(
+            Target::new(
+                crate::kube::models::TargetSelector::ServiceName("web".to_owned()),
+                80,
+                "default",
+            ),
+            Some(busy),
+            Some("127.0.0.1".to_owned()),
+            Some("unreachable".to_owned()),
+            Some("/nonexistent/kubeconfig".to_owned()),
+            1,
+            "service".to_owned(),
+        );
+
+        let error = match forward.port_forward_tcp(None).await {
+            Ok(_) => panic!("the start must fail on a busy port"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(
+            crate::local_port::free_port_in_error(&error).is_some(),
+            "{error}"
+        );
     }
 }

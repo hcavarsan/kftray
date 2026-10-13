@@ -139,18 +139,30 @@ mod tests {
     }
 
     #[test]
-    fn test_update_configs_with_selected_rows() {
+    fn marked_rows_follow_their_configs_when_rows_move() {
         let mut app = App::new(test_logger_state());
-        let (configs, config_states) = create_test_configs(3, &[0, 2]);
-
-        app.selected_rows_stopped.insert(0);
-        app.selected_rows_stopped.insert(2);
-        app.selected_rows_running.insert(1);
-
+        let (configs, config_states) = create_test_configs(4, &[2, 3]);
         app.update_configs(&configs, &config_states);
 
-        assert_eq!(app.selected_rows_stopped, [0].into());
-        assert_eq!(app.selected_rows_running, [1].into());
+        app.selected_rows_stopped = [1].into();
+        app.selected_rows_running = [0, 1].into();
+
+        let (configs, config_states) = create_test_configs(4, &[0, 3]);
+        app.update_configs(&configs, &config_states);
+
+        let marked_ids = |rows: &std::collections::HashSet<usize>, configs: &[Config]| {
+            let mut ids: Vec<i64> = rows.iter().filter_map(|&row| configs[row].id).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            marked_ids(&app.selected_rows_stopped, &app.stopped_configs),
+            [2]
+        );
+        assert_eq!(
+            marked_ids(&app.selected_rows_running, &app.running_configs),
+            [4]
+        );
     }
 
     #[test]
@@ -703,5 +715,67 @@ mod tests {
             0,
             "start permits must still be held while the stop completes"
         );
+    }
+
+    #[tokio::test]
+    async fn a_start_on_a_busy_port_offers_the_free_port_and_p_saves_it() {
+        use kftray_commons::utils::config::{
+            get_config_with_mode,
+            insert_config_with_mode,
+        };
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _guard = lock_forwarding_globals().await;
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = held.local_addr().unwrap().port();
+        let mut config = create_test_config(0);
+        config.id = None;
+        config.workload_type = Some("service".to_string());
+        config.local_port = Some(busy);
+        config.alias = Some("web".to_string());
+        config.kubeconfig = Some("/nonexistent/kubeconfig".to_string());
+        let id = insert_config_with_mode(config, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let stored = get_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let mut app = App::new(test_logger_state());
+        app.all_configs = vec![stored.clone()];
+        app.stopped_configs = vec![stored.clone()];
+        crate::tui::input::handle_port_forwarding(&mut app, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            app.forwarding_tasks.join_next(),
+        )
+        .await
+        .unwrap();
+        app.update_configs(std::slice::from_ref(&stored), &[]);
+
+        let free = app.port_retries.first().map(|retry| retry.port).unwrap();
+        let shown = app.error_message.clone().unwrap();
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert!(
+            shown.contains(&format!("Press p to start web on port {free}")),
+            "{shown}"
+        );
+
+        // The second start would go on to the cluster, which this test has
+        // none of. Cancelled, it still saves the port and dispatches.
+        app.forwarding_cancel.cancel();
+        crate::tui::input::start_on_free_ports(&mut app, DatabaseMode::Memory).await;
+
+        let saved = get_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(saved.local_port, Some(free));
+        assert!(app.configs_being_processed.contains_key(&id));
+        assert_eq!(app.state, AppState::Normal);
+        assert!(app.port_retries.is_empty());
+        app.forwarding_tasks.join_next().await.unwrap().unwrap();
     }
 }

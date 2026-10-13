@@ -244,7 +244,14 @@ impl UdpForwarder {
         let local_udp_addr = format!("{local_address}:{local_port}");
 
         let local_udp_socket = TokioUdpSocket::bind(&local_udp_addr).await.map_err(|e| {
-            anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}")
+            match (e.kind(), local_address.parse::<std::net::IpAddr>()) {
+                (std::io::ErrorKind::AddrInUse, Ok(ip)) => crate::local_port::port_in_use(
+                    ip,
+                    local_port,
+                    crate::kube::listener::Protocol::Udp,
+                ),
+                _ => anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}"),
+            }
         })?;
 
         let local_port = local_udp_socket.local_addr()?.port();
