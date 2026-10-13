@@ -36,20 +36,42 @@ pub enum KubeClientError {
     },
 }
 
+/// Renders `head` followed by every distinct message in the source chain, so
+/// errors that wrap a cause (`connection refused`, a failed exec plugin) do
+/// not hide it behind a generic summary.
+fn with_causes(head: String, mut cause: Option<&(dyn Error + 'static)>) -> String {
+    let mut text = head;
+    while let Some(err) = cause {
+        let part = err.to_string();
+        if !part.is_empty() && !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        cause = err.source();
+    }
+    text
+}
+
 impl fmt::Display for KubeClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cause = self.source();
         match self {
-            KubeClientError::ConfigError { message, .. } => {
-                write!(f, "Configuration error: {message}")
-            }
+            KubeClientError::ConfigError { message, .. } => f.write_str(&with_causes(
+                format!("Configuration error: {message}"),
+                cause,
+            )),
             KubeClientError::ConnectionError { message, .. } => {
-                write!(f, "Connection error: {message}")
+                f.write_str(&with_causes(format!("Connection error: {message}"), cause))
             }
-            KubeClientError::AuthError { message, .. } => {
-                write!(f, "Authentication error: {message}")
-            }
+            KubeClientError::AuthError { message, .. } => f.write_str(&with_causes(
+                format!("Authentication error: {message}"),
+                cause,
+            )),
             KubeClientError::IoError(err) => write!(f, "IO error: {err}"),
-            KubeClientError::KubeError(err) => write!(f, "Kubernetes error: {err}"),
+            KubeClientError::KubeError(err) => f.write_str(&with_causes(
+                format!("Kubernetes error: {err}"),
+                err.source(),
+            )),
             KubeClientError::ParseError { message, context } => {
                 if let Some(ctx) = context {
                     write!(f, "Parse error in {ctx}: {message}")
@@ -70,9 +92,10 @@ impl fmt::Display for KubeClientError {
             }
             KubeClientError::ProxyError {
                 message, proxy_url, ..
-            } => {
-                write!(f, "Proxy error for '{proxy_url}': {message}")
-            }
+            } => f.write_str(&with_causes(
+                format!("Proxy error for '{proxy_url}': {message}"),
+                cause,
+            )),
         }
     }
 }
@@ -214,3 +237,62 @@ impl KubeClientError {
 }
 
 pub type KubeResult<T> = std::result::Result<T, KubeClientError>;
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use kftray_telemetry::{
+        FailureKind,
+        classify,
+    };
+
+    use super::*;
+
+    #[test]
+    fn connection_error_display_includes_the_source() {
+        let err = KubeClientError::connection_error_with_source(
+            "Failed to connect to Kubernetes API server",
+            io::Error::from(io::ErrorKind::ConnectionRefused),
+        );
+
+        let text = err.to_string();
+        assert!(
+            text.contains("Failed to connect to Kubernetes API server"),
+            "{text}"
+        );
+        assert!(text.contains("connection refused"), "{text}");
+        assert_eq!(classify(&text), FailureKind::Connection);
+    }
+
+    #[test]
+    fn display_walks_the_whole_source_chain() {
+        let inner = io::Error::other("dns error: no record found");
+        let middle = KubeClientError::connection_error_with_source("lookup failed", inner);
+        let err = KubeClientError::proxy_error_with_source("proxy down", "http://p:1", middle);
+
+        let text = err.to_string();
+        assert!(text.contains("lookup failed"), "{text}");
+        assert!(text.contains("dns error: no record found"), "{text}");
+    }
+
+    #[test]
+    fn display_does_not_repeat_a_source_already_in_the_message() {
+        let err = KubeClientError::from(anyhow::anyhow!("bad kubeconfig"));
+
+        assert_eq!(err.to_string(), "Configuration error: bad kubeconfig");
+    }
+
+    #[test]
+    fn auth_error_display_keeps_the_exec_plugin_failure() {
+        let err = KubeClientError::auth_error_with_source(
+            "Failed to create auth layer",
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "unable to run auth exec: gke-gcloud-auth-plugin",
+            ),
+        );
+
+        assert!(err.to_string().contains("gke-gcloud-auth-plugin"), "{err}");
+    }
+}
