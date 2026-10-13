@@ -1,4 +1,4 @@
-import { type QueryMeta, useQuery } from '@tanstack/react-query'
+import { type QueryMeta, queryOptions, useQuery } from '@tanstack/react-query'
 
 import { invoke } from '@/lib/tauri'
 import type { KubeContext } from '@/types'
@@ -14,17 +14,20 @@ export interface KubePort {
   port: number
 }
 
+export const kubeContextsQuery = (kubeconfig: string) =>
+  queryOptions({
+    queryKey: ['kube-contexts', kubeconfig],
+    queryFn: () => invoke<KubeContext[]>('list_kube_contexts', { kubeconfig }),
+    // Only reads local kubeconfig files: a retry cannot succeed and would
+    // report the same failure again.
+    retry: false,
+  })
+
 export const useKubeContexts = (
   kubeconfig: string,
   enabled = true,
   meta?: QueryMeta,
-) =>
-  useQuery({
-    queryKey: ['kube-contexts', kubeconfig],
-    queryFn: () => invoke<KubeContext[]>('list_kube_contexts', { kubeconfig }),
-    enabled,
-    meta,
-  })
+) => useQuery({ ...kubeContextsQuery(kubeconfig), enabled, meta })
 
 export const useKubeNamespaces = ({ kubeconfig, context }: KubeScope) =>
   useQuery({

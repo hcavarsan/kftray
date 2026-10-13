@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ErrorEvent } from '@sentry/browser'
 
 import {
+  captureInvokeFailure,
   initCrashReporting,
   scrub,
   scrubTransaction,
@@ -76,6 +77,13 @@ const event = (overrides: Partial<ErrorEvent> = {}): ErrorEvent => ({
 })
 
 describe('scrub', () => {
+  it('keeps the fingerprint that groups the event', () => {
+    expect(
+      scrub(event({ fingerprint: ['tauri.invoke', 'list_kube_contexts'] }))
+        ?.fingerprint,
+    ).toEqual(['tauri.invoke', 'list_kube_contexts'])
+  })
+
   it('keeps the error type and bundle locations, nothing else', () => {
     expect(scrub(event())).toEqual({
       type: undefined,
@@ -234,6 +242,7 @@ const sentry = vi.hoisted(() => ({
     | ((event: TransactionEvent) => TransactionEvent | null)
     | undefined,
   tracesSampler: undefined as (() => number) | undefined,
+  captured: [] as { error: Error; hint: { fingerprint?: string[] } }[],
 }))
 
 vi.mock('@sentry/browser', () => ({
@@ -245,6 +254,11 @@ vi.mock('@sentry/browser', () => ({
     sentry.beforeSend = options.beforeSend
     sentry.beforeSendTransaction = options.beforeSendTransaction
     sentry.tracesSampler = options.tracesSampler
+  },
+  getClient: () => ({ getDsn: () => ({}) }),
+  captureException: (error: Error, hint: { fingerprint?: string[] }) => {
+    sentry.captured.push({ error, hint })
+    return 'event-id'
   },
   globalHandlersIntegration: () => ({}),
   browserApiErrorsIntegration: () => ({}),
@@ -264,6 +278,7 @@ describe('consent in a window that did not change it', () => {
     sentry.beforeSend = undefined
     sentry.beforeSendTransaction = undefined
     sentry.tracesSampler = undefined
+    sentry.captured = []
   })
 
   it('stops reporting when the main window turns the switch off', async () => {
@@ -293,6 +308,21 @@ describe('consent in a window that did not change it', () => {
     await started
 
     expect(sentry.beforeSend?.(event())).toBeNull()
+  })
+
+  it('reports each failed command under its own fingerprint', async () => {
+    const started = initCrashReporting()
+    await tauri.requested.promise
+    tauri.releaseContext()
+    await started
+
+    captureInvokeFailure('list_kube_contexts')
+    captureInvokeFailure('start_port_forward_tcp_cmd')
+
+    expect(sentry.captured.map(({ hint }) => hint.fingerprint)).toEqual([
+      ['tauri.invoke', 'list_kube_contexts'],
+      ['tauri.invoke', 'start_port_forward_tcp_cmd'],
+    ])
   })
 
   it('never starts the SDK when the process is not allowed to report', async () => {
