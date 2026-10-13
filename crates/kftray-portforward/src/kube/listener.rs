@@ -2259,10 +2259,14 @@ mod tests {
         });
         port_forwarder.track_task(tokio::spawn(std::future::pending()));
 
-        let stubborn = tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let stubborn = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _ = started.send(());
             std::thread::sleep(Duration::from_secs(3));
             Ok(())
         });
+        // A blocking task is only immune to the abort once it has started.
+        running.await.unwrap();
         let mut process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
             stubborn,
             Arc::clone(&port_forwarder),
@@ -2270,14 +2274,75 @@ mod tests {
             CancellationToken::new(),
         );
 
-        tokio::time::timeout(Duration::from_secs(5), process.cleanup_and_abort())
+        let shutdown = tokio::time::timeout(Duration::from_secs(5), process.cleanup_and_abort())
             .await
             .expect("cleanup must not wait on a task that ignores abort");
+        assert_eq!(
+            shutdown,
+            Err(crate::port_forward::ShutdownTimedOut),
+            "a listener task that outlasts the bound is reported, not treated as released"
+        );
 
         assert!(
             PortForwarder::registry(&port_forwarder.background_tasks).is_empty(),
             "the forwarder must be shut down even when the listener join times out"
         );
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_reports_a_connection_worker_that_ignores_abort() {
+        let pod_name = "web-0";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::new(tokio::sync::Notify::new()),
+            Duration::ZERO,
+        ));
+        let forwarder = kube_portforward::Forwarder::builder(
+            kube::Client::new(mock_service, "default"),
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_owned()))
+        .build()
+        .await
+        .unwrap();
+        let port_forwarder = Arc::new(PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            named_port: None,
+            cluster_url: "http://127.0.0.1:1".parse().unwrap(),
+            cluster_identity: "http://127.0.0.1:1".into(),
+            http_log_watcher: HttpLogStateWatcher::new(),
+            stream_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        // An accepted connection keeps the local port bound for as long as its
+        // task lives, even after the listener task itself is gone. A blocking
+        // task is only immune to the abort once it has started running.
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let stubborn_worker = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        running.await.unwrap();
+        PortForwarder::registry(&port_forwarder.connection_tasks).push(stubborn_worker);
+        let mut process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
+            tokio::spawn(std::future::pending::<anyhow::Result<()>>()),
+            Arc::clone(&port_forwarder),
+            "410032".to_owned(),
+            CancellationToken::new(),
+        );
+
+        let shutdown = process.cleanup_and_abort().await;
+
+        assert_eq!(shutdown, Err(crate::port_forward::ShutdownTimedOut));
         driver.abort();
         let _ = driver.await;
     }
