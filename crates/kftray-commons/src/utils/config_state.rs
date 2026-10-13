@@ -267,18 +267,34 @@ pub async fn clear_running_snapshot(id: i64, mode: DatabaseMode) {
 
 /// The configuration a running forward was started with, when a snapshot was
 /// recorded for it.
+///
+/// A snapshot that cannot be read or understood reads as none; a caller that
+/// must tell the two apart uses [`try_running_snapshot`].
 pub async fn running_snapshot(
     id: i64, mode: DatabaseMode,
 ) -> Option<crate::models::config_model::Config> {
+    try_running_snapshot(id, mode).await.ok().flatten()
+}
+
+/// [`running_snapshot`] that reports a record it cannot read or understand
+/// instead of reading it as absent: what such a record named is unknown, which
+/// is not the same as no record.
+pub async fn try_running_snapshot(
+    id: i64, mode: DatabaseMode,
+) -> Result<Option<crate::models::config_model::Config>, String> {
     if mode != DatabaseMode::File {
-        return None;
+        return Ok(None);
     }
     let stored =
         crate::utils::settings::get_setting_with_mode(&running_snapshot_key(id, mode), mode)
             .await
-            .ok()
-            .flatten()?;
-    serde_json::from_str(&stored).ok()
+            .map_err(|error| format!("Failed to read the running config {id}: {error}"))?;
+    stored
+        .map(|stored| {
+            serde_json::from_str(&stored)
+                .map_err(|error| format!("Failed to understand the running config {id}: {error}"))
+        })
+        .transpose()
 }
 
 /// Whether a process that recorded itself as running a forward still exists.
@@ -999,5 +1015,45 @@ mod tests {
                 .unwrap();
             assert_eq!(last_error_of(&pool, id).await, None);
         }
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_running_snapshot_is_told_apart_from_an_absent_one() {
+        let _db = crate::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env =
+            crate::test_utils::EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        crate::utils::db::init().await.unwrap();
+        let mode = DatabaseMode::File;
+        let id = 8_104;
+
+        assert_eq!(try_running_snapshot(id, mode).await, Ok(None));
+
+        let config = Config {
+            alias: Some("app.local".to_string()),
+            ..Config::default()
+        };
+        set_running_snapshot(id, &config, mode).await.unwrap();
+        assert_eq!(
+            try_running_snapshot(id, mode).await,
+            Ok(Some(config.clone()))
+        );
+
+        crate::utils::settings::set_setting_with_mode(
+            &running_snapshot_key(id, mode),
+            "{not a config",
+            mode,
+        )
+        .await
+        .unwrap();
+        assert!(try_running_snapshot(id, mode).await.is_err());
+        assert_eq!(
+            running_snapshot(id, mode).await,
+            None,
+            "the lenient read keeps treating an unreadable record as absent"
+        );
+
+        clear_running_snapshot(id, mode).await;
+        assert_eq!(try_running_snapshot(id, mode).await, Ok(None));
     }
 }

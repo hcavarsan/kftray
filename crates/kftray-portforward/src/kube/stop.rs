@@ -26,6 +26,7 @@ use kftray_commons::{
         config_state::{
             get_configs_state_with_mode,
             running_snapshot,
+            try_running_snapshot,
             update_config_state_with_mode,
         },
         db_mode::DatabaseMode,
@@ -753,7 +754,7 @@ pub(crate) async fn recorded_configs(id: i64, mode: DatabaseMode) -> Option<Vec<
     if let Some(value) = local {
         configs.push(serde_json::from_str::<Config>(&value).ok()?);
     }
-    configs.extend(running_snapshot(id, mode).await);
+    configs.extend(try_running_snapshot(id, mode).await.ok()?);
     Some(configs)
 }
 

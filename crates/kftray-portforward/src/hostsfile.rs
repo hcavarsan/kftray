@@ -1270,6 +1270,47 @@ mod tests {
         assert!(!alias_may_exist(id, Some(&config), mode).await);
     }
 
+    #[tokio::test]
+    async fn an_unreadable_running_snapshot_keeps_the_hosts_verification() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let mode = DatabaseMode::File;
+        let id = 410_192;
+        let config = kftray_commons::models::config_model::Config {
+            id: Some(id),
+            service: Some("app".to_owned()),
+            alias: Some("app.local".to_owned()),
+            domain_enabled: Some(false),
+            protocol: "tcp".to_owned(),
+            ..Default::default()
+        };
+
+        rollback_config_host_entries(id, Some(&config), &[], mode)
+            .await
+            .expect("with no snapshot recorded, the missing hosts file is never opened");
+
+        let key = kftray_commons::utils::config_state::running_snapshot_key(id, mode);
+        kftray_commons::utils::settings::set_setting_with_mode(&key, "{not a config", mode)
+            .await
+            .unwrap();
+        let result = rollback_config_host_entries(id, Some(&config), &[], mode).await;
+        kftray_commons::utils::settings::delete_setting_with_mode(&key, mode)
+            .await
+            .unwrap();
+
+        result.expect_err(
+            "a snapshot that cannot be read may name an alias, so the hosts file is verified",
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn a_hosts_file_that_cannot_be_opened_still_fails_the_rollback_of_a_written_alias() {
