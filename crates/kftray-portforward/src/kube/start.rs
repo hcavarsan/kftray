@@ -1113,14 +1113,12 @@ pub(super) async fn start_config_cancellable(
             debug!("Actual local port: {actual_local_port}");
 
             if cancelled() {
-                handle.cleanup_and_abort().await;
-                return Err(rollback_startup(
-                    &port_forward,
-                    config,
-                    format!("Startup cancelled for config {config_id}"),
-                    mode,
-                )
-                .await);
+                let reason = format!("Startup cancelled for config {config_id}");
+                let reason = match handle.cleanup_and_abort().await {
+                    Ok(()) => reason,
+                    Err(held) => format!("{reason}; cleanup incomplete: {held}"),
+                };
+                return Err(rollback_startup(&port_forward, config, reason, mode).await);
             }
 
             // The snapshot goes first: what this forward holds is written
@@ -1137,9 +1135,14 @@ pub(super) async fn start_config_cancellable(
             };
             drop(phase);
             if let Err(error) = persisted {
-                handle.cleanup_and_abort().await;
+                // A listener still bound after the shutdown bound is a leftover
+                // of this rollback: the retry would meet it on the same port.
+                let reason = match handle.cleanup_and_abort().await {
+                    Ok(()) => error,
+                    Err(held) => format!("{error}; cleanup incomplete: {held}"),
+                };
                 kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
-                return Err(rollback_startup(&port_forward, config, error, mode).await);
+                return Err(rollback_startup(&port_forward, config, reason, mode).await);
             }
 
             handle.set_config(config.clone());
@@ -1765,7 +1768,7 @@ mod tests {
         );
 
         if let Some((_, mut process)) = CHILD_PROCESSES.remove(&id) {
-            process.cleanup_and_abort().await;
+            let _ = process.cleanup_and_abort().await;
         }
     }
 

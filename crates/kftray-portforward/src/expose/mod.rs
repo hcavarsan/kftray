@@ -205,7 +205,10 @@ pub(crate) async fn start_single_expose(
     };
     if cancelled() {
         let reason = format!("Expose startup cancelled for config {config_id}");
-        pf_process.cleanup_and_abort().await;
+        // The relay listener is bound to an ephemeral port, so a retry cannot
+        // meet one that outlasted the shutdown bound; that case is logged by
+        // `cleanup_and_abort`.
+        let _ = pf_process.cleanup_and_abort().await;
         return roll_back_exposure(&client, &config, &resources, &location, mode, guard, reason)
             .await;
     }
@@ -275,7 +278,7 @@ pub(crate) async fn start_single_expose(
         None => ready.await,
     };
     if let Err(error) = startup {
-        pf_process.cleanup_and_abort().await;
+        let _ = pf_process.cleanup_and_abort().await;
         return roll_back_exposure(&client, &config, &resources, &location, mode, guard, error)
             .await;
     }
@@ -295,7 +298,7 @@ pub(crate) async fn start_single_expose(
         Ok(()) => update_config_state_with_mode(&config_state, mode).await,
         Err(error) => Err(error),
     } {
-        pf_process.cleanup_and_abort().await;
+        let _ = pf_process.cleanup_and_abort().await;
         kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
         return roll_back_exposure(&client, &config, &resources, &location, mode, guard, error)
             .await;

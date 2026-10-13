@@ -20,6 +20,18 @@ use crate::kube::models::{
     Target,
 };
 
+/// The listener task or the connection workers of a stopped forward had not
+/// finished when the shutdown bound elapsed, so its local port may still be
+/// bound for as long as they keep running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShutdownTimedOut;
+
+impl std::fmt::Display for ShutdownTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("its listener timed out shutting down, so its local port may still be in use")
+    }
+}
+
 /// Owns the tasks backing a single forward. Dropping it aborts them, so a
 /// startup future that is cancelled before the process reaches
 /// [`CHILD_PROCESSES`] cannot leave an untracked listener running.
@@ -82,8 +94,15 @@ impl PortForwardProcess {
     }
 
     /// Cleanup and abort the port forward process.
-    /// Uses timeouts to prevent blocking on shutdown operations.
-    pub async fn cleanup_and_abort(&mut self) {
+    ///
+    /// Every wait is bounded so a stuck task cannot hang the caller. When the
+    /// listener task or the connection workers have not finished by then, the
+    /// local port may still be bound and this returns [`ShutdownTimedOut`]:
+    /// the tasks are already aborted, but an abort only takes effect once the
+    /// task is next polled, so a task blocked inside a poll keeps its socket
+    /// until it returns. A caller that binds the same port next, or that
+    /// reports the forward as stopped, must not treat that as released.
+    pub async fn cleanup_and_abort(&mut self) -> Result<(), ShutdownTimedOut> {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
         self.cancellation_token.cancel();
@@ -98,19 +117,6 @@ impl PortForwardProcess {
             handle.abort();
         }
 
-        let tasks = async {
-            let forwarding = async {
-                if let Some(handle) = handle {
-                    let _ = handle.await;
-                }
-            };
-            let websocket = async {
-                if let Some(handle) = ws_client_handle {
-                    let _ = handle.await;
-                }
-            };
-            tokio::join!(forwarding, websocket);
-        };
         // Abort synchronously before the first await: if this future is dropped
         // partway through `shutdown`, the remaining workers, including a
         // handshake stalled outside any cancellation point, would keep their
@@ -118,21 +124,38 @@ impl PortForwardProcess {
         if let Some(forwarder) = &direct_forwarder {
             forwarder.abort_workers();
         }
-        let shutdown = async {
+        let listener = timeout(SHUTDOWN_TIMEOUT, async {
+            if let Some(handle) = handle {
+                let _ = handle.await;
+            }
+        });
+        // The reverse-tunnel client dials out and binds nothing local, so
+        // outlasting the bound is logged but does not hold a port.
+        let websocket = timeout(SHUTDOWN_TIMEOUT, async {
+            if let Some(handle) = ws_client_handle {
+                let _ = handle.await;
+            }
+        });
+        let workers = timeout(SHUTDOWN_TIMEOUT, async {
             if let Some(forwarder) = direct_forwarder {
                 forwarder.shutdown().await;
             }
-        };
-        let (tasks, shutdown) = tokio::join!(
-            timeout(SHUTDOWN_TIMEOUT, tasks),
-            timeout(SHUTDOWN_TIMEOUT, shutdown)
-        );
-        if tasks.is_err() || shutdown.is_err() {
+        });
+        let (listener, websocket, workers) = tokio::join!(listener, websocket, workers);
+        if websocket.is_err() {
             tracing::warn!(
-                "Port-forward shutdown timed out for config: {}",
+                "Port-forward websocket client shutdown timed out for config: {}",
                 self.config_id
             );
         }
+        if listener.is_err() || workers.is_err() {
+            tracing::warn!(
+                "Port-forward shutdown timed out for config: {}; its local port may still be bound",
+                self.config_id
+            );
+            return Err(ShutdownTimedOut);
+        }
+        Ok(())
     }
 
     pub fn cancel(&self) {
@@ -561,10 +584,27 @@ mod tests {
         let mut process = PortForwardProcess::new(handle, "cleanup".to_owned());
         process.set_ws_client_handle(websocket);
 
-        process.cleanup_and_abort().await;
+        process.cleanup_and_abort().await.unwrap();
 
         assert!(forwarding_task.is_finished());
         assert!(websocket_task.is_finished());
+    }
+
+    #[tokio::test]
+    async fn a_websocket_client_that_ignores_abort_does_not_hold_the_local_port() {
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let (started, running) = tokio::sync::oneshot::channel::<()>();
+        let websocket = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        running.await.unwrap();
+        let mut process = PortForwardProcess::new(handle, "reverse-tunnel".to_owned());
+        process.set_ws_client_handle(websocket);
+
+        // The reverse-tunnel client dials out and binds nothing local, so
+        // outlasting the bound is not a listener left behind.
+        process.cleanup_and_abort().await.unwrap();
     }
 
     #[tokio::test]

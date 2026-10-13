@@ -309,7 +309,12 @@ fn classify_failure(message: &str) -> Failure {
         ),
         (
             FailureKind::AddressAllocation,
-            &["allocat", "loopback", "still being released"],
+            &[
+                "allocat",
+                "loopback",
+                "still being released",
+                "is not configured on this machine",
+            ],
         ),
         (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
         // Ahead of the kubeconfig rule: the Windows text for error 10013
@@ -538,6 +543,15 @@ pub async fn load_setting_with_mode(mode: DatabaseMode) {
 pub async fn measure<T, E: Display>(
     operation: Operation, future: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
+    measure_with_event(operation, future).await.0
+}
+
+/// [`measure`], also returning the id of the error event it captured so a
+/// caller can point the user's problem report at it. `None` when the call
+/// succeeded or nothing was sent (a clean cancellation, reporting off).
+pub async fn measure_with_event<T, E: Display>(
+    operation: Operation, future: impl Future<Output = Result<T, E>>,
+) -> (Result<T, E>, Option<Uuid>) {
     // A hub of its own so the transaction can be the scope's span for the
     // whole future even as tokio moves it between worker threads. Kept here
     // too: `bind_hub` only switches hubs while the future is polled, and the
@@ -571,11 +585,12 @@ pub async fn measure<T, E: Display>(
             if failure.cleanup_incomplete {
                 transaction.set_tag("cleanup_incomplete", "true");
             }
-            report_failure_on(&hub, operation, failure);
+            let event_id = report_failure_on(&hub, operation, failure);
             finish_unless_opted_out(transaction);
+            return (result, event_id);
         }
     }
-    result
+    (result, None)
 }
 
 /// Sentry samples a transaction when it starts, so a user who turns
@@ -597,7 +612,7 @@ pub fn report_failure(operation: Operation, message: &str) {
     report_failure_on(&Hub::current(), operation, classify_failure(message));
 }
 
-fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) {
+fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Option<Uuid> {
     let quiet = failure.is_clean_cancellation();
     push_breadcrumb(
         "portforward",
@@ -613,7 +628,7 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) {
         if quiet { Level::Info } else { Level::Error },
     );
     if quiet {
-        return;
+        return None;
     }
     let mut event = Event {
         level: Level::Error,
@@ -641,7 +656,8 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) {
             .tags
             .insert("cleanup_incomplete".into(), "true".into());
     }
-    hub.capture_event(event);
+    // Nil when the client dropped the event (reporting off).
+    Some(hub.capture_event(event)).filter(|id| !id.is_nil())
 }
 
 /// Records the steps of an operation whose timing matters before the
@@ -1012,6 +1028,17 @@ mod tests {
     }
 
     #[test]
+    fn an_unconfigured_local_address_is_an_address_allocation_failure() {
+        assert_eq!(
+            classify(
+                "Local TCP port 8080 cannot be bound: address 192.0.2.1 is not configured on \
+                 this machine."
+            ),
+            FailureKind::AddressAllocation
+        );
+    }
+
+    #[test]
     fn timeouts_are_classified_by_the_step_that_ran_out_of_time() {
         assert_eq!(
             classify("Timed out allocating a local address for config 3"),
@@ -1152,6 +1179,47 @@ mod tests {
             trace_id_of(&event.contexts),
             trace_id_of(&transaction.contexts)
         );
+    }
+
+    fn measure_failure_event_id(allowed: bool, message: &'static str) -> (Option<Uuid>, Vec<Uuid>) {
+        let mut event_id = None;
+        let envelopes = envelopes_with_consent(allowed, || {
+            let (result, id) =
+                futures::executor::block_on(measure_with_event(Operation::StartForward, async {
+                    Err::<(), _>(message)
+                }));
+            assert_eq!(result, Err(message));
+            event_id = id;
+        });
+        let captured = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter_map(|item| match item {
+                EnvelopeItem::Event(event) => Some(event.event_id),
+                _ => None,
+            })
+            .collect();
+        (event_id, captured)
+    }
+
+    #[test]
+    fn measure_with_event_returns_the_id_of_the_captured_event() {
+        let (event_id, captured) = measure_failure_event_id(true, "Service 'x' not found");
+
+        assert!(event_id.is_some());
+        assert_eq!(captured, event_id.into_iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn measure_with_event_has_no_id_without_consent_or_for_clean_cancellations() {
+        let (opted_out, captured) = measure_failure_event_id(false, "Service 'x' not found");
+        assert_eq!(opted_out, None);
+        assert!(captured.is_empty());
+
+        let (cancelled, captured) =
+            measure_failure_event_id(true, "Startup cancelled for config 2");
+        assert_eq!(cancelled, None);
+        assert!(captured.is_empty());
     }
 
     #[test]

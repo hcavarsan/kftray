@@ -17,12 +17,16 @@ use kftray_commons::utils::github::{
 use kftray_telemetry::{
     Operation,
     Phase,
-    measure,
     phase,
 };
 use tauri::{
     Error as TauriError,
     ipc::InvokeError,
+};
+
+use crate::commands::measured::{
+    MeasuredError,
+    measured,
 };
 
 #[derive(Debug)]
@@ -126,7 +130,7 @@ pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomEr
 pub async fn import_configs_from_github(
     repo_url: String, config_paths: Vec<String>, use_system_credentials: bool, flush: bool,
     github_token: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), MeasuredError> {
     let config = GitHubConfig {
         repo_url,
         config_paths,
@@ -135,7 +139,7 @@ pub async fn import_configs_from_github(
         flush_existing: flush,
     };
 
-    measure(Operation::GitSync, async {
+    measured(Operation::GitSync, async {
         let guard = phase(Phase::GitFetch);
         let config_content = GitHubRepository::fetch_config_content(&config)?;
         drop(guard);
@@ -314,7 +318,7 @@ mod tests {
         .await;
 
         assert!(result.is_err(), "Should fail with invalid repository");
-        let err = result.unwrap_err();
+        let err = result.unwrap_err().message;
         assert!(
             err.contains("Failed to clone repository") || err.contains("failed to resolve address"),
             "Error should indicate clone or network failure: {err}"

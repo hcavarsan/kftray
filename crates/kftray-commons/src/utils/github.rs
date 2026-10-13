@@ -119,14 +119,21 @@ impl GitHubRepository {
                 Self::read_config_files(temp_dir.path(), config_paths)
             }
             Err(e) => {
-                warn!("Repository clone failed: {e}, trying fallback with system git command");
+                let token = github_token.as_deref().filter(|t| !t.is_empty());
+                let git2_message = redact_token(e.message(), token);
+                warn!(
+                    "Repository clone failed: {git2_message}, trying fallback with system git command"
+                );
                 Self::try_clone_with_system_git(
                     repo_url,
                     temp_dir.path(),
                     config_paths,
                     use_system_credentials,
-                    github_token.as_deref(),
+                    token,
                 )
+                .map_err(|fallback| {
+                    clone_failure_message(&git2_message, is_git2_auth_error(&e), &fallback, token)
+                })
             }
         }
     }
@@ -154,7 +161,7 @@ impl GitHubRepository {
     fn try_clone_with_system_git(
         repo_url: &str, path: &Path, config_paths: &[String], use_system_credentials: bool,
         token: Option<&str>,
-    ) -> GitHubResult<String> {
+    ) -> Result<String, SystemGitError> {
         let token = token.filter(|t| !t.is_empty());
         let existing_config_entries = std::env::var("GIT_CONFIG_COUNT")
             .ok()
@@ -169,17 +176,21 @@ impl GitHubRepository {
             existing_config_entries,
         )
         .output()
-        .map_err(|e| format!("Failed to execute git command: {e}"))?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                SystemGitError::Unavailable(e.to_string())
+            } else {
+                SystemGitError::Failed(format!("Failed to execute git command: {e}"))
+            }
+        })?;
 
         if output.status.success() {
             info!("Successfully cloned repository using system git");
-            Self::read_config_files(path, config_paths)
+            Self::read_config_files(path, config_paths).map_err(SystemGitError::Read)
         } else {
             let error_msg = redact_token(&String::from_utf8_lossy(&output.stderr), token);
             error!("System git clone failed: {error_msg}");
-            Err(format!(
-                "Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"
-            ))
+            Err(SystemGitError::Failed(error_msg))
         }
     }
 
@@ -367,6 +378,63 @@ fn authorization_value(token: &str) -> String {
         "Basic {}",
         STANDARD.encode(format!("{SYSTEM_GIT_TOKEN_USER}:{token}"))
     )
+}
+
+#[derive(Debug)]
+enum SystemGitError {
+    Unavailable(String),
+    Failed(String),
+    Read(String),
+}
+
+fn is_git2_auth_error(error: &git2::Error) -> bool {
+    let message = error.message();
+    matches!(
+        error.class(),
+        git2::ErrorClass::Http | git2::ErrorClass::Ssh
+    ) && error.code() == git2::ErrorCode::Auth
+        || message.starts_with("Authentication failed")
+        || message == "No authentication method configured"
+        || message == "No valid credentials found"
+}
+
+fn is_stderr_auth_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("authentication failed")
+        || lower.contains("could not read username")
+        || lower.contains("could not read password")
+        || stderr.contains("401")
+        || stderr.contains("403")
+}
+
+fn clone_failure_message(
+    git2_message: &str, git2_auth: bool, fallback: &SystemGitError, token: Option<&str>,
+) -> String {
+    const CREDENTIAL_ADVICE: &str = " Please check your credentials and repository URL.";
+
+    let git2_message = redact_token(git2_message, token);
+    match fallback {
+        SystemGitError::Read(message) => message.clone(),
+        SystemGitError::Unavailable(reason) => {
+            let advice = if git2_auth { CREDENTIAL_ADVICE } else { "" };
+            format!(
+                "Failed to clone repository: {git2_message}. System git is unavailable as a \
+                 fallback ({reason}).{advice}"
+            )
+        }
+        SystemGitError::Failed(stderr) => {
+            let advice = if git2_auth || is_stderr_auth_error(stderr) {
+                CREDENTIAL_ADVICE
+            } else {
+                ""
+            };
+            format!(
+                "Failed to clone repository.{advice} Error: {git2_message}. System git fallback \
+                 also failed: {}",
+                stderr.trim()
+            )
+        }
+    }
 }
 
 fn redact_token(text: &str, token: Option<&str>) -> String {
@@ -893,6 +961,8 @@ mod tests {
             false,
             Some(TOKEN),
         )
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
         .unwrap_err();
 
         let requests = stub.finish();
@@ -921,6 +991,8 @@ mod tests {
             true,
             None,
         )
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
         .unwrap_err();
 
         let requests = stub.finish();
@@ -1073,5 +1145,76 @@ mod tests {
             "{redacted}"
         );
         assert!(redacted.starts_with("fatal: bad header"));
+    }
+
+    #[test]
+    fn failed_clone_reports_both_causes_without_credential_advice_for_not_found() {
+        let stub = HttpStub::start();
+        let url = stub.url();
+
+        let err = GitHubRepository::clone_and_read_config(
+            &url,
+            &["config.json".to_string()],
+            false,
+            Some(TOKEN.to_string()),
+        )
+        .unwrap_err();
+
+        stub.finish();
+        assert!(err.contains("404"), "git2 cause was lost: {err}");
+        assert!(
+            err.contains("not found"),
+            "system git cause was lost: {err}"
+        );
+        assert!(!err.contains("credentials"), "wrong advice: {err}");
+        assert!(!err.contains(TOKEN), "token leaked into error: {err}");
+    }
+
+    #[test]
+    fn failed_clone_suggests_checking_credentials_when_unauthorized() {
+        let stub = HttpStub::answering(
+            b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"repo\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let url = stub.url();
+
+        let err = GitHubRepository::clone_and_read_config(
+            &url,
+            &["config.json".to_string()],
+            false,
+            Some(TOKEN.to_string()),
+        )
+        .unwrap_err();
+
+        stub.finish();
+        assert!(err.contains("check your credentials"), "no advice: {err}");
+        assert!(!err.contains(TOKEN), "token leaked into error: {err}");
+    }
+
+    #[test]
+    fn failed_clone_redacts_the_token_from_the_first_error() {
+        let message = clone_failure_message(
+            &format!("cannot reach https://x:{TOKEN}@host/repo.git"),
+            false,
+            &SystemGitError::Failed("fatal: unable to access".to_string()),
+            Some(TOKEN),
+        );
+
+        assert!(!message.contains(TOKEN), "{message}");
+        assert!(message.contains("cannot reach"), "{message}");
+    }
+
+    #[test]
+    fn failed_clone_says_system_git_is_unavailable_and_keeps_the_first_cause() {
+        let message = clone_failure_message(
+            "failed to resolve address for example.invalid",
+            false,
+            &SystemGitError::Unavailable("No such file or directory".to_string()),
+            None,
+        );
+
+        assert!(message.contains("failed to resolve address"), "{message}");
+        assert!(message.contains("System git is unavailable"), "{message}");
+        assert!(!message.contains("Failed to execute git"), "{message}");
+        assert!(!message.contains("credentials"), "{message}");
     }
 }
