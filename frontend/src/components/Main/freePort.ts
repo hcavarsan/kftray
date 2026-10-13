@@ -19,5 +19,5 @@ export async function moveToFreePort(
 
   await invoke('update_config_cmd', { config: { ...stored, local_port: port } })
 
-  return { ...config, local_port: port }
+  return { ...config, ...stored, local_port: port }
 }

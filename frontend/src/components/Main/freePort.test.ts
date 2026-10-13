@@ -40,11 +40,14 @@ describe('moveToFreePort', () => {
       command === 'get_config_cmd' ? stored : undefined,
     )
 
-    const moved = await moveToFreePort({ ...stored, is_running: false }, 8081)
+    const moved = await moveToFreePort(
+      { ...stored, alias: 'stale', is_running: false },
+      8081,
+    )
 
     expect(invoke).toHaveBeenCalledWith('update_config_cmd', {
       config: { ...stored, local_port: 8081 },
     })
-    expect(moved.local_port).toBe(8081)
+    expect(moved).toEqual({ ...stored, is_running: false, local_port: 8081 })
   })
 })
