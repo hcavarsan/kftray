@@ -1,6 +1,6 @@
 {
   "name": "kftray",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "private": true,
   "packageManager": "pnpm@12.11.2",
   "scripts": {
