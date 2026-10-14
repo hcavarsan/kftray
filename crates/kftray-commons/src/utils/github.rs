@@ -637,8 +637,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let ok =
-            r#"{"alias":"ok","workload_type":"service","service":"api","namespace":"default"}"#;
+        let ok = r#"{"alias":"ok","workload_type":"service","service":"api","namespace":"default","protocol":"tcp"}"#;
         let bad = r#"{"alias":"bad","workload_type":"service","service":"api","namespace":""}"#;
         for invalid in [
             "not json".to_string(),

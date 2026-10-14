@@ -344,6 +344,13 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
         return Err("Namespace is required and cannot be empty".to_string());
     }
 
+    if !matches!(config.protocol.as_str(), "tcp" | "udp") {
+        return Err(format!(
+            "Protocol must be 'tcp' or 'udp', got '{}'",
+            config.protocol
+        ));
+    }
+
     match config.workload_type.as_deref() {
         Some("service") => {
             if config.service.is_none() || config.service.as_ref().unwrap().is_empty() {
@@ -1372,6 +1379,45 @@ mod tests {
         let result = import_configs_with_pool(invalid_json.to_string(), &pool).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse config"));
+    }
+
+    #[tokio::test]
+    async fn test_import_rejects_config_without_supported_protocol() {
+        let pool = setup_test_db().await;
+        let base = json!({"service": "a", "namespace": "n", "workload_type": "service",
+            "context": "ctx", "remote_port": 80, "local_port": 8080});
+
+        for protocol in [None, Some(""), Some("TCP"), Some("http"), Some("protocol")] {
+            let mut config = base.clone();
+            if let Some(protocol) = protocol {
+                config["protocol"] = json!(protocol);
+            }
+
+            let error = import_configs_with_pool(config.to_string(), &pool)
+                .await
+                .unwrap_err();
+
+            assert!(error.contains("Protocol"), "{protocol:?}: {error}");
+            assert!(
+                read_configs_with_pool(&pool).await.unwrap().is_empty(),
+                "{protocol:?}"
+            );
+        }
+
+        for protocol in ["tcp", "udp"] {
+            let mut config = base.clone();
+            config["protocol"] = json!(protocol);
+            import_configs_with_pool(config.to_string(), &pool)
+                .await
+                .unwrap();
+        }
+        let saved: Vec<String> = read_configs_with_pool(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.protocol)
+            .collect();
+        assert_eq!(saved, ["tcp", "udp"]);
     }
 
     #[tokio::test]
