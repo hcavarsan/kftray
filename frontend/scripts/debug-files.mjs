@@ -9,6 +9,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 
 const [binary, triple = process.env.TAURI_ENV_TARGET_TRIPLE] =
   process.argv.slice(2)
+const pdbName = process.env.KFTRAY_PDB_NAME ?? binary
 if (!binary || !triple) {
   throw new Error('usage: debug-files.mjs <binary> [target-triple]')
 }
@@ -33,7 +34,7 @@ const targets =
 const files = targets.map(target => {
   const dir = resolve(root, 'target', target, 'release')
   if (process.platform === 'win32') {
-    const pdb = resolve(dir, `${binary}.pdb`)
+    const pdb = resolve(dir, `${pdbName}.pdb`)
     return { check: pdb, upload: pdb }
   }
   if (process.platform === 'darwin') {
