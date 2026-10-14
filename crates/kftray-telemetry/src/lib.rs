@@ -98,10 +98,7 @@ pub enum Operation {
     GitSync,
     /// Starting the MCP server.
     McpStart,
-    /// A relay forward being brought back after its pod or stream died.
     Recover,
-    /// Forwards restarted by the network monitor after a network change or a
-    /// failed health check.
     Restart,
 }
 
