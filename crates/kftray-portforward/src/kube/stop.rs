@@ -2751,6 +2751,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stop_still_completes_once_the_startup_gate_has_closed() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let _reopen = crate::kube::proxy::ReopenStartupGate;
+        let id = 410_083;
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(local_config(id));
+        CHILD_PROCESSES.insert(id, process);
+        crate::kube::proxy::close_startup_gate();
+
+        let response = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, 0);
+        assert!(!CHILD_PROCESSES.contains_key(&id));
+    }
+
+    #[tokio::test]
     async fn stop_uses_the_retained_config_when_the_database_lookup_fails() {
         let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
