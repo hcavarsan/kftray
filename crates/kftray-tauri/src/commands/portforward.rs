@@ -11,6 +11,7 @@ use kftray_commons::utils::config_state::{
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::{
+    close_startup_gate,
     deploy_and_forward_pod,
     reconcile_pending_cleanup,
     start_port_forward,
@@ -202,6 +203,31 @@ async fn reconcile_and_cleanup_on_exit(exclude: &HashSet<i64>) {
     }
 }
 
+async fn begin_exit_cleanup(stop_all: bool) {
+    close_startup_gate();
+    let unfinished: HashSet<i64> = if stop_all {
+        match stop_all_port_forward_with_deadline(
+            DatabaseMode::File,
+            &HashSet::new(),
+            CLEANUP_RECONCILE_TIMEOUT,
+        )
+        .await
+        {
+            Ok((responses, unfinished)) => {
+                info!("Successfully stopped all port forwards: {responses:?}");
+                unfinished.into_iter().collect()
+            }
+            Err(err) => {
+                error!("Failed to stop port forwards: {err:?}");
+                HashSet::new()
+            }
+        }
+    } else {
+        HashSet::new()
+    };
+    reconcile_and_cleanup_on_exit(&unfinished).await;
+}
+
 fn hide_for_exit(app: &AppHandle<Wry>, window: &tauri::WebviewWindow<Wry>) {
     if let Err(e) = window.hide() {
         error!("Failed to hide window before exit: {e}");
@@ -296,7 +322,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
 
             if !any_running {
                 hide_for_exit(&app_handle, &window);
-                reconcile_and_cleanup_on_exit(&HashSet::new()).await;
+                begin_exit_cleanup(false).await;
                 // Stop MCP server if running
                 if let Err(e) = crate::mcp::stop().await {
                     error!("Failed to stop MCP server: {e}");
@@ -316,26 +342,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                         info!("User chose to stop all port forwards before closing.");
                         hide_for_exit(&app_handle, &window);
                         tauri::async_runtime::spawn(async move {
-                            let unfinished = match stop_all_port_forward_with_deadline(
-                                DatabaseMode::File,
-                                &HashSet::new(),
-                                CLEANUP_RECONCILE_TIMEOUT,
-                            )
-                            .await
-                            {
-                                Ok((responses, unfinished)) => {
-                                    info!(
-                                        "Successfully stopped all port forwards: {responses:?}"
-                                    );
-                                    unfinished
-                                }
-                                Err(err) => {
-                                    error!("Failed to stop port forwards: {err:?}");
-                                    Vec::new()
-                                }
-                            };
-                            reconcile_and_cleanup_on_exit(&unfinished.into_iter().collect())
-                                .await;
+                            begin_exit_cleanup(true).await;
                             // Stop MCP server if running
                             if let Err(e) = crate::mcp::stop().await {
                                 error!("Failed to stop MCP server: {e}");
@@ -359,7 +366,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
         }
         _ => {
             error!("No windows found, exiting application.");
-            reconcile_and_cleanup_on_exit(&HashSet::new()).await;
+            begin_exit_cleanup(false).await;
             // Stop MCP server if running
             if let Err(e) = crate::mcp::stop().await {
                 error!("Failed to stop MCP server: {e}");
@@ -525,5 +532,57 @@ mod tests {
     fn expose_is_always_direct_and_proxy_never_is() {
         assert!(is_direct_tcp_forward(Some("expose"), "udp"));
         assert!(!is_direct_tcp_forward(Some("proxy"), "tcp"));
+    }
+
+    async fn assert_exit_cleanup_closes_the_startup_gate(stop_all: bool) {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+            .lock()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+        let _reopen = kftray_portforward::kube::ReopenStartupGate;
+        let id = 440_001;
+        let config = Config {
+            id: Some(id),
+            protocol: "tcp".to_string(),
+            ..Default::default()
+        };
+
+        let before = start_port_forward(vec![config.clone()], "tcp")
+            .await
+            .unwrap_err();
+        assert!(!before.contains("kftray is exiting"), "{before}");
+
+        begin_exit_cleanup(stop_all).await;
+
+        let direct = start_port_forward(vec![config.clone()], "tcp")
+            .await
+            .unwrap_err();
+        let relay = deploy_and_forward_pod(vec![config]).await.unwrap_err();
+        for error in [direct, relay] {
+            assert!(error.contains("kftray is exiting"), "{error}");
+        }
+        assert!(!kftray_portforward::kube::is_start_pending(id));
+        assert!(!kftray_portforward::kube::proxy_recovery::RECOVERY_LOCKS.contains_key(&id));
+        let states = get_configs_state().await.unwrap();
+        assert!(states.iter().all(|state| state.config_id != id));
+    }
+
+    #[tokio::test]
+    async fn exiting_with_nothing_to_stop_refuses_new_starts() {
+        assert_exit_cleanup_closes_the_startup_gate(false).await;
+    }
+
+    #[tokio::test]
+    async fn exiting_after_stop_all_refuses_new_starts() {
+        assert_exit_cleanup_closes_the_startup_gate(true).await;
     }
 }
