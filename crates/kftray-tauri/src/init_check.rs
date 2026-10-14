@@ -1,3 +1,7 @@
+use std::net::{
+    IpAddr,
+    Ipv4Addr,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,7 +43,9 @@ pub trait PortOperations: Send + Sync {
     async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String>;
     async fn get_config(&self, id: i64) -> Result<Config, String>;
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
-    async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)>;
+    async fn find_process_by_port(
+        &self, port: u16, address: Option<IpAddr>, protocol: ProtocolFlags,
+    ) -> Option<(i32, String)>;
     /// Whether a forward for the configuration is running or currently
     /// starting (queued/pending) in this process.
     async fn is_forward_registered(&self, id: i64) -> bool;
@@ -73,8 +79,10 @@ impl PortOperations for RealPortOperations {
         update_config_state(state).await
     }
 
-    async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)> {
-        find_process_by_port_internal(port).await
+    async fn find_process_by_port(
+        &self, port: u16, address: Option<IpAddr>, protocol: ProtocolFlags,
+    ) -> Option<(i32, String)> {
+        find_process_by_port_internal(port, address, protocol).await
     }
 
     async fn is_forward_registered(&self, id: i64) -> bool {
@@ -203,8 +211,16 @@ async fn check_and_manage_port(
     port_ops: Arc<dyn PortOperations>, config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let port = config.local_port.unwrap_or(0);
+    let protocol = if config.protocol == "udp" {
+        ProtocolFlags::UDP
+    } else {
+        ProtocolFlags::TCP
+    };
 
-    if let Some((pid, process_name)) = port_ops.find_process_by_port(port).await {
+    if let Some((pid, process_name)) = port_ops
+        .find_process_by_port(port, forward_address(&config), protocol)
+        .await
+    {
         handle_existing_process(Arc::clone(&port_ops), config, port, pid, process_name).await?;
     } else {
         start_port_forwarding(port_ops, config).await?;
@@ -388,22 +404,42 @@ async fn start_port_forwarding_with_backoff(
     }
 }
 
-async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
+/// The address a start of `config` binds, or `None` when only the start
+/// knows it: an auto loopback address is allocated during the start.
+fn forward_address(config: &Config) -> Option<IpAddr> {
+    if config.auto_loopback_address {
+        return None;
+    }
+    match config.local_address.as_deref() {
+        Some(address) => address.parse().ok(),
+        None => Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+    }
+}
+
+fn socket_blocks_forward(socket: &ProtocolSocketInfo, port: u16, address: Option<IpAddr>) -> bool {
+    let (local_addr, local_port) = match socket {
+        ProtocolSocketInfo::Tcp(tcp_info) => (tcp_info.local_addr, tcp_info.local_port),
+        ProtocolSocketInfo::Udp(udp_info) => (udp_info.local_addr, udp_info.local_port),
+    };
+
+    local_port == port
+        && address.is_none_or(|address| {
+            address == local_addr || address.is_unspecified() || local_addr.is_unspecified()
+        })
+}
+
+async fn find_process_by_port_internal(
+    port: u16, address: Option<IpAddr>, protocol: ProtocolFlags,
+) -> Option<(i32, String)> {
     if port == 0 {
         return None;
     }
 
     let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
-    let proto_flags = ProtocolFlags::TCP | ProtocolFlags::UDP;
 
-    if let Ok(sockets_info) = get_sockets_info(af_flags, proto_flags) {
+    if let Ok(sockets_info) = get_sockets_info(af_flags, protocol) {
         for socket in sockets_info {
-            let local_port = match &socket.protocol_socket_info {
-                ProtocolSocketInfo::Tcp(tcp_info) => tcp_info.local_port,
-                ProtocolSocketInfo::Udp(udp_info) => udp_info.local_port,
-            };
-
-            if local_port == port
+            if socket_blocks_forward(&socket.protocol_socket_info, port, address)
                 && let Some(&pid) = socket.associated_pids.first()
             {
                 let process_name = get_process_name_by_pid(pid as i32);
@@ -487,9 +523,13 @@ mod tests {
             .returning(move |_| Ok(config.clone()));
 
         mock.expect_find_process_by_port()
-            .with(eq(8080))
+            .with(
+                eq(8080),
+                eq(Some(IpAddr::V4(Ipv4Addr::LOCALHOST))),
+                eq(ProtocolFlags::TCP),
+            )
             .times(1)
-            .returning(|_| None);
+            .returning(|_, _, _| None);
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
@@ -538,9 +578,9 @@ mod tests {
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
-            .with(eq(8080))
+            .with(eq(8080), always(), always())
             .times(1)
-            .returning(|_| Some((1234, "nginx".to_string())));
+            .returning(|_, _, _| Some((1234, "nginx".to_string())));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -559,9 +599,9 @@ mod tests {
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
-            .with(eq(8080))
+            .with(eq(8080), always(), always())
             .times(1)
-            .returning(|_| Some((1234, "kftray".to_string())));
+            .returning(|_, _, _| Some((1234, "kftray".to_string())));
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -573,9 +613,9 @@ mod tests {
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
-            .with(eq(8080))
+            .with(eq(8080), always(), always())
             .times(1)
-            .returning(|_| Some((1234, "kftui".to_string())));
+            .returning(|_, _, _| Some((1234, "kftui".to_string())));
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -587,9 +627,9 @@ mod tests {
         let config = create_test_config(1, 8080, "tcp", None);
 
         mock.expect_find_process_by_port()
-            .with(eq(8080))
+            .with(eq(8080), always(), always())
             .times(1)
-            .returning(|_| Some((1234, "nginx".to_string())));
+            .returning(|_, _, _| Some((1234, "nginx".to_string())));
 
         mock.expect_update_config_state()
             .times(1)
@@ -605,9 +645,9 @@ mod tests {
         let config = create_test_config(1, 0, "tcp", Some("service"));
 
         mock.expect_find_process_by_port()
-            .with(eq(0))
+            .with(eq(0), always(), always())
             .times(1)
-            .returning(|_| None);
+            .returning(|_, _, _| None);
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
@@ -617,6 +657,88 @@ mod tests {
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
+    }
+
+    fn tcp_socket(address: &str, port: u16) -> ProtocolSocketInfo {
+        ProtocolSocketInfo::Tcp(netstat2::TcpSocketInfo {
+            local_addr: address.parse().unwrap(),
+            local_port: port,
+            remote_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            remote_port: 0,
+            state: netstat2::TcpState::Listen,
+        })
+    }
+
+    #[test]
+    fn a_socket_on_another_address_does_not_block_the_forward() {
+        let forward = Some("127.0.0.2".parse().unwrap());
+
+        assert!(!socket_blocks_forward(
+            &tcp_socket("127.0.0.1", 8080),
+            8080,
+            forward
+        ));
+        assert!(!socket_blocks_forward(
+            &tcp_socket("::1", 8080),
+            8080,
+            forward
+        ));
+        assert!(!socket_blocks_forward(
+            &tcp_socket("127.0.0.2", 8081),
+            8080,
+            forward
+        ));
+        assert!(socket_blocks_forward(
+            &tcp_socket("127.0.0.2", 8080),
+            8080,
+            forward
+        ));
+    }
+
+    #[test]
+    fn a_wildcard_socket_or_address_blocks_the_forward() {
+        let forward = Some("127.0.0.2".parse().unwrap());
+
+        assert!(socket_blocks_forward(
+            &tcp_socket("0.0.0.0", 8080),
+            8080,
+            forward
+        ));
+        assert!(socket_blocks_forward(
+            &tcp_socket("::", 8080),
+            8080,
+            forward
+        ));
+        assert!(socket_blocks_forward(
+            &tcp_socket("127.0.0.1", 8080),
+            8080,
+            Some("0.0.0.0".parse().unwrap())
+        ));
+    }
+
+    #[test]
+    fn an_unknown_forward_address_matches_any_socket_on_the_port() {
+        assert!(socket_blocks_forward(
+            &tcp_socket("127.0.0.1", 8080),
+            8080,
+            None
+        ));
+    }
+
+    #[test]
+    fn the_forward_address_is_the_address_the_start_binds() {
+        let mut config = create_test_config(1, 8080, "tcp", Some("service"));
+        config.local_address = None;
+        assert_eq!(
+            forward_address(&config),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+
+        config.local_address = Some("127.0.0.2".to_string());
+        assert_eq!(forward_address(&config), Some("127.0.0.2".parse().unwrap()));
+
+        config.auto_loopback_address = true;
+        assert_eq!(forward_address(&config), None);
     }
 
     #[tokio::test]
@@ -768,7 +890,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_process_by_port_internal() {
-        let result = find_process_by_port_internal(0).await;
+        let result = find_process_by_port_internal(0, None, ProtocolFlags::TCP).await;
         assert!(result.is_none());
     }
 
@@ -884,7 +1006,7 @@ mod tests {
                 Some("service"),
             ))
         });
-        mock.expect_find_process_by_port().returning(|_| None);
+        mock.expect_find_process_by_port().returning(|_, _, _| None);
         mock.expect_dispatch_start().returning(move |config| {
             started_tx.send(config.id.unwrap()).unwrap();
             Ok(())
