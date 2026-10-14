@@ -186,7 +186,7 @@ impl Phase {
 ///
 /// A failure whose rollback could not finish keeps the kind of the failure
 /// that caused the rollback; the leftover is reported separately, as the
-/// `cleanup_incomplete` tag.
+/// `cleanup_incomplete` and `cleanup_step` tags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
     /// The user or a concurrent stop cancelled the operation.
@@ -265,13 +265,52 @@ struct Failure {
     kind: FailureKind,
     /// The rollback of the failed operation could not finish, leaving a relay
     /// pod, loopback alias or hosts entry behind.
-    cleanup_incomplete: bool,
+    cleanup: Option<CleanupSteps>,
 }
 
 impl Failure {
     /// A cancellation that left nothing behind is expected and not an error.
     fn is_clean_cancellation(self) -> bool {
-        self.kind == FailureKind::Cancelled && !self.cleanup_incomplete
+        self.kind == FailureKind::Cancelled && self.cleanup.is_none()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CleanupSteps {
+    address: bool,
+    hosts: bool,
+    listener: bool,
+}
+
+impl CleanupSteps {
+    fn parse(detail: &str) -> Self {
+        let mut steps = Self::default();
+        for piece in detail.split("; ") {
+            let piece = piece
+                .strip_prefix(CLEANUP_INCOMPLETE)
+                .unwrap_or(piece)
+                .trim_start_matches(": ");
+            match piece.split_once(": ").map(|(step, _)| step) {
+                Some("address") => steps.address = true,
+                Some("hosts") => steps.hosts = true,
+                Some("listener") => steps.listener = true,
+                _ => {}
+            }
+        }
+        steps
+    }
+
+    fn name(self) -> &'static str {
+        match (self.address, self.hosts, self.listener) {
+            (true, false, false) => "address",
+            (false, true, false) => "hosts",
+            (false, false, true) => "listener",
+            (true, true, false) => "address+hosts",
+            (true, false, true) => "address+listener",
+            (false, true, true) => "hosts+listener",
+            (true, true, true) => "address+hosts+listener",
+            (false, false, false) => "other",
+        }
     }
 }
 
@@ -428,18 +467,15 @@ fn classify_failure(message: &str) -> Failure {
         ),
     ];
     let message = message.to_ascii_lowercase();
-    let (cause, cleanup_incomplete) = match message.find(CLEANUP_INCOMPLETE) {
-        Some(at) => (&message[..at], true),
-        None => (message.as_str(), false),
+    let (cause, cleanup) = match message.find(CLEANUP_INCOMPLETE) {
+        Some(at) => (&message[..at], Some(CleanupSteps::parse(&message[at..]))),
+        None => (message.as_str(), None),
     };
     let kind = RULES
         .iter()
         .find(|(_, needles)| needles.iter().any(|needle| cause.contains(needle)))
         .map_or(FailureKind::Other, |(kind, _)| *kind);
-    Failure {
-        kind,
-        cleanup_incomplete,
-    }
+    Failure { kind, cleanup }
 }
 
 /// Child span of the operation currently being measured; finishes on drop.
@@ -598,8 +634,9 @@ pub async fn measure_with_event<T, E: Display>(
                 SpanStatus::InternalError
             });
             transaction.set_tag("failure_kind", failure.kind.name());
-            if failure.cleanup_incomplete {
+            if let Some(steps) = failure.cleanup {
                 transaction.set_tag("cleanup_incomplete", "true");
+                transaction.set_tag("cleanup_step", steps.name());
             }
             let event_id = report_failure_on(&hub, operation, failure);
             finish_unless_opted_out(transaction);
@@ -632,7 +669,7 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
     let quiet = failure.is_clean_cancellation();
     push_breadcrumb(
         "portforward",
-        if failure.cleanup_incomplete {
+        if failure.cleanup.is_some() {
             format!(
                 "{} {} cleanup_incomplete",
                 operation.name(),
@@ -667,10 +704,13 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
     event
         .tags
         .insert("failure_kind".into(), failure.kind.name().into());
-    if failure.cleanup_incomplete {
+    if let Some(steps) = failure.cleanup {
         event
             .tags
             .insert("cleanup_incomplete".into(), "true".into());
+        event
+            .tags
+            .insert("cleanup_step".into(), steps.name().into());
     }
     // Nil when the client dropped the event (reporting off).
     Some(hub.capture_event(event)).filter(|id| !id.is_nil())
@@ -1207,7 +1247,7 @@ mod tests {
             failure,
             Failure {
                 kind: FailureKind::PortInUse,
-                cleanup_incomplete: true
+                cleanup: Some(CleanupSteps::default())
             }
         );
         // Only the text before the marker decides the kind, not the cleanup detail.
@@ -1217,16 +1257,46 @@ mod tests {
             ),
             Failure {
                 kind: FailureKind::Cancelled,
-                cleanup_incomplete: true
+                cleanup: Some(CleanupSteps::default())
             }
         );
         assert_eq!(
             classify_failure("Timed out waiting for the relay to start"),
             Failure {
                 kind: FailureKind::Timeout,
-                cleanup_incomplete: false
+                cleanup: None
             }
         );
+    }
+
+    #[test]
+    fn the_cleanup_step_is_read_from_the_rollback_detail() {
+        let steps = |message: &str| classify_failure(message).cleanup.map(CleanupSteps::name);
+
+        assert_eq!(
+            steps("start failed; cleanup incomplete: hosts: Access is denied. (os error 5)"),
+            Some("hosts")
+        );
+        assert_eq!(
+            steps(
+                "start failed; cleanup incomplete: address: helper unavailable; hosts: Access is \
+                 denied. (os error 5)"
+            ),
+            Some("address+hosts")
+        );
+        assert_eq!(
+            steps(
+                "Startup cancelled for config 2; cleanup incomplete: listener: its listener timed \
+                 out shutting down, so its local port may still be in use; cleanup incomplete: \
+                 hosts: entry for api.local still present"
+            ),
+            Some("hosts+listener")
+        );
+        assert_eq!(
+            steps("Startup cancelled for config 2; cleanup incomplete: relay delete failed"),
+            Some("other")
+        );
+        assert_eq!(steps("Startup cancelled for config 2"), None);
     }
 
     #[test]
@@ -1480,9 +1550,11 @@ mod tests {
             .unwrap();
         assert_eq!(event.tags["failure_kind"], "cancelled");
         assert_eq!(event.tags["cleanup_incomplete"], "true");
+        assert_eq!(event.tags["cleanup_step"], "other");
         let transaction = captured_transaction(&envelopes);
         assert_eq!(transaction.tags["failure_kind"], "cancelled");
         assert_eq!(transaction.tags["cleanup_incomplete"], "true");
+        assert_eq!(transaction.tags["cleanup_step"], "other");
         assert_eq!(
             transaction
                 .contexts

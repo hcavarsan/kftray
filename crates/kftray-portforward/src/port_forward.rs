@@ -336,9 +336,9 @@ impl PortForward {
                     .await
         {
             if error.is_unsatisfiable() {
-                unsatisfiable.push(error.to_string());
+                unsatisfiable.push(format!("address: {error}"));
             } else {
-                errors.push(error.to_string());
+                errors.push(format!("address: {error}"));
             }
         }
         // Reported rather than swallowed: this runs when a startup failed or
@@ -356,7 +356,7 @@ impl PortForward {
         .await
         {
             Ok(()) => {}
-            Err(error) => errors.push(error.to_string()),
+            Err(error) => errors.push(format!("hosts: {error}")),
         }
         merge_cleanup_outcome(unsatisfiable, errors)
     }
