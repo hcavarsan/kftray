@@ -411,11 +411,16 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+fn kubeconfig_or_default(config: &Config) -> &str {
+    config.kubeconfig.as_deref().unwrap_or("default")
+}
+
 fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     if existing.context != incoming.context
         || existing.namespace != incoming.namespace
         || existing.workload_type != incoming.workload_type
         || existing.protocol != incoming.protocol
+        || kubeconfig_or_default(existing) != kubeconfig_or_default(incoming)
     {
         return false;
     }
@@ -1650,6 +1655,55 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].alias.as_deref(), Some("app.example.test"));
         assert_eq!(configs[0].local_port, first_port);
+    }
+
+    #[tokio::test]
+    async fn test_export_import_keeps_configs_that_differ_only_by_kubeconfig() {
+        let source = setup_test_db().await;
+        for kubeconfig in ["default", "/home/u/.kube/k3s-prod.yaml"] {
+            let config = Config {
+                service: Some("api".to_string()),
+                namespace: "default".to_string(),
+                context: Some("default".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                local_port: Some(8080),
+                remote_port: Some(80),
+                kubeconfig: Some(kubeconfig.to_string()),
+                ..Config::default()
+            };
+            insert_config_with_pool(config, &source).await.unwrap();
+        }
+
+        let kubeconfigs = |configs: Vec<Config>| {
+            let mut kubeconfigs: Vec<_> = configs.into_iter().map(|c| c.kubeconfig).collect();
+            kubeconfigs.sort();
+            kubeconfigs
+        };
+        let expected = vec![
+            Some("/home/u/.kube/k3s-prod.yaml".to_string()),
+            Some("default".to_string()),
+        ];
+        assert_eq!(
+            kubeconfigs(read_configs_with_pool(&source).await.unwrap()),
+            expected
+        );
+
+        let exported = export_configs_with_pool(&source).await.unwrap();
+        import_configs_with_pool(exported.clone(), &source)
+            .await
+            .unwrap();
+        assert_eq!(
+            kubeconfigs(read_configs_with_pool(&source).await.unwrap()),
+            expected
+        );
+
+        let target = setup_test_db().await;
+        import_configs_with_pool(exported, &target).await.unwrap();
+        assert_eq!(
+            kubeconfigs(read_configs_with_pool(&target).await.unwrap()),
+            expected
+        );
     }
 
     #[tokio::test]
