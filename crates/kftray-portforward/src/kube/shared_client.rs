@@ -192,12 +192,10 @@ impl SharedClientManager {
             .as_deref()
             .expect("resolve_key always returns a key carrying a context");
 
-        if let Some(cached) = self.clients.get(&key) {
-            if cached.is_fresh(self.client_ttl, &signature) {
-                return Ok(cached.connection.clone());
-            }
-            drop(cached);
-            self.clients.remove(&key);
+        if let Some(cached) = self.clients.get(&key)
+            && cached.is_fresh(self.client_ttl, &signature)
+        {
+            return Ok(cached.connection.clone());
         }
 
         let (lock, failures_seen) = {
@@ -214,15 +212,13 @@ impl SharedClientManager {
 
         let mut guard = lock.failures.lock().await;
 
-        if let Some(cached) = self.clients.get(&key) {
-            if cached.is_fresh(self.client_ttl, &signature) {
-                let client_arc = cached.connection.clone();
-                drop(cached);
-                drop(guard);
-                return Ok(client_arc);
-            }
+        if let Some(cached) = self.clients.get(&key)
+            && cached.is_fresh(self.client_ttl, &signature)
+        {
+            let client_arc = cached.connection.clone();
             drop(cached);
-            self.clients.remove(&key);
+            drop(guard);
+            return Ok(client_arc);
         }
         if let Some(failure) = guard
             .iter()
@@ -232,6 +228,7 @@ impl SharedClientManager {
             drop(guard);
             return Err(error);
         }
+        self.clients.remove(&key);
 
         match create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await {
             Ok(connection) => {
@@ -1147,15 +1144,8 @@ mod tests {
     }
 
     async fn waiter_behind_failed_creations(
-        stored: Vec<(KubeconfigSignature, &str)>, then_cached: Option<KubeconfigSignature>,
+        stored: Vec<(KubeconfigSignature, &str)>,
     ) -> (ServiceClientKey, Arc<SharedClientManager>, anyhow::Error) {
-        use http::{
-            Request,
-            Response,
-        };
-        use kube::client::Body;
-        use tower_test::mock;
-
         let manager = Arc::new(SharedClientManager::new());
         let key = ServiceClientKey::new(
             Some("ctx".to_string()),
@@ -1178,17 +1168,6 @@ mod tests {
         for (signature, message) in stored {
             record_failure(&lock, &mut guard, signature, message);
         }
-        let _handle = then_cached.map(|signature| {
-            let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
-            let connection = KubeConnection {
-                client: kube::Client::new(mock_service, "default"),
-                cluster_url: "https://example.invalid".parse().unwrap(),
-            };
-            manager
-                .clients
-                .insert(key.clone(), CachedClient::new(connection, signature));
-            handle
-        });
         drop(guard);
         manager.release_creation_lock(&key, &lock);
 
@@ -1202,11 +1181,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_waiter_queued_behind_a_failed_creation_gets_that_failure() {
-        let (key, manager, error) = waiter_behind_failed_creations(
-            vec![(failing_signature(), "cluster unreachable")],
-            None,
-        )
-        .await;
+        let (key, manager, error) =
+            waiter_behind_failed_creations(vec![(failing_signature(), "cluster unreachable")])
+                .await;
 
         assert_eq!(
             format!("{error:#}"),
@@ -1221,8 +1198,7 @@ mod tests {
     #[tokio::test]
     async fn a_failure_of_another_kubeconfig_state_is_not_shared() {
         let (_, _, error) =
-            waiter_behind_failed_creations(vec![(stale_signature(), "cluster unreachable")], None)
-                .await;
+            waiter_behind_failed_creations(vec![(stale_signature(), "cluster unreachable")]).await;
 
         assert!(
             !error.to_string().contains("cluster unreachable"),
@@ -1232,13 +1208,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_later_failure_of_another_kubeconfig_state_keeps_the_earlier_one() {
-        let (_, _, error) = waiter_behind_failed_creations(
-            vec![
-                (failing_signature(), "cluster unreachable"),
-                (stale_signature(), "edited kubeconfig rejected"),
-            ],
-            None,
-        )
+        let (_, _, error) = waiter_behind_failed_creations(vec![
+            (failing_signature(), "cluster unreachable"),
+            (stale_signature(), "edited kubeconfig rejected"),
+        ])
         .await;
 
         assert_eq!(
@@ -1248,16 +1221,134 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_later_success_of_another_kubeconfig_state_keeps_the_earlier_failure() {
-        let (_, _, error) = waiter_behind_failed_creations(
-            vec![(failing_signature(), "cluster unreachable")],
-            Some(stale_signature()),
-        )
-        .await;
+    async fn a_failure_shared_past_a_later_success_of_another_state_leaves_that_success_cached() {
+        crate::ssl::ensure_crypto_provider_installed();
+        let port = fake_api_server().await;
+        let kubeconfig = tempfile::NamedTempFile::new().expect("create temp kubeconfig");
+        std::fs::write(kubeconfig.path(), kubeconfig_yaml("ctx")).expect("write temp kubeconfig");
+        let kubeconfig_path = kubeconfig.path().to_string_lossy().to_string();
+        let signature = || kubeconfig_signature(&[kubeconfig.path().to_path_buf()]);
+        let manager = Arc::new(SharedClientManager::new());
+        let key = ServiceClientKey::new(Some("ctx".to_string()), Some(kubeconfig_path.clone()));
 
+        let lock = manager
+            .creation_locks
+            .entry(key.clone())
+            .or_insert_with(new_creation_lock)
+            .clone();
+        lock.interest.fetch_add(1, Ordering::SeqCst);
+        let mut guard = lock.failures.lock().await;
+
+        let waiter_manager = manager.clone();
+        let waiter_key = key.clone();
+        let waiter = tokio::spawn(async move { waiter_manager.get_connection(waiter_key).await });
+        wait_for_interest_count(&lock, 2).await;
+
+        record_failure(&lock, &mut guard, signature(), "cluster unreachable");
+        rewrite_kubeconfig_preserving_mtime(
+            kubeconfig.path(),
+            &kubeconfig_for_server(port),
+            std::time::SystemTime::now() + Duration::from_secs(60),
+        );
+        let created = create_client_with_specific_context(Some(kubeconfig_path), "ctx")
+            .await
+            .expect("the edited kubeconfig reaches the fake API server");
+        let cached = CachedClient::new(created, signature());
+        let newer_connection = cached.connection.clone();
+        manager.clients.insert(key.clone(), cached);
+        drop(guard);
+        manager.release_creation_lock(&key, &lock);
+
+        let error = tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("a waiter given a shared failure must not hang")
+            .expect("waiter task must not panic")
+            .expect_err("the older caller is given the failure of its own kubeconfig state");
         assert_eq!(
             format!("{error:#}"),
             "Failed to create client: cluster unreachable"
+        );
+
+        let retained = manager
+            .clients
+            .get(&key)
+            .expect("the newer client must stay cached")
+            .connection
+            .clone();
+        assert!(
+            Arc::ptr_eq(&retained, &newer_connection),
+            "the older caller's failure must not evict the newer client"
+        );
+
+        let reused = manager
+            .get_connection(key)
+            .await
+            .expect("a caller on the newer kubeconfig state reuses the cached client");
+        assert!(
+            Arc::ptr_eq(&reused, &newer_connection),
+            "a caller on the newer kubeconfig state must not recreate the client"
+        );
+        let version = reused
+            .client
+            .apiserver_version()
+            .await
+            .expect("the retained client still reaches the cluster");
+        assert_eq!(version.git_version, "v1.30.0");
+    }
+
+    #[tokio::test]
+    async fn a_caller_still_waiting_for_the_lock_leaves_a_stale_client_cached() {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = Arc::new(SharedClientManager::new());
+        let key = ServiceClientKey::new(
+            Some("ctx".to_string()),
+            Some(FAILING_KUBECONFIG.to_string()),
+        );
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let connection = KubeConnection {
+            client: kube::Client::new(mock_service, "default"),
+            cluster_url: "https://example.invalid".parse().unwrap(),
+        };
+        manager.clients.insert(
+            key.clone(),
+            CachedClient::new(connection, stale_signature()),
+        );
+
+        let lock = manager
+            .creation_locks
+            .entry(key.clone())
+            .or_insert_with(new_creation_lock)
+            .clone();
+        lock.interest.fetch_add(1, Ordering::SeqCst);
+        let guard = lock.failures.lock().await;
+
+        let waiter_manager = manager.clone();
+        let waiter_key = key.clone();
+        let waiter = tokio::spawn(async move { waiter_manager.get_connection(waiter_key).await });
+        wait_for_interest_count(&lock, 2).await;
+
+        assert!(
+            manager.clients.contains_key(&key),
+            "a caller that does not hold the creation lock must not evict the cached client"
+        );
+
+        drop(guard);
+        manager.release_creation_lock(&key, &lock);
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter must not hang")
+            .expect("waiter task must not panic")
+            .expect_err("no client can be created from a nonexistent kubeconfig");
+
+        assert!(
+            !manager.clients.contains_key(&key),
+            "the caller that replaces a client built for another kubeconfig state must evict it"
         );
     }
 
@@ -1464,20 +1555,21 @@ mod tests {
         port
     }
 
+    fn kubeconfig_for_server(port: u16) -> String {
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  \
+             context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    \
+             server: http://127.0.0.1:{port}\nusers:\n- name: u\n  user: {{}}\n"
+        )
+    }
+
     #[tokio::test]
     async fn explicit_context_client_follows_kubeconfig_edit() {
         crate::ssl::ensure_crypto_provider_installed();
         let a = fake_api_server().await;
         let b = fake_api_server().await;
-        let cfg = |port: u16| {
-            format!(
-                "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  \
-                 context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    \
-                 server: http://127.0.0.1:{port}\nusers:\n- name: u\n  user: {{}}\n"
-            )
-        };
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), cfg(a)).unwrap();
+        std::fs::write(file.path(), kubeconfig_for_server(a)).unwrap();
         let manager = SharedClientManager::new();
         let key = ServiceClientKey::new(
             Some("ctx".to_string()),
@@ -1487,7 +1579,7 @@ mod tests {
         assert_eq!(first.cluster_url.port_u16(), Some(a));
         // Coarse-mtime file systems need the rewrite to land in a later second.
         tokio::time::sleep(Duration::from_millis(1100)).await;
-        std::fs::write(file.path(), cfg(b)).unwrap();
+        std::fs::write(file.path(), kubeconfig_for_server(b)).unwrap();
         let second = manager.get_connection(key).await.unwrap();
         assert_eq!(
             second.cluster_url.port_u16(),
