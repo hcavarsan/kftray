@@ -4,6 +4,7 @@ use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::utils::config_state::set_connection_error_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_telemetry::Phase;
 use kube::Api;
 use kube_portforward::PodSelector;
 use tokio::io::{
@@ -452,7 +453,12 @@ impl PortForwarder {
         pod_readiness: kube_portforward::PodReadiness, expected_destination: Option<&str>,
     ) -> anyhow::Result<Self> {
         let client_key = ServiceClientKey::new(context_name, kubeconfig);
-        let connection = SHARED_CLIENT_MANAGER.get_connection(client_key).await?;
+        let phase = kftray_telemetry::phase(Phase::Client);
+        let connection = SHARED_CLIENT_MANAGER
+            .get_connection(client_key)
+            .await
+            .inspect_err(|_| phase.fail())?;
+        drop(phase);
         // The relay this forward reaches was created by an earlier step that
         // resolved the same context; a cached client that expired in between
         // can resolve it to another server, and forwarding there would look
@@ -466,9 +472,11 @@ impl PortForwarder {
             );
         }
 
+        let phase = kftray_telemetry::phase(Phase::Resolve);
         let pod_selector =
             crate::kube::target::resolve_pod_selector(&connection.client, namespace, &target)
-                .await?;
+                .await
+                .inspect_err(|_| phase.fail())?;
         let pod_api: Api<Pod> = Api::namespaced(connection.client.clone(), namespace);
 
         let forwarder = kube_portforward::Forwarder::builder(
@@ -480,16 +488,22 @@ impl PortForwarder {
         .pod_readiness(pod_readiness)
         .build()
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to build port forwarder: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to build port forwarder: {}", e))
+        .inspect_err(|_| phase.fail())?;
         let forwarder = Arc::new(forwarder);
+        drop(phase);
 
+        let phase = kftray_telemetry::phase(Phase::Probe);
         let target_port = match probe_startup(&forwarder, &pod_api, &pod_selector, &target).await {
             Ok(port) => port,
             Err(err) => {
+                phase.fail();
+                drop(phase);
                 let _ = forwarder.shutdown().await;
                 return Err(err);
             }
         };
+        drop(phase);
 
         let named_port =
             matches!(target.port, crate::kube::models::Port::Name(_)).then(|| NamedPort {

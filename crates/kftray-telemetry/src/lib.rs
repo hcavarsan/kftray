@@ -126,6 +126,9 @@ pub enum Phase {
     Tls,
     /// Loading the kubeconfig, building the client and resolving the target pod.
     Connect,
+    Client,
+    Resolve,
+    Probe,
     /// Binding the local listener and spawning the forwarder.
     Listen,
     /// Recording the running state in the database.
@@ -161,6 +164,9 @@ impl Phase {
             Self::HostsEntry => "forward.hosts_entry",
             Self::Tls => "forward.tls",
             Self::Connect => "kube.connect",
+            Self::Client => "kube.client",
+            Self::Resolve => "kube.resolve",
+            Self::Probe => "kube.probe",
             Self::Listen => "net.listen",
             Self::PersistState => "db.persist_state",
             Self::RelayDeploy => "relay.deploy",
