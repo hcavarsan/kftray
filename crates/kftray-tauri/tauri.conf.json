@@ -24,6 +24,7 @@
   },
   "build": {
     "beforeBuildCommand": "pnpm build",
+    "beforeBundleCommand": "node frontend/scripts/debug-files.mjs kftray",
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../../frontend/dist",
