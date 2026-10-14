@@ -412,7 +412,10 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
 }
 
 fn kubeconfig_or_default(config: &Config) -> &str {
-    config.kubeconfig.as_deref().unwrap_or("default")
+    match config.kubeconfig.as_deref().map(str::trim) {
+        None | Some("") => "default",
+        Some(kubeconfig) => kubeconfig,
+    }
 }
 
 fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
@@ -1700,6 +1703,17 @@ mod tests {
 
         let target = setup_test_db().await;
         import_configs_with_pool(exported, &target).await.unwrap();
+        assert_eq!(
+            kubeconfigs(read_configs_with_pool(&target).await.unwrap()),
+            expected
+        );
+
+        let blank_kubeconfig = json!({"workload_type": "service", "service": "api",
+            "protocol": "tcp", "context": "default", "namespace": "default",
+            "local_port": 8080, "remote_port": 80, "kubeconfig": " "});
+        import_configs_with_pool(blank_kubeconfig.to_string(), &target)
+            .await
+            .unwrap();
         assert_eq!(
             kubeconfigs(read_configs_with_pool(&target).await.unwrap()),
             expected
