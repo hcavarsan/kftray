@@ -13,7 +13,7 @@ ignored = ["tauri-build"]
 
 [lib]
 crate-type = ["cdylib", "lib", "staticlib"]
-name = "kftray_tauri"
+name = "kftray_tauri_lib"
 path = "src/lib.rs"
 
 [dependencies]
