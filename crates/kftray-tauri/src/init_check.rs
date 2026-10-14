@@ -263,14 +263,6 @@ const RESTORE_RETRY_BACKOFF: [Duration; 4] = [
     Duration::from_secs(45),
 ];
 
-/// How a restore that may have waited ended without an error.
-enum Restored {
-    Started,
-    /// While waiting to retry, the user stopped or started the forward, or
-    /// another process took the row over; the row is theirs now.
-    Superseded,
-}
-
 /// Failures that say the cluster is not reachable yet, as opposed to
 /// something a later attempt cannot change.
 fn is_transient_failure(message: &str) -> bool {
@@ -281,17 +273,19 @@ fn is_transient_failure(message: &str) -> bool {
 }
 
 /// Starts the config, retrying after each wait in `backoff` while the
-/// failure is transient. Returns the last error once the waits run out or
-/// the failure is not transient. Run inside `measure`, so one restore is one
-/// AutoStart report, for its final outcome.
+/// failure is transient. Returns `Ok` without starting when the user stopped
+/// or started the forward, or another process took the row over, while it
+/// waited. Returns the last error once the waits run out or the failure is
+/// not transient. Run inside `measure`, so one restore is one AutoStart
+/// report, for its final outcome.
 async fn dispatch_until_reachable(
     port_ops: &Arc<dyn PortOperations>, config: &Config, config_id: i64, backoff: &[Duration],
-) -> Result<Restored, String> {
+) -> Result<(), String> {
     let stops_before = port_ops.stop_generation(config_id);
     let mut waits = backoff.iter();
     loop {
         let error = match port_ops.dispatch_start(config).await {
-            Ok(()) => return Ok(Restored::Started),
+            Ok(()) => return Ok(()),
             Err(error) => error,
         };
         let Some(wait) = waits.next().filter(|_| is_transient_failure(&error)) else {
@@ -301,7 +295,7 @@ async fn dispatch_until_reachable(
         tokio::time::sleep(*wait).await;
         if restore_superseded(port_ops, config_id, stops_before).await {
             info!("Config {config_id} changed while waiting to retry; not restoring it");
-            return Ok(Restored::Superseded);
+            return Ok(());
         }
     }
 }
@@ -356,12 +350,7 @@ async fn start_port_forwarding_with_backoff(
     )
     .await;
     match result {
-        Ok(Restored::Started) => {
-            let config_state = ConfigState::new(config_id, true);
-            port_ops.update_config_state(&config_state).await?;
-            Ok(())
-        }
-        Ok(Restored::Superseded) => Ok(()),
+        Ok(()) => Ok(()),
         Err(e) => {
             let error_msg = format!("Failed to start port forwarding for '{config_alias}': {e}");
             error!("{error_msg}");
@@ -540,9 +529,7 @@ mod tests {
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
-        mock.expect_update_config_state()
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
 
         let result = check_and_manage_ports(Arc::new(mock)).await;
         assert!(result.is_ok());
@@ -658,9 +645,7 @@ mod tests {
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
-        mock.expect_update_config_state()
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -771,12 +756,7 @@ mod tests {
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
-        mock.expect_update_config_state()
-            .with(function(|state: &ConfigState| {
-                state.config_id == 1 && state.is_running
-            }))
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
 
         let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -789,12 +769,7 @@ mod tests {
 
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
-        mock.expect_update_config_state()
-            .with(function(|state: &ConfigState| {
-                state.config_id == 1 && state.is_running
-            }))
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
 
         let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -863,21 +838,6 @@ mod tests {
             .times(1)
             .returning(|| Err("database is locked".to_string()));
         mock.expect_update_config_state().times(0);
-
-        let result = start_port_forwarding(Arc::new(mock), config).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_start_port_forwarding_update_state_error() {
-        let mut mock = mock_ops();
-        let config = create_test_config(1, 8080, "tcp", Some("service"));
-
-        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
-
-        mock.expect_update_config_state()
-            .times(1)
-            .returning(|_| Err("Failed to update state".to_string()));
 
         let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_err());
@@ -1016,7 +976,6 @@ mod tests {
         };
         let own = create_config_state(2, true);
         let (started_tx, started_rx) = mpsc::channel();
-        let (written_tx, written_rx) = mpsc::channel();
 
         let mut mock = mock_ops();
         mock.expect_get_configs_state()
@@ -1034,10 +993,7 @@ mod tests {
             started_tx.send(config.id.unwrap()).unwrap();
             Ok(())
         });
-        mock.expect_update_config_state().returning(move |state| {
-            written_tx.send(state.config_id).unwrap();
-            Ok(())
-        });
+        mock.expect_update_config_state().times(0);
 
         let result = check_and_manage_ports(Arc::new(mock)).await;
 
@@ -1045,16 +1001,11 @@ mod tests {
         let _ = child.wait();
         assert!(result.is_ok());
         assert_eq!(started_rx.try_iter().collect::<Vec<_>>(), vec![2]);
-        assert_eq!(written_rx.try_iter().collect::<Vec<_>>(), vec![2]);
     }
 
     const NOT_REACHABLE: &str =
         "error trying to connect: tcp connect error: Connection refused (os error 111)";
     const TEST_BACKOFF: [Duration; 2] = [Duration::from_millis(1), Duration::from_millis(1)];
-
-    fn marks_running(state: &ConfigState) -> bool {
-        state.config_id == 1 && state.is_running
-    }
 
     fn marks_stopped(state: &ConfigState) -> bool {
         state.config_id == 1 && !state.is_running
@@ -1078,14 +1029,42 @@ mod tests {
         mock.expect_is_forward_registered().returning(|_| false);
         mock.expect_get_configs_state()
             .returning(|| Ok(vec![create_config_state(1, true)]));
-        mock.expect_update_config_state()
-            .with(function(marks_running))
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
 
         let result =
             start_port_forwarding_with_backoff(Arc::new(mock), config, &TEST_BACKOFF).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stop_after_the_restore_started_the_forward_keeps_the_row_stopped() {
+        use std::sync::atomic::{
+            AtomicBool,
+            Ordering,
+        };
+
+        let row_running = Arc::new(AtomicBool::new(true));
+        let mut mock = mock_ops();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+
+        let backend_row = row_running.clone();
+        mock.expect_dispatch_start().times(1).returning(move |_| {
+            // The backend marks the row running, then a user stop that lands
+            // before dispatch returns marks it stopped.
+            backend_row.store(true, Ordering::SeqCst);
+            backend_row.store(false, Ordering::SeqCst);
+            Ok(())
+        });
+        let written_row = row_running.clone();
+        mock.expect_update_config_state().returning(move |state| {
+            written_row.store(state.is_running, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let result =
+            start_port_forwarding_with_backoff(Arc::new(mock), config, &TEST_BACKOFF).await;
+        assert!(result.is_ok());
+        assert!(!row_running.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
