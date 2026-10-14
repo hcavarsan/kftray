@@ -216,7 +216,7 @@ pub enum FailureKind {
     Kubeconfig,
     /// The service, pod or named port does not exist or selects nothing.
     TargetNotFound,
-    /// The cluster refused or dropped the connection.
+    /// The cluster refused, dropped or failed to secure the connection.
     Connection,
     /// Creating, reading or deleting the relay pod or its service.
     RelayPod,
@@ -338,11 +338,18 @@ fn classify_failure(message: &str) -> Failure {
         ),
         (
             FailureKind::HostsFile,
-            &["hosts file", "host entry", "hosts entry"],
+            &["hosts file", "hostfile", "host entry", "hosts entry"],
         ),
         (
-            FailureKind::Tls,
-            &["tls", "certificate", "pkcs", "rustls", "acceptor"],
+            FailureKind::Connection,
+            &[
+                "client error (connect)",
+                "error trying to connect",
+                "tcp connect error",
+                "handshake",
+                "peer certificate",
+                "fatal alert",
+            ],
         ),
         (
             FailureKind::Kubeconfig,
@@ -350,10 +357,15 @@ fn classify_failure(message: &str) -> Failure {
                 "kubeconfig",
                 "client key",
                 "exec plugin",
+                "pkcs",
                 "auth",
                 "unauthorized",
                 "forbidden",
             ],
+        ),
+        (
+            FailureKind::Tls,
+            &["tls", "certificate", "rustls", "acceptor"],
         ),
         (
             FailureKind::TargetNotFound,
@@ -372,6 +384,10 @@ fn classify_failure(message: &str) -> Failure {
             &[
                 "connection refused",
                 "connection reset",
+                "actively refused",
+                "forcibly closed",
+                "failed to respond",
+                "no such host is known",
                 "broken pipe",
                 "dns",
                 "resolve",
@@ -1035,6 +1051,82 @@ mod tests {
                  this machine."
             ),
             FailureKind::AddressAllocation
+        );
+    }
+
+    #[test]
+    fn a_failed_api_server_connection_is_not_a_local_tls_failure() {
+        assert_eq!(
+            classify(
+                "Failed to create Kubernetes client.\nErrors:\n  • Connection failed for context \
+                 'prod': Connection error: Failed to connect to Kubernetes API server: client \
+                 error (Connect): invalid peer certificate: UnknownIssuer"
+            ),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify(
+                "Failed to connect to Kubernetes API server: error trying to connect: received \
+                 fatal alert: HandshakeFailure"
+            ),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify("Failed to connect to Kubernetes API server: tls handshake eof"),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify("Config error for context 'prod': Failed to convert PKCS#8 key to PKCS#1"),
+            FailureKind::Kubeconfig
+        );
+        assert_eq!(
+            classify("Authentication error: Failed to create auth layer: invalid certificate"),
+            FailureKind::Kubeconfig
+        );
+        assert_eq!(
+            classify("Failed to create TLS acceptor for config 3"),
+            FailureKind::Tls
+        );
+    }
+
+    #[test]
+    fn windows_socket_errors_are_connection_failures() {
+        assert_eq!(
+            classify(
+                "Failed to connect to Kubernetes API server: No connection could be made because \
+                 the target machine actively refused it. (os error 10061)"
+            ),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify("Failed to get Service 'api': No such host is known. (os error 11001)"),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify(
+                "Failed to connect to Kubernetes API server: A connection attempt failed because \
+                 the connected party did not properly respond after a period of time, or \
+                 established connection failed because connected host has failed to respond. \
+                 (os error 10060)"
+            ),
+            FailureKind::Connection
+        );
+        assert_eq!(
+            classify(
+                "An existing connection was forcibly closed by the remote host. (os error 10054)"
+            ),
+            FailureKind::Connection
+        );
+    }
+
+    #[test]
+    fn a_hostfile_write_failure_is_a_hosts_file_failure() {
+        assert_eq!(
+            classify(
+                "Failed to write to the hostfile for api: Access is denied. (os error 5). Domain \
+                 alias feature requires hostfile access."
+            ),
+            FailureKind::HostsFile
         );
     }
 
