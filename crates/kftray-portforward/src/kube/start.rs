@@ -230,9 +230,9 @@ async fn rollback_local_resources(
             crate::kube::stop::release_address_with_fallback(address, config.id, mode).await
     {
         if error.is_unsatisfiable() {
-            unsatisfiable.push(error.to_string());
+            unsatisfiable.push(format!("address: {error}"));
         } else {
-            errors.push(error.to_string());
+            errors.push(format!("address: {error}"));
         }
     }
     let id = config.id.unwrap_or_default();
@@ -242,7 +242,7 @@ async fn rollback_local_resources(
         crate::hostsfile::rollback_config_host_entries(id, Some(&snapshot), &in_use, mode).await;
     match hosts {
         Ok(()) => {}
-        Err(error) => errors.push(error.to_string()),
+        Err(error) => errors.push(format!("hosts: {error}")),
     }
 
     if errors.is_empty() {
@@ -1116,7 +1116,7 @@ pub(super) async fn start_config_cancellable(
                 let reason = format!("Startup cancelled for config {config_id}");
                 let reason = match handle.cleanup_and_abort().await {
                     Ok(()) => reason,
-                    Err(held) => format!("{reason}; cleanup incomplete: {held}"),
+                    Err(held) => format!("{reason}; cleanup incomplete: listener: {held}"),
                 };
                 return Err(rollback_startup(&port_forward, config, reason, mode).await);
             }
@@ -1139,7 +1139,7 @@ pub(super) async fn start_config_cancellable(
                 // of this rollback: the retry would meet it on the same port.
                 let reason = match handle.cleanup_and_abort().await {
                     Ok(()) => error,
-                    Err(held) => format!("{error}; cleanup incomplete: {held}"),
+                    Err(held) => format!("{error}; cleanup incomplete: listener: {held}"),
                 };
                 kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
                 return Err(rollback_startup(&port_forward, config, reason, mode).await);
@@ -1816,7 +1816,7 @@ mod tests {
         )
         .await;
 
-        assert!(message.contains("cleanup incomplete"), "{message}");
+        assert!(message.contains("cleanup incomplete: hosts: "), "{message}");
         crate::kube::stop::settle_local_cleanup(410_171, &config, DatabaseMode::Memory).await;
     }
 
