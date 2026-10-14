@@ -210,6 +210,13 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
 async fn check_and_manage_port(
     port_ops: Arc<dyn PortOperations>, config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // An expose forward binds an ephemeral port. Its `local_port` is the
+    // local app the tunnel sends traffic to, so a listener there is expected.
+    if config.workload_type.as_deref() == Some("expose") {
+        start_port_forwarding(port_ops, config).await?;
+        return Ok(());
+    }
+
     let port = config.local_port.unwrap_or(0);
     let protocol = if config.protocol == "udp" {
         ProtocolFlags::UDP
@@ -639,6 +646,22 @@ mod tests {
         mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
 
         mock.expect_update_config_state().times(0);
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_expose_forward_is_restored_while_its_local_app_listens() {
+        let mut mock = mock_ops();
+        let config = create_test_config(1, 3000, "tcp", Some("expose"));
+
+        mock.expect_find_process_by_port()
+            .returning(|_, _, _| Some((4321, "node".to_string())));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| state.is_running))
+            .returning(|_| Ok(()));
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
