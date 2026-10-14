@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{
+    AtomicU64,
     AtomicUsize,
     Ordering,
 };
@@ -66,7 +67,38 @@ impl CachedClient {
 /// not yet released), so the lock entry can be reclaimed exactly when the
 /// last interested caller releases it, instead of inferring "unshared" from
 /// `Arc::strong_count`, which a stray clone elsewhere could perturb.
-type CreationLock = Arc<(Mutex<()>, AtomicUsize)>;
+type CreationLock = Arc<Creation>;
+
+struct Creation {
+    failures: Mutex<Vec<SharedFailure>>,
+    interest: AtomicUsize,
+    sequence: AtomicU64,
+}
+
+fn new_creation_lock() -> CreationLock {
+    Arc::new(Creation {
+        failures: Mutex::new(Vec::new()),
+        interest: AtomicUsize::new(0),
+        sequence: AtomicU64::new(0),
+    })
+}
+
+struct SharedFailure {
+    sequence: u64,
+    signature: KubeconfigSignature,
+    error: anyhow::Error,
+}
+
+fn clone_error_text(error: &anyhow::Error) -> anyhow::Error {
+    let mut causes = error
+        .chain()
+        .rev()
+        .map(|cause| anyhow::Error::msg(cause.to_string()));
+    let root = causes
+        .next()
+        .unwrap_or_else(|| anyhow::Error::msg(error.to_string()));
+    causes.fold(root, |copy, cause| copy.context(cause.to_string()))
+}
 
 /// RAII guard for creation-lock interest. Incrementing the counter and
 /// registering its release used to be two separate steps performed at every
@@ -93,7 +125,7 @@ struct CreationLockInterest<'a> {
 
 impl<'a> CreationLockInterest<'a> {
     /// Wraps a lock whose interest the caller already registered
-    /// (`lock.1.fetch_add`) so `Drop` releases it exactly once.
+    /// (`lock.interest.fetch_add`) so `Drop` releases it exactly once.
     fn already_registered(
         manager: &'a SharedClientManager, key: ServiceClientKey, lock: CreationLock,
     ) -> Self {
@@ -168,18 +200,19 @@ impl SharedClientManager {
             self.clients.remove(&key);
         }
 
-        let lock = {
+        let (lock, failures_seen) = {
             let entry = self
                 .creation_locks
                 .entry(key.clone())
-                .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))));
+                .or_insert_with(new_creation_lock);
             let lock = entry.clone();
-            lock.1.fetch_add(1, Ordering::SeqCst);
-            lock
+            let failures_seen = lock.sequence.load(Ordering::SeqCst);
+            lock.interest.fetch_add(1, Ordering::SeqCst);
+            (lock, failures_seen)
         };
         let _interest = CreationLockInterest::already_registered(self, key.clone(), lock.clone());
 
-        let guard = lock.0.lock().await;
+        let mut guard = lock.failures.lock().await;
 
         if let Some(cached) = self.clients.get(&key) {
             if cached.is_fresh(self.client_ttl, &signature) {
@@ -191,6 +224,14 @@ impl SharedClientManager {
             drop(cached);
             self.clients.remove(&key);
         }
+        if let Some(failure) = guard
+            .iter()
+            .find(|failure| failure.sequence > failures_seen && failure.signature == signature)
+        {
+            let error = clone_error_text(&failure.error);
+            drop(guard);
+            return Err(error);
+        }
 
         match create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await {
             Ok(connection) => {
@@ -201,6 +242,11 @@ impl SharedClientManager {
                 Ok(client_arc)
             }
             Err(error) => {
+                guard.push(SharedFailure {
+                    sequence: lock.sequence.fetch_add(1, Ordering::SeqCst) + 1,
+                    signature,
+                    error: clone_error_text(&error),
+                });
                 drop(guard);
                 Err(error)
             }
@@ -310,9 +356,9 @@ impl SharedClientManager {
     /// callers racing to build a client for one context; a lock another
     /// waiter still holds a clone of is left in place.
     fn release_creation_lock(&self, key: &ServiceClientKey, lock: &CreationLock) {
-        if lock.1.fetch_sub(1, Ordering::SeqCst) == 1 {
+        if lock.interest.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.creation_locks.remove_if(key, |_, entry| {
-                Arc::ptr_eq(entry, lock) && entry.1.load(Ordering::SeqCst) == 0
+                Arc::ptr_eq(entry, lock) && entry.interest.load(Ordering::SeqCst) == 0
             });
         }
     }
@@ -367,7 +413,7 @@ impl SharedClientManager {
         self.clients
             .retain(|_, cached| !cached.is_expired(self.client_ttl));
         self.creation_locks.retain(|key, lock| {
-            self.clients.contains_key(key) || lock.1.load(Ordering::SeqCst) > 0
+            self.clients.contains_key(key) || lock.interest.load(Ordering::SeqCst) > 0
         });
         self.resolved_contexts
             .retain(|kubeconfig_path, (context_name, resolved_at, _)| {
@@ -400,14 +446,14 @@ mod tests {
     /// scheduled in time.
     async fn wait_for_interest_count(lock: &CreationLock, expected: usize) {
         for _ in 0..500 {
-            if lock.1.load(Ordering::SeqCst) == expected {
+            if lock.interest.load(Ordering::SeqCst) == expected {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         panic!(
             "creation lock interest count did not reach {expected} in time (last seen {})",
-            lock.1.load(Ordering::SeqCst)
+            lock.interest.load(Ordering::SeqCst)
         );
     }
 
@@ -934,9 +980,9 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
+            .or_insert_with(new_creation_lock)
             .clone();
-        let guard = lock.0.lock().await;
+        let guard = lock.failures.lock().await;
 
         let waiter_manager = manager.clone();
         let waiter_key = key.clone();
@@ -945,7 +991,7 @@ mod tests {
         // Let the waiter register interest and block on the held mutex.
         wait_for_interest_count(&lock, 1).await;
         assert_eq!(
-            lock.1.load(Ordering::SeqCst),
+            lock.interest.load(Ordering::SeqCst),
             1,
             "waiter must have registered interest before being cancelled"
         );
@@ -956,7 +1002,7 @@ mod tests {
         let _ = handle.await;
 
         assert_eq!(
-            lock.1.load(Ordering::SeqCst),
+            lock.interest.load(Ordering::SeqCst),
             0,
             "a cancelled get_connection must release its creation-lock interest"
         );
@@ -971,10 +1017,10 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
+            .or_insert_with(new_creation_lock)
             .clone();
         // Two callers registered interest; only one releases.
-        lock.1.fetch_add(2, Ordering::SeqCst);
+        lock.interest.fetch_add(2, Ordering::SeqCst);
 
         manager.release_creation_lock(&key, &lock);
 
@@ -991,9 +1037,9 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
+            .or_insert_with(new_creation_lock)
             .clone();
-        lock.1.fetch_add(1, Ordering::SeqCst);
+        lock.interest.fetch_add(1, Ordering::SeqCst);
 
         manager.cleanup_expired();
         assert!(
@@ -1001,7 +1047,7 @@ mod tests {
             "cleanup_expired must not drop a lock entry an in-flight creation still holds"
         );
 
-        lock.1.fetch_sub(1, Ordering::SeqCst);
+        lock.interest.fetch_sub(1, Ordering::SeqCst);
         manager.cleanup_expired();
         assert!(
             !manager.creation_locks.contains_key(&key),
@@ -1027,10 +1073,10 @@ mod tests {
         let lock = manager
             .creation_locks
             .entry(key.clone())
-            .or_insert_with(|| Arc::new((Mutex::new(()), AtomicUsize::new(0))))
+            .or_insert_with(new_creation_lock)
             .clone();
-        lock.1.fetch_add(1, Ordering::SeqCst);
-        let guard = lock.0.lock().await;
+        lock.interest.fetch_add(1, Ordering::SeqCst);
+        let guard = lock.failures.lock().await;
 
         let waiter_manager = manager.clone();
         let waiter_key = key.clone();
@@ -1074,6 +1120,190 @@ mod tests {
             !manager.creation_locks.contains_key(&key),
             "a post-lock cache hit must release its clone of the creation lock"
         );
+    }
+
+    const FAILING_KUBECONFIG: &str = "/nonexistent/kftray-test-shared-failure-kubeconfig";
+
+    fn failing_signature() -> KubeconfigSignature {
+        kubeconfig_signature(&[PathBuf::from(FAILING_KUBECONFIG)])
+    }
+
+    fn stale_signature() -> KubeconfigSignature {
+        vec![(
+            PathBuf::from(FAILING_KUBECONFIG),
+            Some(std::time::SystemTime::UNIX_EPOCH),
+        )]
+    }
+
+    fn record_failure(
+        lock: &CreationLock, failures: &mut Vec<SharedFailure>, signature: KubeconfigSignature,
+        message: &str,
+    ) {
+        failures.push(SharedFailure {
+            sequence: lock.sequence.fetch_add(1, Ordering::SeqCst) + 1,
+            signature,
+            error: anyhow::anyhow!("{message}").context("Failed to create client"),
+        });
+    }
+
+    async fn waiter_behind_failed_creations(
+        stored: Vec<(KubeconfigSignature, &str)>, then_cached: Option<KubeconfigSignature>,
+    ) -> (ServiceClientKey, Arc<SharedClientManager>, anyhow::Error) {
+        use http::{
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+        use tower_test::mock;
+
+        let manager = Arc::new(SharedClientManager::new());
+        let key = ServiceClientKey::new(
+            Some("ctx".to_string()),
+            Some(FAILING_KUBECONFIG.to_string()),
+        );
+
+        let lock = manager
+            .creation_locks
+            .entry(key.clone())
+            .or_insert_with(new_creation_lock)
+            .clone();
+        lock.interest.fetch_add(1, Ordering::SeqCst);
+        let mut guard = lock.failures.lock().await;
+
+        let waiter_manager = manager.clone();
+        let waiter_key = key.clone();
+        let waiter = tokio::spawn(async move { waiter_manager.get_connection(waiter_key).await });
+        wait_for_interest_count(&lock, 2).await;
+
+        for (signature, message) in stored {
+            record_failure(&lock, &mut guard, signature, message);
+        }
+        let _handle = then_cached.map(|signature| {
+            let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+            let connection = KubeConnection {
+                client: kube::Client::new(mock_service, "default"),
+                cluster_url: "https://example.invalid".parse().unwrap(),
+            };
+            manager
+                .clients
+                .insert(key.clone(), CachedClient::new(connection, signature));
+            handle
+        });
+        drop(guard);
+        manager.release_creation_lock(&key, &lock);
+
+        let error = tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("a waiter behind a failed creation must not hang")
+            .expect("waiter task must not panic")
+            .expect_err("no client can be created from a nonexistent kubeconfig");
+        (key, manager, error)
+    }
+
+    #[tokio::test]
+    async fn a_waiter_queued_behind_a_failed_creation_gets_that_failure() {
+        let (key, manager, error) = waiter_behind_failed_creations(
+            vec![(failing_signature(), "cluster unreachable")],
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            format!("{error:#}"),
+            "Failed to create client: cluster unreachable"
+        );
+        assert!(
+            !manager.creation_locks.contains_key(&key),
+            "the shared failure must leave with the last queued caller"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failure_of_another_kubeconfig_state_is_not_shared() {
+        let (_, _, error) =
+            waiter_behind_failed_creations(vec![(stale_signature(), "cluster unreachable")], None)
+                .await;
+
+        assert!(
+            !error.to_string().contains("cluster unreachable"),
+            "a waiter whose kubeconfig differs from the failed attempt must try again: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_later_failure_of_another_kubeconfig_state_keeps_the_earlier_one() {
+        let (_, _, error) = waiter_behind_failed_creations(
+            vec![
+                (failing_signature(), "cluster unreachable"),
+                (stale_signature(), "edited kubeconfig rejected"),
+            ],
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            format!("{error:#}"),
+            "Failed to create client: cluster unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_later_success_of_another_kubeconfig_state_keeps_the_earlier_failure() {
+        let (_, _, error) = waiter_behind_failed_creations(
+            vec![(failing_signature(), "cluster unreachable")],
+            Some(stale_signature()),
+        )
+        .await;
+
+        assert_eq!(
+            format!("{error:#}"),
+            "Failed to create client: cluster unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_caller_arriving_after_the_failure_tries_again() {
+        let manager = SharedClientManager::new();
+        let key = ServiceClientKey::new(
+            Some("ctx".to_string()),
+            Some(FAILING_KUBECONFIG.to_string()),
+        );
+        let lock = manager
+            .creation_locks
+            .entry(key.clone())
+            .or_insert_with(new_creation_lock)
+            .clone();
+        lock.interest.fetch_add(1, Ordering::SeqCst);
+        let mut failures = lock.failures.lock().await;
+        record_failure(
+            &lock,
+            &mut failures,
+            failing_signature(),
+            "cluster unreachable",
+        );
+        drop(failures);
+
+        let error = manager
+            .get_connection(key)
+            .await
+            .expect_err("no client can be created from a nonexistent kubeconfig");
+
+        assert!(
+            !error.to_string().contains("cluster unreachable"),
+            "a caller that registered after the failure must try again: {error}"
+        );
+    }
+
+    #[test]
+    fn clone_error_text_keeps_the_message_and_its_causes() {
+        let error = anyhow::anyhow!("root cause")
+            .context("middle")
+            .context("outer");
+
+        let copy = clone_error_text(&error);
+
+        assert_eq!(format!("{copy:#}"), format!("{error:#}"));
+        assert_eq!(copy.to_string(), "outer");
     }
 
     #[tokio::test]
