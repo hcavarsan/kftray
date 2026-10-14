@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from './App'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Provider } from './components/ui/provider'
 import { initCrashReporting } from './lib/telemetry'
 
@@ -18,7 +19,9 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <Provider>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </Provider>
   </StrictMode>,
 )

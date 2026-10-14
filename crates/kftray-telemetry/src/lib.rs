@@ -35,6 +35,7 @@ use parking_lot::Mutex;
 use sentry::integrations::backtrace::current_stacktrace;
 use sentry::protocol::{
     Breadcrumb,
+    DebugImage,
     Event,
     Exception,
     Level,
@@ -97,6 +98,11 @@ pub enum Operation {
     GitSync,
     /// Starting the MCP server.
     McpStart,
+    /// A relay forward being brought back after its pod or stream died.
+    Recover,
+    /// Forwards restarted by the network monitor after a network change or a
+    /// failed health check.
+    Restart,
 }
 
 impl Operation {
@@ -109,6 +115,8 @@ impl Operation {
             Self::AppStartup => "app.startup",
             Self::GitSync => "git.sync",
             Self::McpStart => "mcp.start",
+            Self::Recover => "portforward.recover",
+            Self::Restart => "portforward.restart",
         }
     }
 }
@@ -881,9 +889,10 @@ fn push_breadcrumb(category: &'static str, message: String, level: Level) {
     crumbs.push_back(crumb);
 }
 
-/// Drops the event without consent; otherwise removes the host name and adds
-/// the fixed-string context that helps reading the report: build target,
-/// seconds since launch and the operations that ran before it.
+/// Drops the event without consent; otherwise removes the host name, cuts
+/// the install location out of the loaded-module list and adds the
+/// fixed-string context that helps reading the report: build target, seconds
+/// since launch and the operations that ran before it.
 fn scrub(enabled: bool, mut event: Event<'static>) -> Option<Event<'static>> {
     if !enabled {
         return None;
@@ -894,9 +903,33 @@ fn scrub(enabled: bool, mut event: Event<'static>) -> Option<Event<'static>> {
         "uptime_seconds".into(),
         Value::from(STARTED.elapsed().as_secs()),
     );
+    if !event.debug_meta.images.is_empty() {
+        for image in &mut event.debug_meta.to_mut().images {
+            strip_image_path(image);
+        }
+    }
     let crumbs = BREADCRUMBS.lock();
     event.breadcrumbs.values.extend(crumbs.iter().cloned());
     Some(event)
+}
+
+fn strip_image_path(image: &mut DebugImage) {
+    match image {
+        DebugImage::Symbolic(image) => {
+            image.name = file_name(&image.name);
+            image.debug_file = image.debug_file.as_deref().map(file_name);
+        }
+        DebugImage::Apple(image) => image.name = file_name(&image.name),
+        DebugImage::Wasm(image) => {
+            image.code_file = file_name(&image.code_file);
+            image.debug_file = image.debug_file.as_deref().map(file_name);
+        }
+        DebugImage::Proguard(_) => {}
+    }
+}
+
+fn file_name(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 fn panic_event(info: &PanicHookInfo<'_>) -> Event<'static> {
@@ -975,6 +1008,63 @@ mod tests {
 
         assert_eq!(event.server_name, None);
         assert_eq!(event.dist.as_deref(), Some(TARGET));
+    }
+
+    #[test]
+    fn scrub_keeps_only_the_file_name_of_loaded_modules() {
+        use sentry::protocol::{
+            DebugMeta,
+            SymbolicDebugImage,
+        };
+        use sentry::types::DebugId;
+
+        let image = |name: &str, debug_file: Option<&str>| {
+            DebugImage::Symbolic(SymbolicDebugImage {
+                name: name.to_string(),
+                arch: None,
+                image_addr: 0x1000.into(),
+                image_size: 4096,
+                image_vmaddr: 0.into(),
+                id: DebugId::default(),
+                code_id: None,
+                debug_file: debug_file.map(str::to_string),
+            })
+        };
+        let mut event = event_from("laptop");
+        event.debug_meta = std::borrow::Cow::Owned(DebugMeta {
+            sdk_info: None,
+            images: vec![
+                image(
+                    r"C:\Users\alice\AppData\Local\kftray\kftray.exe",
+                    Some(r"C:\Users\alice\AppData\Local\kftray\kftray.pdb"),
+                ),
+                image(
+                    "/Users/alice/Downloads/kftray.app/Contents/MacOS/kftray",
+                    None,
+                ),
+                image("/usr/lib/libc.so.6", None),
+            ],
+        });
+
+        let event = scrub(true, event).unwrap();
+        let names: Vec<_> = event
+            .debug_meta
+            .images
+            .iter()
+            .map(|image| match image {
+                DebugImage::Symbolic(image) => (image.name.as_str(), image.debug_file.as_deref()),
+                _ => unreachable!(),
+            })
+            .collect();
+
+        assert_eq!(
+            names,
+            [
+                ("kftray.exe", Some("kftray.pdb")),
+                ("kftray", None),
+                ("libc.so.6", None),
+            ]
+        );
     }
 
     #[test]

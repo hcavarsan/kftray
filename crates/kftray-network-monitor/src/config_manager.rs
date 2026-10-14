@@ -1,6 +1,10 @@
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_portforward::kube::stop_generation;
+use kftray_telemetry::{
+    Operation,
+    measure,
+};
 use log::{
     error,
     info,
@@ -132,7 +136,12 @@ impl ConfigManager {
         let (relay_configs, direct_configs) = partition_relay_configs(configs);
 
         if !direct_configs.is_empty() {
-            match kftray_portforward::kube::start_port_forward(direct_configs, protocol).await {
+            match measure(
+                Operation::Restart,
+                kftray_portforward::kube::start_port_forward(direct_configs, protocol),
+            )
+            .await
+            {
                 Ok(responses) => report_restart_outcome(&responses, protocol, "port forwards"),
                 Err(e) => report_restart_failure(&e, protocol, "port forwards"),
             }
@@ -142,7 +151,12 @@ impl ConfigManager {
             let configs_to_restart = relay_configs_to_restart(relay_configs, &recovering);
 
             if !configs_to_restart.is_empty() {
-                match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
+                match measure(
+                    Operation::Restart,
+                    kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart),
+                )
+                .await
+                {
                     Ok(responses) => {
                         report_restart_outcome(&responses, protocol, "relay port forwards")
                     }

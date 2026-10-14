@@ -180,6 +180,12 @@ export const captureInvokeFailure = (command: string): ProblemReportContext => {
   }
 }
 
+export const captureRenderError = (error: unknown) => {
+  Sentry.captureException(error, {
+    mechanism: { type: 'react', handled: true },
+  })
+}
+
 // Starts the SDK once the Rust side has said whether reporting is allowed.
 // Errors thrown before that answer arrives are not reported.
 export const initCrashReporting = async () => {

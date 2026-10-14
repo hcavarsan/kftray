@@ -362,7 +362,10 @@ impl ProxyRecoveryManager {
                         all_attempts_exhausted = false;
                         break;
                     }
-                    result = self.do_recovery_attempt(&signal) => result,
+                    result = kftray_telemetry::measure(
+                        kftray_telemetry::Operation::Recover,
+                        self.do_recovery_attempt(&signal),
+                    ) => result,
                 };
                 match result {
                     Ok(()) => {
