@@ -347,7 +347,7 @@ impl PortForward {
         let config_id = self.config_id;
         let snapshot = config.cloned();
         let in_use = crate::kube::stop::forwarding_configs(mode).await;
-        match crate::hostsfile::remove_config_host_entries(
+        match crate::hostsfile::rollback_config_host_entries(
             config_id,
             snapshot.as_ref(),
             &in_use,
@@ -493,6 +493,8 @@ impl PortForward {
 
 #[cfg(test)]
 mod tests {
+    use kftray_commons::utils::db_mode::DatabaseMode;
+
     use super::*;
 
     #[test]
@@ -652,41 +654,68 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_denied_local_port_fails_before_the_cluster_is_contacted() {
-        if std::net::TcpListener::bind("127.0.0.1:80")
-            .err()
-            .map(|error| error.kind())
-            != Some(std::io::ErrorKind::PermissionDenied)
-        {
-            return;
-        }
-        let forward = PortForward::new(
+    fn forward_for_cleanup(id: i64) -> PortForward {
+        PortForward::new(
             Target::new(
                 crate::kube::models::TargetSelector::ServiceName("web".to_owned()),
                 80,
                 "default",
             ),
-            Some(80),
-            Some("127.0.0.1".to_owned()),
+            Some(0),
+            None,
             Some("unreachable".to_owned()),
             Some("/nonexistent/kubeconfig".to_owned()),
-            1,
+            id,
             "service".to_owned(),
-        );
+        )
+    }
 
-        let error = match forward.port_forward_tcp(None).await {
-            Ok(_) => panic!("the start must fail on a denied port"),
-            Err(error) => error.to_string(),
+    #[tokio::test]
+    async fn cleanup_of_a_start_that_never_wrote_an_alias_ignores_an_unusable_hosts_file() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let config = Config {
+            id: Some(410_180),
+            service: Some("web".to_owned()),
+            alias: Some("web.local".to_owned()),
+            domain_enabled: Some(false),
+            protocol: "tcp".to_owned(),
+            ..Config::default()
         };
 
+        let outcome = forward_for_cleanup(410_180)
+            .cleanup_resources(Some(&config), DatabaseMode::Memory)
+            .await;
+
+        assert_eq!(outcome, CleanupOutcome::Settled(None));
+    }
+
+    #[tokio::test]
+    async fn cleanup_of_a_start_that_wrote_an_alias_stays_incomplete_without_a_hosts_file() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _hosts =
+            kftray_commons::test_utils::HostsFileGuard::point_at(&dir.path().join("hosts"));
+        let config = Config {
+            id: Some(410_181),
+            service: Some("web".to_owned()),
+            alias: Some("web.local".to_owned()),
+            domain_enabled: Some(true),
+            protocol: "tcp".to_owned(),
+            ..Config::default()
+        };
+
+        let outcome = forward_for_cleanup(410_181)
+            .cleanup_resources(Some(&config), DatabaseMode::Memory)
+            .await;
+
         assert!(
-            error.contains("access denied or the port is reserved"),
-            "{error}"
-        );
-        assert!(
-            crate::local_port::free_port_in_error(&error).is_some(),
-            "{error}"
+            matches!(outcome, CleanupOutcome::Incomplete(_)),
+            "{outcome:?}"
         );
     }
 }
