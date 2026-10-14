@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 
@@ -38,10 +38,9 @@ const files = targets.map(target => {
   }
   if (process.platform === 'darwin') {
     const bundle = resolve(dir, `${binary}.dSYM`)
-    return {
-      check: resolve(bundle, 'Contents', 'Resources', 'DWARF', binary),
-      upload: bundle,
-    }
+    const dwarf = resolve(bundle, 'Contents', 'Resources', 'DWARF')
+    const [file] = existsSync(dwarf) ? readdirSync(dwarf) : []
+    return { check: file ? resolve(dwarf, file) : dwarf, upload: bundle }
   }
   const executable = resolve(dir, binary)
   const debug = `${executable}.debug`
