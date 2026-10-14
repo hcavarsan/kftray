@@ -25,6 +25,8 @@ pub use listener::{
 };
 pub use proxy::{
     INSTALLATION_LABEL,
+    ReopenStartupGate,
+    close_startup_gate,
     deploy_and_forward_pod,
     deploy_and_forward_pod_with_mode,
     proxy_resource_prefix,

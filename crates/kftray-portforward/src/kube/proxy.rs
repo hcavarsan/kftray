@@ -1,5 +1,9 @@
 use std::{
     collections::HashMap,
+    sync::{
+        PoisonError,
+        RwLock,
+    },
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -66,6 +70,20 @@ use crate::kube::shared_client::{
 pub(super) static STARTING_PROXIES: std::sync::LazyLock<DashMap<i64, CancellationToken>> =
     std::sync::LazyLock::new(DashMap::new);
 
+static EXITING: RwLock<bool> = RwLock::new(false);
+
+pub fn close_startup_gate() {
+    *EXITING.write().unwrap_or_else(PoisonError::into_inner) = true;
+}
+
+pub struct ReopenStartupGate;
+
+impl Drop for ReopenStartupGate {
+    fn drop(&mut self) {
+        *EXITING.write().unwrap_or_else(PoisonError::into_inner) = false;
+    }
+}
+
 pub(super) struct PendingStart {
     id: i64,
     cancellation: CancellationToken,
@@ -79,6 +97,12 @@ impl PendingStart {
 
 impl PendingStart {
     fn new(id: i64) -> Result<Self, String> {
+        let exiting = EXITING.read().unwrap_or_else(PoisonError::into_inner);
+        if *exiting {
+            return Err(format!(
+                "Startup cancelled for config {id}: kftray is exiting"
+            ));
+        }
         match STARTING_PROXIES.entry(id) {
             Entry::Occupied(_) => Err(format!("Startup is already in progress for config {id}")),
             Entry::Vacant(entry) => {
@@ -938,6 +962,7 @@ mod tests {
 
     #[test]
     fn every_batch_config_registers_before_any_is_buffered() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.blocking_lock();
         let ids: Vec<i64> = (930_100..930_130).collect();
         let configs: Vec<Config> = ids
             .iter()
@@ -1070,6 +1095,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_and_forward_pod_invalid_kubeconfig() {
         let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config = Config {
             id: Some(1),
             context: Some("invalid-context".to_string()),
@@ -1280,5 +1306,148 @@ mod tests {
         .unwrap();
         assert_eq!(selected, "replacement-pod");
         server.await.unwrap();
+    }
+
+    fn registered_config(id: i64) -> Config {
+        Config {
+            id: Some(id),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_exit_cancels_earlier_starts_and_refuses_later_ones() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let _reopen = ReopenStartupGate;
+        let early = [930_200, 930_201, 930_202];
+        let (queued, rejected) =
+            register_start_batch(early.iter().copied().map(registered_config).collect());
+        assert!(rejected.is_empty());
+        for (_, startup) in &queued {
+            assert!(!startup.cancellation().is_cancelled());
+        }
+
+        close_startup_gate();
+        let (before_snapshot, rejected_before_snapshot) =
+            register_start_batch(vec![registered_config(930_210)]);
+        let (responses, unfinished) = crate::kube::stop::stop_all_port_forward_with_deadline(
+            DatabaseMode::Memory,
+            &std::collections::HashSet::new(),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let (after_snapshot, rejected_after_snapshot) =
+            register_start_batch(vec![registered_config(930_211)]);
+
+        for (_, startup) in &queued {
+            assert!(startup.cancellation().is_cancelled());
+        }
+        for id in early {
+            assert!(responses.iter().any(|response| response.id == Some(id)));
+        }
+        assert!(unfinished.is_empty());
+        assert!(before_snapshot.is_empty());
+        assert!(after_snapshot.is_empty());
+        for (config, error) in rejected_before_snapshot
+            .iter()
+            .chain(&rejected_after_snapshot)
+        {
+            assert!(error.contains("kftray is exiting"), "{error}");
+            assert!(!STARTING_PROXIES.contains_key(&config.id.unwrap()));
+        }
+        assert_eq!(rejected_before_snapshot.len(), 1);
+        assert_eq!(rejected_after_snapshot.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn refused_starts_reserve_nothing_on_any_entry_path() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let _reopen = ReopenStartupGate;
+        let id = 930_300;
+        close_startup_gate();
+
+        let direct = crate::kube::start_port_forward_with_mode(
+            vec![registered_config(id)],
+            "tcp",
+            DatabaseMode::Memory,
+            false,
+        )
+        .await
+        .unwrap_err();
+        let relay = deploy_and_forward_pod_with_mode(
+            vec![registered_config(id)],
+            DatabaseMode::Memory,
+            false,
+        )
+        .await
+        .unwrap_err();
+        let expose = crate::expose::start_expose(vec![registered_config(id)], DatabaseMode::Memory)
+            .await
+            .unwrap_err();
+
+        for error in [direct, relay, expose] {
+            assert!(error.contains("kftray is exiting"), "{error}");
+        }
+        assert!(!STARTING_PROXIES.contains_key(&id));
+        assert!(!crate::kube::proxy_recovery::RECOVERY_LOCKS.contains_key(&id));
+        assert!(!crate::port_forward::CHILD_PROCESSES.contains_key(&id));
+        let states =
+            kftray_commons::utils::config_state::get_configs_state_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap();
+        assert!(states.iter().all(|state| state.config_id != id));
+    }
+
+    #[test]
+    fn no_start_registers_after_the_gate_closes_while_others_register() {
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.blocking_lock();
+        let _reopen = ReopenStartupGate;
+        let registered = AtomicUsize::new(0);
+
+        let (seen_at_close, granted) = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8_i64)
+                .map(|worker| {
+                    let registered = &registered;
+                    scope.spawn(move || {
+                        let mut held = Vec::new();
+                        let mut id = 940_000 + worker * 100_000;
+                        while held.len() < 20_000 {
+                            let Ok(startup) = PendingStart::new(id) else {
+                                break;
+                            };
+                            held.push(startup);
+                            registered.fetch_add(1, Ordering::SeqCst);
+                            id += 1;
+                        }
+                        held
+                    })
+                })
+                .collect();
+            while registered.load(Ordering::SeqCst) < 200 {
+                std::thread::yield_now();
+            }
+            close_startup_gate();
+            let seen_at_close: std::collections::HashSet<i64> =
+                STARTING_PROXIES.iter().map(|entry| *entry.key()).collect();
+            let granted: Vec<PendingStart> = workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect();
+            (seen_at_close, granted)
+        });
+
+        assert!(
+            granted
+                .iter()
+                .all(|startup| seen_at_close.contains(&startup.id))
+        );
     }
 }
