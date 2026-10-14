@@ -3491,6 +3491,7 @@ mod tests {
         )
         .await
         .unwrap();
+        PENDING_CLEANUP.remove(&id);
         let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
         let mut process = PortForwardProcess::new(task, id.to_string());
         process.set_config(Config {
