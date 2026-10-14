@@ -6,7 +6,8 @@
 // upload does not depend on the URL the webview serves the file from.
 //
 // sentry-cli reads SENTRY_URL, SENTRY_ORG, SENTRY_PROJECT and
-// SENTRY_AUTH_TOKEN from the environment. The release is `kftray@<version>`,
+// SENTRY_AUTH_TOKEN from the environment; KFTRAY_UPLOAD_SOURCEMAPS picks the
+// one job per bundle flavour that uploads. The release is `kftray@<version>`,
 // the same string the Rust side and the webview report with.
 import { execFileSync } from 'node:child_process'
 import { globSync, readFileSync, rmSync } from 'node:fs'
@@ -26,7 +27,7 @@ const run = args => {
 
 run(['sourcemaps', 'inject', dist])
 
-if (process.env.SENTRY_AUTH_TOKEN) {
+if (process.env.SENTRY_AUTH_TOKEN && process.env.KFTRAY_UPLOAD_SOURCEMAPS) {
   const { version } = JSON.parse(
     readFileSync(resolve(root, 'package.json'), 'utf8'),
   )
@@ -35,7 +36,7 @@ if (process.env.SENTRY_AUTH_TOKEN) {
   run(['sourcemaps', 'upload', '--release', release, dist])
   run(['releases', 'finalize', release])
 } else {
-  console.log('[sourcemaps] SENTRY_AUTH_TOKEN unset; not uploading')
+  console.log('[sourcemaps] not the uploading job; not uploading')
 }
 
 // Debug builds reference their maps and are never distributed.

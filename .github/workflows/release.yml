@@ -192,8 +192,6 @@ jobs:
 
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
-        env:
-          RUSTFLAGS: "-C link-arg=-s"
         run: |
           cargo build --bin kftray-helper --release --target x86_64-apple-darwin
           cargo build --bin kftray-helper --release --target aarch64-apple-darwin
@@ -219,10 +217,15 @@ jobs:
         shell: bash
         run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
-      - name: Disable strip for Windows builds
-        if: matrix.os == 'windows-latest'
+      - name: Keep debug info for GlitchTip debug files
         shell: bash
-        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV"
+        run: |
+          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          case "$RUNNER_OS" in
+            Linux) echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV" ;;
+            macOS) echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed" >> "$GITHUB_ENV" ;;
+            Windows) echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV" ;;
+          esac
 
       - name: Import Apple Developer Certificate
         if: matrix.os == 'macos-latest'
@@ -253,18 +256,18 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
-          RUSTFLAGS: ${{ matrix.os != 'windows-latest' && '-C link-arg=-s' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-          # Source maps for GlitchTip: only the jobs flagged above get the
-          # token; the others still inject debug ids but do not upload.
+          # GlitchTip: every job uploads its own debug files; only the jobs
+          # flagged above upload the (shared) webview source maps.
           SENTRY_URL: https://glitchtip.cavarsa.app
           SENTRY_ORG: ${{ vars.GLITCHTIP_ORG || 'kftray' }}
           SENTRY_PROJECT: ${{ vars.GLITCHTIP_PROJECT || 'kftray' }}
-          SENTRY_AUTH_TOKEN: ${{ matrix.upload_sourcemaps && secrets.GLITCHTIP_AUTH_TOKEN || '' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+          KFTRAY_UPLOAD_SOURCEMAPS: ${{ matrix.upload_sourcemaps && 'true' || '' }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -507,10 +510,15 @@ jobs:
         shell: bash
         run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
-      - name: Disable strip for Windows builds
-        if: matrix.os == 'windows-latest'
+      - name: Keep debug info for GlitchTip debug files
         shell: bash
-        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV"
+        run: |
+          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          case "$RUNNER_OS" in
+            Linux) echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV" ;;
+            macOS) echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed" >> "$GITHUB_ENV" ;;
+            Windows) echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV" ;;
+          esac
 
       - name: Build kftui (Windows)
         if: matrix.os == 'windows-latest'
@@ -523,7 +531,6 @@ jobs:
       - name: Build kftui
         if: matrix.os != 'windows-latest'
         env:
-          RUSTFLAGS: '-C link-arg=-s'
           RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           if [ "$RUST_TARGET" = "universal-apple-darwin" ]; then
@@ -534,6 +541,28 @@ jobs:
             cargo build --release --bin kftui --target "$RUST_TARGET"
           fi
         shell: bash
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Upload debug files to GlitchTip
+        shell: bash
+        env:
+          SENTRY_URL: https://glitchtip.cavarsa.app
+          SENTRY_ORG: ${{ vars.GLITCHTIP_ORG || 'kftray' }}
+          SENTRY_PROJECT: ${{ vars.GLITCHTIP_PROJECT || 'kftray' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: node frontend/scripts/debug-files.mjs kftui "$RUST_TARGET"
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
