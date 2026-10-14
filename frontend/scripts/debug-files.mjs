@@ -9,7 +9,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 
 const [binary, triple = process.env.TAURI_ENV_TARGET_TRIPLE] =
   process.argv.slice(2)
-const pdbName = process.env.KFTRAY_PDB_NAME ?? binary
+const cargoName = process.env.KFTRAY_CARGO_BIN_NAME ?? binary
 if (!binary || !triple) {
   throw new Error('usage: debug-files.mjs <binary> [target-triple]')
 }
@@ -34,11 +34,11 @@ const targets =
 const files = targets.map(target => {
   const dir = resolve(root, 'target', target, 'release')
   if (process.platform === 'win32') {
-    const pdb = resolve(dir, `${pdbName}.pdb`)
+    const pdb = resolve(dir, `${cargoName.replaceAll('-', '_')}.pdb`)
     return { check: pdb, upload: pdb }
   }
   if (process.platform === 'darwin') {
-    const bundle = resolve(dir, `${binary}.dSYM`)
+    const bundle = resolve(dir, `${cargoName}.dSYM`)
     const dwarf = resolve(bundle, 'Contents', 'Resources', 'DWARF')
     const [file] = existsSync(dwarf) ? readdirSync(dwarf) : []
     return { check: file ? resolve(dwarf, file) : dwarf, upload: bundle }
