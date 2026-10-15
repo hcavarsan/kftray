@@ -13,12 +13,12 @@ use serde::ser::{
     Serializer,
 };
 
-/// The rejection of a command whose failure `measure` already reported.
-/// With the id of that error event it reaches the webview as
-/// `{ message, eventId }`, so the webview links the problem report to the
-/// event instead of reporting the same failure again. Without one (reporting
-/// off, or nothing was sent) it stays the plain string every other command
-/// rejects with.
+/// The rejection of a command that ran under `measure`. It reaches the
+/// webview as `{ message, eventId }`: the id of the error event the failure
+/// produced, so the webview links the problem report to it instead of
+/// reporting the same failure again, or `null` when nothing was sent (an
+/// expected outcome, a repeat, reporting off). The object shape alone tells
+/// the webview the backend owns the reporting for this command.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredError {
     pub message: String,
@@ -42,12 +42,9 @@ impl Display for MeasuredError {
 
 impl Serialize for MeasuredError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let Some(event_id) = &self.event_id else {
-            return serializer.serialize_str(&self.message);
-        };
         let mut state = serializer.serialize_struct("MeasuredError", 2)?;
         state.serialize_field("message", &self.message)?;
-        state.serialize_field("eventId", event_id)?;
+        state.serialize_field("eventId", &self.event_id)?;
         state.end()
     }
 }
@@ -70,10 +67,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serializes_as_the_plain_message_without_an_event_id() {
+    fn serializes_a_null_event_id_when_nothing_was_reported() {
         let error = MeasuredError::from("port in use".to_string());
 
-        assert_eq!(serde_json::to_value(error).unwrap(), json!("port in use"));
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            json!({ "message": "port in use", "eventId": null })
+        );
     }
 
     #[test]

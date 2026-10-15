@@ -1,0 +1,355 @@
+use std::io::{
+    IsTerminal,
+    Read,
+};
+
+const READ_CHUNK_BYTES: usize = 4096;
+const MAX_PENDING_LINE_BYTES: usize = 8192;
+const MAX_FORWARDED_BYTES: usize = 1_000_000;
+
+pub fn redirect_if_detached() {
+    if std::io::stderr().is_terminal() {
+        return;
+    }
+    let (read, write) = match imp::pipe() {
+        Ok(ends) => ends,
+        Err(e) => {
+            log::warn!("failed to capture detached stderr: {e}");
+            return;
+        }
+    };
+    let _ = std::thread::Builder::new()
+        .name("stderr-capture".to_owned())
+        .spawn(move || {
+            imp::attach(write);
+            forward(read);
+        });
+}
+
+struct LineAssembler {
+    pending: Vec<u8>,
+}
+
+impl LineAssembler {
+    fn new() -> Self {
+        Self {
+            pending: Vec::with_capacity(READ_CHUNK_BYTES),
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8], out: &mut Vec<Vec<u8>>) {
+        let mut start = 0;
+        while start < bytes.len() {
+            let len = bytes[start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(bytes.len() - start, |at| at + 1);
+            self.pending.extend_from_slice(&bytes[start..start + len]);
+            start += len;
+            if (self.pending.last() == Some(&b'\n') || self.pending.len() >= MAX_PENDING_LINE_BYTES)
+                && let Some(line) = self.take_line()
+            {
+                out.push(line);
+            }
+        }
+    }
+
+    fn finish(&mut self, out: &mut Vec<Vec<u8>>) {
+        if let Some(line) = self.take_line() {
+            out.push(line);
+        }
+    }
+
+    fn take_line(&mut self) -> Option<Vec<u8>> {
+        while matches!(self.pending.last(), Some(b'\n' | b'\r')) {
+            self.pending.pop();
+        }
+        if self.pending.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut self.pending))
+    }
+}
+
+fn forward<R: Read>(mut read: R) {
+    let mut assembler = LineAssembler::new();
+    let mut chunk = [0u8; READ_CHUNK_BYTES];
+    let mut lines = Vec::new();
+    let mut forwarded = 0usize;
+    let mut announced = false;
+    loop {
+        match read.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                assembler.push(&chunk[..n], &mut lines);
+                for line in lines.drain(..) {
+                    if forwarded >= MAX_FORWARDED_BYTES {
+                        if !announced {
+                            announced = true;
+                            log::warn!(
+                                target: "stderr",
+                                "stderr capture limit reached, further output is dropped"
+                            );
+                        }
+                        continue;
+                    }
+                    let line = String::from_utf8_lossy(&line);
+                    forwarded += line.len();
+                    log::warn!(target: "stderr", "{line}");
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    assembler.finish(&mut lines);
+    for line in lines {
+        if forwarded < MAX_FORWARDED_BYTES {
+            let line = String::from_utf8_lossy(&line);
+            forwarded += line.len();
+            log::warn!(target: "stderr", "{line}");
+        }
+    }
+}
+
+#[cfg(unix)]
+mod imp {
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::{
+        AsRawFd,
+        FromRawFd,
+        OwnedFd,
+    };
+
+    pub struct WriteEnd(OwnedFd);
+
+    pub fn pipe() -> anyhow::Result<(File, WriteEnd)> {
+        let mut fds = [0i32; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+        let read = above_standard_descriptors(&read)?;
+        let write = above_standard_descriptors(&write)?;
+        Ok((File::from(read), WriteEnd(write)))
+    }
+
+    fn above_standard_descriptors(fd: &OwnedFd) -> io::Result<OwnedFd> {
+        let moved = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+        if moved < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { OwnedFd::from_raw_fd(moved) })
+    }
+
+    pub fn attach(write: WriteEnd) {
+        if unsafe { libc::dup2(write.0.as_raw_fd(), libc::STDERR_FILENO) } < 0 {
+            log::warn!("failed to redirect stderr: {}", io::Error::last_os_error());
+        }
+    }
+
+    #[cfg(test)]
+    pub struct Saved(OwnedFd);
+
+    #[cfg(test)]
+    pub fn save() -> Saved {
+        Saved(unsafe { OwnedFd::from_raw_fd(libc::dup(libc::STDERR_FILENO)) })
+    }
+
+    #[cfg(test)]
+    impl Drop for Saved {
+        fn drop(&mut self) {
+            unsafe { libc::dup2(self.0.as_raw_fd(), libc::STDERR_FILENO) };
+        }
+    }
+}
+
+#[cfg(windows)]
+mod imp {
+    use std::fs::File;
+    use std::mem::size_of;
+    use std::os::windows::io::{
+        AsRawHandle,
+        FromRawHandle,
+        OwnedHandle,
+    };
+
+    use windows::Win32::Foundation::{
+        HANDLE,
+        HANDLE_FLAG_INHERIT,
+        HANDLE_FLAGS,
+        SetHandleInformation,
+    };
+    use windows::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows::Win32::System::Console::{
+        STD_ERROR_HANDLE,
+        SetStdHandle,
+    };
+    use windows::Win32::System::Pipes::CreatePipe;
+
+    pub struct WriteEnd(OwnedHandle);
+
+    pub fn pipe() -> anyhow::Result<(File, WriteEnd)> {
+        let mut read = HANDLE::default();
+        let mut write = HANDLE::default();
+        let attrs = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: true.into(),
+        };
+        let (read, write) = unsafe {
+            CreatePipe(&mut read, &mut write, Some(&attrs), 0)?;
+            let _ = SetHandleInformation(read, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0));
+            (
+                OwnedHandle::from_raw_handle(read.0),
+                OwnedHandle::from_raw_handle(write.0),
+            )
+        };
+        Ok((File::from(read), WriteEnd(write)))
+    }
+
+    pub fn attach(write: WriteEnd) {
+        let handle = HANDLE(write.0.as_raw_handle());
+        match unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) } {
+            Ok(()) => std::mem::forget(write),
+            Err(e) => log::warn!("failed to redirect stderr: {e}"),
+        }
+    }
+
+    #[cfg(test)]
+    pub struct Saved(HANDLE);
+
+    #[cfg(test)]
+    pub fn save() -> Saved {
+        use windows::Win32::System::Console::GetStdHandle;
+        Saved(unsafe { GetStdHandle(STD_ERROR_HANDLE) }.unwrap_or_default())
+    }
+
+    #[cfg(test)]
+    impl Drop for Saved {
+        fn drop(&mut self) {
+            let _ = unsafe { SetStdHandle(STD_ERROR_HANDLE, self.0) };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_child_inherits_the_redirected_stderr() {
+        let _restore = imp::save();
+        let (mut read, write) = imp::pipe().unwrap();
+        imp::attach(write);
+
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo marker >&2")
+            .spawn()
+            .unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "echo marker 1>&2"])
+            .spawn()
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success());
+
+        let mut output = [0u8; 64];
+        let read = read.read(&mut output).unwrap_or(0);
+        let output = String::from_utf8_lossy(&output[..read]);
+        assert!(output.contains("marker"), "{output}");
+    }
+
+    #[cfg(unix)]
+    const CLOSED_FDS_SCENARIO: &str = "KFTRAY_TEST_CLOSED_STANDARD_FDS";
+
+    #[cfg(unix)]
+    #[test]
+    fn redirection_survives_closed_standard_descriptors() {
+        if std::env::var_os(CLOSED_FDS_SCENARIO).is_some() {
+            unsafe {
+                libc::close(libc::STDIN_FILENO);
+                libc::close(libc::STDERR_FILENO);
+            }
+            let (mut read, write) = imp::pipe().unwrap();
+            imp::attach(write);
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("echo marker >&2")
+                .status()
+                .unwrap();
+            let mut output = [0u8; 64];
+            let n = read.read(&mut output).unwrap_or(0);
+            println!(
+                "{} {}",
+                status.success(),
+                String::from_utf8_lossy(&output[..n]).trim()
+            );
+            std::process::exit(0);
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "detached_stderr::tests::redirection_survives_closed_standard_descriptors",
+                "--nocapture",
+            ])
+            .env(CLOSED_FDS_SCENARIO, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("true marker"), "{stdout}");
+    }
+
+    fn collect(parts: &[&[u8]]) -> Vec<String> {
+        let mut assembler = LineAssembler::new();
+        let mut out = Vec::new();
+        for part in parts {
+            assembler.push(part, &mut out);
+        }
+        assembler.finish(&mut out);
+        out.into_iter()
+            .map(|line| String::from_utf8_lossy(&line).into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn splits_complete_lines() {
+        assert_eq!(collect(&[b"one\ntwo\n"]), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn buffers_partial_lines_across_reads() {
+        assert_eq!(collect(&[b"par", b"tial\n"]), vec!["partial"]);
+    }
+
+    #[test]
+    fn skips_blank_lines() {
+        assert!(collect(&[b"\n\n\n"]).is_empty());
+    }
+
+    #[test]
+    fn strips_carriage_returns() {
+        assert_eq!(collect(&[b"crlf\r\n"]), vec!["crlf"]);
+    }
+
+    #[test]
+    fn flushes_trailing_partial_line_at_eof() {
+        assert_eq!(collect(&[b"tail"]), vec!["tail"]);
+    }
+
+    #[test]
+    fn emits_oversized_line_without_newline() {
+        let part = vec![b'x'; MAX_PENDING_LINE_BYTES];
+        let lines = collect(&[&part, b"\nrest\n"]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), MAX_PENDING_LINE_BYTES);
+        assert_eq!(lines[1], "rest");
+    }
+}

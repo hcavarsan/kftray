@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { showErrorToast } from '@/components/ui/error-toast'
+import { toaster } from '@/components/ui/toaster'
+
 import { executeToggle, type ToggleDeps } from './portForwardToggle'
 import { createReservationRegistry } from './reservationRegistry'
 import { flushPromises, makeConfig } from './testFixtures'
@@ -63,6 +66,29 @@ describe('executeToggle', () => {
     await flushPromises()
     await Promise.all([first, second])
 
+    expect(runForwardCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes the row without a toast when the forward is already running', async () => {
+    const { deps, preflights, registry, runForwardCommand } = setup()
+    const config = makeConfig(1)
+    runForwardCommand.mockRejectedValue(
+      new Error('Port forwarding is already running for config 1'),
+    )
+
+    const toggle = executeToggle(deps, config, 'starting')
+    for (const preflight of preflights) {
+      preflight.resolve(true)
+    }
+    await flushPromises()
+    await toggle
+    await flushPromises()
+
+    expect(toaster.info).not.toHaveBeenCalled()
+    expect(toaster.error).not.toHaveBeenCalled()
+    expect(showErrorToast).not.toHaveBeenCalled()
+    expect(deps.refreshConfigs).toHaveBeenCalled()
+    expect(registry.isBusy(1)).toBe(false)
     expect(runForwardCommand).toHaveBeenCalledTimes(1)
   })
 

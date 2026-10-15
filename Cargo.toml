@@ -194,6 +194,7 @@ windows = {
     "Win32_Security_Cryptography",
     "Win32_Security_Cryptography_Certificates",
     "Win32_Storage_FileSystem",
+    "Win32_System_Console",
     "Win32_System_Environment",
     "Win32_System_IO",
     "Win32_System_Pipes",
