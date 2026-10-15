@@ -705,31 +705,27 @@ struct ReportedFailure {
     at: Instant,
 }
 
-fn is_repeat(hub: &Hub, operation: Operation, failure: Failure) -> bool {
-    let Some(client) = hub.client() else {
-        return false;
-    };
-    let current = ReportedFailure {
+fn repeat_key(hub: &Hub, operation: Operation, failure: Failure) -> Option<ReportedFailure> {
+    hub.client().map(|client| ReportedFailure {
         client: Arc::downgrade(&client),
         operation: operation.name(),
         kind: failure.kind.name(),
         cleanup: failure.cleanup.map_or("none", CleanupSteps::name),
         at: Instant::now(),
-    };
+    })
+}
+
+fn is_repeat(current: &ReportedFailure) -> bool {
     let mut recent = RECENT_FAILURES.lock();
     recent.retain(|failure| {
         failure.client.strong_count() > 0 && current.at.duration_since(failure.at) < REPEAT_WINDOW
     });
-    let seen = recent.iter().any(|failure| {
+    recent.iter().any(|failure| {
         failure.client.ptr_eq(&current.client)
             && failure.operation == current.operation
             && failure.kind == current.kind
             && failure.cleanup == current.cleanup
-    });
-    if !seen {
-        recent.push(current);
-    }
-    seen
+    })
 }
 
 fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Option<Uuid> {
@@ -747,7 +743,8 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
         },
         if quiet { Level::Info } else { Level::Error },
     );
-    if quiet || is_repeat(hub, operation, failure) {
+    let key = repeat_key(hub, operation, failure);
+    if quiet || key.as_ref().is_some_and(is_repeat) {
         return None;
     }
     let mut event = Event {
@@ -779,8 +776,14 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
             .tags
             .insert("cleanup_step".into(), steps.name().into());
     }
-    // Nil when the client dropped the event (reporting off).
-    Some(hub.capture_event(event)).filter(|id| !id.is_nil())
+    let id = hub.capture_event(event);
+    if id.is_nil() {
+        return None;
+    }
+    if let Some(key) = key {
+        RECENT_FAILURES.lock().push(key);
+    }
+    Some(id)
 }
 
 /// Records the steps of an operation whose timing matters before the
@@ -1864,6 +1867,23 @@ mod tests {
                 ("portforward.autostart", "kubeconfig"),
             ]
         );
+    }
+
+    #[test]
+    fn a_failure_dropped_without_consent_is_still_reported_once_consent_is_on() {
+        let envelopes = envelopes_with_consent(true, || {
+            ENABLED.store(false, Ordering::Relaxed);
+            report_failure(Operation::GitSync, "Failed to clone repository: denied");
+            ENABLED.store(true, Ordering::Relaxed);
+            report_failure(Operation::GitSync, "Failed to clone repository: denied");
+        });
+        let events = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter(|item| matches!(item, EnvelopeItem::Event(_)))
+            .count();
+
+        assert_eq!(events, 1);
     }
 
     #[test]
