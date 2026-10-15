@@ -126,6 +126,26 @@ pub(crate) fn log_dir() -> Result<PathBuf, String> {
     kftray_commons::utils::config_dir::get_config_dir()
 }
 
+pub fn file_logger(
+    log_dir: &Path, basename: &str,
+) -> Result<flexi_logger::Logger, flexi_logger::FlexiLoggerError> {
+    Ok(flexi_logger::Logger::try_with_str("info, zbus=warn")?
+        .log_to_file(
+            flexi_logger::FileSpec::default()
+                .directory(log_dir)
+                .basename(basename),
+        )
+        // `clear_logs` truncates the current file through its own handle.
+        // Appending makes the next line land at the new end of the file.
+        .append()
+        .rotate(
+            flexi_logger::Criterion::Size(5_000_000),
+            flexi_logger::Naming::Numbers,
+            flexi_logger::Cleanup::KeepLogFiles(1),
+        )
+        .format(flexi_logger::detailed_format))
+}
+
 fn is_kftray_log_file(filename: &str) -> bool {
     filename.starts_with("kftray_") && filename.ends_with(".log")
 }
@@ -684,5 +704,31 @@ mod tests {
 
         assert_eq!(before.log_size, after.log_size);
         assert_ne!(before.version, after.version);
+    }
+
+    #[tokio::test]
+    async fn lines_after_clearing_the_current_log_start_at_the_top() {
+        let dir = tempfile::tempdir().unwrap();
+        let _config = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        let logger = file_logger(dir.path(), "kftray_2026-10-15_01-00-00")
+            .unwrap()
+            .start()
+            .unwrap();
+        for i in 0..20 {
+            info!("line before clear {i}");
+        }
+        logger.flush();
+
+        clear_logs(None).await.unwrap();
+        info!("first line after clear");
+        logger.flush();
+
+        let entries = get_log_contents_json(None, None).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].is_parsed, "unparsed: {:?}", entries[0].message);
+        assert_eq!(entries[0].message, "first line after clear");
     }
 }
