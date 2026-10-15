@@ -703,29 +703,69 @@ struct ReportedFailure {
     kind: &'static str,
     cleanup: &'static str,
     at: Instant,
+    outcome: Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>,
 }
 
-fn repeat_key(hub: &Hub, operation: Operation, failure: Failure) -> Option<ReportedFailure> {
-    hub.client().map(|client| ReportedFailure {
+impl ReportedFailure {
+    fn same_key(&self, other: &Self) -> bool {
+        self.client.ptr_eq(&other.client)
+            && self.operation == other.operation
+            && self.kind == other.kind
+            && self.cleanup == other.cleanup
+    }
+}
+
+enum Claim {
+    Owner(Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>),
+    Repeat,
+}
+
+fn claim(hub: &Hub, operation: Operation, failure: Failure) -> Claim {
+    let Some(client) = hub.client() else {
+        return Claim::Owner(Arc::default());
+    };
+    let current = ReportedFailure {
         client: Arc::downgrade(&client),
         operation: operation.name(),
         kind: failure.kind.name(),
         cleanup: failure.cleanup.map_or("none", CleanupSteps::name),
         at: Instant::now(),
-    })
+        outcome: Arc::default(),
+    };
+    loop {
+        let pending = {
+            let mut recent = RECENT_FAILURES.lock();
+            recent.retain(|failure| {
+                failure.client.strong_count() > 0
+                    && current.at.duration_since(failure.at) < REPEAT_WINDOW
+            });
+            match recent.iter().find(|failure| failure.same_key(&current)) {
+                Some(existing) => Arc::clone(&existing.outcome),
+                None => {
+                    let outcome = Arc::clone(&current.outcome);
+                    recent.push(current);
+                    return Claim::Owner(outcome);
+                }
+            }
+        };
+        let mut settled = pending.0.lock();
+        while settled.is_none() {
+            pending.1.wait(&mut settled);
+        }
+        if *settled == Some(true) {
+            return Claim::Repeat;
+        }
+    }
 }
 
-fn is_repeat(current: &ReportedFailure) -> bool {
-    let mut recent = RECENT_FAILURES.lock();
-    recent.retain(|failure| {
-        failure.client.strong_count() > 0 && current.at.duration_since(failure.at) < REPEAT_WINDOW
-    });
-    recent.iter().any(|failure| {
-        failure.client.ptr_eq(&current.client)
-            && failure.operation == current.operation
-            && failure.kind == current.kind
-            && failure.cleanup == current.cleanup
-    })
+fn settle(outcome: &Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>, accepted: bool) {
+    if !accepted {
+        RECENT_FAILURES
+            .lock()
+            .retain(|failure| !Arc::ptr_eq(&failure.outcome, outcome));
+    }
+    *outcome.0.lock() = Some(accepted);
+    outcome.1.notify_all();
 }
 
 fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Option<Uuid> {
@@ -743,10 +783,13 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
         },
         if quiet { Level::Info } else { Level::Error },
     );
-    let key = repeat_key(hub, operation, failure);
-    if quiet || key.as_ref().is_some_and(is_repeat) {
+    if quiet {
         return None;
     }
+    let outcome = match claim(hub, operation, failure) {
+        Claim::Owner(outcome) => outcome,
+        Claim::Repeat => return None,
+    };
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
@@ -777,13 +820,8 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
             .insert("cleanup_step".into(), steps.name().into());
     }
     let id = hub.capture_event(event);
-    if id.is_nil() {
-        return None;
-    }
-    if let Some(key) = key {
-        RECENT_FAILURES.lock().push(key);
-    }
-    Some(id)
+    settle(&outcome, !id.is_nil());
+    (!id.is_nil()).then_some(id)
 }
 
 /// Records the steps of an operation whose timing matters before the
@@ -1867,6 +1905,42 @@ mod tests {
                 ("portforward.autostart", "kubeconfig"),
             ]
         );
+    }
+
+    #[test]
+    fn concurrent_reports_of_the_same_failure_send_one_event() {
+        use std::sync::Barrier;
+
+        let envelopes = envelopes_with_consent(true, || {
+            let hub = Hub::current();
+            let threads = 16;
+            let barrier = Arc::new(Barrier::new(threads));
+            let workers: Vec<_> = (0..threads)
+                .map(|_| {
+                    let hub = Arc::clone(&hub);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        Hub::run(hub, || {
+                            barrier.wait();
+                            report_failure(
+                                Operation::StartForward,
+                                "Failed to create configuration from kubeconfig: exec plugin",
+                            );
+                        })
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        let events = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter(|item| matches!(item, EnvelopeItem::Event(_)))
+            .count();
+
+        assert_eq!(events, 1);
     }
 
     #[test]
