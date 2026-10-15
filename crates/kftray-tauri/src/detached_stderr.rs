@@ -177,8 +177,8 @@ mod imp {
     pub struct WriteEnd(OwnedHandle);
 
     pub fn pipe() -> anyhow::Result<(File, WriteEnd)> {
-        let mut read = HANDLE::null();
-        let mut write = HANDLE::null();
+        let mut read = HANDLE::default();
+        let mut write = HANDLE::default();
         let attrs = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: std::ptr::null_mut(),
