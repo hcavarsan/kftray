@@ -15,6 +15,7 @@ import { runWithLimit } from './runWithLimit'
 import type { RunForwardCommand } from './useForwardCommand'
 import type { PendingActions } from './usePendingActions'
 
+const ALREADY_RUNNING = /already (running|in progress)/i
 const CONCURRENCY_LIMIT = 8
 export const BATCH_DEADLINE_MS = 180_000
 export const DEADLINE_GRACE_MS = 30_000
@@ -110,6 +111,7 @@ export async function executeBatch(
   let timedOut = false
 
   const failures: { id: number; error: unknown }[] = []
+  const alreadyRunning = new Set<number>()
   const reportFailures = (reporting = failures) => {
     if (!reporting.length) {
       return
@@ -131,6 +133,19 @@ export async function executeBatch(
       title: failureTitle,
       description: `${reporting.length} configs failed to ${verb}`,
       duration: 3000,
+    })
+  }
+  const noteAlreadyRunning = () => {
+    if (!alreadyRunning.size) {
+      return
+    }
+    toaster.info({
+      title: 'Already running',
+      description:
+        alreadyRunning.size === 1
+          ? `Config ${[...alreadyRunning][0]} is already forwarded.`
+          : `${alreadyRunning.size} configs are already forwarded.`,
+      duration: 2000,
     })
   }
   /**
@@ -187,11 +202,15 @@ export async function executeBatch(
         try {
           await runForwardCommand(config, action, token)
         } catch (error) {
-          const failure = { id, error }
+          if (ALREADY_RUNNING.test(errorMessage(error))) {
+            alreadyRunning.add(id)
+          } else {
+            const failure = { id, error }
 
-          failures.push(failure)
-          if (timedOut) {
-            reportFailures([failure])
+            failures.push(failure)
+            if (timedOut) {
+              reportFailures([failure])
+            }
           }
         } finally {
           unresolved.delete(id)
@@ -231,6 +250,7 @@ export async function executeBatch(
       return
     }
     refusals = splitRefusals()
+    noteAlreadyRunning()
 
     if (failures.length) {
       reportFailures()

@@ -15,6 +15,7 @@ use crate::validation::alert_multiple_configs;
 #[cfg(target_os = "linux")]
 mod appimage_wayland_fixup;
 mod commands;
+mod detached_stderr;
 mod glibc_detector;
 mod init_check;
 mod mcp;
@@ -138,6 +139,7 @@ fn main() {
     if let Err(e) = init_file_logger() {
         eprintln!("failed to initialize file logger: {e}");
     }
+    detached_stderr::redirect_if_detached();
 
     let _telemetry = kftray_telemetry::init(concat!("kftray@", env!("CARGO_PKG_VERSION")));
 

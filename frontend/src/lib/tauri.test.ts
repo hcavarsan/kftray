@@ -67,6 +67,22 @@ describe('invoke rejections', () => {
     expect(errorMessage(error)).toBe('Port 8080 is already in use')
   })
 
+  it('does not report a failure the backend measured and chose not to send', async () => {
+    native.invoke.mockRejectedValue({
+      message: 'Port forwarding is already running for config 1',
+      eventId: null,
+    })
+
+    const error = await reject('start_port_forward_tcp_cmd')
+    await Sentry.flush(2000)
+
+    expect(sentEvents).toHaveLength(0)
+    expect(getProblemReportContext(error)).toBeUndefined()
+    expect(errorMessage(error)).toBe(
+      'Port forwarding is already running for config 1',
+    )
+  })
+
   it('still shows the backend message in the error toast', async () => {
     native.invoke.mockRejectedValue({
       message: 'Port 8080 is already in use',

@@ -160,6 +160,62 @@ pub async fn set_connection_error_with_mode(
     set_connection_error_with_pool(config_id, error, &context.pool).await
 }
 
+pub async fn set_retry_status_with_pool(
+    config_id: i64, owner_process_id: Option<u32>, owner_process_start: Option<i64>,
+    retry_count: Option<i32>, last_error: Option<&str>, pool: &SqlitePool,
+) -> Result<(), String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE config_state SET is_retrying = ?1, retry_count = ?2, last_error = ?3 WHERE \
+         config_id = ?4 AND is_running = 1 AND process_id IS ?5 AND process_start IS ?6",
+    )
+    .bind(retry_count.is_some())
+    .bind(retry_count)
+    .bind(last_error)
+    .bind(config_id)
+    .bind(owner_process_id)
+    .bind(owner_process_start)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn set_retry_status(
+    config_id: i64, owner_process_id: Option<u32>, owner_process_start: Option<i64>,
+    retry_count: Option<i32>, last_error: Option<&str>,
+) -> Result<(), String> {
+    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    set_retry_status_with_pool(
+        config_id,
+        owner_process_id,
+        owner_process_start,
+        retry_count,
+        last_error,
+        &pool,
+    )
+    .await
+}
+
+pub async fn clear_retry_status_with_pool(config_id: i64, pool: &SqlitePool) -> Result<(), String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE config_state SET is_retrying = false, retry_count = NULL, last_error = NULL \
+         WHERE config_id = ?1 AND is_running = 1 AND process_id = ?2",
+    )
+    .bind(config_id)
+    .bind(std::process::id())
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn clear_retry_status(config_id: i64) -> Result<(), String> {
+    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    clear_retry_status_with_pool(config_id, &pool).await
+}
+
 /// Marks every configuration this process was running as stopped, except the
 /// ones in `still_owed`: a configuration whose cleanup did not complete keeps
 /// its running state, so the next run's stop-all enumerates and retries it.
@@ -1094,6 +1150,161 @@ mod tests {
                 .unwrap();
             assert_eq!(last_error_of(&pool, id).await, None);
         }
+    }
+
+    async fn retry_fields_of(
+        pool: &SqlitePool, config_id: i64,
+    ) -> (bool, Option<i32>, Option<String>) {
+        let state = read_config_states_with_pool(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|state| state.config_id == config_id)
+            .unwrap();
+        (state.is_retrying, state.retry_count, state.last_error)
+    }
+
+    #[tokio::test]
+    async fn retry_status_is_written_to_the_row_its_owner_still_holds() {
+        let pool = setup_test_db().await;
+        let id = config_with_state(&pool, true, 4242).await;
+
+        set_retry_status_with_pool(
+            id,
+            Some(4242),
+            None,
+            Some(2),
+            Some("connection refused"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            retry_fields_of(&pool, id).await,
+            (true, Some(2), Some("connection refused".to_string()))
+        );
+        let state = read_config_states_with_pool(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|state| state.config_id == id)
+            .unwrap();
+        assert!(state.is_running);
+        assert_eq!(state.process_id, Some(4242));
+    }
+
+    #[tokio::test]
+    async fn retry_status_leaves_a_row_that_changed_owner_or_stopped_alone() {
+        let pool = setup_test_db().await;
+        let taken_over = config_with_state(&pool, true, 4242).await;
+        let stopped = config_with_state(&pool, true, 4242).await;
+        update_config_state_with_pool(
+            &ConfigState {
+                config_id: taken_over,
+                is_running: true,
+                process_id: Some(9999),
+                ..Default::default()
+            },
+            &pool,
+        )
+        .await
+        .unwrap();
+        update_config_state_with_pool(
+            &ConfigState {
+                config_id: stopped,
+                is_running: false,
+                process_id: None,
+                ..Default::default()
+            },
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        set_retry_status_with_pool(
+            taken_over,
+            Some(4242),
+            None,
+            Some(1),
+            Some("connection refused"),
+            &pool,
+        )
+        .await
+        .unwrap();
+        set_retry_status_with_pool(
+            stopped,
+            Some(4242),
+            None,
+            Some(1),
+            Some("connection refused"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            retry_fields_of(&pool, taken_over).await,
+            (false, None, None)
+        );
+        assert_eq!(retry_fields_of(&pool, stopped).await, (false, None, None));
+    }
+
+    #[tokio::test]
+    async fn a_retry_status_is_cleared_only_from_a_row_this_process_runs() {
+        let pool = setup_test_db().await;
+        let own = config_with_state(&pool, true, std::process::id()).await;
+        let foreign = config_with_state(&pool, true, 4242).await;
+        let stopped = config_with_state(&pool, true, std::process::id()).await;
+
+        set_retry_status_with_pool(
+            own,
+            Some(std::process::id()),
+            process_start_identity(std::process::id()),
+            Some(3),
+            Some("connection refused"),
+            &pool,
+        )
+        .await
+        .unwrap();
+        set_retry_status_with_pool(
+            foreign,
+            Some(4242),
+            None,
+            Some(3),
+            Some("connection refused"),
+            &pool,
+        )
+        .await
+        .unwrap();
+        update_config_state_with_pool(
+            &ConfigState {
+                config_id: stopped,
+                is_running: false,
+                process_id: None,
+                is_retrying: true,
+                retry_count: Some(3),
+                last_error: Some("connection refused".to_string()),
+                ..Default::default()
+            },
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        for id in [own, foreign, stopped] {
+            clear_retry_status_with_pool(id, &pool).await.unwrap();
+        }
+
+        assert_eq!(retry_fields_of(&pool, own).await, (false, None, None));
+        assert_eq!(
+            retry_fields_of(&pool, foreign).await,
+            (true, Some(3), Some("connection refused".to_string()))
+        );
+        assert_eq!(
+            retry_fields_of(&pool, stopped).await,
+            (true, Some(3), Some("connection refused".to_string()))
+        );
     }
 
     #[tokio::test]

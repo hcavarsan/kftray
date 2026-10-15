@@ -21,7 +21,7 @@ export const invoke = <T>(
       if (reported) {
         throw attachProblemReportContext(
           new Error(reported.message, { cause: error }),
-          { eventId: reported.eventId },
+          reported.eventId === null ? undefined : { eventId: reported.eventId },
         )
       }
       throw attachProblemReportContext(error, captureInvokeFailure(command))

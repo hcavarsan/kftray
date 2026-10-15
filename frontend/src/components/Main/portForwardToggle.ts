@@ -9,6 +9,7 @@ import type { RunForwardCommand } from './useForwardCommand'
 import type { PendingActions } from './usePendingActions'
 
 const FREE_PORT_TOAST_DURATION = 10000
+const ALREADY_RUNNING = /already (running|in progress)/i
 
 export interface ToggleDeps {
   pending: Pick<PendingActions, 'isBusy' | 'markPending' | 'clearPending'>
@@ -94,6 +95,7 @@ export async function executeToggle(
       token = markPending(config.id, action)
     }
     let refused: string | null = null
+    let alreadyRunning = false
 
     try {
       await runForwardCommand(config, action, token)
@@ -101,7 +103,9 @@ export async function executeToggle(
       await refreshConfigs()
       const message = errorMessage(error)
 
-      if (
+      if (ALREADY_RUNNING.test(message)) {
+        alreadyRunning = true
+      } else if (
         action === 'starting' &&
         attempt === 0 &&
         PRIVILEGE_ERROR.test(message)
@@ -134,10 +138,18 @@ export async function executeToggle(
         }
       }
     } finally {
+      if (alreadyRunning) {
+        toaster.info({
+          title: 'Already running',
+          description: 'Config is already forwarded; nothing to start.',
+          duration: 2000,
+        })
+      }
       clearPending(config.id, token)
       void refreshConfigs()
     }
     if (
+      alreadyRunning ||
       refused === null ||
       (await askAfterRefusal([config], refused)) === 'cancel'
     ) {
