@@ -129,25 +129,19 @@ mod imp {
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error().into());
         }
-        let mut read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
         let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
-        if read.as_raw_fd() == libc::STDERR_FILENO {
-            let moved = unsafe { libc::dup(read.as_raw_fd()) };
-            if moved < 0 {
-                return Err(io::Error::last_os_error().into());
-            }
-            read = unsafe { OwnedFd::from_raw_fd(moved) };
-        }
-        set_cloexec(read.as_raw_fd());
-        set_cloexec(write.as_raw_fd());
+        let read = above_standard_descriptors(&read)?;
+        let write = above_standard_descriptors(&write)?;
         Ok((File::from(read), WriteEnd(write)))
     }
 
-    fn set_cloexec(fd: i32) {
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        if flags >= 0 {
-            unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+    fn above_standard_descriptors(fd: &OwnedFd) -> io::Result<OwnedFd> {
+        let moved = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+        if moved < 0 {
+            return Err(io::Error::last_os_error());
         }
+        Ok(unsafe { OwnedFd::from_raw_fd(moved) })
     }
 
     pub fn attach(write: WriteEnd) {
@@ -269,6 +263,48 @@ mod tests {
         let read = read.read(&mut output).unwrap_or(0);
         let output = String::from_utf8_lossy(&output[..read]);
         assert!(output.contains("marker"), "{output}");
+    }
+
+    #[cfg(unix)]
+    const CLOSED_FDS_SCENARIO: &str = "KFTRAY_TEST_CLOSED_STANDARD_FDS";
+
+    #[cfg(unix)]
+    #[test]
+    fn redirection_survives_closed_standard_descriptors() {
+        if std::env::var_os(CLOSED_FDS_SCENARIO).is_some() {
+            unsafe {
+                libc::close(libc::STDIN_FILENO);
+                libc::close(libc::STDERR_FILENO);
+            }
+            let (mut read, write) = imp::pipe().unwrap();
+            imp::attach(write);
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("echo marker >&2")
+                .status()
+                .unwrap();
+            let mut output = [0u8; 64];
+            let n = read.read(&mut output).unwrap_or(0);
+            println!(
+                "{} {}",
+                status.success(),
+                String::from_utf8_lossy(&output[..n]).trim()
+            );
+            std::process::exit(0);
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "detached_stderr::tests::redirection_survives_closed_standard_descriptors",
+                "--nocapture",
+            ])
+            .env(CLOSED_FDS_SCENARIO, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("true marker"), "{stdout}");
     }
 
     fn collect(parts: &[&[u8]]) -> Vec<String> {
