@@ -697,7 +697,7 @@ pub fn report_failure(operation: Operation, message: &str) {
 
 const REPEAT_WINDOW: Duration = Duration::from_secs(30);
 
-static RECENT_FAILURES: Mutex<Vec<(usize, &'static str, &'static str, Instant)>> =
+static RECENT_FAILURES: Mutex<Vec<(usize, &'static str, &'static str, &'static str, Instant)>> =
     Mutex::new(Vec::new());
 
 fn is_repeat(hub: &Hub, operation: Operation, failure: Failure) -> bool {
@@ -708,15 +708,16 @@ fn is_repeat(hub: &Hub, operation: Operation, failure: Failure) -> bool {
         Arc::as_ptr(&client) as usize,
         operation.name(),
         failure.kind.name(),
+        failure.cleanup.map_or("none", CleanupSteps::name),
     );
     let now = Instant::now();
     let mut recent = RECENT_FAILURES.lock();
-    recent.retain(|(_, _, _, at)| now.duration_since(*at) < REPEAT_WINDOW);
+    recent.retain(|(_, _, _, _, at)| now.duration_since(*at) < REPEAT_WINDOW);
     let seen = recent
         .iter()
-        .any(|(c, op, kind, _)| (*c, *op, *kind) == key);
+        .any(|(c, op, kind, cleanup, _)| (*c, *op, *kind, *cleanup) == key);
     if !seen {
-        recent.push((key.0, key.1, key.2, now));
+        recent.push((key.0, key.1, key.2, key.3, now));
     }
     seen
 }
@@ -1853,6 +1854,34 @@ mod tests {
                 ("portforward.autostart", "kubeconfig"),
             ]
         );
+    }
+
+    #[test]
+    fn a_failure_that_left_resources_behind_is_not_a_repeat() {
+        let envelopes = envelopes_with_consent(true, || {
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x",
+            );
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x; cleanup \
+                 incomplete: listener: timed out",
+            );
+        });
+        let reported: Vec<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter_map(|item| match item {
+                EnvelopeItem::Event(event) => Some((
+                    event.tags["failure_kind"].as_str(),
+                    event.tags.get("cleanup_incomplete").map(|v| v.as_str()),
+                )),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(reported, [("timeout", None), ("timeout", Some("true"))]);
     }
 
     #[test]
