@@ -80,24 +80,27 @@ impl ConfigManager {
         // stay stopped. The stop generation catches a stop landing after
         // this check: a count moved by anything other than our own stop
         // means someone else stopped it, and starting it would undo that.
+        // A relay forward whose recovery is retrying is left to it, since
+        // the stop would cancel that recovery.
         let owned: Vec<(i64, Config, u64)> = configs
             .into_iter()
             .filter_map(|config| {
                 let id = config.id?;
-                is_forward_registered(id).then(|| (id, config, stop_generation(id)))
+                if !is_forward_registered(id) {
+                    return None;
+                }
+                if kftray_portforward::kube::recovery_in_progress(id) {
+                    info!("Skipping network monitor restart for config {id}: recovery in progress");
+                    return None;
+                }
+                Some((id, config, stop_generation(id)))
             })
             .collect();
         if owned.is_empty() {
-            info!("No {protocol} port forwards left to restart; they were stopped meanwhile");
+            info!("No {protocol} port forwards to restart");
             return;
         }
         info!("Restarting {} {} port forwards", owned.len(), protocol);
-
-        let recovering: std::collections::HashSet<i64> = owned
-            .iter()
-            .map(|(id, _, _)| *id)
-            .filter(|&id| kftray_portforward::kube::recovery_in_progress(id))
-            .collect();
 
         let stop_tasks: Vec<_> = owned
             .iter()
@@ -148,48 +151,19 @@ impl ConfigManager {
         }
 
         if !relay_configs.is_empty() {
-            let configs_to_restart = relay_configs_to_restart(relay_configs, &recovering);
-
-            if !configs_to_restart.is_empty() {
-                match measure(
-                    Operation::Restart,
-                    kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart),
-                )
-                .await
-                {
-                    Ok(responses) => {
-                        report_restart_outcome(&responses, protocol, "relay port forwards")
-                    }
-                    Err(e) => report_restart_failure(&e, protocol, "relay port forwards"),
+            match measure(
+                Operation::Restart,
+                kftray_portforward::kube::deploy_and_forward_pod(relay_configs),
+            )
+            .await
+            {
+                Ok(responses) => {
+                    report_restart_outcome(&responses, protocol, "relay port forwards")
                 }
+                Err(e) => report_restart_failure(&e, protocol, "relay port forwards"),
             }
         }
     }
-}
-
-/// Drops relay configs whose recovery was in progress before this restart
-/// stopped them. `recovering` must be snapshotted before the stop pass runs,
-/// since `stop_config` unconditionally clears `RECOVERY_MANAGERS` and a
-/// live check here would always see it already gone.
-fn relay_configs_to_restart(
-    relay_configs: Vec<Config>, recovering: &std::collections::HashSet<i64>,
-) -> Vec<Config> {
-    relay_configs
-        .into_iter()
-        .filter(|config| {
-            if let Some(config_id) = config.id
-                && recovering.contains(&config_id)
-            {
-                info!(
-                    "Skipping network monitor restart for config {} \
-                     \u{2014} recovery already in progress",
-                    config_id
-                );
-                return false;
-            }
-            true
-        })
-        .collect()
 }
 
 fn report_restart_outcome(responses: &[CustomResponse], protocol: &str, kind: &str) {
@@ -230,10 +204,7 @@ fn partition_relay_configs(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
 mod tests {
     use kftray_commons::models::config_model::Config;
 
-    use super::{
-        partition_relay_configs,
-        relay_configs_to_restart,
-    };
+    use super::partition_relay_configs;
 
     fn make_config(id: i64, workload_type: &str, protocol: &str) -> Config {
         Config {
@@ -301,23 +272,6 @@ mod tests {
     }
 
     #[test]
-    fn a_config_recovering_before_the_stop_pass_is_skipped() {
-        // `recovering` must be captured before `stop_port_forward` runs, or
-        // every config would already be missing from `RECOVERY_MANAGERS` by
-        // the time this filter looks it up, and none would ever be skipped.
-        let recovering: std::collections::HashSet<i64> = [2].into_iter().collect();
-        let configs = vec![
-            make_config(1, "proxy", "tcp"),
-            make_config(2, "proxy", "tcp"),
-        ];
-
-        let restart = relay_configs_to_restart(configs, &recovering);
-
-        let ids: Vec<i64> = restart.iter().filter_map(|c| c.id).collect();
-        assert_eq!(ids, vec![1]);
-    }
-
-    #[test]
     fn udp_service_and_pod_configs_restart_through_the_relay() {
         let configs = vec![
             make_config(1, "service", "udp"),
@@ -378,31 +332,22 @@ mod tests {
         (addr, requests)
     }
 
-    #[tokio::test]
-    async fn restarting_a_udp_service_forward_deploys_a_new_relay() {
+    async fn register_running_udp_service_forward(
+        dir: &std::path::Path,
+    ) -> (Config, std::sync::Arc<tokio::sync::Mutex<Vec<String>>>) {
         use kftray_commons::models::config_state_model::ConfigState;
-        use kftray_commons::test_utils::{
-            EnvVarGuard,
-            test_db,
-        };
         use kftray_portforward::port_forward::{
             CHILD_PROCESSES,
-            PROCESS_TEST_MUTEX,
             PortForwardProcess,
         };
 
-        kftray_portforward::ssl::ensure_crypto_provider_installed();
-        let _db = test_db().await;
-        let _process = PROCESS_TEST_MUTEX.lock().await;
-        let dir = tempfile::tempdir().unwrap();
-        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
         kftray_commons::utils::db::init().await.unwrap();
         kftray_commons::utils::migration::migrate_configs(None)
             .await
             .unwrap();
 
         let (api, requests) = serve_forbidding_kube_api().await;
-        let kubeconfig = dir.path().join("kubeconfig");
+        let kubeconfig = dir.join("kubeconfig");
         std::fs::write(
             &kubeconfig,
             format!(
@@ -434,6 +379,27 @@ mod tests {
             .unwrap();
         let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
         CHILD_PROCESSES.insert(id, PortForwardProcess::new(handle, id.to_string()));
+        (config, requests)
+    }
+
+    #[tokio::test]
+    async fn restarting_a_udp_service_forward_deploys_a_new_relay() {
+        use kftray_commons::test_utils::{
+            EnvVarGuard,
+            test_db,
+        };
+        use kftray_portforward::port_forward::{
+            CHILD_PROCESSES,
+            PROCESS_TEST_MUTEX,
+        };
+
+        kftray_portforward::ssl::ensure_crypto_provider_installed();
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        let (config, requests) = register_running_udp_service_forward(dir.path()).await;
+        let id = config.id.unwrap();
 
         let restart = tokio::time::timeout(
             std::time::Duration::from_secs(30),
@@ -449,5 +415,76 @@ mod tests {
             "no relay deployment requested, finished: {}, requests: {seen:?}",
             restart.is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn a_relay_forward_in_recovery_keeps_its_recovery_through_a_restart() {
+        use kftray_commons::test_utils::{
+            EnvVarGuard,
+            test_db,
+        };
+        use kftray_commons::utils::db_mode::DatabaseMode;
+        use kftray_portforward::kube::proxy_recovery::{
+            ProxyRecoveryManager,
+            ProxyType,
+            RECOVERY_MANAGERS,
+            RecoverySignal,
+        };
+        use kftray_portforward::port_forward::{
+            CHILD_PROCESSES,
+            PROCESS_TEST_MUTEX,
+        };
+
+        kftray_portforward::ssl::ensure_crypto_provider_installed();
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        let (config, _requests) = register_running_udp_service_forward(dir.path()).await;
+        let id = config.id.unwrap();
+
+        let manager = std::sync::Arc::new(ProxyRecoveryManager::new(
+            config.clone(),
+            ProxyType::Deployment,
+            DatabaseMode::File,
+            false,
+            "http://127.0.0.1:1/".to_string(),
+        ));
+        RECOVERY_MANAGERS.insert(id, std::sync::Arc::clone(&manager));
+        let runner = std::sync::Arc::clone(&manager);
+        let recovery = tokio::spawn(async move { runner.run_recovery_loop().await });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !kftray_portforward::kube::recovery_in_progress(id) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recovery never started"
+            );
+            manager.signal_recovery(RecoverySignal::StreamFailed);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let restart = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::ConfigManager::restart_port_forwards(vec![config]),
+        )
+        .await;
+        let still_registered = CHILD_PROCESSES.contains_key(&id);
+        let same_manager = RECOVERY_MANAGERS
+            .get(&id)
+            .is_some_and(|entry| std::sync::Arc::ptr_eq(entry.value(), &manager));
+        let recovering = kftray_portforward::kube::recovery_in_progress(id);
+
+        manager.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), recovery).await;
+        RECOVERY_MANAGERS.remove(&id);
+        CHILD_PROCESSES.remove(&id);
+
+        assert!(restart.is_ok(), "restart did not finish within 30s");
+        assert!(
+            still_registered,
+            "the restart stopped the forward under recovery"
+        );
+        assert!(same_manager, "the restart removed the recovery manager");
+        assert!(recovering, "the recovery no longer runs after the restart");
     }
 }
