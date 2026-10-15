@@ -17,8 +17,10 @@ use std::sync::{
     Arc,
     LazyLock,
     OnceLock,
+    Weak,
 };
 use std::time::{
+    Duration,
     Instant,
     SystemTime,
 };
@@ -280,9 +282,22 @@ struct Failure {
 }
 
 impl Failure {
-    /// A cancellation that left nothing behind is expected and not an error.
-    fn is_clean_cancellation(self) -> bool {
-        self.kind == FailureKind::Cancelled && self.cleanup.is_none()
+    /// An outcome the user asked for: a cancelled start, or a start of a
+    /// forward that is already up. Logged as a breadcrumb, never as an error.
+    fn is_expected(self) -> bool {
+        self.cleanup.is_none()
+            && matches!(
+                self.kind,
+                FailureKind::Cancelled | FailureKind::AlreadyRunning
+            )
+    }
+
+    fn span_status(self) -> SpanStatus {
+        match self.kind {
+            FailureKind::Cancelled if self.cleanup.is_none() => SpanStatus::Cancelled,
+            FailureKind::AlreadyRunning if self.cleanup.is_none() => SpanStatus::AlreadyExists,
+            _ => SpanStatus::InternalError,
+        }
     }
 }
 
@@ -346,7 +361,7 @@ fn classify_failure(message: &str) -> Failure {
         (FailureKind::Git, &["failed to read config file at"]),
         (
             FailureKind::InvalidConfig,
-            &["failed to parse config file at"],
+            &["failed to parse config", "invalid config", "config path"],
         ),
         (FailureKind::OwnedElsewhere, &["being forwarded by another"]),
         (
@@ -364,6 +379,8 @@ fn classify_failure(message: &str) -> Failure {
                 "loopback",
                 "still being released",
                 "is not configured on this machine",
+                "not valid in its context",
+                "cannot assign requested address",
             ],
         ),
         (FailureKind::Timeout, &["timed out", "timeout", "deadline"]),
@@ -465,6 +482,7 @@ fn classify_failure(message: &str) -> Failure {
                 "invalid port",
                 "no label selector",
                 "no longer exists",
+                "merge config files",
             ],
         ),
         (
@@ -639,11 +657,7 @@ pub async fn measure_with_event<T, E: Display>(
         }
         Err(error) => {
             let failure = classify_failure(&error.to_string());
-            transaction.set_status(if failure.is_clean_cancellation() {
-                SpanStatus::Cancelled
-            } else {
-                SpanStatus::InternalError
-            });
+            transaction.set_status(failure.span_status());
             transaction.set_tag("failure_kind", failure.kind.name());
             if let Some(steps) = failure.cleanup {
                 transaction.set_tag("cleanup_incomplete", "true");
@@ -670,14 +684,92 @@ fn finish_unless_opted_out(transaction: Transaction) {
 /// `<operation>: <kind>` and keeps it as a breadcrumb. For callers that see
 /// failures inside an operation that still succeeded as a whole (a mixed
 /// start batch); `measure` reports its own result on the operation's hub.
-/// Cancellations that left nothing behind leave an informational breadcrumb
-/// without an error event.
+/// Expected outcomes (a clean cancellation, a forward that was already
+/// running) leave an informational breadcrumb without an error event, and
+/// so does a failure identical to one reported within the last
+/// [`REPEAT_WINDOW`]: one broken context fails every forward that uses it,
+/// and the first report says what the rest would.
 pub fn report_failure(operation: Operation, message: &str) {
     report_failure_on(&Hub::current(), operation, classify_failure(message));
 }
 
+const REPEAT_WINDOW: Duration = Duration::from_secs(30);
+
+static RECENT_FAILURES: Mutex<Vec<ReportedFailure>> = Mutex::new(Vec::new());
+
+struct ReportedFailure {
+    client: Weak<sentry::Client>,
+    operation: &'static str,
+    kind: &'static str,
+    cleanup: &'static str,
+    at: Instant,
+    outcome: Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>,
+}
+
+impl ReportedFailure {
+    fn same_key(&self, other: &Self) -> bool {
+        self.client.ptr_eq(&other.client)
+            && self.operation == other.operation
+            && self.kind == other.kind
+            && self.cleanup == other.cleanup
+    }
+}
+
+enum Claim {
+    Owner(Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>),
+    Repeat,
+}
+
+fn claim(hub: &Hub, operation: Operation, failure: Failure) -> Claim {
+    let Some(client) = hub.client() else {
+        return Claim::Owner(Arc::default());
+    };
+    let current = ReportedFailure {
+        client: Arc::downgrade(&client),
+        operation: operation.name(),
+        kind: failure.kind.name(),
+        cleanup: failure.cleanup.map_or("none", CleanupSteps::name),
+        at: Instant::now(),
+        outcome: Arc::default(),
+    };
+    loop {
+        let pending = {
+            let mut recent = RECENT_FAILURES.lock();
+            recent.retain(|failure| {
+                failure.client.strong_count() > 0
+                    && current.at.duration_since(failure.at) < REPEAT_WINDOW
+            });
+            match recent.iter().find(|failure| failure.same_key(&current)) {
+                Some(existing) => Arc::clone(&existing.outcome),
+                None => {
+                    let outcome = Arc::clone(&current.outcome);
+                    recent.push(current);
+                    return Claim::Owner(outcome);
+                }
+            }
+        };
+        let mut settled = pending.0.lock();
+        while settled.is_none() {
+            pending.1.wait(&mut settled);
+        }
+        if *settled == Some(true) {
+            return Claim::Repeat;
+        }
+    }
+}
+
+fn settle(outcome: &Arc<(Mutex<Option<bool>>, parking_lot::Condvar)>, accepted: bool) {
+    if !accepted {
+        RECENT_FAILURES
+            .lock()
+            .retain(|failure| !Arc::ptr_eq(&failure.outcome, outcome));
+    }
+    *outcome.0.lock() = Some(accepted);
+    outcome.1.notify_all();
+}
+
 fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Option<Uuid> {
-    let quiet = failure.is_clean_cancellation();
+    let quiet = failure.is_expected();
     push_breadcrumb(
         "portforward",
         if failure.cleanup.is_some() {
@@ -694,6 +786,10 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
     if quiet {
         return None;
     }
+    let outcome = match claim(hub, operation, failure) {
+        Claim::Owner(outcome) => outcome,
+        Claim::Repeat => return None,
+    };
     let mut event = Event {
         level: Level::Error,
         exception: vec![Exception {
@@ -723,8 +819,9 @@ fn report_failure_on(hub: &Hub, operation: Operation, failure: Failure) -> Optio
             .tags
             .insert("cleanup_step".into(), steps.name().into());
     }
-    // Nil when the client dropped the event (reporting off).
-    Some(hub.capture_event(event)).filter(|id| !id.is_nil())
+    let id = hub.capture_event(event);
+    settle(&outcome, !id.is_nil());
+    (!id.is_nil()).then_some(id)
 }
 
 /// Records the steps of an operation whose timing matters before the
@@ -1150,6 +1247,35 @@ mod tests {
         assert_eq!(
             classify("Startup is already in progress for config 7"),
             FailureKind::AlreadyRunning
+        );
+    }
+
+    #[test]
+    fn import_and_address_failures_are_not_other() {
+        assert_eq!(
+            classify("Failed to import configs: Invalid config: missing protocol"),
+            FailureKind::InvalidConfig
+        );
+        assert_eq!(
+            classify("Failed to import configs: Failed to parse config: expected value at line 1"),
+            FailureKind::InvalidConfig
+        );
+        assert_eq!(
+            classify("Config path escapes repository directory: ../auth.json"),
+            FailureKind::InvalidConfig
+        );
+        assert_eq!(
+            classify(
+                "Failed to bind TCP listener to 127.0.0.2:8080: The requested address is not \
+                 valid in its context. (os error 10049)"
+            ),
+            FailureKind::AddressAllocation
+        );
+        assert_eq!(
+            classify(
+                "Failed to bind 127.0.0.2:8080: Cannot assign requested address (os error 99)"
+            ),
+            FailureKind::AddressAllocation
         );
     }
 
@@ -1708,6 +1834,158 @@ mod tests {
             .collect();
 
         assert_eq!(failures, ["timeout"]);
+    }
+
+    #[test]
+    fn a_start_of_a_running_forward_is_not_an_error() {
+        let envelopes = envelopes_with_consent(true, || {
+            let result: Result<(), &str> =
+                futures::executor::block_on(measure(Operation::StartForward, async {
+                    Err("Port forwarding is already running for config 2")
+                }));
+            assert!(result.is_err());
+        });
+
+        assert!(
+            envelopes
+                .iter()
+                .flat_map(|envelope| envelope.items())
+                .all(|item| !matches!(item, EnvelopeItem::Event(_))),
+            "{envelopes:?}"
+        );
+        let transaction = captured_transaction(&envelopes);
+        assert_eq!(transaction.tags["failure_kind"], "already_running");
+        assert_eq!(
+            transaction
+                .contexts
+                .get("trace")
+                .and_then(|context| match context {
+                    sentry::protocol::Context::Trace(trace) => trace.status,
+                    _ => None,
+                }),
+            Some(SpanStatus::AlreadyExists)
+        );
+    }
+
+    #[test]
+    fn the_same_failure_is_reported_once_per_window() {
+        let envelopes = envelopes_with_consent(true, || {
+            for _ in 0..3 {
+                report_failure(
+                    Operation::StartForward,
+                    "Failed to create configuration from kubeconfig: exec plugin",
+                );
+            }
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x",
+            );
+            report_failure(
+                Operation::AutoStart,
+                "Failed to create configuration from kubeconfig: exec plugin",
+            );
+        });
+        let reported: Vec<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter_map(|item| match item {
+                EnvelopeItem::Event(event) => Some((
+                    event.tags["operation"].as_str(),
+                    event.tags["failure_kind"].as_str(),
+                )),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            reported,
+            [
+                ("portforward.start", "kubeconfig"),
+                ("portforward.start", "timeout"),
+                ("portforward.autostart", "kubeconfig"),
+            ]
+        );
+    }
+
+    #[test]
+    fn concurrent_reports_of_the_same_failure_send_one_event() {
+        use std::sync::Barrier;
+
+        let envelopes = envelopes_with_consent(true, || {
+            let hub = Hub::current();
+            let threads = 16;
+            let barrier = Arc::new(Barrier::new(threads));
+            let workers: Vec<_> = (0..threads)
+                .map(|_| {
+                    let hub = Arc::clone(&hub);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        Hub::run(hub, || {
+                            barrier.wait();
+                            report_failure(
+                                Operation::StartForward,
+                                "Failed to create configuration from kubeconfig: exec plugin",
+                            );
+                        })
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        let events = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter(|item| matches!(item, EnvelopeItem::Event(_)))
+            .count();
+
+        assert_eq!(events, 1);
+    }
+
+    #[test]
+    fn a_failure_dropped_without_consent_is_still_reported_once_consent_is_on() {
+        let envelopes = envelopes_with_consent(true, || {
+            ENABLED.store(false, Ordering::Relaxed);
+            report_failure(Operation::GitSync, "Failed to clone repository: denied");
+            ENABLED.store(true, Ordering::Relaxed);
+            report_failure(Operation::GitSync, "Failed to clone repository: denied");
+        });
+        let events = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter(|item| matches!(item, EnvelopeItem::Event(_)))
+            .count();
+
+        assert_eq!(events, 1);
+    }
+
+    #[test]
+    fn a_failure_that_left_resources_behind_is_not_a_repeat() {
+        let envelopes = envelopes_with_consent(true, || {
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x",
+            );
+            report_failure(
+                Operation::StartForward,
+                "Timed out waiting for proxy listener in pod kftray-proxy-x; cleanup \
+                 incomplete: listener: timed out",
+            );
+        });
+        let reported: Vec<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.items())
+            .filter_map(|item| match item {
+                EnvelopeItem::Event(event) => Some((
+                    event.tags["failure_kind"].as_str(),
+                    event.tags.get("cleanup_incomplete").map(|v| v.as_str()),
+                )),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(reported, [("timeout", None), ("timeout", Some("true"))]);
     }
 
     #[test]

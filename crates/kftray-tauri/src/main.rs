@@ -15,6 +15,7 @@ use crate::validation::alert_multiple_configs;
 #[cfg(target_os = "linux")]
 mod appimage_wayland_fixup;
 mod commands;
+mod detached_stderr;
 mod glibc_detector;
 mod init_check;
 mod mcp;
@@ -135,8 +136,9 @@ fn main() {
     // Must be called before any X11 interaction to prevent xcb threading crashes.
     x11_init::init_x11_threads();
 
-    if let Err(e) = init_file_logger() {
-        eprintln!("failed to initialize file logger: {e}");
+    match init_file_logger() {
+        Ok(()) => detached_stderr::redirect_if_detached(),
+        Err(e) => eprintln!("failed to initialize file logger: {e}"),
     }
 
     let _telemetry = kftray_telemetry::init(concat!("kftray@", env!("CARGO_PKG_VERSION")));

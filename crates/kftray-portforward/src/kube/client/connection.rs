@@ -346,35 +346,9 @@ pub fn build_kube_client<C>(
 where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
-    let auth_layer = config.auth_layer().map_err(|e| {
-        let error_detail = format!("{e}");
-        let error_debug = format!("{e:?}");
-
-        if error_detail.contains("AuthExecStart")
-            || error_detail.contains("unable to run auth exec")
-        {
-            error!(
-                "Failed to start auth exec plugin. The command could not be executed. \
-                 Error: {error_detail}. Debug: {error_debug}"
-            );
-        } else if error_detail.contains("AuthExecRun")
-            || error_detail.contains("failed with status")
-        {
-            error!(
-                "Auth exec plugin command failed. The plugin ran but returned an error. \
-                 Error: {error_detail}. Debug: {error_debug}"
-            );
-        } else if error_detail.contains("MissingCommand") {
-            error!(
-                "Auth exec plugin has no command specified in kubeconfig. \
-                 Error: {error_detail}"
-            );
-        } else {
-            warn!("Failed to create auth layer: {error_detail}. Debug: {error_debug}");
-        }
-
-        KubeClientError::auth_error_with_source("Failed to create auth layer", e)
-    })?;
+    let auth_layer = config
+        .auth_layer()
+        .map_err(|e| auth_layer_error(&config, e))?;
 
     let service = ServiceBuilder::new()
         .layer(config.base_uri_layer())
@@ -383,6 +357,45 @@ where
         .service(hyper_client);
 
     Ok(Client::new(service, config.default_namespace))
+}
+
+/// The failure of an exec credential plugin is reported by what it is: the
+/// command and its exit status. kube's own message embeds the full
+/// `KUBERNETES_EXEC_INFO` environment, including the cluster's CA, which
+/// says nothing about why the plugin failed and would otherwise reach the
+/// toast and the config state row.
+fn auth_layer_error(config: &Config, error: kube::Error) -> KubeClientError {
+    use kube::client::AuthError;
+
+    let command = config
+        .auth_info
+        .exec
+        .as_ref()
+        .and_then(|exec| exec.command.as_deref())
+        .unwrap_or("the auth exec plugin");
+    match &error {
+        kube::Error::Auth(AuthError::AuthExecRun { status, out, .. }) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let detail = match stderr.trim() {
+                "" => "run it from a terminal to see why".to_string(),
+                text => text.to_string(),
+            };
+            error!("Auth exec plugin {command} failed with {status}: {detail}");
+            KubeClientError::auth_error(format!("{command} failed with {status}: {detail}"))
+        }
+        kube::Error::Auth(AuthError::AuthExecStart(io)) => {
+            error!("Auth exec plugin {command} could not be started: {io}");
+            KubeClientError::auth_error(format!("{command} could not be started: {io}"))
+        }
+        kube::Error::Auth(AuthError::MissingCommand) => {
+            error!("Auth exec plugin has no command specified in kubeconfig");
+            KubeClientError::auth_error("The kubeconfig's exec plugin has no command")
+        }
+        _ => {
+            warn!("Failed to create auth layer: {error}. Debug: {error:?}");
+            KubeClientError::auth_error_with_source("Failed to create auth layer", error)
+        }
+    }
 }
 
 fn log_connection_failure(
@@ -419,6 +432,44 @@ fn log_connection_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_plugin_failure_keeps_the_cause_without_the_command_environment() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::{
+            ExitStatus,
+            Output,
+        };
+
+        let mut config = Config::new("https://example.com".parse().unwrap());
+        config.auth_info.exec = Some(kube::config::ExecConfig {
+            command: Some("gke-gcloud-auth-plugin".to_string()),
+            ..Default::default()
+        });
+        for stderr in [b"mise: no version selected".as_slice(), b"".as_slice()] {
+            let status = ExitStatus::from_raw(256);
+            let error = kube::Error::Auth(kube::client::AuthError::AuthExecRun {
+                cmd: "KUBERNETES_EXEC_INFO=cluster-certificate gke-gcloud-auth-plugin".to_string(),
+                status,
+                out: Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: stderr.to_vec(),
+                },
+            });
+            let message = auth_layer_error(&config, error).to_string();
+            assert!(message.contains("gke-gcloud-auth-plugin"), "{message}");
+            assert!(message.contains("exit status: 1"), "{message}");
+            assert!(!message.contains("KUBERNETES_EXEC_INFO"), "{message}");
+            assert!(!message.contains("cluster-certificate"), "{message}");
+            if stderr.is_empty() {
+                assert!(message.contains("run it from a terminal"), "{message}");
+            } else {
+                assert!(message.contains("mise: no version selected"), "{message}");
+            }
+        }
+    }
 
     #[test]
     fn test_connection_strategies_count() {

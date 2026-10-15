@@ -15,6 +15,7 @@ import { runWithLimit } from './runWithLimit'
 import type { RunForwardCommand } from './useForwardCommand'
 import type { PendingActions } from './usePendingActions'
 
+const ALREADY_RUNNING = /already (running|in progress)/i
 const CONCURRENCY_LIMIT = 8
 export const BATCH_DEADLINE_MS = 180_000
 export const DEADLINE_GRACE_MS = 30_000
@@ -110,6 +111,7 @@ export async function executeBatch(
   let timedOut = false
 
   const failures: { id: number; error: unknown }[] = []
+  let succeeded = 0
   const reportFailures = (reporting = failures) => {
     if (!reporting.length) {
       return
@@ -186,12 +188,20 @@ export async function executeBatch(
         }
         try {
           await runForwardCommand(config, action, token)
+          succeeded += 1
         } catch (error) {
-          const failure = { id, error }
+          if (
+            action === 'starting' &&
+            ALREADY_RUNNING.test(errorMessage(error))
+          ) {
+            succeeded += 1
+          } else {
+            const failure = { id, error }
 
-          failures.push(failure)
-          if (timedOut) {
-            reportFailures([failure])
+            failures.push(failure)
+            if (timedOut) {
+              reportFailures([failure])
+            }
           }
         } finally {
           unresolved.delete(id)
@@ -234,7 +244,7 @@ export async function executeBatch(
 
     if (failures.length) {
       reportFailures()
-    } else if (successMessage && !controller.signal.aborted) {
+    } else if (succeeded > 0 && successMessage && !controller.signal.aborted) {
       toaster.success({
         title: 'Success',
         description: successMessage,

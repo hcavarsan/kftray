@@ -10,6 +10,7 @@ use kftray_commons::config::get_config;
 use kftray_commons::config_state::{
     get_configs_state,
     is_owned_by_other_live_process,
+    set_retry_status,
     update_config_state,
 };
 use kftray_commons::config_state_model::ConfigState;
@@ -43,6 +44,11 @@ pub trait PortOperations: Send + Sync {
     async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String>;
     async fn get_config(&self, id: i64) -> Result<Config, String>;
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
+    async fn set_retry_status(
+        &self, config_id: i64, owner_process_id: Option<u32>, owner_process_start: Option<i64>,
+        retry_count: Option<i32>, last_error: Option<String>,
+    ) -> Result<(), String>;
+    async fn clear_retry_status(&self, config_id: i64) -> Result<(), String>;
     async fn find_process_by_port(
         &self, port: u16, address: Option<IpAddr>, protocol: ProtocolFlags,
     ) -> Option<(i32, String)>;
@@ -77,6 +83,24 @@ impl PortOperations for RealPortOperations {
 
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String> {
         update_config_state(state).await
+    }
+
+    async fn set_retry_status(
+        &self, config_id: i64, owner_process_id: Option<u32>, owner_process_start: Option<i64>,
+        retry_count: Option<i32>, last_error: Option<String>,
+    ) -> Result<(), String> {
+        set_retry_status(
+            config_id,
+            owner_process_id,
+            owner_process_start,
+            retry_count,
+            last_error.as_deref(),
+        )
+        .await
+    }
+
+    async fn clear_retry_status(&self, config_id: i64) -> Result<(), String> {
+        kftray_commons::config_state::clear_retry_status(config_id).await
     }
 
     async fn find_process_by_port(
@@ -283,14 +307,22 @@ async fn dispatch_until_reachable(
 ) -> Result<(), String> {
     let stops_before = port_ops.stop_generation(config_id);
     let mut waits = backoff.iter();
+    let mut attempt = 0;
     loop {
         let error = match port_ops.dispatch_start(config).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                if attempt > 0 {
+                    clear_retry_status(port_ops, config_id).await;
+                }
+                return Ok(());
+            }
             Err(error) => error,
         };
         let Some(wait) = waits.next().filter(|_| is_transient_failure(&error)) else {
             return Err(error);
         };
+        attempt += 1;
+        record_retry_status(port_ops, config_id, attempt, &error).await;
         warn!("Config {config_id} is not reachable yet ({error}); retrying in {wait:?}");
         tokio::time::sleep(*wait).await;
         if restore_superseded(port_ops, config_id, stops_before).await {
@@ -319,6 +351,45 @@ async fn restore_superseded(
             debug!("Could not read config states while waiting to retry {config_id}: {e}");
             false
         }
+    }
+}
+
+async fn record_retry_status(
+    port_ops: &Arc<dyn PortOperations>, config_id: i64, attempt: i32, error: &str,
+) {
+    let states = match port_ops.get_configs_state().await {
+        Ok(states) => states,
+        Err(e) => {
+            debug!("Could not read config states while reporting the retry of {config_id}: {e}");
+            return;
+        }
+    };
+    let Some(state) = states.iter().find(|state| state.config_id == config_id) else {
+        return;
+    };
+    if !state.is_running
+        || is_owned_by_other_live_process(state)
+        || port_ops.is_forward_registered(config_id).await
+    {
+        return;
+    }
+    if let Err(e) = port_ops
+        .set_retry_status(
+            config_id,
+            state.process_id,
+            state.process_start,
+            Some(attempt),
+            Some(error.to_string()),
+        )
+        .await
+    {
+        debug!("Could not save the retry status of config {config_id}: {e}");
+    }
+}
+
+async fn clear_retry_status(port_ops: &Arc<dyn PortOperations>, config_id: i64) {
+    if let Err(e) = port_ops.clear_retry_status(config_id).await {
+        debug!("Could not clear the retry status of config {config_id}: {e}");
     }
 }
 
@@ -1008,7 +1079,11 @@ mod tests {
     const TEST_BACKOFF: [Duration; 2] = [Duration::from_millis(1), Duration::from_millis(1)];
 
     fn marks_stopped(state: &ConfigState) -> bool {
-        state.config_id == 1 && !state.is_running
+        state.config_id == 1
+            && !state.is_running
+            && !state.is_retrying
+            && state.retry_count.is_none()
+            && state.last_error.is_none()
     }
 
     #[tokio::test]
@@ -1029,6 +1104,20 @@ mod tests {
         mock.expect_is_forward_registered().returning(|_| false);
         mock.expect_get_configs_state()
             .returning(|| Ok(vec![create_config_state(1, true)]));
+        mock.expect_set_retry_status()
+            .with(
+                eq(1),
+                eq(None::<u32>),
+                eq(None::<i64>),
+                eq(Some(1)),
+                eq(Some(NOT_REACHABLE.to_string())),
+            )
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(()));
+        mock.expect_clear_retry_status()
+            .with(eq(1))
+            .times(1)
+            .returning(|_| Ok(()));
         mock.expect_update_config_state().times(0);
 
         let result =
@@ -1079,6 +1168,26 @@ mod tests {
         mock.expect_is_forward_registered().returning(|_| false);
         mock.expect_get_configs_state()
             .returning(|| Ok(vec![create_config_state(1, true)]));
+        mock.expect_set_retry_status()
+            .with(
+                eq(1),
+                eq(None::<u32>),
+                eq(None::<i64>),
+                eq(Some(1)),
+                eq(Some(NOT_REACHABLE.to_string())),
+            )
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(()));
+        mock.expect_set_retry_status()
+            .with(
+                eq(1),
+                eq(None::<u32>),
+                eq(None::<i64>),
+                eq(Some(2)),
+                eq(Some(NOT_REACHABLE.to_string())),
+            )
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(()));
         mock.expect_update_config_state()
             .with(function(marks_stopped))
             .times(1)
@@ -1134,6 +1243,19 @@ mod tests {
             .returning(|_| Err(NOT_REACHABLE.to_string()));
         mock.expect_stop_generation()
             .returning(move |_| stop_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        mock.expect_is_forward_registered().returning(|_| false);
+        mock.expect_get_configs_state()
+            .returning(|| Ok(vec![create_config_state(1, true)]));
+        mock.expect_set_retry_status()
+            .with(
+                eq(1),
+                eq(None::<u32>),
+                eq(None::<i64>),
+                eq(Some(1)),
+                eq(Some(NOT_REACHABLE.to_string())),
+            )
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(()));
         mock.expect_update_config_state().times(0);
 
         let result =
@@ -1153,6 +1275,7 @@ mod tests {
         mock.expect_is_forward_registered().returning(|_| false);
         mock.expect_get_configs_state()
             .returning(|| Ok(vec![create_config_state(1, false)]));
+        mock.expect_set_retry_status().times(0);
         mock.expect_update_config_state().times(0);
 
         let result =
@@ -1170,6 +1293,9 @@ mod tests {
             .returning(|_| Err(NOT_REACHABLE.to_string()));
         mock.expect_stop_generation().returning(|_| 0);
         mock.expect_is_forward_registered().returning(|_| true);
+        mock.expect_get_configs_state()
+            .returning(|| Ok(vec![create_config_state(1, true)]));
+        mock.expect_set_retry_status().times(0);
         mock.expect_update_config_state().times(0);
 
         let result =
@@ -1202,6 +1328,7 @@ mod tests {
                 ..Default::default()
             }])
         });
+        mock.expect_set_retry_status().times(0);
         mock.expect_update_config_state().times(0);
 
         let result =
@@ -1209,6 +1336,70 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_failed_retry_status_write_does_not_stop_the_restore() {
+        let mut mock = mock_ops();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+        let mut attempts = mockall::Sequence::new();
+
+        mock.expect_dispatch_start()
+            .times(1)
+            .in_sequence(&mut attempts)
+            .returning(|_| Err(NOT_REACHABLE.to_string()));
+        mock.expect_dispatch_start()
+            .times(1)
+            .in_sequence(&mut attempts)
+            .returning(|_| Ok(()));
+        mock.expect_is_forward_registered()
+            .times(2)
+            .returning(|_| false);
+        mock.expect_get_configs_state()
+            .times(2)
+            .returning(|| Ok(vec![create_config_state(1, true)]));
+        mock.expect_set_retry_status()
+            .times(1)
+            .returning(|_, _, _, _, _| Err("database is locked".to_string()));
+        mock.expect_clear_retry_status()
+            .times(1)
+            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
+
+        let result =
+            start_port_forwarding_with_backoff(Arc::new(mock), config, &TEST_BACKOFF).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_state_while_reporting_a_retry_skips_the_report() {
+        let mut mock = mock_ops();
+        let config = create_test_config(1, 8080, "tcp", Some("service"));
+        let mut attempts = mockall::Sequence::new();
+
+        mock.expect_dispatch_start()
+            .times(1)
+            .in_sequence(&mut attempts)
+            .returning(|_| Err(NOT_REACHABLE.to_string()));
+        mock.expect_dispatch_start()
+            .times(1)
+            .in_sequence(&mut attempts)
+            .returning(|_| Ok(()));
+        mock.expect_is_forward_registered()
+            .times(1)
+            .returning(|_| false);
+        mock.expect_get_configs_state()
+            .times(2)
+            .returning(|| Err("Failed to get config states".to_string()));
+        mock.expect_set_retry_status().times(0);
+        mock.expect_clear_retry_status()
+            .times(1)
+            .returning(|_| Ok(()));
+        mock.expect_update_config_state().times(0);
+
+        let result =
+            start_port_forwarding_with_backoff(Arc::new(mock), config, &TEST_BACKOFF).await;
         assert!(result.is_ok());
     }
 }
