@@ -195,8 +195,9 @@ mod imp {
 
     pub fn attach(write: WriteEnd) {
         let handle = HANDLE(write.0.as_raw_handle());
-        if let Err(e) = unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) } {
-            log::warn!("failed to redirect stderr: {e}");
+        match unsafe { SetStdHandle(STD_ERROR_HANDLE, handle) } {
+            Ok(()) => std::mem::forget(write),
+            Err(e) => log::warn!("failed to redirect stderr: {e}"),
         }
     }
 }
@@ -204,6 +205,31 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_child_inherits_the_redirected_stderr() {
+        let (mut read, write) = imp::pipe().unwrap();
+        imp::attach(write);
+
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo marker >&2")
+            .spawn()
+            .unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "echo marker 1>&2"])
+            .spawn()
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success());
+
+        let mut output = [0u8; 64];
+        let read = read.read(&mut output).unwrap_or(0);
+        let output = String::from_utf8_lossy(&output[..read]);
+        assert!(output.contains("marker"), "{output}");
+    }
 
     fn collect(parts: &[&[u8]]) -> Vec<String> {
         let mut assembler = LineAssembler::new();
