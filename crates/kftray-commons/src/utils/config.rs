@@ -465,7 +465,7 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     }
 }
 
-fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<usize> {
+fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<(usize, u8)> {
     let rank = |c: &Config| match (
         c.remote_port == incoming.remote_port,
         c.local_port == incoming.local_port,
@@ -492,7 +492,32 @@ fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<usize> {
         }
     }
 
-    best.filter(|_| !ambiguous).map(|(index, _)| index)
+    best.filter(|_| !ambiguous)
+}
+
+fn assign_identity_matches(saved: &[Config], incoming: &[Config]) -> Vec<Option<usize>> {
+    let matches: Vec<_> = incoming
+        .iter()
+        .map(|config| find_identity_match(saved, config))
+        .collect();
+
+    let mut winners: Vec<Option<(usize, u8)>> = vec![None; saved.len()];
+    for (position, m) in matches.iter().enumerate() {
+        if let Some((index, score)) = *m
+            && winners[index].is_none_or(|(_, best)| score > best)
+        {
+            winners[index] = Some((position, score));
+        }
+    }
+
+    matches
+        .into_iter()
+        .enumerate()
+        .map(|(position, m)| {
+            m.map(|(index, _)| index)
+                .filter(|&index| winners[index].is_some_and(|(winner, _)| winner == position))
+        })
+        .collect()
 }
 
 fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
@@ -506,11 +531,9 @@ fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
 }
 
 async fn merge_config_with_existing(
-    config: Config, existing_configs: &[Config], pool: &SqlitePool,
+    config: Config, existing: Option<&Config>, pool: &SqlitePool,
 ) -> Result<(), String> {
-    if let Some(existing) =
-        find_identity_match(existing_configs, &config).map(|index| &existing_configs[index])
-    {
+    if let Some(existing) = existing {
         info!(
             "Found matching config ID={}, checking if update needed",
             existing.id.unwrap_or(-1)
@@ -547,9 +570,10 @@ pub(crate) async fn import_configs_with_pool(
     let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
+    let matches = assign_identity_matches(&existing_configs, &configs);
 
-    for config in configs {
-        merge_config_with_existing(config, &existing_configs, pool)
+    for (config, existing) in configs.into_iter().zip(matches) {
+        merge_config_with_existing(config, existing.map(|i| &existing_configs[i]), pool)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -580,26 +604,27 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
         }
     };
 
-    let mut configs: Vec<Config> = Vec::with_capacity(parsed.len());
-    for config in parsed {
-        match configs
+    Ok(dedup_configs(parsed))
+}
+
+fn dedup_configs(configs: Vec<Config>) -> Vec<Config> {
+    let mut unique: Vec<Config> = Vec::with_capacity(configs.len());
+    for config in configs {
+        match unique
             .iter()
             .position(|c| configs_match_identity(c, &config) && c.remote_port == config.remote_port)
         {
-            Some(index) => configs[index] = config,
-            None => configs.push(config),
+            Some(index) => unique[index] = config,
+            None => unique.push(config),
         }
     }
-
-    Ok(configs)
+    unique
 }
 
 async fn merge_config_with_existing_and_mode(
-    config: Config, existing_configs: &[Config], pool: &SqlitePool, mode: DatabaseMode,
+    config: Config, existing: Option<&Config>, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<i64, String> {
-    if let Some(existing) =
-        find_identity_match(existing_configs, &config).map(|index| &existing_configs[index])
-    {
+    if let Some(existing) = existing {
         let id = existing
             .id
             .ok_or_else(|| "Matching config has no id".to_string())?;
@@ -635,9 +660,11 @@ pub(crate) async fn import_configs_with_pool_and_mode(
     let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
+    let matches = assign_identity_matches(&existing_configs, &configs);
 
-    for config in configs {
-        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+    for (config, existing) in configs.into_iter().zip(matches) {
+        let existing = existing.map(|i| &existing_configs[i]);
+        merge_config_with_existing_and_mode(config, existing, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -691,15 +718,16 @@ pub async fn upsert_configs_with_pool_and_mode(
     configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<Vec<i64>, String> {
     let existing_configs = read_configs_with_pool(pool).await?;
+    let configs = dedup_configs(configs);
+    let matches = assign_identity_matches(&existing_configs, &configs);
 
     let mut ids = Vec::with_capacity(configs.len());
-    for config in configs {
-        let id = merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+    for (config, existing) in configs.into_iter().zip(matches) {
+        let existing = existing.map(|i| &existing_configs[i]);
+        let id = merge_config_with_existing_and_mode(config, existing, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
-        if !ids.contains(&id) {
-            ids.push(id);
-        }
+        ids.push(id);
     }
 
     if let Err(e) = migrate_configs(Some(pool)).await {
@@ -1455,6 +1483,109 @@ mod tests {
         let configs = read_configs_with_pool(&pool).await.unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].alias.as_deref(), Some("from-second-file"));
+    }
+
+    fn web_port(alias: &str, remote_port: u16) -> Value {
+        json!({
+            "alias": alias,
+            "service": "web",
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "kind-dev",
+            "namespace": "shop",
+            "remote_port": remote_port
+        })
+    }
+
+    #[tokio::test]
+    async fn test_import_new_port_for_saved_service_keeps_saved_port() {
+        let pool = setup_test_db().await;
+        let first = json!([web_port("web-http", 80)]).to_string();
+        let second = json!([web_port("web-http", 80), web_port("web-https", 443)]).to_string();
+
+        import_configs_with_pool(first, &pool).await.unwrap();
+        let saved_port = read_configs_with_pool(&pool).await.unwrap()[0].local_port;
+        import_configs_with_pool(second, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let rows: Vec<_> = configs
+            .iter()
+            .map(|c| (c.alias.as_deref(), c.remote_port))
+            .collect();
+        assert_eq!(
+            rows,
+            [(Some("web-http"), Some(80)), (Some("web-https"), Some(443))]
+        );
+        assert_eq!(configs[0].local_port, saved_port);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_new_port_for_saved_service_keeps_saved_port() {
+        let pool = setup_test_db().await;
+        let parse = |value: Value| parse_import_configs(&value.to_string()).unwrap();
+
+        let first = upsert_configs_with_pool_and_mode(
+            parse(json!([web_port("web-http", 80)])),
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+        let second = upsert_configs_with_pool_and_mode(
+            parse(json!([
+                web_port("web-https", 443),
+                web_port("web-http", 80)
+            ])),
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let rows: Vec<_> = configs
+            .iter()
+            .map(|c| (c.id, c.alias.as_deref(), c.remote_port))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (Some(first[0]), Some("web-http"), Some(80)),
+                (Some(second[0]), Some("web-https"), Some(443))
+            ]
+        );
+        assert_eq!(second[1], first[0]);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_repeated_entry_saves_one_row() {
+        let pool = setup_test_db().await;
+        let mut entry = Config {
+            service: Some("web".to_string()),
+            alias: Some("web".to_string()),
+            context: Some("kind-dev".to_string()),
+            namespace: "shop".to_string(),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            local_port: Some(8080),
+            remote_port: Some(80),
+            ..Default::default()
+        };
+        insert_config_with_pool(entry.clone(), &pool).await.unwrap();
+        entry.alias = Some("web-renamed".to_string());
+
+        let ids = upsert_configs_with_pool_and_mode(
+            vec![entry.clone(), entry],
+            &pool,
+            DatabaseMode::File,
+        )
+        .await
+        .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].alias.as_deref(), Some("web-renamed"));
+        assert_eq!(ids, [configs[0].id.unwrap()]);
     }
 
     #[tokio::test]
