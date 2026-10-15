@@ -135,6 +135,7 @@ export async function executeBatch(
       duration: 3000,
     })
   }
+  let succeeded = 0
   const noteAlreadyRunning = () => {
     if (!alreadyRunning.size) {
       return
@@ -201,8 +202,12 @@ export async function executeBatch(
         }
         try {
           await runForwardCommand(config, action, token)
+          succeeded += 1
         } catch (error) {
-          if (ALREADY_RUNNING.test(errorMessage(error))) {
+          if (
+            action === 'starting' &&
+            ALREADY_RUNNING.test(errorMessage(error))
+          ) {
             alreadyRunning.add(id)
           } else {
             const failure = { id, error }
@@ -254,7 +259,7 @@ export async function executeBatch(
 
     if (failures.length) {
       reportFailures()
-    } else if (successMessage && !controller.signal.aborted) {
+    } else if (succeeded > 0 && successMessage && !controller.signal.aborted) {
       toaster.success({
         title: 'Success',
         description: successMessage,

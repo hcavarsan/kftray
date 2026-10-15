@@ -103,7 +103,7 @@ export async function executeToggle(
       await refreshConfigs()
       const message = errorMessage(error)
 
-      if (ALREADY_RUNNING.test(message)) {
+      if (action === 'starting' && ALREADY_RUNNING.test(message)) {
         alreadyRunning = true
       } else if (
         action === 'starting' &&

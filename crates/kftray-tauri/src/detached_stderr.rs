@@ -129,24 +129,45 @@ mod imp {
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error().into());
         }
-        let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let mut read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
         let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
-        let fd = read.as_raw_fd();
+        if read.as_raw_fd() == libc::STDERR_FILENO {
+            let moved = unsafe { libc::dup(read.as_raw_fd()) };
+            if moved < 0 {
+                return Err(io::Error::last_os_error().into());
+            }
+            read = unsafe { OwnedFd::from_raw_fd(moved) };
+        }
+        set_cloexec(read.as_raw_fd());
+        set_cloexec(write.as_raw_fd());
+        Ok((File::from(read), WriteEnd(write)))
+    }
+
+    fn set_cloexec(fd: i32) {
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         if flags >= 0 {
             unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
         }
-        Ok((File::from(read), WriteEnd(write)))
     }
 
     pub fn attach(write: WriteEnd) {
-        let fd = write.0.as_raw_fd();
-        if fd == libc::STDERR_FILENO {
-            std::mem::forget(write);
-            return;
-        }
-        if unsafe { libc::dup2(fd, libc::STDERR_FILENO) } < 0 {
+        if unsafe { libc::dup2(write.0.as_raw_fd(), libc::STDERR_FILENO) } < 0 {
             log::warn!("failed to redirect stderr: {}", io::Error::last_os_error());
+        }
+    }
+
+    #[cfg(test)]
+    pub struct Saved(OwnedFd);
+
+    #[cfg(test)]
+    pub fn save() -> Saved {
+        Saved(unsafe { OwnedFd::from_raw_fd(libc::dup(libc::STDERR_FILENO)) })
+    }
+
+    #[cfg(test)]
+    impl Drop for Saved {
+        fn drop(&mut self) {
+            unsafe { libc::dup2(self.0.as_raw_fd(), libc::STDERR_FILENO) };
         }
     }
 }
@@ -184,12 +205,14 @@ mod imp {
             lpSecurityDescriptor: std::ptr::null_mut(),
             bInheritHandle: true.into(),
         };
-        unsafe {
+        let (read, write) = unsafe {
             CreatePipe(&mut read, &mut write, Some(&attrs), 0)?;
             let _ = SetHandleInformation(read, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0));
-        }
-        let read = OwnedHandle::from_raw_handle(read.0);
-        let write = OwnedHandle::from_raw_handle(write.0);
+            (
+                OwnedHandle::from_raw_handle(read.0),
+                OwnedHandle::from_raw_handle(write.0),
+            )
+        };
         Ok((File::from(read), WriteEnd(write)))
     }
 
@@ -200,6 +223,22 @@ mod imp {
             Err(e) => log::warn!("failed to redirect stderr: {e}"),
         }
     }
+
+    #[cfg(test)]
+    pub struct Saved(HANDLE);
+
+    #[cfg(test)]
+    pub fn save() -> Saved {
+        use windows::Win32::System::Console::GetStdHandle;
+        Saved(unsafe { GetStdHandle(STD_ERROR_HANDLE) }.unwrap_or_default())
+    }
+
+    #[cfg(test)]
+    impl Drop for Saved {
+        fn drop(&mut self) {
+            let _ = unsafe { SetStdHandle(STD_ERROR_HANDLE, self.0) };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +247,7 @@ mod tests {
 
     #[test]
     fn a_child_inherits_the_redirected_stderr() {
+        let _restore = imp::save();
         let (mut read, write) = imp::pipe().unwrap();
         imp::attach(write);
 

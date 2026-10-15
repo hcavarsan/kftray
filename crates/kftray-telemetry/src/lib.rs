@@ -17,6 +17,7 @@ use std::sync::{
     Arc,
     LazyLock,
     OnceLock,
+    Weak,
 };
 use std::time::{
     Duration,
@@ -360,7 +361,7 @@ fn classify_failure(message: &str) -> Failure {
         (FailureKind::Git, &["failed to read config file at"]),
         (
             FailureKind::InvalidConfig,
-            &["failed to parse config file at"],
+            &["failed to parse config", "invalid config", "config path"],
         ),
         (FailureKind::OwnedElsewhere, &["being forwarded by another"]),
         (
@@ -481,9 +482,6 @@ fn classify_failure(message: &str) -> Failure {
                 "invalid port",
                 "no label selector",
                 "no longer exists",
-                "invalid config",
-                "failed to parse config",
-                "config path",
                 "merge config files",
             ],
         ),
@@ -700,7 +698,7 @@ const REPEAT_WINDOW: Duration = Duration::from_secs(30);
 static RECENT_FAILURES: Mutex<Vec<ReportedFailure>> = Mutex::new(Vec::new());
 
 struct ReportedFailure {
-    client: usize,
+    client: Weak<sentry::Client>,
     operation: &'static str,
     kind: &'static str,
     cleanup: &'static str,
@@ -712,16 +710,18 @@ fn is_repeat(hub: &Hub, operation: Operation, failure: Failure) -> bool {
         return false;
     };
     let current = ReportedFailure {
-        client: Arc::as_ptr(&client) as usize,
+        client: Arc::downgrade(&client),
         operation: operation.name(),
         kind: failure.kind.name(),
         cleanup: failure.cleanup.map_or("none", CleanupSteps::name),
         at: Instant::now(),
     };
     let mut recent = RECENT_FAILURES.lock();
-    recent.retain(|failure| current.at.duration_since(failure.at) < REPEAT_WINDOW);
+    recent.retain(|failure| {
+        failure.client.strong_count() > 0 && current.at.duration_since(failure.at) < REPEAT_WINDOW
+    });
     let seen = recent.iter().any(|failure| {
-        failure.client == current.client
+        failure.client.ptr_eq(&current.client)
             && failure.operation == current.operation
             && failure.kind == current.kind
             && failure.cleanup == current.cleanup
@@ -1220,7 +1220,7 @@ mod tests {
             FailureKind::InvalidConfig
         );
         assert_eq!(
-            classify("Config path escapes repository directory: ../x.json"),
+            classify("Config path escapes repository directory: ../auth.json"),
             FailureKind::InvalidConfig
         );
         assert_eq!(

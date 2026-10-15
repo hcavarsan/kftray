@@ -136,10 +136,10 @@ fn main() {
     // Must be called before any X11 interaction to prevent xcb threading crashes.
     x11_init::init_x11_threads();
 
-    if let Err(e) = init_file_logger() {
-        eprintln!("failed to initialize file logger: {e}");
+    match init_file_logger() {
+        Ok(()) => detached_stderr::redirect_if_detached(),
+        Err(e) => eprintln!("failed to initialize file logger: {e}"),
     }
-    detached_stderr::redirect_if_detached();
 
     let _telemetry = kftray_telemetry::init(concat!("kftray@", env!("CARGO_PKG_VERSION")));
 

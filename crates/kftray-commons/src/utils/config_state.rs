@@ -201,7 +201,7 @@ pub async fn clear_retry_status_with_pool(config_id: i64, pool: &SqlitePool) -> 
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
     sqlx::query(
         "UPDATE config_state SET is_retrying = false, retry_count = NULL, last_error = NULL \
-         WHERE config_id = ?1 AND is_running = 1 AND process_id = ?2",
+         WHERE config_id = ?1 AND is_running = 1 AND is_retrying = 1 AND process_id = ?2",
     )
     .bind(config_id)
     .bind(std::process::id())
@@ -1304,6 +1304,22 @@ mod tests {
         assert_eq!(
             retry_fields_of(&pool, stopped).await,
             (true, Some(3), Some("connection refused".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_connection_error_recorded_after_the_restore_survives_the_clear() {
+        let pool = setup_test_db().await;
+        let id = config_with_state(&pool, true, std::process::id()).await;
+        set_connection_error_with_pool(id, Some("connection reset"), &pool)
+            .await
+            .unwrap();
+
+        clear_retry_status_with_pool(id, &pool).await.unwrap();
+
+        assert_eq!(
+            retry_fields_of(&pool, id).await,
+            (false, None, Some("connection reset".to_string()))
         );
     }
 
