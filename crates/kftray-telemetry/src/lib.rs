@@ -697,27 +697,37 @@ pub fn report_failure(operation: Operation, message: &str) {
 
 const REPEAT_WINDOW: Duration = Duration::from_secs(30);
 
-static RECENT_FAILURES: Mutex<Vec<(usize, &'static str, &'static str, &'static str, Instant)>> =
-    Mutex::new(Vec::new());
+static RECENT_FAILURES: Mutex<Vec<ReportedFailure>> = Mutex::new(Vec::new());
+
+struct ReportedFailure {
+    client: usize,
+    operation: &'static str,
+    kind: &'static str,
+    cleanup: &'static str,
+    at: Instant,
+}
 
 fn is_repeat(hub: &Hub, operation: Operation, failure: Failure) -> bool {
     let Some(client) = hub.client() else {
         return false;
     };
-    let key = (
-        Arc::as_ptr(&client) as usize,
-        operation.name(),
-        failure.kind.name(),
-        failure.cleanup.map_or("none", CleanupSteps::name),
-    );
-    let now = Instant::now();
+    let current = ReportedFailure {
+        client: Arc::as_ptr(&client) as usize,
+        operation: operation.name(),
+        kind: failure.kind.name(),
+        cleanup: failure.cleanup.map_or("none", CleanupSteps::name),
+        at: Instant::now(),
+    };
     let mut recent = RECENT_FAILURES.lock();
-    recent.retain(|(_, _, _, _, at)| now.duration_since(*at) < REPEAT_WINDOW);
-    let seen = recent
-        .iter()
-        .any(|(c, op, kind, cleanup, _)| (*c, *op, *kind, *cleanup) == key);
+    recent.retain(|failure| current.at.duration_since(failure.at) < REPEAT_WINDOW);
+    let seen = recent.iter().any(|failure| {
+        failure.client == current.client
+            && failure.operation == current.operation
+            && failure.kind == current.kind
+            && failure.cleanup == current.cleanup
+    });
     if !seen {
-        recent.push((key.0, key.1, key.2, key.3, now));
+        recent.push(current);
     }
     seen
 }
