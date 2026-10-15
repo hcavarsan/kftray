@@ -26,7 +26,7 @@
     "@tauri-apps/plugin-dialog": "~2.8.1",
     "@tauri-apps/plugin-fs": "~2.7.0",
     "@tauri-apps/plugin-shell": "~2.5.0",
-    "lucide-react": "1.55.0",
+    "lucide-react": "1.57.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-select": "^5.10.2",
@@ -44,6 +44,6 @@
     "taze": "^21.3.0",
     "typescript": "7.0.2",
     "vite": "8.3.4",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }
