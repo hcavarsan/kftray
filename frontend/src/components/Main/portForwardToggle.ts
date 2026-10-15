@@ -138,13 +138,6 @@ export async function executeToggle(
         }
       }
     } finally {
-      if (alreadyRunning) {
-        toaster.info({
-          title: 'Already running',
-          description: 'Config is already forwarded; nothing to start.',
-          duration: 2000,
-        })
-      }
       clearPending(config.id, token)
       void refreshConfigs()
     }

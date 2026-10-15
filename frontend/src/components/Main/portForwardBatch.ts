@@ -111,7 +111,7 @@ export async function executeBatch(
   let timedOut = false
 
   const failures: { id: number; error: unknown }[] = []
-  const alreadyRunning = new Set<number>()
+  let succeeded = 0
   const reportFailures = (reporting = failures) => {
     if (!reporting.length) {
       return
@@ -133,20 +133,6 @@ export async function executeBatch(
       title: failureTitle,
       description: `${reporting.length} configs failed to ${verb}`,
       duration: 3000,
-    })
-  }
-  let succeeded = 0
-  const noteAlreadyRunning = () => {
-    if (!alreadyRunning.size) {
-      return
-    }
-    toaster.info({
-      title: 'Already running',
-      description:
-        alreadyRunning.size === 1
-          ? `Config ${[...alreadyRunning][0]} is already forwarded.`
-          : `${alreadyRunning.size} configs are already forwarded.`,
-      duration: 2000,
     })
   }
   /**
@@ -208,7 +194,7 @@ export async function executeBatch(
             action === 'starting' &&
             ALREADY_RUNNING.test(errorMessage(error))
           ) {
-            alreadyRunning.add(id)
+            succeeded += 1
           } else {
             const failure = { id, error }
 
@@ -255,7 +241,6 @@ export async function executeBatch(
       return
     }
     refusals = splitRefusals()
-    noteAlreadyRunning()
 
     if (failures.length) {
       reportFailures()

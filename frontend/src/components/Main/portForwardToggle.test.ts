@@ -69,8 +69,8 @@ describe('executeToggle', () => {
     expect(runForwardCommand).toHaveBeenCalledTimes(1)
   })
 
-  it('informs instead of erroring when the forward is already running', async () => {
-    const { deps, preflights, runForwardCommand } = setup()
+  it('refreshes the row without a toast when the forward is already running', async () => {
+    const { deps, preflights, registry, runForwardCommand } = setup()
     const config = makeConfig(1)
     runForwardCommand.mockRejectedValue(
       new Error('Port forwarding is already running for config 1'),
@@ -84,10 +84,11 @@ describe('executeToggle', () => {
     await toggle
     await flushPromises()
 
-    expect(toaster.info).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Already running' }),
-    )
+    expect(toaster.info).not.toHaveBeenCalled()
+    expect(toaster.error).not.toHaveBeenCalled()
     expect(showErrorToast).not.toHaveBeenCalled()
+    expect(deps.refreshConfigs).toHaveBeenCalled()
+    expect(registry.isBusy(1)).toBe(false)
     expect(runForwardCommand).toHaveBeenCalledTimes(1)
   })
 
