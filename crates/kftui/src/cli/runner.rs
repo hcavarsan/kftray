@@ -40,11 +40,25 @@ impl PortForwardRunner {
         let config_ids = Self::get_config_ids_to_start(cli, mode, imported_config_ids).await?;
 
         if config_ids.is_empty() {
+            if cli.ssl && !cli.non_interactive {
+                Self::ensure_ssl_for_saved_configs(mode).await?;
+            }
             return Ok(Vec::new());
         }
 
         let successful_config_ids = Self::start_port_forwards(cli, mode, config_ids).await?;
         Ok(successful_config_ids)
+    }
+
+    pub async fn ensure_ssl_for_saved_configs(
+        mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let config_ids: Vec<i64> = read_configs_with_mode(mode)
+            .await?
+            .into_iter()
+            .filter_map(|config| config.id)
+            .collect();
+        Self::ensure_ssl_setup_with_configs(&config_ids, mode, true).await
     }
 
     /// Returns the exit code of the command given after `--`, when one ran.

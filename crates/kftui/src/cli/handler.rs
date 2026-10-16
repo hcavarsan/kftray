@@ -37,17 +37,26 @@ impl CliHandler {
 
         let imported_config_ids = self.handle_config_import().await?;
 
-        if self.cli.auto_start && !self.cli.non_interactive {
-            let _successful_config_ids = PortForwardRunner::auto_start_port_forwards(
-                &self.cli,
-                self.mode,
-                imported_config_ids.clone(),
-            )
+        self.prepare_tui_forwards(imported_config_ids.clone())
             .await?;
-        }
 
         self.handle_stdin_redirect().await?;
         self.handle_execution_mode(imported_config_ids).await
+    }
+
+    pub(crate) async fn prepare_tui_forwards(
+        &self, imported_config_ids: Vec<i64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.cli.non_interactive {
+            return Ok(());
+        }
+        if self.cli.auto_start {
+            PortForwardRunner::auto_start_port_forwards(&self.cli, self.mode, imported_config_ids)
+                .await?;
+        } else if self.cli.ssl {
+            PortForwardRunner::ensure_ssl_for_saved_configs(self.mode).await?;
+        }
+        Ok(())
     }
 
     fn determine_database_mode(cli: &Cli) -> DatabaseMode {
