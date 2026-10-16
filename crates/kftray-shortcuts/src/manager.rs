@@ -278,15 +278,18 @@ impl ShortcutManager {
     pub async fn reload_registered_shortcuts(&mut self) -> ShortcutResult<()> {
         let ids: Vec<i64> = self.registered_shortcuts.keys().copied().collect();
         for id in ids {
-            match self.storage.get_shortcut_by_id(id).await? {
-                Some(shortcut) if shortcut.enabled => {
+            match self.storage.get_shortcut_by_id(id).await {
+                Ok(Some(shortcut)) if shortcut.enabled => {
                     self.registered_shortcuts.insert(id, shortcut.clone());
                     self.action_registry
                         .lock()
                         .await
                         .register_shortcut_definition(shortcut);
                 }
-                _ => {
+                lookup => {
+                    if let Err(e) = lookup {
+                        error!("Failed to reload shortcut {}: {}", id, e);
+                    }
                     if let Err(e) = self.platform_manager.unregister_shortcut(id).await {
                         error!("Failed to unregister removed shortcut {}: {}", id, e);
                     }
