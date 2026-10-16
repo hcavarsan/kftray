@@ -453,6 +453,42 @@ async fn config_tools_work_after_startup_on_a_fresh_config_dir() {
 }
 
 #[tokio::test]
+async fn config_tools_reject_protocol_and_workload_type_outside_the_schema() {
+    let _db = temp_config_db().await;
+
+    for (field, value) in [("protocol", "TCP"), ("workload_type", "deployment")] {
+        let mut args = serde_json::json!({
+            "context": "kind",
+            "namespace": "shop",
+            "service": "web",
+            "remote_port": 80,
+        });
+        args[field] = serde_json::json!(value);
+        let created = execute_tool("create_config", Some(args)).await;
+        assert_eq!(created.is_error, Some(true), "{}", result_text(&created));
+        assert!(result_text(&created).contains(value));
+    }
+    assert_eq!(
+        list_services(serde_json::json!([])).await,
+        Vec::<String>::new()
+    );
+
+    let id = create_tagged("web", "shop", serde_json::json!({})).await;
+    for (field, value) in [("protocol", "http"), ("workload_type", "deployment")] {
+        let mut args = serde_json::json!({ "config_id": id });
+        args[field] = serde_json::json!(value);
+        let updated = execute_tool("update_config", Some(args)).await;
+        assert_eq!(updated.is_error, Some(true), "{}", result_text(&updated));
+        assert!(result_text(&updated).contains(value));
+    }
+
+    let saved = execute_tool("get_config", Some(serde_json::json!({ "config_id": id }))).await;
+    let saved = result_json(&saved);
+    assert_eq!(saved["protocol"], "tcp");
+    assert_eq!(saved["workload_type"], "service");
+}
+
+#[tokio::test]
 async fn list_configs_filters_by_tags_and_fields_like_kftui() {
     let _db = temp_config_db().await;
     create_tagged(

@@ -25,6 +25,19 @@ use crate::protocol::{
 };
 use crate::tools::McpTool;
 
+const PROTOCOLS: &[&str] = &["tcp", "udp"];
+const WORKLOAD_TYPES: &[&str] = &["service", "pod", "proxy"];
+
+fn check_choice(field: &str, value: Option<&str>, allowed: &[&str]) -> Result<(), CallToolResult> {
+    match value {
+        Some(value) if !allowed.contains(&value) => Err(CallToolResult::error(format!(
+            "{field} must be one of {}, got '{value}'",
+            allowed.join(", ")
+        ))),
+        _ => Ok(()),
+    }
+}
+
 // ============================================================================
 // List Configs Tool
 // ============================================================================
@@ -240,12 +253,12 @@ impl McpTool for CreateConfigTool {
                 },
                 "protocol": {
                     "type": "string",
-                    "enum": ["tcp", "udp"],
+                    "enum": PROTOCOLS,
                     "description": "Protocol to use. Defaults to 'tcp'."
                 },
                 "workload_type": {
                     "type": "string",
-                    "enum": ["service", "pod", "proxy"],
+                    "enum": WORKLOAD_TYPES,
                     "description": "Type of workload. Defaults to 'service'."
                 },
                 "kubeconfig": {
@@ -296,6 +309,11 @@ impl McpTool for CreateConfigTool {
         };
 
         let workload_type = args.workload_type.unwrap_or_else(|| "service".to_string());
+        if let Err(error) = check_choice("protocol", args.protocol.as_deref(), PROTOCOLS)
+            .and_then(|()| check_choice("workload_type", Some(&workload_type), WORKLOAD_TYPES))
+        {
+            return error;
+        }
 
         // Validate workload-specific requirements
         if workload_type == "service" && args.service.is_none() {
@@ -426,12 +444,12 @@ impl McpTool for UpdateConfigTool {
                 },
                 "protocol": {
                     "type": "string",
-                    "enum": ["tcp", "udp"],
+                    "enum": PROTOCOLS,
                     "description": "Protocol to use"
                 },
                 "workload_type": {
                     "type": "string",
-                    "enum": ["service", "pod", "proxy"],
+                    "enum": WORKLOAD_TYPES,
                     "description": "Type of workload"
                 },
                 "kubeconfig": {
@@ -472,6 +490,17 @@ impl McpTool for UpdateConfigTool {
             },
             None => return CallToolResult::error("Missing required argument: config_id"),
         };
+        if let Err(error) =
+            check_choice("protocol", args.protocol.as_deref(), PROTOCOLS).and_then(|()| {
+                check_choice(
+                    "workload_type",
+                    args.workload_type.as_deref(),
+                    WORKLOAD_TYPES,
+                )
+            })
+        {
+            return error;
+        }
 
         // Get existing config
         let mut config = match kftray_commons::config::get_config(args.config_id).await {
