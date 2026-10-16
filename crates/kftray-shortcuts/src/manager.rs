@@ -275,6 +275,35 @@ impl ShortcutManager {
         Ok(deleted_count)
     }
 
+    pub async fn reload_registered_shortcuts(&mut self) -> ShortcutResult<()> {
+        let ids: Vec<i64> = self.registered_shortcuts.keys().copied().collect();
+        for id in ids {
+            match self.storage.get_shortcut_by_id(id).await {
+                Ok(Some(shortcut)) if shortcut.enabled => {
+                    self.registered_shortcuts.insert(id, shortcut.clone());
+                    self.action_registry
+                        .lock()
+                        .await
+                        .register_shortcut_definition(shortcut);
+                }
+                lookup => {
+                    if let Err(e) = lookup {
+                        error!("Failed to reload shortcut {}: {}", id, e);
+                    }
+                    if let Err(e) = self.platform_manager.unregister_shortcut(id).await {
+                        error!("Failed to unregister removed shortcut {}: {}", id, e);
+                    }
+                    self.registered_shortcuts.remove(&id);
+                    self.action_registry
+                        .lock()
+                        .await
+                        .unregister_shortcut_definition(id);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn enable_shortcut(&mut self, id: i64) -> ShortcutResult<()> {
         let shortcut = self
             .storage
@@ -630,5 +659,47 @@ mod tests {
         assert_eq!(manager.registered_shortcuts.get(&id), Some(&old));
         press(&manager, id).await;
         assert_eq!(executed.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_follows_targets_changed_or_removed_in_storage() {
+        let executed = Executed::default();
+        let mut manager = test_manager(&executed).await;
+
+        let mut shortcut =
+            ShortcutDefinition::new("s".into(), "Ctrl+Shift+F1".into(), "start".into());
+        shortcut.action_data = Some(r#"{"config_ids":[1,2]}"#.into());
+        let kept = manager.create_shortcut(shortcut.clone()).await.unwrap();
+        shortcut.name = "t".into();
+        shortcut.shortcut_key = "Ctrl+Shift+F2".into();
+        shortcut.action_data = Some(r#"{"config_ids":[2]}"#.into());
+        let removed = manager.create_shortcut(shortcut).await.unwrap();
+
+        let mut changed = manager.get_shortcut(kept).await.unwrap().unwrap();
+        changed.action_data = Some(r#"{"config_ids":[1]}"#.into());
+        manager.storage.update_shortcut(&changed).await.unwrap();
+        manager.storage.delete_shortcut(removed).await.unwrap();
+
+        manager.reload_registered_shortcuts().await.unwrap();
+        press(&manager, kept).await;
+
+        assert_eq!(
+            *executed.lock().await,
+            vec![(
+                "start".to_string(),
+                Some(r#"{"config_ids":[1]}"#.to_string()),
+                None
+            )]
+        );
+        assert!(!manager.registered_shortcuts.contains_key(&removed));
+        assert!(
+            manager
+                .action_registry
+                .lock()
+                .await
+                .execute_by_id(removed, &ActionContext::new(removed))
+                .await
+                .is_err()
+        );
     }
 }

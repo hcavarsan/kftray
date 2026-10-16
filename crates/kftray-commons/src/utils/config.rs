@@ -6,6 +6,7 @@ use log::{
 use serde_json::json;
 use sqlx::{
     Row,
+    SqliteConnection,
     SqlitePool,
 };
 
@@ -26,14 +27,55 @@ use crate::utils::db_mode::{
 };
 use crate::utils::error::DbError;
 
-pub async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
-    let mut conn = pool.acquire().await?;
-    sqlx::query("DELETE FROM configs WHERE id = ?1")
-        .bind(id)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| DbError::QueryFailed(format!("Failed to delete config: {e}")))?;
+async fn remove_configs_from_shortcuts(
+    conn: &mut SqliteConnection, ids: &[i64],
+) -> Result<(), DbError> {
+    let has_shortcuts =
+        sqlx::query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'shortcuts'")
+            .fetch_optional(&mut *conn)
+            .await?
+            .is_some();
+    if !has_shortcuts {
+        return Ok(());
+    }
+
+    let rows = sqlx::query("SELECT id, action_data FROM shortcuts WHERE action_data IS NOT NULL")
+        .fetch_all(&mut *conn)
+        .await?;
+    for row in rows {
+        let shortcut_id: i64 = row.try_get("id")?;
+        let data: String = row.try_get("action_data")?;
+        let Ok(mut action_data) = serde_json::from_str::<serde_json::Value>(&data) else {
+            continue;
+        };
+        let Some(targets) = action_data
+            .get_mut("config_ids")
+            .and_then(|v| v.as_array_mut())
+        else {
+            continue;
+        };
+        let before = targets.len();
+        targets.retain(|target| !target.as_i64().is_some_and(|id| ids.contains(&id)));
+        if targets.len() == before {
+            continue;
+        }
+
+        let query = if targets.is_empty() {
+            sqlx::query("DELETE FROM shortcuts WHERE id = ?1").bind(shortcut_id)
+        } else {
+            sqlx::query("UPDATE shortcuts SET action_data = ?2 WHERE id = ?1")
+                .bind(shortcut_id)
+                .bind(action_data.to_string())
+        };
+        query.execute(&mut *conn).await.map_err(|e| {
+            DbError::QueryFailed(format!("Failed to update shortcut {shortcut_id}: {e}"))
+        })?;
+    }
     Ok(())
+}
+
+pub async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
+    delete_configs_with_pool(vec![id], pool).await
 }
 
 pub async fn delete_config(id: i64) -> Result<(), String> {
@@ -45,7 +87,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
 
 pub async fn delete_configs_with_pool(ids: Vec<i64>, pool: &SqlitePool) -> Result<(), DbError> {
     let mut transaction = pool.begin().await?;
-    for id in ids {
+    for id in &ids {
         sqlx::query("DELETE FROM configs WHERE id = ?1")
             .bind(id)
             .execute(&mut *transaction)
@@ -54,6 +96,7 @@ pub async fn delete_configs_with_pool(ids: Vec<i64>, pool: &SqlitePool) -> Resul
                 DbError::QueryFailed(format!("Failed to delete config with id {id}: {e}"))
             })?;
     }
+    remove_configs_from_shortcuts(&mut transaction, &ids).await?;
     transaction.commit().await?;
     Ok(())
 }
@@ -1244,6 +1287,63 @@ mod tests {
         let configs_after = read_configs_with_pool(&pool).await.unwrap();
         assert_eq!(configs_after.len(), 1);
         assert_eq!(configs_after[0].service, Some("service2".to_string()));
+    }
+
+    async fn add_shortcut(pool: &SqlitePool, name: &str, config_ids: &[i64]) -> i64 {
+        sqlx::query(
+            "INSERT INTO shortcuts (name, shortcut_key, action_type, action_data)
+             VALUES (?1, 'Ctrl+Shift+F1', 'start_port_forward', ?2)",
+        )
+        .bind(name)
+        .bind(json!({ "config_ids": config_ids }).to_string())
+        .execute(pool)
+        .await
+        .unwrap()
+        .last_insert_rowid()
+    }
+
+    async fn shortcut_targets(pool: &SqlitePool, id: i64) -> Option<serde_json::Value> {
+        sqlx::query_scalar::<_, String>("SELECT action_data FROM shortcuts WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .map(|data| {
+                serde_json::from_str::<serde_json::Value>(&data).unwrap()["config_ids"].clone()
+            })
+    }
+
+    #[tokio::test]
+    async fn deleted_configs_leave_shortcuts_and_reused_ids_stay_untargeted() {
+        let pool = setup_test_db().await;
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                insert_config_with_pool(Config::default(), &pool)
+                    .await
+                    .unwrap(),
+            );
+        }
+        let shared = add_shortcut(&pool, "shared", &ids).await;
+        let first = add_shortcut(&pool, "first", &ids[..1]).await;
+        let last = add_shortcut(&pool, "last", &ids[2..]).await;
+
+        delete_config_with_pool(ids[0], &pool).await.unwrap();
+        assert_eq!(
+            shortcut_targets(&pool, shared).await,
+            Some(json!([ids[1], ids[2]]))
+        );
+        assert_eq!(shortcut_targets(&pool, first).await, None);
+
+        delete_configs_with_pool(vec![ids[2]], &pool).await.unwrap();
+        assert_eq!(shortcut_targets(&pool, shared).await, Some(json!([ids[1]])));
+        assert_eq!(shortcut_targets(&pool, last).await, None);
+
+        let reused = insert_config_with_pool(Config::default(), &pool)
+            .await
+            .unwrap();
+        assert_eq!(reused, ids[2]);
+        assert_eq!(shortcut_targets(&pool, shared).await, Some(json!([ids[1]])));
     }
 
     #[tokio::test]
