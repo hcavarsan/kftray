@@ -186,6 +186,15 @@ pub async fn get_manager() -> Result<Arc<Mutex<ShortcutManager>>, String> {
         .ok_or_else(|| "Shortcut manager not initialized".to_string())
 }
 
+pub async fn reload_registered_shortcuts() {
+    let Ok(manager) = get_manager().await else {
+        return;
+    };
+    if let Err(e) = manager.lock().await.reload_registered_shortcuts().await {
+        error!("Failed to reload shortcuts after deleting configs: {}", e);
+    }
+}
+
 struct ToggleWindowAction {
     app_handle: AppHandle,
 }

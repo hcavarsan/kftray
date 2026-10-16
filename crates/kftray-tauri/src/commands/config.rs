@@ -275,6 +275,7 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     )
     .await;
     if result.is_ok() {
+        crate::shortcuts::reload_registered_shortcuts().await;
         let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result
@@ -296,6 +297,7 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     )
     .await;
     if result.is_ok() {
+        crate::shortcuts::reload_registered_shortcuts().await;
         let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
     }
     result
