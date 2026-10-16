@@ -145,6 +145,7 @@ impl MessageFormatter {
                     for encoding in encodings.map(str::trim) {
                         let decoded = match encoding {
                             "gzip" => Self::decompress_gzip(&processed_body),
+                            "deflate" => Self::decompress_deflate(&processed_body),
                             "br" => {
                                 Self::read_bounded(Decompressor::new(&processed_body[..], 4096))
                             }
@@ -263,6 +264,11 @@ impl MessageFormatter {
         }
 
         Ok(decompressed)
+    }
+
+    fn decompress_deflate(data: &[u8]) -> Result<(Vec<u8>, bool)> {
+        Self::read_bounded(flate2::read::ZlibDecoder::new(data))
+            .or_else(|_| Self::read_bounded(flate2::read::DeflateDecoder::new(data)))
     }
 
     fn read_bounded(reader: impl Read) -> Result<(Vec<u8>, bool)> {
@@ -1160,6 +1166,26 @@ mod formatter_tests {
             50,
             "got:\n{formatted}"
         );
+    }
+
+    #[test]
+    fn test_format_preformatted_response_deflate() {
+        let body = repeated_marker_json();
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut zlib, body.as_bytes()).unwrap();
+        let mut raw =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut raw, body.as_bytes()).unwrap();
+
+        for compressed in [zlib.finish().unwrap(), raw.finish().unwrap()] {
+            let formatted = format_json_response("Content-Encoding: deflate\r\n", &compressed);
+
+            assert_eq!(
+                formatted.matches("decoded-body").count(),
+                50,
+                "got:\n{formatted}"
+            );
+        }
     }
 
     #[test]
