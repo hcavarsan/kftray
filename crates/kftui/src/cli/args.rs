@@ -75,7 +75,7 @@ pub struct Cli {
         help = "Level for logs and for the messages kftui prints outside the TUI: error, warn, info, debug, trace or off (default: error when a command runs after --)",
         value_name = "LEVEL"
     )]
-    pub log_level: Option<String>,
+    pub log_level: Option<LevelFilter>,
 
     #[arg(
         long,
@@ -198,8 +198,8 @@ impl Cli {
     }
 
     fn level_or(&self, default: LevelFilter) -> LevelFilter {
-        match self.log_level.as_deref() {
-            Some(level) => crate::logging::parse_level(level),
+        match self.log_level {
+            Some(level) => level,
             None if self.runs_command() => LevelFilter::Error,
             None => default,
         }
@@ -398,5 +398,13 @@ mod tests {
         let cli = Cli::try_parse_from(["kftui", "--auto-start", "--non-interactive"]).unwrap();
         assert_eq!(cli.log_level(), LevelFilter::Warn);
         assert_eq!(cli.message_level(), LevelFilter::Info);
+    }
+
+    #[test]
+    fn log_level_rejects_an_unknown_name_and_ignores_case() {
+        assert!(Cli::try_parse_from(["kftui", "--log-level", "warning"]).is_err());
+
+        let cli = Cli::try_parse_from(["kftui", "--log-level", "WARN"]).unwrap();
+        assert_eq!(cli.log_level(), LevelFilter::Warn);
     }
 }
