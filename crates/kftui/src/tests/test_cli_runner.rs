@@ -88,8 +88,7 @@ async fn a_command_does_not_run_when_no_forward_starts() {
     assert!(!marker.exists());
 }
 
-#[tokio::test]
-async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
+async fn https_is_on_after_the_tui_prepares(args: &[&str]) -> bool {
     let _db = test_db().await;
     let dir = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
@@ -109,18 +108,37 @@ async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
     .await
     .unwrap();
 
-    let cli = Cli::parse_from(["kftui", "--ssl"]);
-    CliHandler::new(cli, LoggerState::new(LogConfig::new(log::LevelFilter::Off)))
-        .prepare_tui_forwards(Vec::new())
-        .await
-        .unwrap();
+    CliHandler::new(
+        Cli::parse_from(args),
+        LoggerState::new(LogConfig::new(log::LevelFilter::Off)),
+    )
+    .prepare_tui_forwards(Vec::new())
+    .await
+    .unwrap();
 
-    assert!(get_ssl_enabled().await.unwrap());
-    assert!(
-        std::fs::read_dir(dir.path().join("ssl-certs"))
+    get_ssl_enabled().await.unwrap()
+        && std::fs::read_dir(dir.path().join("ssl-certs"))
             .unwrap()
             .next()
             .is_some()
+}
+
+#[tokio::test]
+async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
+    assert!(https_is_on_after_the_tui_prepares(&["kftui", "--ssl"]).await);
+}
+
+#[tokio::test]
+async fn ssl_turns_on_https_when_auto_start_matches_no_config() {
+    assert!(
+        https_is_on_after_the_tui_prepares(&[
+            "kftui",
+            "--ssl",
+            "--auto-start",
+            "--filter",
+            "tag:nomatch",
+        ])
+        .await
     );
 }
 

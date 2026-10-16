@@ -40,6 +40,9 @@ impl PortForwardRunner {
         let config_ids = Self::get_config_ids_to_start(cli, mode, imported_config_ids).await?;
 
         if config_ids.is_empty() {
+            if cli.ssl && !cli.non_interactive {
+                Self::ensure_ssl_for_saved_configs(mode).await?;
+            }
             return Ok(Vec::new());
         }
 
