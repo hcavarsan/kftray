@@ -47,6 +47,17 @@ impl PortForwardRunner {
         Ok(successful_config_ids)
     }
 
+    pub async fn ensure_ssl_for_saved_configs(
+        mode: DatabaseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let config_ids: Vec<i64> = read_configs_with_mode(mode)
+            .await?
+            .into_iter()
+            .filter_map(|config| config.id)
+            .collect();
+        Self::ensure_ssl_setup_with_configs(&config_ids, mode, true).await
+    }
+
     /// Returns the exit code of the command given after `--`, when one ran.
     pub async fn run_non_interactive_mode(
         cli: &Cli, mode: DatabaseMode, imported_config_ids: Vec<i64>,

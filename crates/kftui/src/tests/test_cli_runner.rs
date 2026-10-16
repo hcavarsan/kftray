@@ -1,21 +1,17 @@
 use std::time::Duration;
 
-#[cfg(unix)]
 use clap::Parser;
-#[cfg(unix)]
 use kftray_commons::test_utils::{
     EnvVarGuard,
     test_db,
 };
-#[cfg(unix)]
+use kftray_commons::utils::config::import_configs_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::settings::get_ssl_enabled;
 
-#[cfg(unix)]
 use crate::cli::CliHandler;
-#[cfg(unix)]
 use crate::cli::args::Cli;
 use crate::cli::runner::PortForwardRunner;
-#[cfg(unix)]
 use crate::logging::{
     LogConfig,
     LoggerState,
@@ -90,6 +86,42 @@ async fn a_command_does_not_run_when_no_forward_starts() {
 
     assert!(result.is_err());
     assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
+    let _db = test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    let _test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+    let _skip_ca_install = EnvVarGuard::set("KFTRAY_SKIP_CA_INSTALL", "1");
+    *kftray_portforward::ssl::cert_store::TEST_SSL_VAULT
+        .lock()
+        .unwrap() = Default::default();
+    kftray_commons::utils::db::init().await.unwrap();
+    kftray_commons::utils::migration::migrate_configs(None)
+        .await
+        .unwrap();
+    import_configs_with_mode(
+        r#"[{"alias":"web","namespace":"default","service":"web","local_port":18443,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#.to_string(),
+        DatabaseMode::File,
+    )
+    .await
+    .unwrap();
+
+    let cli = Cli::parse_from(["kftui", "--ssl"]);
+    CliHandler::new(cli, LoggerState::new(LogConfig::new(log::LevelFilter::Off)))
+        .prepare_tui_forwards(Vec::new())
+        .await
+        .unwrap();
+
+    assert!(get_ssl_enabled().await.unwrap());
+    assert!(
+        std::fs::read_dir(dir.path().join("ssl-certs"))
+            .unwrap()
+            .next()
+            .is_some()
+    );
 }
 
 /// A stop still in flight when `drain_stop_tasks`'s deadline elapses must
