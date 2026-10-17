@@ -2735,7 +2735,7 @@ async fn open_http_log_file(log_file_name: &str) -> Result<(), String> {
     Err("Failed to open file with any available editor".to_string())
 }
 
-async fn handle_http_logs_config_input(
+pub async fn handle_http_logs_config_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     match key {
@@ -2836,9 +2836,9 @@ async fn handle_http_logs_config_input(
 async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
     if let Some(config_id) = app.http_logs_config_id {
         let max_file_size = match app.http_logs_config_max_file_size_input.parse::<u64>() {
-            Ok(size) if size > 0 && size <= 1000 => size * 1024 * 1024,
+            Ok(size) if size > 0 && size <= 100 => size * 1024 * 1024,
             Ok(_) => {
-                app.error_message = Some("Max file size must be between 1 and 1000 MB".to_string());
+                app.error_message = Some("Max file size must be between 1 and 100 MB".to_string());
                 app.state = AppState::ShowErrorPopup;
                 return;
             }
