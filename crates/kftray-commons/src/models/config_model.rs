@@ -158,7 +158,7 @@ impl Default for Config {
             namespace: "default-namespace".to_string(),
             local_port: Some(0),
             remote_port: Some(0),
-            context: Some("current-context".to_string()),
+            context: Some(Self::DEFAULT_CONTEXT.to_string()),
             workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
             remote_address: Some(Self::DEFAULT_REMOTE_ADDRESS.to_string()),
@@ -184,6 +184,7 @@ impl Default for Config {
 }
 
 impl Config {
+    pub const DEFAULT_CONTEXT: &'static str = "current-context";
     pub const DEFAULT_REMOTE_ADDRESS: &'static str = "default-remote-address";
 
     pub fn prepare_for_export(mut self) -> Self {
@@ -289,7 +290,7 @@ impl Config {
                 | Self::DEFAULT_REMOTE_ADDRESS
                 | "default-alias"
                 | "default-workload"
-                | "current-context"
+                | Self::DEFAULT_CONTEXT
                 | "protocol"
                 | ""
         )
