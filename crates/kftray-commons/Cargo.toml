@@ -29,6 +29,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 parking_lot = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
