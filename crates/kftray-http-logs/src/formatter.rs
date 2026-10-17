@@ -440,14 +440,22 @@ impl MessageFormatter {
             return Ok(());
         }
 
-        let body_content = match Self::try_decompress_body(body, headers).await {
-            Ok(content) => content,
-            Err(e) => Self::handle_decompression_error(body, headers, log_entry, e)?,
+        let (body_content, truncated) = match Self::try_decompress_body(body, headers).await {
+            Ok(decoded) => decoded,
+            Err(e) => (
+                Self::handle_decompression_error(body, headers, log_entry, e)?,
+                false,
+            ),
         };
 
         let content_type = Self::extract_content_type(headers);
         let formatted_body = BodyParser::format_body(&body_content, content_type)?;
         log_entry.push_str(&formatted_body);
+        if truncated {
+            log_entry.push_str(&format!(
+                "\n# <body truncated at {MAX_DECODED_BODY_SIZE} bytes after decoding>"
+            ));
+        }
 
         Ok(())
     }
@@ -494,9 +502,9 @@ impl MessageFormatter {
             .push_str("console.log('Content placeholder for compressed and chunked JavaScript');");
     }
 
-    async fn try_decompress_body(body: &[u8], headers: &[Header<'_>]) -> Result<Vec<u8>> {
+    async fn try_decompress_body(body: &[u8], headers: &[Header<'_>]) -> Result<(Vec<u8>, bool)> {
         if body.is_empty() || body.len() < 16 {
-            return Ok(body.to_vec());
+            return Ok((body.to_vec(), false));
         }
 
         let content_encoding = headers.iter().find_map(|h| {
@@ -508,12 +516,13 @@ impl MessageFormatter {
         });
 
         if content_encoding.is_none() {
-            return Ok(body.to_vec());
+            return Ok((body.to_vec(), false));
         }
 
         let content_encoding = content_encoding.unwrap().to_lowercase();
 
         let mut current_data = body.to_vec();
+        let mut truncated = false;
 
         let encodings: Vec<&str> = content_encoding
             .split(',')
@@ -522,103 +531,68 @@ impl MessageFormatter {
             .collect();
 
         for encoding in encodings {
-            match encoding {
-                "gzip" => {
-                    debug!("Decompressing gzip encoded data");
-                    match Self::decompress_gzip_async(&current_data).await {
-                        Ok(decompressed) if !decompressed.is_empty() => {
-                            debug!(
-                                "Successfully decompressed gzip data: {} bytes -> {} bytes",
-                                current_data.len(),
-                                decompressed.len()
-                            );
-                            current_data = decompressed;
-                        }
-                        Ok(_) => {
-                            debug!("Gzip decompression produced empty result, keeping original");
-                        }
-                        Err(e) => {
-                            debug!("Gzip decompression failed: {:?}, keeping original", e);
-                        }
-                    }
-                }
-                "br" => {
-                    debug!("Decompressing brotli encoded data");
-                    match Self::try_decompress_brotli(&current_data).await {
-                        Ok(decompressed) if !decompressed.is_empty() => {
-                            debug!(
-                                "Successfully decompressed brotli data: {} bytes -> {} bytes",
-                                current_data.len(),
-                                decompressed.len()
-                            );
-                            current_data = decompressed;
-                        }
-                        Ok(_) => {
-                            debug!("Brotli decompression produced empty result, keeping original");
-                        }
-                        Err(e) => {
-                            debug!("Brotli decompression failed: {:?}, keeping original", e);
-                        }
-                    }
-                }
-                "deflate" => {
-                    debug!("Decompressing deflate encoded data");
-                    match Self::try_decompress_deflate(&current_data).await {
-                        Ok(decompressed) if !decompressed.is_empty() => {
-                            debug!(
-                                "Successfully decompressed deflate data: {} bytes -> {} bytes",
-                                current_data.len(),
-                                decompressed.len()
-                            );
-                            current_data = decompressed;
-                        }
-                        Ok(_) => {
-                            debug!("Deflate decompression produced empty result, keeping original");
-                        }
-                        Err(e) => {
-                            debug!("Deflate decompression failed: {:?}, keeping original", e);
-                        }
-                    }
-                }
+            let decoded = match encoding {
+                "gzip" => Self::decompress_gzip_async(&current_data).await,
+                "br" => Self::try_decompress_brotli(&current_data).await,
+                "deflate" => Self::try_decompress_deflate(&current_data).await,
                 "identity" => {
                     debug!("Identity encoding - no decompression needed");
+                    continue;
                 }
                 _ => {
                     debug!("Unknown content encoding: {}, keeping original", encoding);
+                    continue;
+                }
+            };
+            match decoded {
+                Ok((decompressed, hit_limit)) if !decompressed.is_empty() => {
+                    debug!(
+                        "Successfully decompressed {} data: {} bytes -> {} bytes",
+                        encoding,
+                        current_data.len(),
+                        decompressed.len()
+                    );
+                    current_data = decompressed;
+                    if hit_limit {
+                        truncated = true;
+                        break;
+                    }
+                }
+                Ok(_) => {
+                    debug!(
+                        "{} decompression produced empty result, keeping original",
+                        encoding
+                    );
+                }
+                Err(e) => {
+                    debug!(
+                        "{} decompression failed: {:?}, keeping original",
+                        encoding, e
+                    );
                 }
             }
         }
 
-        Ok(current_data)
+        Ok((current_data, truncated))
     }
 
-    async fn decompress_gzip_async(data: &[u8]) -> Result<Vec<u8>> {
+    async fn decompress_gzip_async(data: &[u8]) -> Result<(Vec<u8>, bool)> {
         let data_owned = data.to_vec();
         task::spawn_blocking(move || {
-            let mut decoder = flate2::read::GzDecoder::new(&data_owned[..]);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
+            Self::read_bounded(flate2::read::GzDecoder::new(&data_owned[..]))
         })
         .await?
     }
 
-    async fn try_decompress_brotli(body: &[u8]) -> Result<Vec<u8>> {
+    async fn try_decompress_brotli(body: &[u8]) -> Result<(Vec<u8>, bool)> {
         let body_owned = body.to_vec();
-        task::spawn_blocking(move || {
-            let cursor = std::io::Cursor::new(body_owned);
-            let mut reader = Decompressor::new(cursor, 4096);
-            let mut decompressed_data = Vec::new();
-            reader.read_to_end(&mut decompressed_data)?;
-            Ok(decompressed_data)
-        })
-        .await?
-    }
-
-    async fn try_decompress_deflate(body: &[u8]) -> Result<Vec<u8>> {
-        let body_owned = body.to_vec();
-        task::spawn_blocking(move || Self::decompress_deflate(&body_owned).map(|(data, _)| data))
+        task::spawn_blocking(move || Self::read_bounded(Decompressor::new(&body_owned[..], 4096)))
             .await?
+    }
+
+    async fn try_decompress_deflate(body: &[u8]) -> Result<(Vec<u8>, bool)> {
+        let body_owned = body.to_vec();
+        task::spawn_blocking(move || Self::decompress_deflate(&body_owned)).await?
     }
 
     fn find_headers_end(data: &[u8]) -> Option<usize> {
@@ -830,7 +804,7 @@ mod formatter_tests {
             result.err()
         );
         let decompressed = result.unwrap();
-        assert_eq!(decompressed, test_data);
+        assert_eq!(decompressed, (test_data.to_vec(), false));
     }
 
     #[tokio::test]
@@ -855,7 +829,7 @@ mod formatter_tests {
             result.err()
         );
         let decompressed = result.unwrap();
-        assert_eq!(decompressed, test_data);
+        assert_eq!(decompressed, (test_data.to_vec(), false));
     }
 
     #[tokio::test]
@@ -873,7 +847,7 @@ mod formatter_tests {
             result.err()
         );
         let decompressed = result.unwrap();
-        assert_eq!(decompressed, test_data);
+        assert_eq!(decompressed, (test_data.to_vec(), false));
     }
 
     #[tokio::test]
@@ -902,6 +876,45 @@ mod formatter_tests {
 
         assert!(text.contains("\"user\": \"alice\""), "{text}");
         assert!(!text.contains("invalid JSON"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn test_format_request_caps_decoded_body() {
+        let kept = "a".repeat(MAX_DECODED_BODY_SIZE);
+        let payload = format!("{kept}a");
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut zlib, payload.as_bytes()).unwrap();
+
+        for (encoding, body) in [
+            ("br", brotli_compress(payload.as_bytes())),
+            ("gzip", gzip_compress(payload.as_bytes())),
+            ("deflate", zlib.finish().unwrap()),
+        ] {
+            let mut request = format!(
+                "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Encoding: \
+                 {encoding}\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            request.extend_from_slice(&body);
+
+            let LogMessage::Request(text) =
+                MessageFormatter::format_request(&Bytes::from(request), "t1", Utc::now())
+                    .await
+                    .unwrap()
+            else {
+                panic!("not a request")
+            };
+
+            assert!(text.contains(&kept), "encoding {encoding}");
+            assert!(!text.contains(&payload), "encoding {encoding}");
+            assert!(
+                text.contains(&format!(
+                    "# <body truncated at {MAX_DECODED_BODY_SIZE} bytes after decoding>"
+                )),
+                "encoding {encoding}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1357,7 +1370,7 @@ mod formatter_tests {
         let result = MessageFormatter::try_decompress_body(body, &headers)
             .await
             .unwrap();
-        assert_eq!(result, body);
+        assert_eq!(result, (body.to_vec(), false));
 
         let identity_headers = vec![Header {
             name: "Content-Encoding",
@@ -1367,7 +1380,7 @@ mod formatter_tests {
         let identity_result = MessageFormatter::try_decompress_body(body, &identity_headers)
             .await
             .unwrap();
-        assert_eq!(identity_result, body);
+        assert_eq!(identity_result, (body.to_vec(), false));
 
         let unsupported_headers = vec![Header {
             name: "Content-Encoding",
@@ -1377,6 +1390,6 @@ mod formatter_tests {
         let unsupported_result = MessageFormatter::try_decompress_body(body, &unsupported_headers)
             .await
             .unwrap();
-        assert_eq!(unsupported_result, body);
+        assert_eq!(unsupported_result, (body.to_vec(), false));
     }
 }
