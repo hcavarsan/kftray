@@ -257,24 +257,23 @@ impl AddressPoolManager {
         Ok(result)
     }
 
-    /// Expires an allocation once it is stale by age, or once its recorded
-    /// owner is no longer alive -- the latter is checked here rather than
-    /// only left to `release_address`, so a process that dies without
-    /// releasing its address does not pin it for up to `MAX_ALLOCATION_AGE`
-    /// and narrow the window in which the OS could recycle that pid onto
-    /// an unrelated live process before this runs again (it runs on every
-    /// `allocate_address` call).
+    /// Expires an allocation once its recorded owner is no longer alive, or
+    /// once it is stale by age and has no recorded owner. A live owner keeps
+    /// its address however old the allocation is, because a running forward
+    /// never refreshes it and still holds the alias and its listener. The
+    /// dead-owner check runs on every `allocate_address` call, so a process
+    /// that dies without releasing its address does not pin it, and the OS
+    /// has only a short window to recycle that pid onto an unrelated process.
     async fn cleanup_stale_allocations(&self) -> Result<(), HelperError> {
         let mut allocations = self.allocations.write().await;
         let now = SystemTime::now();
 
-        allocations.retain(|_, alloc| {
-            let stale_by_age = match now.duration_since(alloc.last_refreshed) {
-                Ok(duration) => duration >= MAX_ALLOCATION_AGE,
-                Err(_) => false,
-            };
-            let owner_dead = alloc.owner_pid.is_some_and(|pid| !is_pid_alive(pid));
-            !(stale_by_age || owner_dead)
+        allocations.retain(|_, alloc| match alloc.owner_pid {
+            Some(pid) => is_pid_alive(pid),
+            None => match now.duration_since(alloc.last_refreshed) {
+                Ok(duration) => duration < MAX_ALLOCATION_AGE,
+                Err(_) => true,
+            },
         });
 
         drop(allocations);
@@ -463,6 +462,47 @@ mod tests {
         assert!(
             !allocations.iter().any(|(service, _)| service == "svc-e"),
             "the dead owner's allocation should have been reclaimed: {allocations:?}"
+        );
+    }
+
+    async fn backdate_past_max_age(pool: &AddressPoolManager, address: &str) {
+        pool.allocations
+            .write()
+            .await
+            .get_mut(address)
+            .unwrap()
+            .last_refreshed = SystemTime::now() - MAX_ALLOCATION_AGE - Duration::from_secs(1);
+    }
+
+    #[tokio::test]
+    async fn a_live_owners_allocation_is_kept_past_the_age_limit() {
+        let pool = manager();
+        let pid = std::process::id();
+        let first = pool.allocate_address("svc-g", Some(pid)).await.unwrap();
+        backdate_past_max_age(&pool, &first).await;
+
+        let second = pool.allocate_address("svc-h", Some(pid)).await.unwrap();
+
+        assert_ne!(first, second);
+        let allocations = pool.list_allocations().await.unwrap();
+        assert!(
+            allocations.contains(&("svc-g".to_string(), first)),
+            "{allocations:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ownerless_allocation_expires_at_the_age_limit() {
+        let pool = manager();
+        let first = pool.allocate_address("svc-i", None).await.unwrap();
+        backdate_past_max_age(&pool, &first).await;
+
+        pool.allocate_address("svc-j", None).await.unwrap();
+
+        let allocations = pool.list_allocations().await.unwrap();
+        assert!(
+            !allocations.iter().any(|(service, _)| service == "svc-i"),
+            "{allocations:?}"
         );
     }
 }
