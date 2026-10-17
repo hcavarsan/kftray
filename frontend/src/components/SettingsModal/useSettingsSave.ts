@@ -213,13 +213,21 @@ export function useSettingsSave({
 }: UseSettingsSaveOptions) {
   const queryClient = useQueryClient()
   const [baseline, setBaseline] = useState(initial)
+  const [unconfirmed, setUnconfirmed] = useState<
+    ReadonlySet<keyof SettingsDraft>
+  >(new Set())
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const failures: SectionFailure[] = []
 
       for (const { section, keys, write, skip } of buildPlans(draft, loaded)) {
-        if (skip || keys.every(key => draft[key] === baseline[key])) {
+        if (
+          skip ||
+          keys.every(
+            key => !unconfirmed.has(key) && draft[key] === baseline[key],
+          )
+        ) {
           continue
         }
 
@@ -229,7 +237,11 @@ export function useSettingsSave({
             ...prev,
             ...Object.fromEntries(keys.map(key => [key, draft[key]])),
           }))
+          setUnconfirmed(
+            prev => new Set([...prev].filter(key => !keys.includes(key))),
+          )
         } catch (error) {
+          setUnconfirmed(prev => new Set([...prev, ...keys]))
           if (!failures.some(failure => failure.section === section)) {
             failures.push({ section, error })
           }
