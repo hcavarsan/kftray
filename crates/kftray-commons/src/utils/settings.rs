@@ -425,8 +425,7 @@ pub async fn set_disconnect_timeout(
     minutes: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting("disconnect_timeout_minutes", &minutes.to_string()).await?;
-    restart_timeouts_for_running_forwards(minutes, DatabaseMode::File).await;
-    Ok(())
+    restart_timeouts_for_running_forwards(DatabaseMode::File).await
 }
 
 pub async fn get_network_monitor() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
@@ -514,8 +513,7 @@ pub async fn set_disconnect_timeout_with_mode(
     minutes: u32, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting_with_mode("disconnect_timeout_minutes", &minutes.to_string(), mode).await?;
-    restart_timeouts_for_running_forwards(minutes, mode).await;
-    Ok(())
+    restart_timeouts_for_running_forwards(mode).await
 }
 
 pub async fn get_network_monitor_with_mode(

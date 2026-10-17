@@ -45,6 +45,7 @@ fn spawn_timer(
 pub async fn start_timeout_for_forward(
     config_id: i64, stop_callback: StopCallback, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut timeouts = TIMEOUTS.write().await;
     let timeout_minutes = get_disconnect_timeout_with_mode(mode).await?.unwrap_or(0);
     let started = Instant::now();
     let timer = spawn_timer(config_id, started, timeout_minutes, stop_callback.clone());
@@ -54,7 +55,7 @@ pub async fn start_timeout_for_forward(
         mode,
         timer,
     };
-    if let Some(replaced) = TIMEOUTS.write().await.insert(config_id, timeout)
+    if let Some(replaced) = timeouts.insert(config_id, timeout)
         && let Some(timer) = replaced.timer
     {
         timer.abort();
@@ -62,8 +63,11 @@ pub async fn start_timeout_for_forward(
     Ok(())
 }
 
-pub async fn restart_timeouts_for_running_forwards(timeout_minutes: u32, mode: DatabaseMode) {
+pub async fn restart_timeouts_for_running_forwards(
+    mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut timeouts = TIMEOUTS.write().await;
+    let timeout_minutes = get_disconnect_timeout_with_mode(mode).await?.unwrap_or(0);
     for (&config_id, timeout) in timeouts.iter_mut().filter(|(_, t)| t.mode == mode) {
         if let Some(timer) = timeout.timer.take() {
             timer.abort();
@@ -75,6 +79,7 @@ pub async fn restart_timeouts_for_running_forwards(timeout_minutes: u32, mode: D
             timeout.stop_callback.clone(),
         );
     }
+    Ok(())
 }
 
 pub async fn cancel_timeout_for_forward(config_id: i64) {
