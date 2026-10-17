@@ -2819,6 +2819,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "global-hotkey"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adda8c76a5139df3bae0eb0413c2cd746f66594e0bb66231a4daa0be3172da70"
+dependencies = [
+ "crossbeam-channel",
+ "keyboard-types 0.8.3",
+ "objc2",
+ "objc2-app-kit",
+ "once_cell",
+ "thiserror 2.0.21",
+ "windows-sys 0.59.0",
+ "x11rb",
+ "xkeysym",
+]
+
+[[package]]
 name = "gloo-timers"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4055,7 +4072,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "evdev",
- "global-hotkey",
+ "global-hotkey 0.9.0",
  "log",
  "mio",
  "serde",
@@ -8227,7 +8244,7 @@ version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bd2e1f725891a1613af8f25bf918ba3357654b0fd3f2d794c0ce76cbdd92ed2"
 dependencies = [
- "global-hotkey",
+ "global-hotkey 0.8.0",
  "log",
  "serde",
  "serde_json",
