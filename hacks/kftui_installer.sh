@@ -32,7 +32,7 @@ detect_os() {
         echo "linux"
       fi
       ;;
-    *) print_msg red "Unsupported OS"; exit 1 ;;
+    *) print_msg red "Unsupported OS" >&2; exit 1 ;;
   esac
 }
 
@@ -42,7 +42,7 @@ detect_arch() {
     x86_64) echo "amd64" ;;
     arm64|aarch64) echo "arm64" ;;
     i386|i686) echo "x86" ;;
-    *) print_msg red "Unsupported architecture"; exit 1 ;;
+    *) print_msg red "Unsupported architecture" >&2; exit 1 ;;
   esac
 }
 
