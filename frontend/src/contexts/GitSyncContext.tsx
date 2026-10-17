@@ -15,6 +15,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 
+import { allHttpLogsEnabledQueryKey } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { configsQuery } from '@/hooks/useConfigs'
 import type { GitConfig } from '@/services/gitService'
 import { gitService } from '@/services/gitService'
@@ -62,6 +63,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     onSuccess: () => {
       setLastSyncTime(Date.now())
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey })
     },
     meta: { errorToast: { title: 'Sync Failed', duration: 3000 } },
   })
@@ -78,6 +80,7 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     onSuccess: creds => {
       queryClient.setQueryData(credentialsQueryKey, creds)
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey })
       setLastSyncTime(Date.now())
     },
     meta: { errorToast: { title: 'Error saving settings', duration: 1000 } },
