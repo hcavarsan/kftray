@@ -7,7 +7,7 @@ use kftray_commons::test_utils::{
 };
 use kftray_commons::utils::config::import_configs_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_commons::utils::settings::get_ssl_enabled_with_mode;
+use kftray_commons::utils::settings::get_app_settings_with_mode;
 
 use crate::cli::CliHandler;
 use crate::cli::args::Cli;
@@ -90,7 +90,13 @@ async fn a_command_does_not_run_when_no_forward_starts() {
 
 const SSL_TEST_CONFIGS: &str = r#"[{"alias":"web","namespace":"default","service":"web","local_port":18443,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#;
 
-async fn https_is_on_after_the_tui_prepares(args: &[&str], mode: DatabaseMode) -> bool {
+const SAVED_API_CONFIG: &str = r#"[{"alias":"api","namespace":"default","service":"api","local_port":18444,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#;
+
+/// The names the certificate a forward start serves covers, or `None` when
+/// HTTPS is off or the start finds no certificate.
+async fn https_names_after_the_tui_prepares(
+    args: &[&str], mode: DatabaseMode, saved_configs: Option<&str>,
+) -> Option<Vec<String>> {
     let _db = test_db().await;
     let dir = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
@@ -103,6 +109,11 @@ async fn https_is_on_after_the_tui_prepares(args: &[&str], mode: DatabaseMode) -
     kftray_commons::utils::migration::migrate_configs(None)
         .await
         .unwrap();
+    if let Some(saved) = saved_configs {
+        import_configs_with_mode(saved.to_string(), DatabaseMode::File)
+            .await
+            .unwrap();
+    }
     import_configs_with_mode(SSL_TEST_CONFIGS.to_string(), mode)
         .await
         .unwrap();
@@ -115,38 +126,57 @@ async fn https_is_on_after_the_tui_prepares(args: &[&str], mode: DatabaseMode) -
     .await
     .unwrap();
 
-    get_ssl_enabled_with_mode(mode).await.unwrap()
-        && std::fs::read_dir(dir.path().join("ssl-certs"))
-            .unwrap()
-            .next()
-            .is_some()
+    let settings = get_app_settings_with_mode(mode).await.unwrap();
+    if !settings.ssl_enabled {
+        return None;
+    }
+    let manager = kftray_portforward::ssl::CertificateManager::new(&settings).unwrap();
+    let global = manager.load_global_certificate().await.ok()?;
+    Some(global.subject_alt_names)
+}
+
+fn covers(names: Option<Vec<String>>, aliases: &[&str]) -> bool {
+    names.is_some_and(|names| aliases.iter().all(|alias| names.iter().any(|n| n == alias)))
 }
 
 #[tokio::test]
 async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
-    assert!(https_is_on_after_the_tui_prepares(&["kftui", "--ssl"], DatabaseMode::File).await);
+    let names =
+        https_names_after_the_tui_prepares(&["kftui", "--ssl"], DatabaseMode::File, None).await;
+    assert!(covers(names, &["web"]));
 }
 
 #[tokio::test]
 async fn ssl_turns_on_https_for_configs_loaded_without_save() {
-    assert!(
-        https_is_on_after_the_tui_prepares(
-            &["kftui", "--json", SSL_TEST_CONFIGS, "--ssl"],
-            DatabaseMode::Memory,
-        )
-        .await
-    );
+    let names = https_names_after_the_tui_prepares(
+        &["kftui", "--json", SSL_TEST_CONFIGS, "--ssl"],
+        DatabaseMode::Memory,
+        None,
+    )
+    .await;
+    assert!(covers(names, &["web"]));
+}
+
+#[tokio::test]
+async fn ssl_for_configs_loaded_without_save_keeps_the_saved_configs_covered() {
+    let names = https_names_after_the_tui_prepares(
+        &["kftui", "--json", SSL_TEST_CONFIGS, "--ssl"],
+        DatabaseMode::Memory,
+        Some(SAVED_API_CONFIG),
+    )
+    .await;
+    assert!(covers(names, &["web", "api"]));
 }
 
 #[tokio::test]
 async fn ssl_turns_on_https_when_auto_start_matches_no_config() {
-    assert!(
-        https_is_on_after_the_tui_prepares(
-            &["kftui", "--ssl", "--auto-start", "--filter", "tag:nomatch"],
-            DatabaseMode::File,
-        )
-        .await
-    );
+    let names = https_names_after_the_tui_prepares(
+        &["kftui", "--ssl", "--auto-start", "--filter", "tag:nomatch"],
+        DatabaseMode::File,
+        None,
+    )
+    .await;
+    assert!(covers(names, &["web"]));
 }
 
 /// A stop still in flight when `drain_stop_tasks`'s deadline elapses must

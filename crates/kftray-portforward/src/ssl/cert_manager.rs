@@ -4,6 +4,7 @@ use anyhow::{
     Context,
     Result,
 };
+use kftray_commons::models::config_model::Config;
 use kftray_commons::models::settings_model::AppSettings;
 use log::info;
 use log::warn;
@@ -655,50 +656,52 @@ impl CertificateManager {
     }
 
     pub async fn collect_all_domains_from_configs() -> Result<Vec<String>> {
+        let configs = match kftray_commons::utils::config::get_configs().await {
+            Ok(configs) => configs,
+            Err(e) => {
+                warn!(
+                    "Failed to get configs for domain collection, using defaults: {}",
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        let domains = Self::domains_for_configs(&configs);
+        info!(
+            "Collected domains from {} configs: {:?}",
+            configs.len(),
+            domains
+        );
+
+        Ok(domains)
+    }
+
+    pub fn domains_for_configs(configs: &[Config]) -> Vec<String> {
         let mut domains = vec![
             "localhost".to_string(),
             "127.0.0.1".to_string(),
             "::1".to_string(),
         ];
 
-        match kftray_commons::utils::config::get_configs().await {
-            Ok(configs) => {
-                let config_count = configs.len();
-                for config in configs {
-                    if let Some(local_address) = &config.local_address
-                        && !local_address.is_empty()
-                        && !domains.contains(local_address)
-                    {
-                        domains.push(local_address.clone());
-                    }
-
-                    if let Some(alias) = &config.alias {
-                        if !alias.is_empty() && !domains.contains(alias) {
-                            domains.push(alias.clone());
-                        }
-                        let local_domain = format!("{}.local", alias);
-                        if !domains.contains(&local_domain) {
-                            domains.push(local_domain);
-                        }
-                    }
-                }
-                info!(
-                    "Collected domains from {} configs: {:?}",
-                    config_count, domains
-                );
+        for config in configs {
+            if let Some(local_address) = &config.local_address
+                && !local_address.is_empty()
+            {
+                domains.push(local_address.clone());
             }
-            Err(e) => {
-                warn!(
-                    "Failed to get configs for domain collection, using defaults: {}",
-                    e
-                );
+
+            if let Some(alias) = &config.alias {
+                if !alias.is_empty() {
+                    domains.push(alias.clone());
+                }
+                domains.push(format!("{}.local", alias));
             }
         }
 
         domains.sort();
         domains.dedup();
-
-        Ok(domains)
+        domains
     }
 
     pub async fn regenerate_certificate_for_all_configs(&self) -> Result<CertificatePair> {
