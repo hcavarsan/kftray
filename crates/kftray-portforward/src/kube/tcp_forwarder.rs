@@ -202,7 +202,7 @@ impl TcpForwarder {
 
     pub async fn forward_connection(
         &mut self, client_conn: Arc<Mutex<TcpStream>>,
-        mut upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: CancellationToken, http_log_watcher: Arc<HttpLogStateWatcher>,
         local_port: u16,
     ) -> anyhow::Result<()> {
@@ -212,76 +212,54 @@ impl TcpForwarder {
         if current_logging_enabled && self.logger.is_none() {
             let _ = self.initialize_logger(local_port).await;
         }
-        if current_logging_enabled || self.logger.is_some() {
-            let config_id = self.config_id;
-            let shared_logger: Arc<Mutex<Option<Arc<crate::Logger>>>> =
-                Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
+        let config_id = self.config_id;
+        let shared_logger: Arc<Mutex<Option<Arc<crate::Logger>>>> =
+            Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
-            let request_id = Arc::new(Mutex::new(None));
-            let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
-            let mut client_conn_guard = client_conn.lock().await;
-            let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
-            let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
+        let request_id = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
+        let mut client_conn_guard = client_conn.lock().await;
+        let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
 
-            let client_to_upstream = Self::forward_client_to_upstream(
-                Arc::clone(&shared_logger),
-                config_id,
-                &mut client_reader,
-                &mut upstream_writer,
-                Arc::clone(&request_id),
-                cancellation_token.clone(),
-                log_subscriber.resubscribe(),
-                local_port,
-                Arc::clone(&websocket_tunnel_mode),
-            );
+        let client_to_upstream = Self::forward_client_to_upstream(
+            Arc::clone(&shared_logger),
+            config_id,
+            &mut client_reader,
+            &mut upstream_writer,
+            Arc::clone(&request_id),
+            cancellation_token.clone(),
+            log_subscriber.resubscribe(),
+            local_port,
+            Arc::clone(&websocket_tunnel_mode),
+        );
 
-            let upstream_to_client = Self::forward_upstream_to_client(
-                Arc::clone(&shared_logger),
-                config_id,
-                &mut upstream_reader,
-                &mut client_writer,
-                Arc::clone(&request_id),
-                cancellation_token.clone(),
-                log_subscriber,
-                local_port,
-                Arc::clone(&websocket_tunnel_mode),
-            );
+        let upstream_to_client = Self::forward_upstream_to_client(
+            Arc::clone(&shared_logger),
+            config_id,
+            &mut upstream_reader,
+            &mut client_writer,
+            Arc::clone(&request_id),
+            cancellation_token.clone(),
+            log_subscriber,
+            local_port,
+            Arc::clone(&websocket_tunnel_mode),
+        );
 
-            let result = tokio::try_join!(client_to_upstream, upstream_to_client);
+        let result = tokio::try_join!(client_to_upstream, upstream_to_client);
 
-            self.logger = Arc::try_unwrap(shared_logger)
-                .ok()
-                .and_then(|mutex| mutex.into_inner())
-                .and_then(|arc_logger| Arc::try_unwrap(arc_logger).ok());
+        self.logger = Arc::try_unwrap(shared_logger)
+            .ok()
+            .and_then(|mutex| mutex.into_inner())
+            .and_then(|arc_logger| Arc::try_unwrap(arc_logger).ok());
 
-            match result {
-                Ok(_) => {
-                    debug!("HTTP-aware connection closed normally");
-                }
-                Err(e) => {
-                    error!("HTTP-aware connection closed with error: {}", e);
-                    return Err(e);
-                }
+        match result {
+            Ok(_) => {
+                debug!("HTTP-aware connection closed normally");
             }
-        } else {
-            let mut client_conn_guard = client_conn.lock().await;
-
-            let copy_future =
-                tokio::io::copy_bidirectional(&mut *client_conn_guard, &mut upstream_conn);
-
-            tokio::select! {
-                result = copy_future => {
-                    match result {
-                        Ok(_) => debug!("Simple connection closed normally"),
-                        Err(e) => {
-                            error!("Simple connection closed with error: {}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-                _ = cancellation_token.cancelled() => {
-                    debug!("Connection cancelled");
-                }
+            Err(e) => {
+                error!("HTTP-aware connection closed with error: {}", e);
+                return Err(e);
             }
         }
 
@@ -371,8 +349,11 @@ impl TcpForwarder {
                                 req_buf.clear();
                             }
                         }
-                    } else if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
-                        return Err(e.into());
+                    } else {
+                        tokio::select! {
+                            result = upstream_writer.write_all(&buffer[..n]) => result?,
+                            _ = cancellation_token.cancelled() => break,
+                        }
                     }
                 },
                 log_event = log_subscriber.recv() => {
@@ -513,8 +494,9 @@ impl TcpForwarder {
                         should_log = false;
                     }
 
-                    if let Err(e) = client_writer.write_all(&buffer[..n]).await {
-                        return Err(e.into());
+                    tokio::select! {
+                        result = client_writer.write_all(&buffer[..n]) => result?,
+                        _ = cancellation_token.cancelled() => break,
                     }
                 },
                 log_event = log_subscriber.recv() => {
@@ -1128,8 +1110,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_raw_tunnel_blocked_writes_are_cancellable() {
-        for upstream_to_client in [false, true] {
+    async fn test_blocked_writes_are_cancellable_inside_and_outside_a_tunnel() {
+        for (upstream_to_client, tunnel_mode) in
+            [(false, true), (true, true), (false, false), (true, false)]
+        {
             let (mut reader, mut source) = tokio::io::duplex(1024);
             let (mut writer, _unread_peer) = tokio::io::duplex(1);
             source.write_all(&[0x81; 64]).await.unwrap();
@@ -1139,7 +1123,7 @@ mod tests {
             let mut forward = tokio::spawn(async move {
                 let logger = Arc::new(Mutex::new(None));
                 let request_id = Arc::new(Mutex::new(None));
-                let tunnel = Arc::new(AtomicBool::new(true));
+                let tunnel = Arc::new(AtomicBool::new(tunnel_mode));
                 if upstream_to_client {
                     TcpForwarder::forward_upstream_to_client(
                         logger,
@@ -1367,5 +1351,144 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
+    }
+
+    fn log_dir_contains(dir: &std::path::Path, needle: &str) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                log_dir_contains(&path, needle)
+            } else {
+                std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle))
+            }
+        })
+    }
+
+    async fn open_forwarded_connection(
+        config_id: i64, watcher: Arc<HttpLogStateWatcher>, cancel: CancellationToken,
+    ) -> (TcpStream, tokio::task::JoinHandle<anyhow::Result<()>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, peer) = listener.accept().await.unwrap();
+        let (upstream, mut origin) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = origin.read(&mut buf).await {
+                if n == 0
+                    || origin
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nok",
+                        )
+                        .await
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let forward = tokio::spawn(async move {
+            TcpForwarder::new(config_id, "service".to_string())
+                .forward_streams(server, upstream, peer, cancel, watcher, 18080)
+                .await
+        });
+        (client, forward)
+    }
+
+    async fn get_through(client: &mut TcpStream, path: &str) {
+        client
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: example.test\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        let mut buf = [0u8; 4096];
+        while !response.ends_with(b"ok") {
+            let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buf))
+                .await
+                .expect("the response should arrive")
+                .unwrap();
+            assert!(n > 0, "the connection closed before the response arrived");
+            response.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    #[tokio::test]
+    async fn http_logs_enabled_later_log_requests_on_a_connection_opened_with_logs_off() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let config_dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            config_dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+        let config_id = kftray_commons::utils::config::insert_config(
+            kftray_commons::models::config_model::Config {
+                service: Some("web".into()),
+                namespace: "default".into(),
+                workload_type: Some("service".into()),
+                protocol: "tcp".into(),
+                remote_port: Some(80),
+                local_port: Some(18080),
+                context: Some("ctx".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut logs_config =
+            kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(config_id);
+        logs_config.enabled = false;
+        kftray_commons::utils::http_logs_config::update_http_logs_config(&logs_config)
+            .await
+            .unwrap();
+        let watcher = Arc::new(HttpLogStateWatcher::new());
+        watcher.set_http_logs(config_id, false).await.unwrap();
+        let cancel = CancellationToken::new();
+
+        let (mut kept, kept_forward) =
+            open_forwarded_connection(config_id, watcher.clone(), cancel.clone()).await;
+        get_through(&mut kept, "/before-enable").await;
+
+        logs_config.enabled = true;
+        kftray_commons::utils::http_logs_config::update_http_logs_config(&logs_config)
+            .await
+            .unwrap();
+        watcher.set_http_logs(config_id, true).await.unwrap();
+
+        let logged_after_enable = tokio::time::timeout(Duration::from_secs(10), async {
+            for attempt in 0.. {
+                get_through(&mut kept, &format!("/after-enable-{attempt}")).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if log_dir_contains(config_dir.path(), "/after-enable-") {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok();
+
+        drop(kept);
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(5), kept_forward)
+            .await
+            .expect("the forwarder should stop once the connection closes")
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            logged_after_enable,
+            "a request on a connection opened with logs off was not logged after logs were enabled"
+        );
+        assert!(
+            !log_dir_contains(config_dir.path(), "/before-enable"),
+            "a request sent while logs were off was logged"
+        );
     }
 }
