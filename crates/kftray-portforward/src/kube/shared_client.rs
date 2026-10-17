@@ -12,6 +12,7 @@ use std::time::{
 };
 
 use dashmap::DashMap;
+use kftray_commons::models::config_model::Config;
 use log::warn;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
@@ -30,9 +31,12 @@ pub struct ServiceClientKey {
 }
 
 impl ServiceClientKey {
+    /// `Config::DEFAULT_CONTEXT` is the placeholder the config migration
+    /// writes for a config saved without a context, so it resolves to the
+    /// kubeconfig's current-context like a missing one.
     pub fn new(context_name: Option<String>, kubeconfig_path: Option<String>) -> Self {
         Self {
-            context_name,
+            context_name: context_name.filter(|name| name != Config::DEFAULT_CONTEXT),
             kubeconfig_path,
         }
     }
@@ -522,6 +526,50 @@ mod tests {
             !err.to_string().contains("Kubernetes context is required"),
             "resolving a None context via the kubeconfig's current-context must not fail with \
              a missing-context error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_config_imported_without_a_context_connects_with_the_current_context() {
+        use kftray_commons::utils::config::{
+            import_configs_with_mode,
+            read_configs_with_mode,
+        };
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        crate::ssl::ensure_crypto_provider_installed();
+        let _db = kftray_commons::test_utils::test_db().await;
+        let kubeconfig_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            kubeconfig_file.path(),
+            kubeconfig_yaml("kftray-test-current-context"),
+        )
+        .unwrap();
+        import_configs_with_mode(
+            r#"[{"service":"web","namespace":"default","workload_type":"service",
+                "protocol":"tcp","remote_port":80,"local_port":18080}]"#
+                .to_string(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        let config = read_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap()
+            .remove(0);
+
+        let key = ServiceClientKey::new(
+            config.context,
+            Some(kubeconfig_file.path().to_string_lossy().to_string()),
+        );
+        let err = SharedClientManager::new()
+            .get_connection(key)
+            .await
+            .expect_err("an unreachable cluster must not produce a client");
+
+        assert!(
+            err.to_string().contains("kftray-test-current-context"),
+            "{err}"
         );
     }
 
