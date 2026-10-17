@@ -12,11 +12,11 @@ use kftray_commons::utils::config::{
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::settings::{
-    get_app_settings,
-    get_ssl_enabled,
-    set_ssl_auto_regenerate,
-    set_ssl_ca_auto_install,
-    set_ssl_enabled,
+    get_app_settings_with_mode,
+    get_ssl_enabled_with_mode,
+    set_ssl_auto_regenerate_with_mode,
+    set_ssl_ca_auto_install_with_mode,
+    set_ssl_enabled_with_mode,
 };
 use kftray_portforward::kube::stop_port_forward_with_mode;
 use kftray_portforward::ssl::CertificateManager;
@@ -169,7 +169,7 @@ impl PortForwardRunner {
     async fn start_each(
         cli: &Cli, mode: DatabaseMode, config_ids: Vec<i64>, mut on_started: impl FnMut(i64),
     ) -> (Vec<i64>, usize) {
-        let ssl_settings_enabled = get_ssl_enabled().await.unwrap_or(false);
+        let ssl_settings_enabled = get_ssl_enabled_with_mode(mode).await.unwrap_or(false);
         let ssl_override = cli.ssl && !ssl_settings_enabled;
         let mut tasks = stream::iter(config_ids)
             .map(|config_id| async move {
@@ -746,7 +746,7 @@ impl PortForwardRunner {
     pub(crate) async fn ensure_ssl_setup_with_configs(
         config_ids: &[i64], mode: DatabaseMode, announce: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let ssl_already_enabled = get_ssl_enabled().await.unwrap_or(false);
+        let ssl_already_enabled = get_ssl_enabled_with_mode(mode).await.unwrap_or(false);
 
         if ssl_already_enabled {
             let needs_cert_regeneration =
@@ -760,17 +760,17 @@ impl PortForwardRunner {
             info!("Enabling SSL for CLI session");
         }
 
-        set_ssl_enabled(true)
+        set_ssl_enabled_with_mode(true, mode)
             .await
             .map_err(|e| format!("Failed to enable SSL: {}", e))?;
-        set_ssl_ca_auto_install(true)
+        set_ssl_ca_auto_install_with_mode(true, mode)
             .await
             .map_err(|e| format!("Failed to set CA auto install: {}", e))?;
-        set_ssl_auto_regenerate(true)
+        set_ssl_auto_regenerate_with_mode(true, mode)
             .await
             .map_err(|e| format!("Failed to set SSL auto regenerate: {}", e))?;
 
-        let settings = get_app_settings()
+        let settings = get_app_settings_with_mode(mode)
             .await
             .map_err(|e| format!("Failed to get app settings: {}", e))?;
         let cert_manager = CertificateManager::new(&settings)?;
@@ -829,7 +829,7 @@ impl PortForwardRunner {
     async fn check_cert_needs_regeneration(
         config_ids: &[i64], mode: DatabaseMode,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        let settings = get_app_settings()
+        let settings = get_app_settings_with_mode(mode)
             .await
             .map_err(|e| format!("Failed to get app settings: {}", e))?;
         let cert_manager = CertificateManager::new(&settings)?;
