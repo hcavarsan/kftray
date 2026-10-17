@@ -617,14 +617,8 @@ impl MessageFormatter {
 
     async fn try_decompress_deflate(body: &[u8]) -> Result<Vec<u8>> {
         let body_owned = body.to_vec();
-        task::spawn_blocking(move || {
-            let cursor = std::io::Cursor::new(body_owned);
-            let mut decompressed_data = Vec::new();
-            let mut deflater = flate2::read::DeflateDecoder::new(cursor);
-            deflater.read_to_end(&mut decompressed_data)?;
-            Ok(decompressed_data)
-        })
-        .await?
+        task::spawn_blocking(move || Self::decompress_deflate(&body_owned).map(|(data, _)| data))
+            .await?
     }
 
     fn find_headers_end(data: &[u8]) -> Option<usize> {
@@ -880,6 +874,34 @@ mod formatter_tests {
         );
         let decompressed = result.unwrap();
         assert_eq!(decompressed, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_format_request_zlib_deflate_body() {
+        let item = r#"{"user":"alice","note":"zlib check"}"#;
+        let json = format!("[{}]", vec![item; 20].join(","));
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, json.as_bytes()).unwrap();
+        let body = encoder.finish().unwrap();
+        let mut request = format!(
+            "POST /api HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Encoding: \
+             deflate\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&body);
+
+        let LogMessage::Request(text) =
+            MessageFormatter::format_request(&Bytes::from(request), "t1", Utc::now())
+                .await
+                .unwrap()
+        else {
+            panic!("not a request")
+        };
+
+        assert!(text.contains("\"user\": \"alice\""), "{text}");
+        assert!(!text.contains("invalid JSON"), "{text}");
     }
 
     #[tokio::test]
