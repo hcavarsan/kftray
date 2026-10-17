@@ -23,6 +23,7 @@ use crate::tui::input::{
     handle_details_input,
     handle_error_popup_input,
     handle_help_input,
+    handle_http_logs_config_input,
     handle_logs_input,
     handle_menu_input,
     handle_normal_input,
@@ -486,6 +487,46 @@ mod tests {
             .filter_map(|(id, on)| on.then_some(*id))
             .collect();
         assert_eq!(enabled, vec![highlighted.unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn http_logs_config_refuses_a_max_file_size_that_import_rejects() {
+        use kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (mut app, highlighted) = searching_for_gamma().await;
+        let id = highlighted.unwrap();
+        handle_stopped_table_input(&mut app, KeyCode::Char('L'), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let before = get_http_logs_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap()
+            .max_file_size;
+
+        let mut keys = vec![KeyCode::Down, KeyCode::Enter];
+        keys.extend(
+            app.http_logs_config_max_file_size_input
+                .chars()
+                .map(|_| KeyCode::Backspace),
+        );
+        keys.extend("101".chars().map(KeyCode::Char));
+        keys.push(KeyCode::Enter);
+        for key in keys {
+            handle_http_logs_config_input(&mut app, key, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        }
+
+        let saved = get_http_logs_config_with_mode(id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(saved.max_file_size, before);
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Max file size must be between 1 and 100 MB")
+        );
     }
 
     #[tokio::test]
