@@ -12,6 +12,7 @@ import {
 } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
+import { allHttpLogsEnabledQueryKey } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -88,6 +89,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey })
       toaster.success({
         title: 'Success',
         description: 'Configs imported successfully.',
