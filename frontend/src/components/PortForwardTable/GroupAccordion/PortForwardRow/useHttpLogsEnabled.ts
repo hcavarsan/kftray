@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { invoke } from '@/lib/tauri'
 
+export const allHttpLogsEnabledQueryKey = ['http-logs-enabled'] as const
+
 export const httpLogsEnabledQueryKey = (configId: number) =>
-  ['http-logs-enabled', configId] as const
+  [...allHttpLogsEnabledQueryKey, configId] as const
 
 export function useHttpLogsEnabled(configId: number) {
   return useQuery({

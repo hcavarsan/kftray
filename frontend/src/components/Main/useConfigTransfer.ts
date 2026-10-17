@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
+import { allHttpLogsEnabledQueryKey } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
 import { withNativeDialog } from '@/lib/nativeDialog'
@@ -61,7 +62,10 @@ export function useConfigTransfer() {
       const json = await readTextFile(selected)
 
       await invoke('import_configs_cmd', { json })
-      await queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: configsQuery.queryKey }),
+        queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey }),
+      ])
 
       return true
     },
