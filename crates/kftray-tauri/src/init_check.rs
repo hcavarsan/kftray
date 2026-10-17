@@ -236,7 +236,9 @@ async fn check_and_manage_port(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // An expose forward binds an ephemeral port. Its `local_port` is the
     // local app the tunnel sends traffic to, so a listener there is expected.
-    if config.workload_type.as_deref() == Some("expose") {
+    // An auto loopback forward gets its address during the start, and the
+    // start handles a busy address itself.
+    if config.workload_type.as_deref() == Some("expose") || config.auto_loopback_address {
         start_port_forwarding(port_ops, config).await?;
         return Ok(());
     }
@@ -471,12 +473,9 @@ async fn start_port_forwarding_with_backoff(
     }
 }
 
-/// The address a start of `config` binds, or `None` when only the start
-/// knows it: an auto loopback address is allocated during the start.
+/// The address a start of `config` binds, or `None` when it is not an IP
+/// address.
 fn forward_address(config: &Config) -> Option<IpAddr> {
-    if config.auto_loopback_address {
-        return None;
-    }
     match config.local_address.as_deref() {
         Some(address) => address.parse().ok(),
         None => Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
@@ -738,6 +737,24 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[tokio::test]
+    async fn an_auto_loopback_forward_is_restored_while_its_port_is_busy_elsewhere() {
+        let mut mock = mock_ops();
+        let mut config = create_test_config(1, 5432, "tcp", Some("service"));
+        config.local_address = Some("127.0.0.2".to_string());
+        config.auto_loopback_address = true;
+
+        mock.expect_find_process_by_port()
+            .returning(|_, _, _| Some((4321, "postgres".to_string())));
+        mock.expect_dispatch_start().times(1).returning(|_| Ok(()));
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| !state.is_running))
+            .times(0);
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
     fn tcp_socket(address: &str, port: u16) -> ProtocolSocketInfo {
         ProtocolSocketInfo::Tcp(netstat2::TcpSocketInfo {
             local_addr: address.parse().unwrap(),
@@ -815,9 +832,6 @@ mod tests {
 
         config.local_address = Some("127.0.0.2".to_string());
         assert_eq!(forward_address(&config), Some("127.0.0.2".parse().unwrap()));
-
-        config.auto_loopback_address = true;
-        assert_eq!(forward_address(&config), None);
     }
 
     #[tokio::test]
