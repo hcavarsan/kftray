@@ -899,6 +899,12 @@ impl PortForwardRunner {
         for alias in aliases {
             cert_manager.regenerate_certificate(&alias).await?;
         }
+
+        let mut domains = CertificateManager::collect_all_domains_from_configs().await?;
+        domains.extend(CertificateManager::domains_for_configs(configs));
+        domains.sort();
+        domains.dedup();
+        cert_manager.regenerate_global_certificate(&domains).await?;
         Ok(())
     }
 
