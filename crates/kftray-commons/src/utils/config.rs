@@ -508,7 +508,14 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     }
 }
 
-fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<(usize, u8)> {
+#[derive(Clone, Copy)]
+enum IdentityMatch {
+    None,
+    Saved(usize, u8),
+    SavedMoreThanOnce,
+}
+
+fn find_identity_match(configs: &[Config], incoming: &Config) -> IdentityMatch {
     let rank = |c: &Config| match (
         c.remote_port == incoming.remote_port,
         c.local_port == incoming.local_port,
@@ -535,10 +542,16 @@ fn find_identity_match(configs: &[Config], incoming: &Config) -> Option<(usize, 
         }
     }
 
-    best.filter(|_| !ambiguous)
+    match best {
+        Some((index, score)) if !ambiguous => IdentityMatch::Saved(index, score),
+        Some((_, 1)) => IdentityMatch::SavedMoreThanOnce,
+        _ => IdentityMatch::None,
+    }
 }
 
-fn assign_identity_matches(saved: &[Config], incoming: &[Config]) -> Vec<Option<usize>> {
+fn assign_identity_matches(
+    saved: &[Config], incoming: Vec<Config>,
+) -> Vec<(Config, Option<&Config>)> {
     let matches: Vec<_> = incoming
         .iter()
         .map(|config| find_identity_match(saved, config))
@@ -546,19 +559,28 @@ fn assign_identity_matches(saved: &[Config], incoming: &[Config]) -> Vec<Option<
 
     let mut winners: Vec<Option<(usize, u8)>> = vec![None; saved.len()];
     for (position, m) in matches.iter().enumerate() {
-        if let Some((index, score)) = *m
+        if let IdentityMatch::Saved(index, score) = *m
             && winners[index].is_none_or(|(_, best)| score > best)
         {
             winners[index] = Some((position, score));
         }
     }
 
-    matches
+    incoming
         .into_iter()
+        .zip(matches)
         .enumerate()
-        .map(|(position, m)| {
-            m.map(|(index, _)| index)
-                .filter(|&index| winners[index].is_some_and(|(winner, _)| winner == position))
+        .filter_map(|(position, (config, m))| match m {
+            IdentityMatch::SavedMoreThanOnce => {
+                info!("Several saved configs match an imported config, skipping it");
+                None
+            }
+            IdentityMatch::Saved(index, _)
+                if winners[index].is_some_and(|(winner, _)| winner == position) =>
+            {
+                Some((config, Some(&saved[index])))
+            }
+            _ => Some((config, None)),
         })
         .collect()
 }
@@ -613,10 +635,9 @@ pub(crate) async fn import_configs_with_pool(
     let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
-    let matches = assign_identity_matches(&existing_configs, &configs);
 
-    for (config, existing) in configs.into_iter().zip(matches) {
-        merge_config_with_existing(config, existing.map(|i| &existing_configs[i]), pool)
+    for (config, existing) in assign_identity_matches(&existing_configs, configs) {
+        merge_config_with_existing(config, existing, pool)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -703,10 +724,8 @@ pub(crate) async fn import_configs_with_pool_and_mode(
     let configs = parse_import_configs(&json)?;
 
     let existing_configs = read_configs_with_pool(pool).await?;
-    let matches = assign_identity_matches(&existing_configs, &configs);
 
-    for (config, existing) in configs.into_iter().zip(matches) {
-        let existing = existing.map(|i| &existing_configs[i]);
+    for (config, existing) in assign_identity_matches(&existing_configs, configs) {
         merge_config_with_existing_and_mode(config, existing, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
@@ -762,11 +781,10 @@ pub async fn upsert_configs_with_pool_and_mode(
 ) -> Result<Vec<i64>, String> {
     let existing_configs = read_configs_with_pool(pool).await?;
     let configs = dedup_configs(configs);
-    let matches = assign_identity_matches(&existing_configs, &configs);
+    let matches = assign_identity_matches(&existing_configs, configs);
 
-    let mut ids = Vec::with_capacity(configs.len());
-    for (config, existing) in configs.into_iter().zip(matches) {
-        let existing = existing.map(|i| &existing_configs[i]);
+    let mut ids = Vec::with_capacity(matches.len());
+    for (config, existing) in matches {
         let id = merge_config_with_existing_and_mode(config, existing, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
@@ -1686,6 +1704,39 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].alias.as_deref(), Some("web-renamed"));
         assert_eq!(ids, [configs[0].id.unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_entry_saved_on_two_local_ports_adds_no_row() {
+        let pool = setup_test_db().await;
+        for local_port in [8080, 9080] {
+            let mut entry = web_port("web-http", 80);
+            entry["local_port"] = json!(local_port);
+            import_configs_with_pool(json!([entry]).to_string(), &pool)
+                .await
+                .unwrap();
+        }
+        let file = json!([web_port("web-http", 80)]).to_string();
+
+        for _ in 0..3 {
+            let ids = upsert_configs_with_pool_and_mode(
+                parse_import_configs(&file).unwrap(),
+                &pool,
+                DatabaseMode::File,
+            )
+            .await
+            .unwrap();
+            assert!(ids.is_empty());
+            import_configs_with_pool(file.clone(), &pool).await.unwrap();
+        }
+
+        let local_ports: Vec<_> = read_configs_with_pool(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|c| c.local_port)
+            .collect();
+        assert_eq!(local_ports, [Some(8080), Some(9080)]);
     }
 
     #[tokio::test]
