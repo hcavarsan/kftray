@@ -7,7 +7,7 @@ use kftray_commons::test_utils::{
 };
 use kftray_commons::utils::config::import_configs_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_commons::utils::settings::get_ssl_enabled;
+use kftray_commons::utils::settings::get_ssl_enabled_with_mode;
 
 use crate::cli::CliHandler;
 use crate::cli::args::Cli;
@@ -88,7 +88,9 @@ async fn a_command_does_not_run_when_no_forward_starts() {
     assert!(!marker.exists());
 }
 
-async fn https_is_on_after_the_tui_prepares(args: &[&str]) -> bool {
+const SSL_TEST_CONFIGS: &str = r#"[{"alias":"web","namespace":"default","service":"web","local_port":18443,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#;
+
+async fn https_is_on_after_the_tui_prepares(args: &[&str], mode: DatabaseMode) -> bool {
     let _db = test_db().await;
     let dir = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
@@ -101,12 +103,9 @@ async fn https_is_on_after_the_tui_prepares(args: &[&str]) -> bool {
     kftray_commons::utils::migration::migrate_configs(None)
         .await
         .unwrap();
-    import_configs_with_mode(
-        r#"[{"alias":"web","namespace":"default","service":"web","local_port":18443,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#.to_string(),
-        DatabaseMode::File,
-    )
-    .await
-    .unwrap();
+    import_configs_with_mode(SSL_TEST_CONFIGS.to_string(), mode)
+        .await
+        .unwrap();
 
     CliHandler::new(
         Cli::parse_from(args),
@@ -116,7 +115,7 @@ async fn https_is_on_after_the_tui_prepares(args: &[&str]) -> bool {
     .await
     .unwrap();
 
-    get_ssl_enabled().await.unwrap()
+    get_ssl_enabled_with_mode(mode).await.unwrap()
         && std::fs::read_dir(dir.path().join("ssl-certs"))
             .unwrap()
             .next()
@@ -125,19 +124,27 @@ async fn https_is_on_after_the_tui_prepares(args: &[&str]) -> bool {
 
 #[tokio::test]
 async fn ssl_without_auto_start_turns_on_https_before_the_tui_opens() {
-    assert!(https_is_on_after_the_tui_prepares(&["kftui", "--ssl"]).await);
+    assert!(https_is_on_after_the_tui_prepares(&["kftui", "--ssl"], DatabaseMode::File).await);
+}
+
+#[tokio::test]
+async fn ssl_turns_on_https_for_configs_loaded_without_save() {
+    assert!(
+        https_is_on_after_the_tui_prepares(
+            &["kftui", "--json", SSL_TEST_CONFIGS, "--ssl"],
+            DatabaseMode::Memory,
+        )
+        .await
+    );
 }
 
 #[tokio::test]
 async fn ssl_turns_on_https_when_auto_start_matches_no_config() {
     assert!(
-        https_is_on_after_the_tui_prepares(&[
-            "kftui",
-            "--ssl",
-            "--auto-start",
-            "--filter",
-            "tag:nomatch",
-        ])
+        https_is_on_after_the_tui_prepares(
+            &["kftui", "--ssl", "--auto-start", "--filter", "tag:nomatch"],
+            DatabaseMode::File,
+        )
         .await
     );
 }

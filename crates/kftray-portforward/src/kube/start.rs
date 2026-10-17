@@ -12,11 +12,12 @@ use kftray_commons::{
         config_state_model::ConfigState,
         hostfile::HostEntry,
         response::CustomResponse,
+        settings_model::AppSettings,
     },
     utils::{
         config_state::update_config_state_with_mode,
         db_mode::DatabaseMode,
-        settings::get_app_settings,
+        settings::get_app_settings_with_mode,
         timeout_manager::start_timeout_for_forward,
     },
 };
@@ -92,7 +93,7 @@ fn create_static_timeout_callback(mode: DatabaseMode) -> Arc<dyn Fn(i64) + Send 
 }
 
 async fn build_tls_acceptor(
-    _config: &Config, settings: &kftray_commons::models::settings_model::AppSettings,
+    _config: &Config, settings: &AppSettings,
 ) -> Result<tokio_rustls::TlsAcceptor> {
     crate::ssl::ensure_crypto_provider_installed();
 
@@ -108,6 +109,18 @@ async fn build_tls_acceptor(
         .map_err(|e| anyhow::anyhow!("Failed to create server config with certificate: {}", e))?;
 
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
+}
+
+async fn load_ssl_settings(
+    config: &Config, mode: DatabaseMode, ssl_override: bool,
+) -> (Option<AppSettings>, bool) {
+    let settings = get_app_settings_with_mode(mode).await.ok();
+    let should_use_ssl = (settings
+        .as_ref()
+        .is_some_and(|settings| settings.ssl_enabled)
+        || ssl_override)
+        && config.alias.is_some();
+    (settings, should_use_ssl)
 }
 
 /// Writes the HTTPS aliases from a task that outlives the startup.
@@ -1026,12 +1039,7 @@ pub(super) async fn start_config_cancellable(
 
     let local_address_clone = Some(final_local_address);
 
-    let settings = get_app_settings().await.ok();
-    let should_use_ssl = (settings
-        .as_ref()
-        .is_some_and(|settings| settings.ssl_enabled)
-        || ssl_override)
-        && config.alias.is_some();
+    let (settings, should_use_ssl) = load_ssl_settings(&config, mode, ssl_override).await;
 
     let actual_config = config.clone();
 
@@ -1907,5 +1915,33 @@ mod tests {
     #[test]
     fn finish_start_batch_stays_ok_for_an_empty_batch() {
         assert!(finish_start_batch(Vec::new()).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_memory_mode_start_follows_the_memory_mode_ssl_setting() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _config_dir = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        let config = setup_test_config();
+
+        for enabled in [true, false] {
+            kftray_commons::utils::settings::set_ssl_enabled(!enabled)
+                .await
+                .unwrap();
+            kftray_commons::utils::settings::set_ssl_enabled_with_mode(
+                enabled,
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
+
+            let (_, should_use_ssl) = load_ssl_settings(&config, DatabaseMode::Memory, false).await;
+
+            assert_eq!(should_use_ssl, enabled);
+        }
     }
 }
