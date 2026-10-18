@@ -38,17 +38,21 @@ fn check_choice(field: &str, value: Option<&str>, allowed: &[&str]) -> Result<()
     }
 }
 
+fn is_missing(value: Option<&str>) -> bool {
+    value.is_none_or(str::is_empty)
+}
+
 fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
     match config.workload_type.as_deref() {
-        Some("service") if config.service.is_none() => Err(CallToolResult::error(
+        Some("service") if is_missing(config.service.as_deref()) => Err(CallToolResult::error(
             "service is required when workload_type is 'service'",
         )),
-        Some("pod") if config.target.is_none() => Err(CallToolResult::error(
+        Some("pod") if is_missing(config.target.as_deref()) => Err(CallToolResult::error(
             "target (pod label selector) is required when workload_type is 'pod'",
         )),
-        Some("proxy") if config.remote_address.is_none() => Err(CallToolResult::error(
-            "remote_address is required when workload_type is 'proxy'",
-        )),
+        Some("proxy") if is_missing(config.remote_address.as_deref()) => Err(
+            CallToolResult::error("remote_address is required when workload_type is 'proxy'"),
+        ),
         _ => Ok(()),
     }
 }

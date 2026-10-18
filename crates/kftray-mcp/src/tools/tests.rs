@@ -525,6 +525,50 @@ async fn update_config_rejects_a_workload_change_without_its_required_field() {
 }
 
 #[tokio::test]
+async fn config_tools_reject_an_empty_required_workload_field() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("web", "shop", serde_json::json!({})).await;
+
+    for (workload_type, field) in [
+        ("service", "service"),
+        ("pod", "target"),
+        ("proxy", "remote_address"),
+    ] {
+        let mut args = serde_json::json!({
+            "context": "kind",
+            "namespace": "shop",
+            "remote_port": 80,
+            "workload_type": workload_type,
+        });
+        args[field] = serde_json::json!("");
+        let created = execute_tool("create_config", Some(args)).await;
+        assert_eq!(created.is_error, Some(true), "{}", result_text(&created));
+        assert!(
+            result_text(&created).contains(field),
+            "{}",
+            result_text(&created)
+        );
+
+        let mut args = serde_json::json!({ "config_id": id, "workload_type": workload_type });
+        args[field] = serde_json::json!("");
+        let updated = execute_tool("update_config", Some(args)).await;
+        assert_eq!(updated.is_error, Some(true), "{}", result_text(&updated));
+        assert!(
+            result_text(&updated).contains(field),
+            "{}",
+            result_text(&updated)
+        );
+    }
+
+    assert_eq!(
+        list_services(serde_json::json!([])).await,
+        vec!["web".to_string()]
+    );
+    let saved = execute_tool("get_config", Some(serde_json::json!({ "config_id": id }))).await;
+    assert_eq!(result_json(&saved)["workload_type"], "service");
+}
+
+#[tokio::test]
 async fn list_configs_filters_by_tags_and_fields_like_kftui() {
     let _db = temp_config_db().await;
     create_tagged(
