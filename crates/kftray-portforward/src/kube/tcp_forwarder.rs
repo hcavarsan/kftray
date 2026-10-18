@@ -28,6 +28,7 @@ const MAX_CHUNK_LINE_SIZE: usize = 4096;
 struct RequestLogBuffer {
     buffer: Vec<u8>,
     body: RequestBody,
+    logged_at_head: bool,
 }
 
 #[derive(Default)]
@@ -49,9 +50,13 @@ impl RequestLogBuffer {
                     let start = self.buffer.len();
                     self.buffer.extend_from_slice(bytes);
                     match Self::parse_head(&self.buffer) {
-                        Ok(Some((head_len, body))) => {
+                        Ok(Some((head_len, body, expect_continue))) => {
                             self.buffer.truncate(head_len);
                             self.body = body;
+                            if expect_continue && !matches!(self.body, RequestBody::Length(0)) {
+                                complete.push(std::mem::take(&mut self.buffer));
+                                self.logged_at_head = true;
+                            }
                             head_len - start
                         }
                         Ok(None) if self.buffer.len() <= BUFFER_SIZE => bytes.len(),
@@ -64,7 +69,7 @@ impl RequestLogBuffer {
                 RequestBody::Length(remaining) | RequestBody::ChunkData(remaining) => {
                     let consumed = (*remaining).min(bytes.len());
                     *remaining -= consumed;
-                    Self::store(&mut self.buffer, &bytes[..consumed]);
+                    Self::store(&mut self.buffer, self.logged_at_head, &bytes[..consumed]);
                     consumed
                 }
                 RequestBody::ChunkSize(line) | RequestBody::Trailers(line) => {
@@ -77,7 +82,7 @@ impl RequestLogBuffer {
                         self.reset();
                         return complete;
                     }
-                    Self::store(&mut self.buffer, &bytes[..consumed]);
+                    Self::store(&mut self.buffer, self.logged_at_head, &bytes[..consumed]);
                     consumed
                 }
             };
@@ -114,7 +119,10 @@ impl RequestLogBuffer {
             };
             if let Some(next) = next {
                 if matches!(next, RequestBody::Headers) {
-                    complete.push(std::mem::take(&mut self.buffer));
+                    let request = std::mem::take(&mut self.buffer);
+                    if !std::mem::take(&mut self.logged_at_head) {
+                        complete.push(request);
+                    }
                 }
                 self.body = next;
             }
@@ -123,7 +131,7 @@ impl RequestLogBuffer {
     }
 
     fn take_started(&mut self) -> Option<Vec<u8>> {
-        if matches!(self.body, RequestBody::Headers) {
+        if matches!(self.body, RequestBody::Headers) || self.logged_at_head {
             return None;
         }
         let started = std::mem::take(&mut self.buffer);
@@ -131,7 +139,10 @@ impl RequestLogBuffer {
         Some(started)
     }
 
-    fn store(buffer: &mut Vec<u8>, bytes: &[u8]) {
+    fn store(buffer: &mut Vec<u8>, logged_at_head: bool, bytes: &[u8]) {
+        if logged_at_head {
+            return;
+        }
         let room = MAX_LOGGED_REQUEST_SIZE.saturating_sub(buffer.len());
         buffer.extend_from_slice(&bytes[..bytes.len().min(room)]);
     }
@@ -139,9 +150,10 @@ impl RequestLogBuffer {
     fn reset(&mut self) {
         self.buffer.clear();
         self.body = RequestBody::Headers;
+        self.logged_at_head = false;
     }
 
-    fn parse_head(buffer: &[u8]) -> Result<Option<(usize, RequestBody)>, httparse::Error> {
+    fn parse_head(buffer: &[u8]) -> Result<Option<(usize, RequestBody, bool)>, httparse::Error> {
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut request = httparse::Request::new(&mut headers);
         let head_len = match request.parse(buffer)? {
@@ -169,7 +181,9 @@ impl RequestLogBuffer {
                 .unwrap_or(0);
             RequestBody::Length(length)
         };
-        Ok(Some((head_len, body)))
+        let expect_continue =
+            header_value("expect").is_some_and(|v| v.trim().eq_ignore_ascii_case("100-continue"));
+        Ok(Some((head_len, body, expect_continue)))
     }
 }
 
@@ -753,6 +767,7 @@ impl TcpForwarder {
 
         let scanned_len = state.buffer.len();
         state.buffer.extend_from_slice(buffer);
+        let scanned_len = scanned_len.saturating_sub(state.drop_interim_responses());
 
         if !state.is_chunked && !state.found_end_marker {
             state.is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(&state.buffer);
@@ -879,6 +894,24 @@ impl ResponseState {
         self.total_chunks_received = 0;
         self.first_chunk_time = None;
         self.force_log_time = None;
+    }
+
+    fn drop_interim_responses(&mut self) -> usize {
+        let mut dropped = 0;
+        loop {
+            let mut headers = [httparse::EMPTY_HEADER; 64];
+            let mut response = httparse::Response::new(&mut headers);
+            let head_len = match response.parse(&self.buffer) {
+                Ok(httparse::Status::Complete(head_len))
+                    if matches!(response.code, Some(100 | 102..=199)) =>
+                {
+                    head_len
+                }
+                _ => return dropped,
+            };
+            self.buffer.drain(..head_len);
+            dropped += head_len;
+        }
     }
 }
 
@@ -1421,6 +1454,163 @@ mod tests {
 
         let contents = read_log_until(&http_logger, &log_path, "PUT /aborted").await;
         assert_eq!(trace_ids_after(&contents, "# Request at").len(), 1);
+        http_logger.shutdown().await;
+    }
+
+    fn spawn_forwarders(
+        logger: Arc<Mutex<Option<Arc<Logger>>>>,
+    ) -> (
+        tokio::io::DuplexStream,
+        tokio::io::DuplexStream,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (client, client_side) = tokio::io::duplex(4096);
+        let (upstream, upstream_side) = tokio::io::duplex(4096);
+        let forwarders = tokio::spawn(async move {
+            let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+            let request_id = Arc::new(Mutex::new(None));
+            let tunnel = Arc::new(AtomicBool::new(false));
+            let (mut client_reader, mut client_writer) = tokio::io::split(client_side);
+            let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_side);
+            let (to_upstream, to_client) = tokio::join!(
+                TcpForwarder::forward_client_to_upstream(
+                    Arc::clone(&logger),
+                    1,
+                    &mut client_reader,
+                    &mut upstream_writer,
+                    Arc::clone(&request_id),
+                    CancellationToken::new(),
+                    subscriber.resubscribe(),
+                    8080,
+                    Arc::clone(&tunnel),
+                ),
+                TcpForwarder::forward_upstream_to_client(
+                    logger,
+                    1,
+                    &mut upstream_reader,
+                    &mut client_writer,
+                    request_id,
+                    CancellationToken::new(),
+                    subscriber,
+                    8080,
+                    tunnel,
+                ),
+            );
+            to_upstream.unwrap();
+            to_client.unwrap();
+        });
+        (client, upstream, forwarders)
+    }
+
+    async fn pass_through(
+        from: &mut tokio::io::DuplexStream, to: &mut tokio::io::DuplexStream, bytes: &[u8],
+    ) {
+        from.write_all(bytes).await.unwrap();
+        let mut received = vec![0; bytes.len()];
+        to.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, bytes);
+    }
+
+    async fn temp_http_logger(name: &str) -> (tempfile::TempDir, std::path::PathBuf, Arc<Logger>) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join(name);
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        (temp_dir, log_path, http_logger)
+    }
+
+    #[tokio::test]
+    async fn early_final_response_to_expect_continue_request_shares_its_trace_id() {
+        let (_temp_dir, log_path, http_logger) = temp_http_logger("early-response.log").await;
+        let (mut client, mut upstream, forwarders) =
+            spawn_forwarders(Arc::new(Mutex::new(Some(http_logger.clone()))));
+
+        pass_through(
+            &mut client,
+            &mut upstream,
+            b"GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n",
+        )
+        .await;
+        pass_through(
+            &mut upstream,
+            &mut client,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst",
+        )
+        .await;
+        pass_through(
+            &mut client,
+            &mut upstream,
+            b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nContent-Length: 1000\r\n\r\n",
+        )
+        .await;
+        pass_through(
+            &mut upstream,
+            &mut client,
+            b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\n\r\n",
+        )
+        .await;
+        drop(client);
+        drop(upstream);
+        forwarders.await.unwrap();
+
+        let contents = read_log_until(&http_logger, &log_path, "417 Expectation Failed").await;
+        let requests = trace_ids_after(&contents, "# Request at");
+        let responses = trace_ids_after(&contents, "# Response at");
+        assert_eq!(
+            requests.len(),
+            2,
+            "two request entries expected: {contents}"
+        );
+        assert_eq!(
+            requests, responses,
+            "responses not paired with requests: {contents}"
+        );
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn expect_continue_request_logs_the_final_response_not_the_interim_one() {
+        let (_temp_dir, log_path, http_logger) = temp_http_logger("continue.log").await;
+        let (mut client, mut upstream, forwarders) =
+            spawn_forwarders(Arc::new(Mutex::new(Some(http_logger.clone()))));
+
+        pass_through(
+            &mut client,
+            &mut upstream,
+            b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nContent-Length: 17\r\n\r\n",
+        )
+        .await;
+        pass_through(&mut upstream, &mut client, b"HTTP/1.1 100 Continue\r\n\r\n").await;
+        pass_through(&mut client, &mut upstream, b"{\"name\":\"widget\"}").await;
+        pass_through(
+            &mut upstream,
+            &mut client,
+            b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok",
+        )
+        .await;
+
+        let contents = read_log_until(&http_logger, &log_path, "201 Created").await;
+        drop(client);
+        drop(upstream);
+        forwarders.await.unwrap();
+
+        let requests = trace_ids_after(&contents, "# Request at");
+        let responses = trace_ids_after(&contents, "# Response at");
+        assert_eq!(requests.len(), 1, "one request entry expected: {contents}");
+        assert_eq!(
+            requests, responses,
+            "response not paired with request: {contents}"
+        );
+        assert!(
+            !contents.contains("100 Continue"),
+            "interim response logged: {contents}"
+        );
         http_logger.shutdown().await;
     }
 
