@@ -38,6 +38,29 @@ fn check_choice(field: &str, value: Option<&str>, allowed: &[&str]) -> Result<()
     }
 }
 
+fn is_missing(value: Option<&str>) -> bool {
+    value.is_none_or(str::is_empty)
+}
+
+fn is_blank(value: Option<&str>) -> bool {
+    value.is_none_or(|value| value.trim().is_empty())
+}
+
+fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
+    match config.workload_type.as_deref() {
+        Some("service") if is_blank(config.service.as_deref()) => Err(CallToolResult::error(
+            "service is required when workload_type is 'service'",
+        )),
+        Some("pod") if is_blank(config.target.as_deref()) => Err(CallToolResult::error(
+            "target (pod label selector) is required when workload_type is 'pod'",
+        )),
+        Some("proxy") if is_missing(config.remote_address.as_deref()) => Err(
+            CallToolResult::error("remote_address is required when workload_type is 'proxy'"),
+        ),
+        _ => Ok(()),
+    }
+}
+
 // ============================================================================
 // List Configs Tool
 // ============================================================================
@@ -315,21 +338,6 @@ impl McpTool for CreateConfigTool {
             return error;
         }
 
-        // Validate workload-specific requirements
-        if workload_type == "service" && args.service.is_none() {
-            return CallToolResult::error("service is required when workload_type is 'service'");
-        }
-        if workload_type == "pod" && args.target.is_none() {
-            return CallToolResult::error(
-                "target (pod label selector) is required when workload_type is 'pod'",
-            );
-        }
-        if workload_type == "proxy" && args.remote_address.is_none() {
-            return CallToolResult::error(
-                "remote_address is required when workload_type is 'proxy'",
-            );
-        }
-
         let config = Config {
             id: None,
             service: args.service,
@@ -358,6 +366,10 @@ impl McpTool for CreateConfigTool {
             ingress_annotations: None,
             tags: args.tags.unwrap_or_default(),
         };
+
+        if let Err(error) = check_workload_fields(&config) {
+            return error;
+        }
 
         match kftray_commons::config::insert_config(config).await {
             Ok(config_id) => {
@@ -550,6 +562,10 @@ impl McpTool for UpdateConfigTool {
         }
         if let Some(tags) = args.tags {
             config.tags = tags;
+        }
+
+        if let Err(error) = check_workload_fields(&config) {
+            return error;
         }
 
         match kftray_commons::config::update_config(config).await {
