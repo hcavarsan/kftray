@@ -179,6 +179,46 @@ async fn ssl_turns_on_https_when_auto_start_matches_no_config() {
     assert!(covers(names, &["web"]));
 }
 
+#[tokio::test]
+async fn settings_popup_ssl_covers_configs_loaded_without_save() {
+    let _db = test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    let _test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+    let _skip_ca_install = EnvVarGuard::set("KFTRAY_SKIP_CA_INSTALL", "1");
+    *kftray_portforward::ssl::cert_store::TEST_SSL_VAULT
+        .lock()
+        .unwrap() = Default::default();
+    kftray_commons::utils::db::init().await.unwrap();
+    kftray_commons::utils::migration::migrate_configs(None)
+        .await
+        .unwrap();
+    import_configs_with_mode(SAVED_API_CONFIG.to_string(), DatabaseMode::File)
+        .await
+        .unwrap();
+    let mode = DatabaseMode::Memory;
+    import_configs_with_mode(SSL_TEST_CONFIGS.to_string(), mode)
+        .await
+        .unwrap();
+
+    let mut app = crate::tui::input::App::new(crate::tests::test_logger_state());
+    app.state = crate::tui::input::AppState::ShowSettings;
+    app.settings_selected_option = 3;
+    crate::tui::input::handle_settings_input(&mut app, crossterm::event::KeyCode::Enter, mode)
+        .await
+        .unwrap();
+
+    assert_eq!(app.error_message, None);
+    let settings = get_app_settings_with_mode(mode).await.unwrap();
+    assert!(settings.ssl_enabled);
+    let manager = kftray_portforward::ssl::CertificateManager::new(&settings).unwrap();
+    let global = manager.load_global_certificate().await.ok();
+    assert!(covers(
+        global.map(|global| global.subject_alt_names),
+        &["web", "api"]
+    ));
+}
+
 /// A stop still in flight when `drain_stop_tasks`'s deadline elapses must
 /// keep running to completion, detached, rather than being aborted: only the
 /// future joining its `JoinHandle` is dropped, not the spawned task doing

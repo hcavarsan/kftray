@@ -775,17 +775,7 @@ impl PortForwardRunner {
             .map_err(|e| format!("Failed to get app settings: {}", e))?;
         let cert_manager = CertificateManager::new(&settings)?;
 
-        let cert_result = match mode {
-            DatabaseMode::File => cert_manager
-                .regenerate_certificate_for_all_configs()
-                .await
-                .map(|_| ()),
-            DatabaseMode::Memory => {
-                let current_configs = Self::get_current_configs(config_ids, mode).await?;
-                Self::regenerate_certificate_for_memory_configs(&cert_manager, &current_configs)
-                    .await
-            }
-        };
+        let cert_result = Self::regenerate_certificates(&cert_manager, config_ids, mode).await;
 
         match cert_result {
             Ok(_) => {
@@ -872,16 +862,30 @@ impl PortForwardRunner {
         }
     }
 
-    async fn get_current_configs(
-        config_ids: &[i64], mode: DatabaseMode,
-    ) -> Result<Vec<Config>, Box<dyn std::error::Error>> {
+    pub(crate) async fn regenerate_certificates(
+        cert_manager: &CertificateManager, config_ids: &[i64], mode: DatabaseMode,
+    ) -> Result<(), anyhow::Error> {
+        match mode {
+            DatabaseMode::File => cert_manager
+                .regenerate_certificate_for_all_configs()
+                .await
+                .map(|_| ()),
+            DatabaseMode::Memory => {
+                let current_configs = Self::get_current_configs(config_ids, mode).await;
+                Self::regenerate_certificate_for_memory_configs(cert_manager, &current_configs)
+                    .await
+            }
+        }
+    }
+
+    async fn get_current_configs(config_ids: &[i64], mode: DatabaseMode) -> Vec<Config> {
         let mut configs = Vec::new();
         for &config_id in config_ids {
             if let Ok(config) = get_config_with_mode(config_id, mode).await {
                 configs.push(config);
             }
         }
-        Ok(configs)
+        configs
     }
 
     async fn regenerate_certificate_for_memory_configs(
