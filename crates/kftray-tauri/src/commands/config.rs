@@ -144,7 +144,7 @@ async fn restart_ssl_proxies_if_running(
         .into_iter()
         .filter(|config| {
             let is_candidate = config.id.is_some_and(|id| running_config_ids.contains(&id));
-            let is_ssl_enabled = config.domain_enabled.unwrap_or(false);
+            let is_ssl_enabled = config.alias.is_some();
             info!(
                 "Config {}: candidate={}, ssl_enabled={}, alias={:?}",
                 config.id.unwrap_or(-1),
@@ -210,7 +210,7 @@ async fn restart_ssl_proxies_if_running(
     Ok(Some(failed_ids))
 }
 
-async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
+pub(crate) async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) -> Vec<i64> {
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
     let mut target_ids: Option<Vec<i64>> = None;
@@ -229,7 +229,7 @@ async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
                     "SSL proxy restart attempt {} completed successfully",
                     attempt + 1
                 );
-                return;
+                return Vec::new();
             }
             Ok(Some(failed_ids)) => {
                 warn!(
@@ -256,6 +256,7 @@ async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
     }
 
     warn!("All SSL proxy restart attempts failed");
+    target_ids.unwrap_or_default()
 }
 
 #[tauri::command]
