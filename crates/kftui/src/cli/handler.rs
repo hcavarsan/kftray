@@ -116,8 +116,8 @@ impl CliHandler {
         }
     }
 
-    async fn handle_stdin_redirect(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.cli.stdin {
+    pub(crate) async fn handle_stdin_redirect(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.cli.stdin || self.cli.non_interactive {
             return Ok(());
         }
 

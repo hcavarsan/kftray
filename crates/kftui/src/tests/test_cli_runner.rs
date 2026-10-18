@@ -88,6 +88,20 @@ async fn a_command_does_not_run_when_no_forward_starts() {
     assert!(!marker.exists());
 }
 
+#[tokio::test]
+async fn stdin_without_the_tui_does_not_need_a_terminal() {
+    for args in [
+        &["kftui", "--stdin", "--non-interactive"][..],
+        &["kftui", "--stdin", "--", "true"][..],
+    ] {
+        let handler = CliHandler::new(
+            Cli::parse_from(args),
+            LoggerState::new(LogConfig::new(log::LevelFilter::Off)),
+        );
+        assert!(handler.handle_stdin_redirect().await.is_ok(), "{args:?}");
+    }
+}
+
 const SSL_TEST_CONFIGS: &str = r#"[{"alias":"web","namespace":"default","service":"web","local_port":18443,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#;
 
 const SAVED_API_CONFIG: &str = r#"[{"alias":"api","namespace":"default","service":"api","local_port":18444,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"dev"}]"#;
