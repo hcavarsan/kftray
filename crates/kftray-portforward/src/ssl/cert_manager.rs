@@ -699,6 +699,13 @@ impl CertificateManager {
             }
         }
 
+        domains.retain(|domain| {
+            let valid = rcgen::string::Ia5String::try_from(domain.as_str()).is_ok();
+            if !valid {
+                warn!("Leaving {domain} out of the SSL certificate: not a valid DNS name");
+            }
+            valid
+        });
         domains.sort();
         domains.dedup();
         domains
@@ -1011,6 +1018,56 @@ mod tests {
 
         let loaded_cert = manager.load_global_certificate().await.unwrap();
         assert_eq!(cert_pair.certificate.len(), loaded_cert.certificate.len());
+    }
+
+    #[tokio::test]
+    async fn test_global_certificate_skips_non_ascii_alias() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        let config_dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            config_dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+
+        for alias in ["serviço", "web"] {
+            kftray_commons::utils::config::insert_config(Config {
+                alias: Some(alias.to_string()),
+                ..Config::default()
+            })
+            .await
+            .unwrap();
+        }
+        let (manager, _temp_dir) = create_test_manager().await;
+
+        let generated = manager
+            .ensure_global_certificate_for_all_configs()
+            .await
+            .unwrap();
+        let loaded = manager.load_global_certificate().await.unwrap();
+
+        assert!(generated.subject_alt_names.contains(&"web".to_string()));
+        assert!(
+            generated
+                .subject_alt_names
+                .contains(&"web.local".to_string())
+        );
+        assert!(
+            !generated
+                .subject_alt_names
+                .iter()
+                .any(|name| !name.is_ascii())
+        );
+        assert_eq!(loaded.certificate, generated.certificate);
     }
 
     #[tokio::test]

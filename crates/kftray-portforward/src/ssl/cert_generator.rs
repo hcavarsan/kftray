@@ -309,7 +309,10 @@ impl CertificateGenerator {
         for domain in &domains {
             if seen_domains.insert(domain.clone()) {
                 cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                    domain.as_str().try_into().expect("Invalid domain"),
+                    domain
+                        .as_str()
+                        .try_into()
+                        .with_context(|| format!("Invalid domain: {domain}"))?,
                 ));
                 san_names.push(domain.clone());
 
@@ -317,7 +320,10 @@ impl CertificateGenerator {
                     let local_domain = format!("{}.local", domain);
                     if seen_domains.insert(local_domain.clone()) {
                         cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                            local_domain.as_str().try_into().expect("Invalid domain"),
+                            local_domain
+                                .as_str()
+                                .try_into()
+                                .with_context(|| format!("Invalid domain: {local_domain}"))?,
                         ));
                         san_names.push(local_domain);
                     }
@@ -594,5 +600,21 @@ mod tests {
 
         assert!(!cert_pair.certificate.is_empty());
         assert_eq!(cert_pair.domain, "my-api.local");
+    }
+
+    #[tokio::test]
+    async fn test_generate_for_domains_rejects_non_ascii_domain() {
+        let _lock = super::super::cert_store::SSL_TEST_MUTEX.lock().await;
+        let _test_mode = kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+        let _skip_ca = kftray_commons::test_utils::EnvVarGuard::set("KFTRAY_SKIP_CA_INSTALL", "1");
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let generator = CertificateGenerator::for_testing(temp_dir.path());
+
+        let result = generator
+            .generate_for_domains_with_validity(vec!["serviço".to_string()], 30)
+            .await;
+
+        assert!(result.is_err());
     }
 }
