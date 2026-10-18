@@ -190,14 +190,6 @@ impl Config {
     pub fn prepare_for_export(mut self) -> Self {
         self.id = None;
 
-        if self.service.as_deref().is_some_and(Self::is_placeholder) {
-            self.service = None;
-        }
-
-        if Self::is_placeholder(&self.namespace) {
-            self.namespace = String::new();
-        }
-
         if Self::is_placeholder(&self.protocol) {
             self.protocol = String::new();
         }
@@ -284,9 +276,7 @@ impl Config {
     fn is_placeholder(s: &str) -> bool {
         matches!(
             s,
-            "default-service"
-                | "default-namespace"
-                | "default-target"
+            "default-target"
                 | Self::DEFAULT_REMOTE_ADDRESS
                 | "default-alias"
                 | "default-workload"
