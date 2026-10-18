@@ -68,7 +68,8 @@ impl HttpResponseAnalyzer {
 
     pub fn has_bodyless_status(response_data: &[u8]) -> bool {
         find_headers_end(response_data)
-            .and_then(|headers_end| std::str::from_utf8(&response_data[..headers_end]).ok())
+            .and_then(|_| response_data.windows(2).position(|w| w == b"\r\n"))
+            .and_then(|line_end| std::str::from_utf8(&response_data[..line_end]).ok())
             .and_then(Self::extract_status_code)
             .is_some_and(|status| status == 204 || status == 304)
     }
@@ -380,6 +381,21 @@ mod tests {
         ));
         assert!(!HttpResponseAnalyzer::check_content_length_match(
             headers_only
+        ));
+    }
+
+    #[test]
+    fn test_has_bodyless_status_with_non_utf8_header_value() {
+        let not_modified = b"HTTP/1.1 304 Not Modified\r\nETag: \"v\xe9\"\r\n\r\n";
+        let no_content = b"HTTP/1.1 204 No Content\r\nX-Name: caf\xe9\r\n\r\n";
+        let ok = b"HTTP/1.1 200 OK\r\nETag: \"v\xe9\"\r\nContent-Length: 0\r\n\r\n";
+        let headers_incomplete = b"HTTP/1.1 304 Not Modified\r\nETag: \"v\xe9\"\r\n";
+
+        assert!(HttpResponseAnalyzer::has_bodyless_status(not_modified));
+        assert!(HttpResponseAnalyzer::has_bodyless_status(no_content));
+        assert!(!HttpResponseAnalyzer::has_bodyless_status(ok));
+        assert!(!HttpResponseAnalyzer::has_bodyless_status(
+            headers_incomplete
         ));
     }
 
