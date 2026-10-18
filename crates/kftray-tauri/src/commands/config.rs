@@ -210,7 +210,7 @@ async fn restart_ssl_proxies_if_running(
     Ok(Some(failed_ids))
 }
 
-pub(crate) async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) {
+pub(crate) async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperations>) -> Vec<i64> {
     // Try multiple times with increasing delays to catch configs as they start up
     let delays = [100, 500, 1000]; // milliseconds
     let mut target_ids: Option<Vec<i64>> = None;
@@ -229,7 +229,7 @@ pub(crate) async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperati
                     "SSL proxy restart attempt {} completed successfully",
                     attempt + 1
                 );
-                return;
+                return Vec::new();
             }
             Ok(Some(failed_ids)) => {
                 warn!(
@@ -256,6 +256,7 @@ pub(crate) async fn restart_ssl_proxies_with_retry(port_ops: Arc<dyn PortOperati
     }
 
     warn!("All SSL proxy restart attempts failed");
+    target_ids.unwrap_or_default()
 }
 
 #[tauri::command]

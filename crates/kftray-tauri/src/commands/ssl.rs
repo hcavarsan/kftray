@@ -70,7 +70,7 @@ async fn apply_ssl_settings(
     );
 
     let was_enabled = get_ssl_enabled().await.ok();
-    if let Err(e) = set_ssl_enabled(ssl_enabled).await {
+    if !ssl_enabled && let Err(e) = set_ssl_enabled(false).await {
         error!("Failed to set SSL enabled: {e}");
         return Err(format!("Failed to set SSL enabled: {e}"));
     }
@@ -102,6 +102,11 @@ async fn apply_ssl_settings(
                 match cert_manager.regenerate_certificate_for_all_configs().await {
                     Ok(_) => {
                         info!("Successfully generated global SSL certificate for all configs");
+
+                        if let Err(e) = set_ssl_enabled(true).await {
+                            error!("Failed to set SSL enabled: {e}");
+                            return Err(format!("Failed to set SSL enabled: {e}"));
+                        }
 
                         // Install CA to system trust store if auto_install is enabled
                         if ssl_ca_auto_install {
@@ -138,7 +143,12 @@ async fn apply_ssl_settings(
 
     if was_enabled != Some(ssl_enabled) {
         info!("SSL switched, restarting running HTTPS forwards");
-        crate::commands::config::restart_ssl_proxies_with_retry(port_ops).await;
+        let failed_ids = crate::commands::config::restart_ssl_proxies_with_retry(port_ops).await;
+        if !failed_ids.is_empty() {
+            return Err(format!(
+                "SSL settings saved, but these forwards did not restart: {failed_ids:?}"
+            ));
+        }
     }
 
     info!("SSL settings updated successfully");
@@ -429,5 +439,41 @@ mod tests {
         apply_ssl_settings(Arc::new(mock), true, 30, true, false)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_ssl_enable_restarts_forwards_on_the_next_save() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, id) = running_forward_with_alias("ssl-enable-retry", false).await;
+        let not_a_dir = tempfile::NamedTempFile::new().unwrap();
+        let broken_config_dir =
+            EnvVarGuard::set("KFTRAY_CONFIG", not_a_dir.path().to_str().unwrap());
+        let mut mock = MockPortOperations::new();
+        mock.expect_is_forward_registered().times(0);
+        mock.expect_dispatch_start().times(0);
+
+        let failed = apply_ssl_settings(Arc::new(mock), true, 365, true, false).await;
+
+        assert!(failed.is_err());
+        assert!(!get_ssl_enabled().await.unwrap());
+        drop(broken_config_dir);
+        apply_ssl_settings(expect_one_restart(id), true, 365, true, false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_forward_that_does_not_restart_fails_the_ssl_save() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, id) = running_forward_with_alias("ssl-restart-fails", false).await;
+        let mut mock = MockPortOperations::new();
+        mock.expect_is_forward_registered().returning(|_| false);
+        mock.expect_dispatch_start()
+            .times(3)
+            .returning(|_| Err("port in use".to_string()));
+
+        let result = apply_ssl_settings(Arc::new(mock), true, 365, true, false).await;
+
+        assert!(result.unwrap_err().contains(&id.to_string()));
     }
 }
