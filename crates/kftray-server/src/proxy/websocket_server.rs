@@ -1,5 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    Mutex,
+    PoisonError,
+};
 use std::time::Duration;
 
 use futures::{
@@ -40,9 +44,52 @@ pub struct WebSocketTunnelServer {
     ws_port: u16,
 }
 
+type StreamSenders = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>>;
+
 struct TunnelConnection {
     request_tx: mpsc::UnboundedSender<TunnelMessage>,
     pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<TunnelMessage>>>>,
+    streams: StreamSenders,
+}
+
+/// The relay end of an upgraded connection. Dropping it tells the client to
+/// close its side, unless the client closed first.
+pub struct TunnelStream {
+    id: String,
+    incoming: mpsc::UnboundedReceiver<Vec<u8>>,
+    request_tx: mpsc::UnboundedSender<TunnelMessage>,
+    streams: StreamSenders,
+}
+
+impl TunnelStream {
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        self.incoming.recv().await
+    }
+
+    pub fn send(&self, data: Vec<u8>) -> bool {
+        self.request_tx
+            .send(TunnelMessage::StreamData {
+                id: self.id.clone(),
+                data,
+            })
+            .is_ok()
+    }
+}
+
+impl Drop for TunnelStream {
+    fn drop(&mut self) {
+        let open = self
+            .streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.id)
+            .is_some();
+        if open {
+            let _ = self.request_tx.send(TunnelMessage::StreamClose {
+                id: self.id.clone(),
+            });
+        }
+    }
 }
 
 impl WebSocketTunnelServer {
@@ -114,12 +161,14 @@ impl WebSocketTunnelServer {
         let (request_tx, mut request_rx) = mpsc::unbounded_channel::<TunnelMessage>();
         let pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<TunnelMessage>>>> =
             Arc::new(RwLock::new(HashMap::new()));
+        let streams = StreamSenders::default();
 
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = Some(TunnelConnection {
                 request_tx,
                 pending_responses: pending_responses.clone(),
+                streams: streams.clone(),
             });
         }
 
@@ -137,6 +186,23 @@ impl WebSocketTunnelServer {
                     match msg {
                         Some(Ok(Message::Binary(data))) => {
                             match TunnelMessage::deserialize(&data) {
+                                Ok(TunnelMessage::StreamData { id, data }) => {
+                                    if !deliver_stream_data(&streams, &id, data)
+                                        && let Ok(close) =
+                                            (TunnelMessage::StreamClose { id }).serialize()
+                                        && let Err(e) =
+                                            ws_write.send(Message::Binary(close.into())).await
+                                    {
+                                        error!("Failed to send stream close: {}", e);
+                                        break;
+                                    }
+                                }
+                                Ok(TunnelMessage::StreamClose { id }) => {
+                                    streams
+                                        .lock()
+                                        .unwrap_or_else(PoisonError::into_inner)
+                                        .remove(&id);
+                                }
                                 Ok(tunnel_msg) => {
                                     debug!("Received tunnel message: {:?}", tunnel_msg);
 
@@ -275,6 +341,11 @@ impl WebSocketTunnelServer {
             }
         }
 
+        streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+
         {
             let mut pending = pending_responses.write().await;
             let count = pending.len();
@@ -297,11 +368,11 @@ impl WebSocketTunnelServer {
 
     pub async fn send_request(
         &self, id: String, method: String, path: String, headers: Vec<(String, String)>,
-        body: Vec<u8>,
-    ) -> Result<TunnelMessage, String> {
+        body: Vec<u8>, upgrade: bool,
+    ) -> Result<(TunnelMessage, Option<TunnelStream>), String> {
         let (response_tx, response_rx) = oneshot::channel();
 
-        let pending_responses = {
+        let (pending_responses, request_tx, streams, incoming) = {
             let tunnel_lock = self.tunnel.read().await;
             let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
 
@@ -311,6 +382,16 @@ impl WebSocketTunnelServer {
                 .await
                 .insert(id.clone(), response_tx);
 
+            let incoming = upgrade.then(|| {
+                let (data_tx, data_rx) = mpsc::unbounded_channel();
+                tunnel
+                    .streams
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(id.clone(), data_tx);
+                data_rx
+            });
+
             tunnel
                 .request_tx
                 .send(TunnelMessage::HttpRequest {
@@ -319,13 +400,19 @@ impl WebSocketTunnelServer {
                     path,
                     headers,
                     body,
+                    upgrade,
                 })
                 .map_err(|e| format!("Failed to send request: {}", e))?;
 
-            tunnel.pending_responses.clone()
+            (
+                tunnel.pending_responses.clone(),
+                tunnel.request_tx.clone(),
+                tunnel.streams.clone(),
+                incoming,
+            )
         };
 
-        match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
+        let response = match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
@@ -333,12 +420,48 @@ impl WebSocketTunnelServer {
                 pending.remove(&id);
                 Err("Request timeout".to_string())
             }
-        }
+        };
+
+        let accepted = matches!(
+            response,
+            Ok(TunnelMessage::HttpResponse {
+                status: 101,
+                upgraded: true,
+                ..
+            })
+        );
+        let stream = match incoming {
+            Some(incoming) if accepted => Some(TunnelStream {
+                id,
+                incoming,
+                request_tx,
+                streams,
+            }),
+            Some(_) => {
+                streams
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id);
+                None
+            }
+            None => None,
+        };
+
+        response.map(|response| (response, stream))
     }
 
     pub async fn is_connected(&self) -> bool {
         self.tunnel.read().await.is_some()
     }
+}
+
+fn deliver_stream_data(streams: &StreamSenders, id: &str, data: Vec<u8>) -> bool {
+    let mut open = streams.lock().unwrap_or_else(PoisonError::into_inner);
+    let delivered = open.get(id).is_some_and(|tx| tx.send(data).is_ok());
+    if !delivered {
+        open.remove(id);
+    }
+    delivered
 }
 
 #[cfg(test)]
@@ -577,6 +700,7 @@ mod tests {
                     "/".to_string(),
                     Vec::new(),
                     vec![],
+                    false,
                 )
                 .await
         });
@@ -598,8 +722,9 @@ mod tests {
             .expect("send_request still waiting after the tunnel closed")
             .expect("send_request task panicked");
 
+        let result = result.map(|(response, stream)| (response, stream.is_some()));
         match result {
-            Ok(TunnelMessage::Error { id, message }) => {
+            Ok((TunnelMessage::Error { id, message }, false)) => {
                 assert_eq!(id.as_deref(), Some("drop-test-1"));
                 assert!(
                     message.contains("tunnel closed"),

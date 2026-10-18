@@ -14,6 +14,10 @@ pub enum TunnelMessage {
         #[serde(with = "header_pairs")]
         headers: Vec<(String, String)>,
         body: Vec<u8>,
+        /// Set by a relay that can carry an upgraded connection. A peer
+        /// that predates it never sees the flag and keeps the old path.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        upgrade: bool,
     },
     HttpResponse {
         id: String,
@@ -21,6 +25,15 @@ pub enum TunnelMessage {
         #[serde(with = "header_pairs")]
         headers: Vec<(String, String)>,
         body: Vec<u8>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        upgraded: bool,
+    },
+    StreamData {
+        id: String,
+        data: Vec<u8>,
+    },
+    StreamClose {
+        id: String,
     },
     Ping,
     Pong,

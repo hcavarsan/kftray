@@ -14,6 +14,10 @@ pub enum TunnelMessage {
         #[serde(with = "header_pairs")]
         headers: Vec<(String, String)>,
         body: Vec<u8>,
+        /// Set by a relay that can carry an upgraded connection. A peer
+        /// that predates it never sees the flag and keeps the old path.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        upgrade: bool,
     },
     HttpResponse {
         id: String,
@@ -21,6 +25,15 @@ pub enum TunnelMessage {
         #[serde(with = "header_pairs")]
         headers: Vec<(String, String)>,
         body: Vec<u8>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        upgraded: bool,
+    },
+    StreamData {
+        id: String,
+        data: Vec<u8>,
+    },
+    StreamClose {
+        id: String,
     },
     Ping,
     Pong,
@@ -117,6 +130,7 @@ mod tests {
             path: "/api/test".to_string(),
             headers: headers.clone(),
             body: vec![1, 2, 3],
+            upgrade: false,
         };
 
         let serialized = msg.serialize().unwrap();
@@ -129,6 +143,7 @@ mod tests {
                 path,
                 headers: h,
                 body,
+                ..
             } => {
                 assert_eq!(id, "req-123");
                 assert_eq!(method, "GET");
@@ -149,6 +164,7 @@ mod tests {
             status: 200,
             headers: headers.clone(),
             body: vec![72, 101, 108, 108, 111],
+            upgraded: false,
         };
 
         let serialized = msg.serialize().unwrap();
@@ -160,6 +176,7 @@ mod tests {
                 status,
                 headers: h,
                 body,
+                ..
             } => {
                 assert_eq!(id, "req-123");
                 assert_eq!(status, 200);
@@ -190,6 +207,7 @@ mod tests {
             status: 200,
             headers: headers.clone(),
             body: Vec::new(),
+            upgraded: false,
         }
         .serialize()
         .unwrap();
@@ -222,5 +240,25 @@ mod tests {
             }
             _ => panic!("Expected Error message"),
         }
+    }
+
+    #[test]
+    fn messages_from_a_peer_without_upgrade_support_keep_the_plain_path() {
+        let request = br#"{"type":"HttpRequest","id":"r","method":"GET","path":"/ws","headers":{"upgrade":"websocket"},"body":[]}"#;
+        let response =
+            br#"{"type":"HttpResponse","id":"r","status":101,"headers":{"upgrade":"websocket"},"body":[]}"#;
+
+        assert!(matches!(
+            TunnelMessage::deserialize(request).unwrap(),
+            TunnelMessage::HttpRequest { upgrade: false, .. }
+        ));
+        assert!(matches!(
+            TunnelMessage::deserialize(response).unwrap(),
+            TunnelMessage::HttpResponse {
+                status: 101,
+                upgraded: false,
+                ..
+            }
+        ));
     }
 }

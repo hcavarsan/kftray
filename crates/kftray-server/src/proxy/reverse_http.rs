@@ -8,8 +8,13 @@ use http_body_util::{
     Full,
 };
 use hyper::body::Incoming;
+use hyper::header::{
+    CONNECTION,
+    UPGRADE,
+};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::upgrade::OnUpgrade;
 use hyper::{
     Request,
     Response,
@@ -20,11 +25,18 @@ use log::{
     error,
     info,
 };
+use tokio::io::{
+    AsyncReadExt,
+    AsyncWriteExt,
+};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::websocket_server::WebSocketTunnelServer;
+use super::websocket_server::{
+    TunnelStream,
+    WebSocketTunnelServer,
+};
 use crate::models::tunnel_protocol::TunnelMessage;
 
 pub struct ReverseHttpProxy {
@@ -67,6 +79,7 @@ impl ReverseHttpProxy {
                                             async move { Self::handle_request(tunnel, req).await }
                                         }),
                                     )
+                                    .with_upgrades()
                                     .await
                                 {
                                     error!("Error serving connection: {:?}", err);
@@ -89,7 +102,7 @@ impl ReverseHttpProxy {
     }
 
     async fn handle_request(
-        tunnel: Arc<WebSocketTunnelServer>, req: Request<Incoming>,
+        tunnel: Arc<WebSocketTunnelServer>, mut req: Request<Incoming>,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
         if !tunnel.is_connected().await {
             return Ok(Response::builder()
@@ -99,6 +112,7 @@ impl ReverseHttpProxy {
         }
 
         let request_id = Uuid::new_v4().to_string();
+        let on_upgrade = is_upgrade_request(&req).then(|| hyper::upgrade::on(&mut req));
 
         let method = req.method().to_string();
         let path = req
@@ -139,15 +153,32 @@ impl ReverseHttpProxy {
                 path.clone(),
                 headers,
                 body_bytes.to_vec(),
+                on_upgrade.is_some(),
             )
             .await
         {
-            Ok(TunnelMessage::HttpResponse {
-                status,
-                headers,
-                body,
-                ..
-            }) => {
+            Ok((
+                TunnelMessage::HttpResponse {
+                    status,
+                    headers,
+                    body,
+                    ..
+                },
+                stream,
+            )) => {
+                if status == StatusCode::SWITCHING_PROTOCOLS.as_u16() && stream.is_none() {
+                    error!(
+                        "Local app switched protocols for {} {}, but the kftray app cannot carry it",
+                        method, path
+                    );
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(Full::new(Bytes::from(
+                            "Tunnel error: this kftray version cannot carry upgraded connections",
+                        )))
+                        .unwrap());
+                }
+
                 let mut response = Response::new(Full::new(Bytes::from(body)));
                 *response.status_mut() =
                     StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -160,9 +191,13 @@ impl ReverseHttpProxy {
                     }
                 }
 
+                if let (Some(stream), Some(on_upgrade)) = (stream, on_upgrade) {
+                    tokio::spawn(pipe_upgraded(on_upgrade, stream));
+                }
+
                 Ok(response)
             }
-            Ok(TunnelMessage::Error { message, .. }) => {
+            Ok((TunnelMessage::Error { message, .. }, _)) => {
                 error!("Tunnel error for {} {}: {}", method, path, message);
                 Ok(Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
@@ -186,6 +221,52 @@ impl ReverseHttpProxy {
             }
         }
     }
+}
+
+fn is_upgrade_request(req: &Request<Incoming>) -> bool {
+    req.headers().contains_key(UPGRADE)
+        && req.headers().get_all(CONNECTION).iter().any(|value| {
+            value.to_str().is_ok_and(|value| {
+                value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+            })
+        })
+}
+
+async fn pipe_upgraded(on_upgrade: OnUpgrade, mut stream: TunnelStream) {
+    let upgraded = match on_upgrade.await {
+        Ok(upgraded) => TokioIo::new(upgraded),
+        Err(e) => {
+            error!("Failed to upgrade the browser connection: {}", e);
+            return;
+        }
+    };
+    let (mut reader, mut writer) = tokio::io::split(upgraded);
+    let mut buf = vec![0u8; 16 * 1024];
+
+    loop {
+        tokio::select! {
+            read = reader.read(&mut buf) => match read {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if !stream.send(buf[..n].to_vec()) {
+                        break;
+                    }
+                }
+            },
+            data = stream.recv() => match data {
+                Some(data) => {
+                    if writer.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+                None => break,
+            },
+        }
+    }
+
+    let _ = writer.shutdown().await;
 }
 
 #[cfg(test)]
@@ -322,6 +403,7 @@ mod tests {
                 ("set-cookie".to_owned(), "csrf=xyz; Path=/".to_owned()),
             ],
             body: b"ok".to_vec(),
+            upgraded: false,
         };
         ws_client
             .send(Message::Binary(reply.serialize().unwrap().into()))
@@ -410,5 +492,204 @@ mod tests {
         shutdown.notify_waiters();
         ws_task.abort();
         http_task.abort();
+    }
+
+    type FakeClient = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    struct Relay {
+        client: FakeClient,
+        http_addr: std::net::SocketAddr,
+        shutdown: Arc<Notify>,
+        tasks: Vec<tokio::task::JoinHandle<Result<(), String>>>,
+    }
+
+    impl Relay {
+        async fn start() -> Self {
+            async fn free_port() -> u16 {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                listener.local_addr().unwrap().port()
+            }
+
+            let ws_port = free_port().await;
+            let http_port = free_port().await;
+            let tunnel_server = Arc::new(WebSocketTunnelServer::new(ws_port));
+            let shutdown = Arc::new(Notify::new());
+            let ws_task = tokio::spawn({
+                let tunnel_server = tunnel_server.clone();
+                let shutdown = shutdown.clone();
+                async move { tunnel_server.start(shutdown).await }
+            });
+            let http_task = tokio::spawn({
+                let proxy = ReverseHttpProxy::new(tunnel_server.clone(), http_port);
+                let shutdown = shutdown.clone();
+                async move { proxy.start(shutdown).await }
+            });
+
+            let ws_addr = format!("127.0.0.1:{ws_port}").parse().unwrap();
+            assert!(test_utils::wait_for_port(ws_addr).await);
+            let (client, _) = tokio_tungstenite::connect_async(format!("ws://{ws_addr}"))
+                .await
+                .unwrap();
+            while !tunnel_server.is_connected().await {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let http_addr = format!("127.0.0.1:{http_port}").parse().unwrap();
+            assert!(test_utils::wait_for_port(http_addr).await);
+
+            Self {
+                client,
+                http_addr,
+                shutdown,
+                tasks: vec![ws_task, http_task],
+            }
+        }
+
+        async fn recv(&mut self) -> TunnelMessage {
+            use futures::StreamExt;
+            use tokio_tungstenite::tungstenite::Message;
+
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(5), self.client.next())
+                    .await
+                    .expect("no tunnel message within 5s")
+                    .unwrap()
+                    .unwrap();
+                if let Message::Binary(data) = message {
+                    return TunnelMessage::deserialize(&data).unwrap();
+                }
+            }
+        }
+
+        async fn send(&mut self, message: TunnelMessage) {
+            use futures::SinkExt;
+            use tokio_tungstenite::tungstenite::Message;
+
+            self.client
+                .send(Message::Binary(message.serialize().unwrap().into()))
+                .await
+                .unwrap();
+        }
+
+        async fn open_upgrade(&mut self) -> (TcpStream, String) {
+            use tokio::io::AsyncWriteExt;
+
+            let mut browser = TcpStream::connect(self.http_addr).await.unwrap();
+            browser
+                .write_all(
+                    b"GET /ws HTTP/1.1\r\nHost: app\r\nConnection: Upgrade\r\n\
+                      Upgrade: websocket\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let TunnelMessage::HttpRequest {
+                id, upgrade: true, ..
+            } = self.recv().await
+            else {
+                panic!("expected an upgrade request");
+            };
+            (browser, id)
+        }
+
+        fn stop(self) {
+            self.shutdown.notify_waiters();
+            for task in self.tasks {
+                task.abort();
+            }
+        }
+    }
+
+    async fn read_head(stream: &mut TcpStream) -> String {
+        use tokio::io::AsyncReadExt;
+
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(stream.read_u8().await.unwrap());
+        }
+        String::from_utf8(head).unwrap()
+    }
+
+    fn switching_protocols(id: String, upgraded: bool) -> TunnelMessage {
+        TunnelMessage::HttpResponse {
+            id,
+            status: 101,
+            headers: vec![
+                ("upgrade".to_owned(), "websocket".to_owned()),
+                ("connection".to_owned(), "upgrade".to_owned()),
+            ],
+            body: Vec::new(),
+            upgraded,
+        }
+    }
+
+    #[tokio::test]
+    async fn upgraded_connection_carries_bytes_both_ways_until_a_side_closes() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let mut relay = Relay::start().await;
+
+        let (mut browser, id) = relay.open_upgrade().await;
+        relay.send(switching_protocols(id.clone(), true)).await;
+        let head = read_head(&mut browser).await;
+        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+
+        browser.write_all(b"hello").await.unwrap();
+        match relay.recv().await {
+            TunnelMessage::StreamData { id: got, data } => {
+                assert_eq!(got, id);
+                assert_eq!(data, b"hello");
+            }
+            other => panic!("expected stream data, got {other:?}"),
+        }
+
+        relay
+            .send(TunnelMessage::StreamData {
+                id: id.clone(),
+                data: b"world".to_vec(),
+            })
+            .await;
+        let mut reply = [0u8; 5];
+        tokio::time::timeout(Duration::from_secs(5), browser.read_exact(&mut reply))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&reply, b"world");
+
+        relay.send(TunnelMessage::StreamClose { id }).await;
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), browser.read_to_end(&mut rest))
+            .await
+            .expect("the browser connection stayed open after the client closed")
+            .unwrap();
+        assert!(rest.is_empty());
+
+        let (mut browser, id) = relay.open_upgrade().await;
+        relay.send(switching_protocols(id.clone(), true)).await;
+        read_head(&mut browser).await;
+        drop(browser);
+        match relay.recv().await {
+            TunnelMessage::StreamClose { id: got } => assert_eq!(got, id),
+            other => panic!("expected stream close, got {other:?}"),
+        }
+
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn switching_protocols_from_a_client_without_streams_returns_bad_gateway() {
+        let mut relay = Relay::start().await;
+
+        let (mut browser, id) = relay.open_upgrade().await;
+        relay.send(switching_protocols(id, false)).await;
+        let head = tokio::time::timeout(Duration::from_secs(5), read_head(&mut browser))
+            .await
+            .unwrap();
+        assert!(head.starts_with("HTTP/1.1 502"), "{head}");
+
+        relay.stop();
     }
 }

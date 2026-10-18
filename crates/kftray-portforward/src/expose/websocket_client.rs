@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -9,14 +10,19 @@ use http_body_util::{
     BodyExt,
     Full,
 };
+use hyper::upgrade::Upgraded;
 use hyper::{
     Method,
     Request,
+    StatusCode,
     Uri,
 };
 use hyper_util::client::legacy::Client as LegacyClient;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{
+    TokioExecutor,
+    TokioIo,
+};
 use kftray_commons::models::tunnel_protocol::TunnelMessage;
 use log::{
     debug,
@@ -24,7 +30,14 @@ use log::{
     info,
     warn,
 };
-use tokio::sync::oneshot;
+use tokio::io::{
+    AsyncReadExt,
+    AsyncWriteExt,
+};
+use tokio::sync::{
+    mpsc,
+    oneshot,
+};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{
     connect_async,
@@ -149,22 +162,40 @@ impl WebSocketTunnelClient {
             self.local_service_port,
         ));
         let mut requests = JoinSet::new();
+        let mut streams: HashMap<String, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<TunnelMessage>();
 
         loop {
             let msg = tokio::select! {
                 Some(joined) = requests.join_next(), if !requests.is_empty() => {
-                    let response_msg: TunnelMessage = match joined {
-                        Ok(response_msg) => response_msg,
+                    let (response_msg, upgraded) = match joined {
+                        Ok(reply) => reply,
                         Err(e) => {
                             error!("Request task failed: {}", e);
                             continue;
                         }
                     };
-                    match response_msg.serialize() {
-                        Ok(response_data) => {
-                            if let Err(e) =
-                                ws_write.send(Message::Binary(response_data.into())).await
-                            {
+                    let stream = match (&response_msg, upgraded) {
+                        (TunnelMessage::HttpResponse { id, .. }, Some(upgraded)) => {
+                            Some((id.clone(), upgraded))
+                        }
+                        _ => None,
+                    };
+                    let _ = outgoing_tx.send(response_msg);
+                    if let Some((id, upgraded)) = stream {
+                        let (to_local_tx, to_local_rx) = mpsc::unbounded_channel();
+                        streams.insert(id.clone(), to_local_tx);
+                        tokio::spawn(pipe_upgraded(id, upgraded, to_local_rx, outgoing_tx.clone()));
+                    }
+                    continue;
+                }
+                Some(outgoing) = outgoing_rx.recv() => {
+                    if let TunnelMessage::StreamClose { id } = &outgoing {
+                        streams.remove(id);
+                    }
+                    match outgoing.serialize() {
+                        Ok(data) => {
+                            if let Err(e) = ws_write.send(Message::Binary(data.into())).await {
                                 error!("Failed to send response through WebSocket: {}", e);
                                 break;
                             }
@@ -189,6 +220,7 @@ impl WebSocketTunnelClient {
                         path,
                         headers,
                         body,
+                        upgrade,
                     }) => {
                         debug!("Received HTTP request: {} {}", method, path);
 
@@ -203,9 +235,20 @@ impl WebSocketTunnelClient {
                                     path,
                                     headers,
                                     body,
+                                    upgrade,
                                 )
                                 .await
                         });
+                    }
+                    Ok(TunnelMessage::StreamData { id, data }) => {
+                        if let Some(to_local) = streams.get(&id)
+                            && to_local.send(data).is_err()
+                        {
+                            streams.remove(&id);
+                        }
+                    }
+                    Ok(TunnelMessage::StreamClose { id }) => {
+                        streams.remove(&id);
                     }
                     Ok(TunnelMessage::Ping) => {
                         debug!("Received ping, sending pong");
@@ -239,10 +282,11 @@ impl WebSocketTunnelClient {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn forward_to_local_service(
         &self, http_client: &LegacyClient<HttpConnector, Full<Bytes>>, request_id: String,
-        method: String, path: String, headers: Vec<(String, String)>, body: Vec<u8>,
-    ) -> TunnelMessage {
+        method: String, path: String, headers: Vec<(String, String)>, body: Vec<u8>, upgrade: bool,
+    ) -> (TunnelMessage, Option<Upgraded>) {
         let uri_str = format!(
             "http://{}:{}{}",
             self.local_service_address, self.local_service_port, path
@@ -255,10 +299,14 @@ impl WebSocketTunnelClient {
             Ok(u) => u,
             Err(e) => {
                 error!("Invalid URI {}: {}", uri_str, e);
-                return TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!("Invalid URI: {}", e),
-                };
+                let message = format!("Invalid URI: {}", e);
+                return (
+                    TunnelMessage::Error {
+                        id: Some(request_id),
+                        message,
+                    },
+                    None,
+                );
             }
         };
 
@@ -272,10 +320,14 @@ impl WebSocketTunnelClient {
             "OPTIONS" => Method::OPTIONS,
             _ => {
                 error!("Unsupported HTTP method: {}", method);
-                return TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!("Unsupported method: {}", method),
-                };
+                let message = format!("Unsupported method: {}", method);
+                return (
+                    TunnelMessage::Error {
+                        id: Some(request_id),
+                        message,
+                    },
+                    None,
+                );
             }
         };
 
@@ -293,10 +345,14 @@ impl WebSocketTunnelClient {
             Ok(req) => req,
             Err(e) => {
                 error!("Failed to build HTTP request: {}", e);
-                return TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!("Failed to build request: {}", e),
-                };
+                let message = format!("Failed to build request: {}", e);
+                return (
+                    TunnelMessage::Error {
+                        id: Some(request_id),
+                        message,
+                    },
+                    None,
+                );
             }
         };
 
@@ -315,7 +371,33 @@ impl WebSocketTunnelClient {
                     })
                     .collect();
 
-                match response.into_body().collect().await {
+                if upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS {
+                    return match hyper::upgrade::on(response).await {
+                        Ok(upgraded) => (
+                            TunnelMessage::HttpResponse {
+                                id: request_id,
+                                status,
+                                headers: response_headers,
+                                body: Vec::new(),
+                                upgraded: true,
+                            },
+                            Some(upgraded),
+                        ),
+                        Err(e) => {
+                            error!("Failed to upgrade the local connection: {}", e);
+                            let message = format!("Failed to upgrade the local connection: {}", e);
+                            (
+                                TunnelMessage::Error {
+                                    id: Some(request_id),
+                                    message,
+                                },
+                                None,
+                            )
+                        }
+                    };
+                }
+
+                let reply = match response.into_body().collect().await {
                     Ok(collected) => {
                         let body_bytes = collected.to_bytes();
                         debug!("Forwarded request successfully, status: {}", status);
@@ -324,6 +406,7 @@ impl WebSocketTunnelClient {
                             status,
                             headers: response_headers,
                             body: body_bytes.to_vec(),
+                            upgraded: false,
                         }
                     }
                     Err(e) => {
@@ -333,22 +416,65 @@ impl WebSocketTunnelClient {
                             message: format!("Failed to read response body: {}", e),
                         }
                     }
-                }
+                };
+                (reply, None)
             }
             Err(e) => {
                 error!(
                     "Failed to forward request to local service at {}:{}: {:?}",
                     self.local_service_port, uri_str, e
                 );
-                TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!(
-                        "Failed to connect to local service at localhost:{}: {}",
-                        self.local_service_port, e
-                    ),
-                }
+                let message = format!(
+                    "Failed to connect to local service at localhost:{}: {}",
+                    self.local_service_port, e
+                );
+                (
+                    TunnelMessage::Error {
+                        id: Some(request_id),
+                        message,
+                    },
+                    None,
+                )
             }
         }
+    }
+}
+
+async fn pipe_upgraded(
+    id: String, upgraded: Upgraded, mut from_relay: mpsc::UnboundedReceiver<Vec<u8>>,
+    outgoing: mpsc::UnboundedSender<TunnelMessage>,
+) {
+    let (mut reader, mut writer) = tokio::io::split(TokioIo::new(upgraded));
+    let mut buf = vec![0u8; 16 * 1024];
+
+    let local_closed = loop {
+        tokio::select! {
+            read = reader.read(&mut buf) => match read {
+                Ok(0) | Err(_) => break true,
+                Ok(n) => {
+                    let data = TunnelMessage::StreamData {
+                        id: id.clone(),
+                        data: buf[..n].to_vec(),
+                    };
+                    if outgoing.send(data).is_err() {
+                        break false;
+                    }
+                }
+            },
+            data = from_relay.recv() => match data {
+                Some(data) => {
+                    if writer.write_all(&data).await.is_err() {
+                        break true;
+                    }
+                }
+                None => break false,
+            },
+        }
+    };
+
+    let _ = writer.shutdown().await;
+    if local_closed {
+        let _ = outgoing.send(TunnelMessage::StreamClose { id });
     }
 }
 
@@ -500,10 +626,12 @@ mod tests {
                 "/request".to_owned(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .0;
         match response {
             super::TunnelMessage::HttpResponse { status, body, .. } => {
                 assert_eq!(status, 200);
@@ -556,10 +684,12 @@ mod tests {
                     ("x-tag".to_owned(), "two".to_owned()),
                 ],
                 Vec::new(),
+                false,
             ),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .0;
         let request = server.await.unwrap();
         assert!(
             request.contains("x-tag: one\r\n") && request.contains("x-tag: two\r\n"),
@@ -618,10 +748,12 @@ mod tests {
                 "/file".to_owned(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .0;
         server.await.unwrap();
         let wire = response.serialize().unwrap();
         match super::TunnelMessage::deserialize(&wire).unwrap() {
@@ -684,6 +816,7 @@ mod tests {
                 path: path.to_owned(),
                 headers: Vec::new(),
                 body: Vec::new(),
+                upgrade: false,
             }
             .serialize()
             .unwrap()
@@ -733,6 +866,120 @@ mod tests {
             replies
                 .iter()
                 .any(|reply| matches!(reply, super::TunnelMessage::Pong))
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrade_request_streams_bytes_to_the_local_app_and_back() {
+        use futures::{
+            SinkExt,
+            StreamExt,
+        };
+        use tokio::io::AsyncReadExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        use super::TunnelMessage;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app_port = app.local_addr().unwrap().port();
+        let app_task = tokio::spawn(async move {
+            let (mut socket, _) = app.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                      Connection: Upgrade\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut ping = [0u8; 4];
+            socket.read_exact(&mut ping).await.unwrap();
+            socket.write_all(b"pong").await.unwrap();
+            String::from_utf8(head).unwrap().to_ascii_lowercase()
+        });
+
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            ws_listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            app_port,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let _task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (socket, _) = ws_listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+        ready_rx.await.unwrap().unwrap();
+
+        let request = TunnelMessage::HttpRequest {
+            id: "ws".to_owned(),
+            method: "GET".to_owned(),
+            path: "/socket".to_owned(),
+            headers: vec![
+                ("connection".to_owned(), "upgrade".to_owned()),
+                ("upgrade".to_owned(), "websocket".to_owned()),
+            ],
+            body: Vec::new(),
+            upgrade: true,
+        };
+        ws.send(Message::Binary(request.serialize().unwrap().into()))
+            .await
+            .unwrap();
+
+        let mut replies = Vec::new();
+        loop {
+            let reply = tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .expect("no tunnel message within 3s")
+                .unwrap()
+                .unwrap();
+            let reply = TunnelMessage::deserialize(&reply.into_data()).unwrap();
+            if let TunnelMessage::HttpResponse {
+                status: 101,
+                upgraded: true,
+                ..
+            } = reply
+            {
+                let data = TunnelMessage::StreamData {
+                    id: "ws".to_owned(),
+                    data: b"ping".to_vec(),
+                };
+                ws.send(Message::Binary(data.serialize().unwrap().into()))
+                    .await
+                    .unwrap();
+            }
+            let closed = matches!(&reply, TunnelMessage::StreamClose { id } if id == "ws");
+            replies.push(reply);
+            if closed {
+                break;
+            }
+        }
+
+        let head = app_task.await.unwrap();
+        assert!(head.contains("upgrade: websocket"), "{head}");
+        let received: Vec<u8> = replies
+            .iter()
+            .filter_map(|reply| match reply {
+                TunnelMessage::StreamData { id, data } if id == "ws" => Some(data.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(received, b"pong", "{replies:?}");
+        assert!(
+            matches!(
+                replies.first(),
+                Some(TunnelMessage::HttpResponse {
+                    status: 101,
+                    upgraded: true,
+                    ..
+                })
+            ),
+            "{replies:?}"
         );
     }
 }
