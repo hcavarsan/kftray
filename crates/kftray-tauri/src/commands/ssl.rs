@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kftray_commons::utils::settings::{
     get_app_settings,
     get_ssl_auto_regenerate as get_ssl_auto_regen,
@@ -18,6 +20,11 @@ use log::{
     warn,
 };
 use tauri::command;
+
+use crate::init_check::{
+    PortOperations,
+    RealPortOperations,
+};
 
 #[command]
 pub async fn get_ssl_settings() -> Result<serde_json::Value, String> {
@@ -43,11 +50,26 @@ pub async fn set_ssl_settings(
     ssl_enabled: bool, ssl_cert_validity_days: u16, ssl_auto_regenerate: bool,
     ssl_ca_auto_install: bool,
 ) -> Result<String, String> {
+    apply_ssl_settings(
+        Arc::new(RealPortOperations),
+        ssl_enabled,
+        ssl_cert_validity_days,
+        ssl_auto_regenerate,
+        ssl_ca_auto_install,
+    )
+    .await
+}
+
+async fn apply_ssl_settings(
+    port_ops: Arc<dyn PortOperations>, ssl_enabled: bool, ssl_cert_validity_days: u16,
+    ssl_auto_regenerate: bool, ssl_ca_auto_install: bool,
+) -> Result<String, String> {
     info!(
         "Setting SSL configuration: enabled={}, validity_days={}, auto_regenerate={}, ca_auto_install={}",
         ssl_enabled, ssl_cert_validity_days, ssl_auto_regenerate, ssl_ca_auto_install
     );
 
+    let was_enabled = get_ssl_enabled().await.ok();
     if let Err(e) = set_ssl_enabled(ssl_enabled).await {
         error!("Failed to set SSL enabled: {e}");
         return Err(format!("Failed to set SSL enabled: {e}"));
@@ -112,6 +134,11 @@ pub async fn set_ssl_settings(
         } else {
             info!("Successfully cleaned up all SSL artifacts");
         }
+    }
+
+    if was_enabled != Some(ssl_enabled) {
+        info!("SSL switched, restarting running HTTPS forwards");
+        crate::commands::config::restart_ssl_proxies_with_retry(port_ops).await;
     }
 
     info!("SSL settings updated successfully");
@@ -293,4 +320,114 @@ pub async fn set_ssl_auto_regenerate(enabled: bool) -> Result<String, String> {
 
     info!("SSL auto regenerate set to: {}", enabled);
     Ok(format!("SSL auto regenerate set to: {}", enabled))
+}
+
+#[cfg(test)]
+mod tests {
+    use kftray_commons::models::config_model::Config;
+    use kftray_commons::models::config_state_model::ConfigState;
+    use kftray_commons::test_utils::EnvVarGuard;
+    use sqlx::SqlitePool;
+
+    use super::*;
+    use crate::init_check::MockPortOperations;
+
+    struct SslTestEnv {
+        _config_dir: tempfile::TempDir,
+        _skip_ca_install: EnvVarGuard,
+        _test_mode: EnvVarGuard,
+        _config: EnvVarGuard,
+    }
+
+    async fn running_forward_with_alias(alias: &str, ssl_enabled: bool) -> (SslTestEnv, i64) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .unwrap();
+        kftray_commons::utils::db::set_db_pool(Arc::new(pool));
+
+        let config_dir = tempfile::tempdir().unwrap();
+        let config = EnvVarGuard::set("KFTRAY_CONFIG", config_dir.path().to_str().unwrap());
+        let test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+        let skip_ca_install = EnvVarGuard::set("KFTRAY_SKIP_CA_INSTALL", "1");
+        *kftray_portforward::ssl::cert_store::TEST_SSL_VAULT
+            .lock()
+            .unwrap() = Default::default();
+
+        let id = kftray_commons::utils::config::insert_config(Config {
+            alias: Some(alias.to_string()),
+            domain_enabled: Some(false),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        kftray_commons::utils::config_state::update_config_state(
+            &ConfigState::new_without_process(id, true),
+        )
+        .await
+        .unwrap();
+        set_ssl_enabled(ssl_enabled).await.unwrap();
+
+        let env = SslTestEnv {
+            _config_dir: config_dir,
+            _skip_ca_install: skip_ca_install,
+            _test_mode: test_mode,
+            _config: config,
+        };
+        (env, id)
+    }
+
+    fn expect_one_restart(id: i64) -> Arc<dyn PortOperations> {
+        let mut mock = MockPortOperations::new();
+        mock.expect_is_forward_registered()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| true);
+        mock.expect_stop_port_forward()
+            .with(mockall::predicate::eq(id))
+            .times(1)
+            .returning(|_| Ok(()));
+        mock.expect_dispatch_start()
+            .withf(move |config: &Config| config.id == Some(id))
+            .times(1)
+            .returning(|_| Ok(()));
+        Arc::new(mock)
+    }
+
+    #[tokio::test]
+    async fn turning_ssl_on_restarts_running_forwards_with_an_alias() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, id) = running_forward_with_alias("ssl-switch-on", false).await;
+
+        apply_ssl_settings(expect_one_restart(id), true, 365, true, false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn turning_ssl_off_restarts_running_forwards_with_an_alias() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, id) = running_forward_with_alias("ssl-switch-off", true).await;
+
+        apply_ssl_settings(expect_one_restart(id), false, 365, true, false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn saving_ssl_settings_without_a_switch_keeps_forwards_running() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, _id) = running_forward_with_alias("ssl-unchanged", true).await;
+        let mut mock = MockPortOperations::new();
+        mock.expect_is_forward_registered().times(0);
+        mock.expect_stop_port_forward().times(0);
+        mock.expect_dispatch_start().times(0);
+
+        apply_ssl_settings(Arc::new(mock), true, 30, true, false)
+            .await
+            .unwrap();
+    }
 }
