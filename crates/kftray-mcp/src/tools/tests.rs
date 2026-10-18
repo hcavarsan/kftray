@@ -489,6 +489,42 @@ async fn config_tools_reject_protocol_and_workload_type_outside_the_schema() {
 }
 
 #[tokio::test]
+async fn update_config_rejects_a_workload_change_without_its_required_field() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("web", "shop", serde_json::json!({})).await;
+
+    for (workload_type, field) in [("pod", "target"), ("proxy", "remote_address")] {
+        let updated = execute_tool(
+            "update_config",
+            Some(serde_json::json!({ "config_id": id, "workload_type": workload_type })),
+        )
+        .await;
+        assert_eq!(updated.is_error, Some(true), "{}", result_text(&updated));
+        assert!(
+            result_text(&updated).contains(field),
+            "{}",
+            result_text(&updated)
+        );
+    }
+    let saved = execute_tool("get_config", Some(serde_json::json!({ "config_id": id }))).await;
+    assert_eq!(result_json(&saved)["workload_type"], "service");
+
+    let updated = execute_tool(
+        "update_config",
+        Some(serde_json::json!({ "config_id": id, "workload_type": "pod", "target": "app=web" })),
+    )
+    .await;
+    result_json(&updated);
+    let exported = execute_tool("export_configs", None).await;
+    let imported = execute_tool(
+        "import_configs",
+        Some(serde_json::json!({ "configs_json": result_json(&exported)["configs_json"] })),
+    )
+    .await;
+    result_json(&imported);
+}
+
+#[tokio::test]
 async fn list_configs_filters_by_tags_and_fields_like_kftui() {
     let _db = temp_config_db().await;
     create_tagged(
