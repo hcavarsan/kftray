@@ -42,12 +42,16 @@ fn is_missing(value: Option<&str>) -> bool {
     value.is_none_or(str::is_empty)
 }
 
+fn is_blank(value: Option<&str>) -> bool {
+    value.is_none_or(|value| value.trim().is_empty())
+}
+
 fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
     match config.workload_type.as_deref() {
-        Some("service") if is_missing(config.service.as_deref()) => Err(CallToolResult::error(
+        Some("service") if is_blank(config.service.as_deref()) => Err(CallToolResult::error(
             "service is required when workload_type is 'service'",
         )),
-        Some("pod") if is_missing(config.target.as_deref()) => Err(CallToolResult::error(
+        Some("pod") if is_blank(config.target.as_deref()) => Err(CallToolResult::error(
             "target (pod label selector) is required when workload_type is 'pod'",
         )),
         Some("proxy") if is_missing(config.remote_address.as_deref()) => Err(

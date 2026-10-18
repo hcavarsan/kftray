@@ -525,14 +525,16 @@ async fn update_config_rejects_a_workload_change_without_its_required_field() {
 }
 
 #[tokio::test]
-async fn config_tools_reject_an_empty_required_workload_field() {
+async fn config_tools_reject_a_blank_required_workload_field() {
     let _db = temp_config_db().await;
     let id = create_tagged("web", "shop", serde_json::json!({})).await;
 
-    for (workload_type, field) in [
-        ("service", "service"),
-        ("pod", "target"),
-        ("proxy", "remote_address"),
+    for (workload_type, field, value) in [
+        ("service", "service", ""),
+        ("service", "service", "  "),
+        ("pod", "target", ""),
+        ("pod", "target", " \t"),
+        ("proxy", "remote_address", ""),
     ] {
         let mut args = serde_json::json!({
             "context": "kind",
@@ -540,7 +542,7 @@ async fn config_tools_reject_an_empty_required_workload_field() {
             "remote_port": 80,
             "workload_type": workload_type,
         });
-        args[field] = serde_json::json!("");
+        args[field] = serde_json::json!(value);
         let created = execute_tool("create_config", Some(args)).await;
         assert_eq!(created.is_error, Some(true), "{}", result_text(&created));
         assert!(
@@ -550,7 +552,7 @@ async fn config_tools_reject_an_empty_required_workload_field() {
         );
 
         let mut args = serde_json::json!({ "config_id": id, "workload_type": workload_type });
-        args[field] = serde_json::json!("");
+        args[field] = serde_json::json!(value);
         let updated = execute_tool("update_config", Some(args)).await;
         assert_eq!(updated.is_error, Some(true), "{}", result_text(&updated));
         assert!(
