@@ -222,22 +222,19 @@ impl Config {
             self.domain_enabled = None;
         }
 
-        if self.http_logs_enabled == Some(true) {
-            if self.http_logs_max_file_size == Some(10 * 1024 * 1024) {
-                self.http_logs_max_file_size = None;
-            }
-
-            if self.http_logs_retention_days == Some(7) {
-                self.http_logs_retention_days = None;
-            }
-
-            if self.http_logs_auto_cleanup == Some(true) {
-                self.http_logs_auto_cleanup = None;
-            }
-        } else {
+        if self.http_logs_enabled != Some(true) {
             self.http_logs_enabled = None;
+        }
+
+        if self.http_logs_max_file_size == Some(10 * 1024 * 1024) {
             self.http_logs_max_file_size = None;
+        }
+
+        if self.http_logs_retention_days == Some(7) {
             self.http_logs_retention_days = None;
+        }
+
+        if self.http_logs_auto_cleanup == Some(true) {
             self.http_logs_auto_cleanup = None;
         }
 

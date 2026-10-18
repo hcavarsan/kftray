@@ -1422,6 +1422,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn export_import_keeps_http_log_settings_with_logging_off() {
+        let pool = setup_test_db().await;
+        let config = Config {
+            alias: Some("web".to_string()),
+            service: Some("web".to_string()),
+            namespace: "default".to_string(),
+            context: Some("ctx".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            local_port: Some(18080),
+            remote_port: Some(80),
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(5 * 1024 * 1024),
+            http_logs_retention_days: Some(30),
+            http_logs_auto_cleanup: Some(false),
+            ..Config::default()
+        };
+        insert_config_with_pool(config, &pool).await.unwrap();
+
+        let exported = export_configs_with_pool(&pool).await.unwrap();
+        import_configs_with_pool(exported, &pool).await.unwrap();
+
+        let saved = read_configs_with_pool(&pool).await.unwrap().remove(0);
+        assert_eq!(
+            (
+                saved.http_logs_enabled,
+                saved.http_logs_max_file_size,
+                saved.http_logs_retention_days,
+                saved.http_logs_auto_cleanup,
+            ),
+            (Some(false), Some(5 * 1024 * 1024), Some(30), Some(false))
+        );
+    }
+
+    #[tokio::test]
     async fn test_export_configs_refactored() {
         let pool = setup_test_db().await;
         let config1 = Config {
