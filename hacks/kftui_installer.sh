@@ -104,9 +104,9 @@ download_file() {
 
   if command_exists curl; then
     print_msg blue "Downloading kftui using curl from $url"
-    if ! curl -L -s "$url" -o "$output"; then
+    if ! curl -f -L -s "$url" -o "$output"; then
       print_msg red "Error: Failed to download file using curl."
-      curl -L "$url" -o "$output"  # Run without -s to show error
+      curl -f -L "$url" -o "$output"  # Run without -s to show error
       exit 1
     fi
   elif command_exists wget; then

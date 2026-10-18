@@ -20,6 +20,25 @@ else
 fi
 """
 
+CURL_404_SHIM = """#!/bin/sh
+out=""
+fail=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    --fail|-*f*) fail=1 ;;
+  esac
+  shift
+done
+if [ -z "$out" ]; then
+  echo '  "tag_name": "v9.9.9",'
+elif [ -n "$fail" ]; then
+  exit 22
+else
+  echo '<html><body>Not Found</body></html>' > "$out"
+fi
+"""
+
 UNAME_SHIM = """#!/bin/sh
 case "$1" in
   -s) echo "$SHIM_OS" ;;
@@ -32,15 +51,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def run_installer(tmp_path: Path, os_name: str, arch: str) -> subprocess.CompletedProcess[str]:
+def run_installer(
+    tmp_path: Path, os_name: str, arch: str, curl: str = CURL_SHIM
+) -> subprocess.CompletedProcess[str]:
     shims = tmp_path / "shims"
     shims.mkdir()
-    for name, body in (("curl", CURL_SHIM), ("uname", UNAME_SHIM)):
+    for name, body in (("curl", curl), ("uname", UNAME_SHIM)):
         shim = shims / name
         shim.write_text(body)
         shim.chmod(0o755)
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(INSTALLER)],
         env={
@@ -95,3 +116,15 @@ def test_supported_platform_reaches_download(
 
     assert f"/releases/download/v9.9.9/{asset}" in result.stdout
     assert "Unsupported" not in result.stderr
+
+
+def test_http_error_on_download_keeps_the_installed_kftui(tmp_path: Path) -> None:
+    installed = tmp_path / "home" / ".local" / "bin" / "kftui"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("working kftui")
+    installed.chmod(0o755)
+
+    result = run_installer(tmp_path, "Darwin", "arm64", curl=CURL_404_SHIM)
+
+    assert result.returncode != 0
+    assert installed.read_text() == "working kftui"
