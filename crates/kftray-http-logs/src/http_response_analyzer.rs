@@ -66,6 +66,13 @@ impl HttpResponseAnalyzer {
         false
     }
 
+    pub fn has_bodyless_status(response_data: &[u8]) -> bool {
+        find_headers_end(response_data)
+            .and_then(|headers_end| std::str::from_utf8(&response_data[..headers_end]).ok())
+            .and_then(Self::extract_status_code)
+            .is_some_and(|status| status == 204 || status == 304)
+    }
+
     pub fn has_chunked_end_marker(chunk_data: &[u8]) -> bool {
         Self::has_chunked_end_marker_after(chunk_data, 0)
     }
