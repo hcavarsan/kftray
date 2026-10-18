@@ -1382,6 +1382,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn export_keeps_services_and_namespaces_named_like_defaults() {
+        let pool = setup_test_db().await;
+        let base = Config {
+            local_port: Some(18080),
+            remote_port: Some(80),
+            context: Some("dev".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            ..Config::default()
+        };
+        for (alias, service, namespace) in [
+            ("svc", "default-service", "prod"),
+            ("ns", "web", "default-namespace"),
+        ] {
+            let config = Config {
+                alias: Some(alias.to_string()),
+                service: Some(service.to_string()),
+                namespace: namespace.to_string(),
+                ..base.clone()
+            };
+            insert_config_with_pool(config, &pool).await.unwrap();
+        }
+
+        let exported = export_configs_with_pool(&pool).await.unwrap();
+        let imported = parse_import_configs(&exported).unwrap();
+
+        let names: Vec<_> = imported
+            .iter()
+            .map(|c| (c.service.as_deref(), c.namespace.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (Some("default-service"), "prod"),
+                (Some("web"), "default-namespace")
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn test_export_configs_refactored() {
         let pool = setup_test_db().await;
         let config1 = Config {
@@ -1426,9 +1466,9 @@ mod tests {
 
         assert_eq!(exported_c1.get("service"), Some(&json!("export-service1")));
         assert_eq!(exported_c1.get("local_port"), Some(&json!(8080)));
-        assert!(
-            exported_c1.get("namespace").is_none(),
-            "Default namespace should be removed"
+        assert_eq!(
+            exported_c1.get("namespace"),
+            Some(&json!("default-namespace"))
         );
         assert!(exported_c1.get("id").is_none(), "ID should not be present");
 
