@@ -579,6 +579,19 @@ impl TcpForwarder {
         };
 
         if is_new_response {
+            if !state.current_response_logged
+                && !state.buffer.is_empty()
+                && let Some(previous_id) = state.current_response_id.take()
+            {
+                let maybe_logger = {
+                    let guard = logger.lock().await;
+                    guard.clone()
+                };
+                if let Some(log) = maybe_logger {
+                    log.log_response(std::mem::take(&mut state.buffer).into(), previous_id)
+                        .await;
+                }
+            }
             state.reset_for_new_response(current_req_id);
         }
 
@@ -668,6 +681,7 @@ impl TcpForwarder {
             }
         } else {
             return kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&state.buffer)
+                || kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::has_bodyless_status(&state.buffer)
                 || kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&state.buffer);
         }
         false
@@ -678,6 +692,7 @@ impl TcpForwarder {
             state.found_end_marker
         } else {
             kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&state.buffer)
+                || kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::has_bodyless_status(&state.buffer)
         }
     }
 }
@@ -1060,6 +1075,142 @@ mod tests {
             "logged body lost its last bytes: {contents}"
         );
         http_logger.shutdown().await;
+    }
+
+    async fn assert_reused_connection_logs_first_response(
+        first_request: &'static [u8], first_response: &'static [u8], first_status: &str,
+        logged_before_next_request: bool,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("reused.log");
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let first_id = http_logger
+            .log_request(bytes::Bytes::from_static(first_request))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(first_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward_request_id = Arc::clone(&request_id);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                forward_request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        upstream_writer.write_all(first_response).await.unwrap();
+        let mut received = vec![0; first_response.len()];
+        client_reader.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, first_response);
+
+        if logged_before_next_request {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    http_logger.flush().await.unwrap();
+                    let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                    if contents.lines().any(|line| line == first_status) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("bodyless response must be logged once its headers arrive");
+        }
+
+        let second_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        *request_id.lock().await = Some(second_id);
+
+        let second_response = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond";
+        upstream_writer.write_all(second_response).await.unwrap();
+        let mut received = vec![0; second_response.len()];
+        client_reader.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, second_response);
+        upstream_writer.shutdown().await.unwrap();
+        forward.await.unwrap();
+
+        let contents = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                http_logger.flush().await.unwrap();
+                let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                if contents.lines().any(|line| line == "second") {
+                    break contents;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("second response must be logged");
+        let status_lines: Vec<&str> = contents
+            .lines()
+            .filter(|line| line.starts_with("HTTP/1.1 "))
+            .collect();
+        assert_eq!(
+            status_lines.len(),
+            2,
+            "both responses must be logged: {contents}"
+        );
+        assert!(
+            status_lines.contains(&first_status),
+            "first response missing from the log: {contents}"
+        );
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn not_modified_response_on_reused_connection_is_logged() {
+        assert_reused_connection_logs_first_response(
+            b"GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            b"HTTP/1.1 304 Not Modified\r\nETag: \"abc\"\r\n\r\n",
+            "HTTP/1.1 304 Not Modified",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn no_content_response_on_reused_connection_is_logged() {
+        assert_reused_connection_logs_first_response(
+            b"GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            b"HTTP/1.1 204 No Content\r\n\r\n",
+            "HTTP/1.1 204 No Content",
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn head_response_on_reused_connection_is_logged() {
+        assert_reused_connection_logs_first_response(
+            b"HEAD /first HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 1234\r\n\r\n",
+            "HTTP/1.1 200 OK",
+            false,
+        )
+        .await;
     }
 
     #[tokio::test]
