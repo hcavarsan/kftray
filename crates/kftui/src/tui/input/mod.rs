@@ -2399,9 +2399,19 @@ pub async fn handle_settings_input(
                                                     return Ok(());
                                                 }
 
-                                                if let Err(e) = cert_manager
-                                                    .regenerate_certificate_for_all_configs()
-                                                    .await
+                                                let config_ids: Vec<i64> =
+                                                    kftray_commons::utils::config::read_configs_with_mode(mode)
+                                                        .await
+                                                        .unwrap_or_default()
+                                                        .into_iter()
+                                                        .filter_map(|config| config.id)
+                                                        .collect();
+                                                if let Err(e) = crate::cli::runner::PortForwardRunner::regenerate_certificates(
+                                                    &cert_manager,
+                                                    &config_ids,
+                                                    mode,
+                                                )
+                                                .await
                                                 {
                                                     app.error_message = Some(format!(
                                                         "Failed to generate SSL certificates: {e}"
