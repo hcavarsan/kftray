@@ -429,6 +429,22 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
                     "Certificate issuer is required when cert-manager is enabled".to_string(),
                 );
             }
+            match config.exposure_protocol.as_deref() {
+                None | Some("http") => {}
+                Some("tcp") if config.exposes_tcp() => {}
+                Some("tcp") => {
+                    return Err(
+                        "Exposure protocol 'tcp' needs a cluster exposure. Public exposes carry \
+                         HTTP"
+                            .to_string(),
+                    );
+                }
+                Some(other) => {
+                    return Err(format!(
+                        "Exposure protocol must be 'http' or 'tcp', got '{other}'"
+                    ));
+                }
+            }
         }
         Some(workload_type) => {
             return Err(format!(
@@ -2080,6 +2096,56 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].alias.as_deref(), Some("app.example.test"));
         assert_eq!(configs[0].local_port, first_port);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_cluster_expose_survives_export_and_reimport() {
+        let source = setup_test_db().await;
+        let tcp = json!({"workload_type": "expose", "exposure_type": "cluster",
+            "exposure_protocol": "tcp", "protocol": "tcp", "context": "ctx",
+            "namespace": "default", "alias": "db", "local_port": 5432});
+        let http = json!({"workload_type": "expose", "exposure_type": "cluster",
+            "exposure_protocol": "http", "protocol": "tcp", "context": "ctx",
+            "namespace": "default", "alias": "web", "local_port": 3000});
+        import_configs_with_pool(json!([tcp, http]).to_string(), &source)
+            .await
+            .unwrap();
+
+        let exported = export_configs_with_pool(&source).await.unwrap();
+        let target = setup_test_db().await;
+        import_configs_with_pool(exported, &target).await.unwrap();
+
+        let configs = read_configs_with_pool(&target).await.unwrap();
+        let protocol_of = |alias: &str| {
+            configs
+                .iter()
+                .find(|c| c.alias.as_deref() == Some(alias))
+                .unwrap()
+                .exposure_protocol
+                .clone()
+        };
+        assert_eq!(protocol_of("db").as_deref(), Some("tcp"));
+        assert_eq!(protocol_of("web"), None);
+    }
+
+    #[test]
+    fn test_import_rejects_tcp_on_a_public_expose_and_unknown_protocols() {
+        let expose = |exposure_type: &str, exposure_protocol: &str| -> Config {
+            serde_json::from_value(json!({"workload_type": "expose",
+                "exposure_type": exposure_type, "exposure_protocol": exposure_protocol,
+                "protocol": "tcp", "namespace": "default", "alias": "db", "local_port": 5432}))
+            .unwrap()
+        };
+
+        assert!(validate_imported_config(&expose("cluster", "tcp")).is_ok());
+        assert!(validate_imported_config(&expose("public", "http")).is_ok());
+        let public_tcp = validate_imported_config(&expose("public", "tcp")).unwrap_err();
+        assert!(
+            public_tcp.contains("Public exposes carry HTTP"),
+            "{public_tcp}"
+        );
+        let unknown = validate_imported_config(&expose("cluster", "udp")).unwrap_err();
+        assert!(unknown.contains("got 'udp'"), "{unknown}");
     }
 
     #[tokio::test]

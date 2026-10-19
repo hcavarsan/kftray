@@ -165,9 +165,12 @@ export function getConfigDetails(
         })
       }
     } else {
+      const isTcp = config.exposure_protocol === 'tcp'
+
+      details.push({ label: 'Protocol', value: isTcp ? 'TCP' : 'HTTP' })
       details.push({
         label: 'URL',
-        value: `http://${config.alias}.${config.namespace ?? ''}.svc.cluster.local:${config.local_port}`,
+        value: `${isTcp ? 'tcp' : 'http'}://${config.alias}.${config.namespace ?? ''}.svc.cluster.local:${config.local_port}`,
       })
       details.push({ label: 'Service Name', value: config.alias })
     }

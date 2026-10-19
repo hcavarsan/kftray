@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ConfigDraft } from './types'
-import { applyDraftChange } from './utils'
+import { applyDraftChange, toConfig } from './utils'
 
 const draft: ConfigDraft = {
   context: 'ctx',
@@ -72,5 +72,52 @@ describe('applyDraftChange', () => {
 
   it('does not touch the port for unrelated changes', () => {
     expect(applyDraftChange(draft, { alias: 'a' }).remote_port).toBe('8080')
+  })
+})
+
+describe('toConfig for expose', () => {
+  const exposeDraft: ConfigDraft = {
+    alias: 'db',
+    exposure_type: 'cluster',
+    local_port: '5432',
+    namespace: 'ns',
+    workload_type: 'expose',
+  }
+
+  it('saves a tcp cluster expose with its protocol', () => {
+    const config = toConfig({ ...exposeDraft, exposure_protocol: 'tcp' }, null)
+
+    expect(config).toMatchObject({
+      exposure_protocol: 'tcp',
+      exposure_type: 'cluster',
+    })
+  })
+
+  it('treats a draft without exposure type as cluster for tcp', () => {
+    const config = toConfig(
+      { ...exposeDraft, exposure_protocol: 'tcp', exposure_type: undefined },
+      null,
+    )
+
+    expect(config).toMatchObject({ exposure_protocol: 'tcp' })
+  })
+
+  it('leaves the protocol out for http', () => {
+    expect(
+      toConfig({ ...exposeDraft, exposure_protocol: 'http' }, null),
+    ).toHaveProperty('exposure_protocol', undefined)
+    expect(toConfig(exposeDraft, null)).toHaveProperty(
+      'exposure_protocol',
+      undefined,
+    )
+  })
+
+  it('never sends tcp for a public expose', () => {
+    const config = toConfig(
+      { ...exposeDraft, exposure_protocol: 'tcp', exposure_type: 'public' },
+      null,
+    )
+
+    expect(config).toHaveProperty('exposure_protocol', undefined)
   })
 })

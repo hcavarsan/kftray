@@ -28,12 +28,23 @@ use tokio::sync::{
     oneshot,
 };
 use tokio_tungstenite::{
-    accept_async,
-    tungstenite::Message,
+    accept_hdr_async,
+    tungstenite::{
+        Message,
+        handshake::server::{
+            Callback,
+            ErrorResponse,
+            Request,
+            Response,
+        },
+        http::HeaderValue,
+    },
 };
 
 use crate::models::tunnel_protocol::{
     STREAM_WINDOW,
+    TCP_MODE_PATH,
+    TUNNEL_MODE_HEADER,
     TunnelMessage,
 };
 
@@ -59,10 +70,29 @@ struct TunnelConnection {
     request_tx: mpsc::UnboundedSender<TunnelMessage>,
     pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<TunnelMessage>>>>,
     streams: StreamSenders,
+    carries_tcp: bool,
 }
 
-/// The relay end of an upgraded connection. Dropping it tells the client to
-/// close its side, unless the client closed first.
+impl TunnelConnection {
+    fn add_stream(&self, id: &str) -> (mpsc::UnboundedReceiver<Vec<u8>>, Arc<Semaphore>) {
+        let (data, data_rx) = mpsc::unbounded_channel();
+        let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
+        self.streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                id.to_owned(),
+                StreamRoute {
+                    data,
+                    credit: credit.clone(),
+                },
+            );
+        (data_rx, credit)
+    }
+}
+
+/// The relay end of an upgraded connection or a TCP connection. Dropping it
+/// tells the client to close its side, unless the client closed first.
 pub struct TunnelStream {
     id: String,
     incoming: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -186,11 +216,15 @@ impl WebSocketTunnelServer {
         tunnel: Arc<RwLock<Option<TunnelConnection>>>, stream: TcpStream,
         ping_interval_duration: Duration, pong_timeout_duration: Duration,
     ) -> Result<(), String> {
-        let ws_stream = accept_async(stream)
+        let mut carries_tcp = false;
+        let ws_stream = accept_hdr_async(stream, TunnelModeHandshake(&mut carries_tcp))
             .await
             .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
 
-        info!("WebSocket tunnel established");
+        info!(
+            "WebSocket tunnel established ({})",
+            if carries_tcp { "tcp" } else { "http" }
+        );
 
         let (mut ws_write, mut ws_read) = ws_stream.split();
 
@@ -205,6 +239,7 @@ impl WebSocketTunnelServer {
                 request_tx,
                 pending_responses: pending_responses.clone(),
                 streams: streams.clone(),
+                carries_tcp,
             });
         }
 
@@ -427,22 +462,7 @@ impl WebSocketTunnelServer {
                 .await
                 .insert(id.clone(), response_tx);
 
-            let incoming = upgrade.then(|| {
-                let (data, data_rx) = mpsc::unbounded_channel();
-                let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
-                tunnel
-                    .streams
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(
-                        id.clone(),
-                        StreamRoute {
-                            data,
-                            credit: credit.clone(),
-                        },
-                    );
-                (data_rx, credit)
-            });
+            let incoming = upgrade.then(|| tunnel.add_stream(&id));
 
             tunnel
                 .request_tx
@@ -507,6 +527,52 @@ impl WebSocketTunnelServer {
 
     pub async fn is_connected(&self) -> bool {
         self.tunnel.read().await.is_some()
+    }
+
+    /// Reports whether the connected app asked for raw TCP. The relay pipes
+    /// connections on its HTTP port as streams only while this holds.
+    pub async fn carries_tcp(&self) -> bool {
+        self.tunnel
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|tunnel| tunnel.carries_tcp)
+    }
+
+    /// Asks the app to open a connection to its local port for one client
+    /// connection, and returns the relay end of that stream.
+    pub async fn open_stream(&self, id: String) -> Result<TunnelStream, String> {
+        let tunnel_lock = self.tunnel.read().await;
+        let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
+        let (incoming, credit) = tunnel.add_stream(&id);
+        let stream = TunnelStream {
+            id: id.clone(),
+            incoming,
+            credit,
+            request_tx: tunnel.request_tx.clone(),
+            streams: tunnel.streams.clone(),
+        };
+        tunnel
+            .request_tx
+            .send(TunnelMessage::StreamOpen { id })
+            .map_err(|e| format!("Failed to open stream: {}", e))?;
+        Ok(stream)
+    }
+}
+
+struct TunnelModeHandshake<'a>(&'a mut bool);
+
+impl Callback for TunnelModeHandshake<'_> {
+    fn on_request(
+        self, request: &Request, mut response: Response,
+    ) -> Result<Response, ErrorResponse> {
+        *self.0 = request.uri().path() == TCP_MODE_PATH;
+        if *self.0 {
+            response
+                .headers_mut()
+                .insert(TUNNEL_MODE_HEADER, HeaderValue::from_static("tcp"));
+        }
+        Ok(response)
     }
 }
 
