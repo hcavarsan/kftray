@@ -26,15 +26,18 @@ const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 ///
 /// Unlike `MultiGzDecoder`, it stops without an error at bytes after a
 /// member that do not start another one, such as the start of the next
-/// response in the same capture.
+/// response in the same capture, and at a later member it cannot decode,
+/// such as one cut off at the end of the capture.
 pub(crate) struct GzipMembers<'a> {
     member: GzDecoder<&'a [u8]>,
+    first_member: bool,
 }
 
 impl<'a> GzipMembers<'a> {
     pub(crate) fn new(data: &'a [u8]) -> Self {
         Self {
             member: GzDecoder::new(data),
+            first_member: true,
         }
     }
 }
@@ -42,12 +45,17 @@ impl<'a> GzipMembers<'a> {
 impl Read for GzipMembers<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
-            let read = self.member.read(buf)?;
+            let read = match self.member.read(buf) {
+                Ok(read) => read,
+                Err(_) if !self.first_member => return Ok(0),
+                Err(e) => return Err(e),
+            };
             let rest = *self.member.get_ref();
             if read > 0 || buf.is_empty() || !rest.starts_with(&[0x1f, 0x8b]) {
                 return Ok(read);
             }
             self.member = GzDecoder::new(rest);
+            self.first_member = false;
         }
     }
 }

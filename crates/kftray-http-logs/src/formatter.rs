@@ -968,20 +968,30 @@ mod formatter_tests {
 
     #[test]
     fn test_format_preformatted_response_gzip_with_trailing_bytes() {
-        let mut response =
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n\r\n"
-                .to_vec();
-        response.extend(gzip_compress(b"only-member-line\n"));
-        response.extend_from_slice(b"\r\nHTTP/1.1 200 OK\r\n");
+        let cut_member = gzip_compress(b"cut-member-line\n");
+        for tail in [
+            &b"\r\nHTTP/1.1 200 OK\r\n"[..],
+            &b"\x1f\x8b"[..],
+            &cut_member[..cut_member.len() - 4],
+        ] {
+            let mut response =
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n\r\n"
+                    .to_vec();
+            response.extend(gzip_compress(b"only-member-line\n"));
+            response.extend_from_slice(tail);
 
-        let formatted = MessageFormatter::format_preformatted_response(
-            "gz3",
-            Utc::now(),
-            1,
-            &Bytes::from(response),
-        );
+            let formatted = MessageFormatter::format_preformatted_response(
+                "gz3",
+                Utc::now(),
+                1,
+                &Bytes::from(response),
+            );
 
-        assert!(formatted.contains("only-member-line"), "got:\n{formatted}");
+            assert!(
+                formatted.contains("only-member-line"),
+                "tail {tail:?} got:\n{formatted}"
+            );
+        }
     }
 
     #[tokio::test]
