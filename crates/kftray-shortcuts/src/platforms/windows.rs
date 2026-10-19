@@ -101,7 +101,7 @@ impl WindowsPlatform {
                 "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
                 "alt" => modifiers |= Modifiers::ALT,
                 "shift" => modifiers |= Modifiers::SHIFT,
-                "super" | "cmd" | "meta" | "win" => modifiers |= Modifiers::SUPER,
+                "super" | "cmd" | "meta" | "win" => modifiers |= Modifiers::META,
                 key => key_code = Some(self.parse_key(key)?),
             }
         }

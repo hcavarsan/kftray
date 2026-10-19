@@ -157,7 +157,7 @@ export const invokeSpan = <T>(command: string, run: () => Promise<T>) =>
 // fingerprint is what keeps one command's failures from grouping with
 // another's. The rejection value is a message from Rust that can
 // carry a cluster or resource name, so it is not attached.
-export class InvokeError extends Error {
+class InvokeError extends Error {
   constructor(readonly command: string) {
     super(command)
     this.name = 'InvokeError'
