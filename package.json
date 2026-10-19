@@ -29,6 +29,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@tauri-apps/cli": "^2.12.1",
-    "knip": "6.42.1"
+    "knip": "6.42.0"
   }
 }
