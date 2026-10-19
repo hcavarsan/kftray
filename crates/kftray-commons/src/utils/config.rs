@@ -508,6 +508,23 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     }
 }
 
+fn local_address_or_default(config: &Config) -> &str {
+    config.local_address.as_deref().unwrap_or("127.0.0.1")
+}
+
+fn domain_alias(config: &Config) -> Option<&str> {
+    if config.domain_enabled.unwrap_or_default() {
+        config.alias.as_deref().map(str::trim)
+    } else {
+        None
+    }
+}
+
+fn same_local_endpoint(existing: &Config, incoming: &Config) -> bool {
+    local_address_or_default(existing) == local_address_or_default(incoming)
+        && domain_alias(existing) == domain_alias(incoming)
+}
+
 #[derive(Clone, Copy)]
 enum IdentityMatch {
     None,
@@ -520,6 +537,7 @@ fn find_identity_match(configs: &[Config], incoming: &Config) -> IdentityMatch {
         c.remote_port == incoming.remote_port,
         c.local_port == incoming.local_port,
     ) {
+        (true, true) if same_local_endpoint(c, incoming) => 3,
         (true, true) => 2,
         (true, false) => 1,
         (false, _) => 0,
@@ -674,10 +692,11 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
 fn dedup_configs(configs: Vec<Config>) -> Vec<Config> {
     let mut unique: Vec<Config> = Vec::with_capacity(configs.len());
     for config in configs {
-        match unique
-            .iter()
-            .position(|c| configs_match_identity(c, &config) && c.remote_port == config.remote_port)
-        {
+        match unique.iter().position(|c| {
+            configs_match_identity(c, &config)
+                && c.remote_port == config.remote_port
+                && same_local_endpoint(c, &config)
+        }) {
             Some(index) => unique[index] = config,
             None => unique.push(config),
         }
@@ -2121,6 +2140,85 @@ mod tests {
             kubeconfigs(read_configs_with_pool(&target).await.unwrap()),
             expected
         );
+    }
+
+    fn same_port_service(local_address: Option<&str>, alias: &str, domain: bool) -> Config {
+        Config {
+            service: Some("db".to_string()),
+            namespace: "ns".to_string(),
+            context: Some("ctx1".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            local_port: Some(18080),
+            remote_port: Some(80),
+            local_address: local_address.map(str::to_string),
+            alias: Some(alias.to_string()),
+            domain_enabled: Some(domain),
+            ..Config::default()
+        }
+    }
+
+    async fn endpoints(pool: &SqlitePool) -> Vec<(Option<i64>, Option<String>, Option<String>)> {
+        read_configs_with_pool(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.id, c.local_address, c.alias))
+            .collect()
+    }
+
+    async fn assert_round_trip_keeps_both(pair: [Config; 2]) {
+        let source = setup_test_db().await;
+        for config in pair.clone() {
+            insert_config_with_pool(config, &source).await.unwrap();
+        }
+        let saved = endpoints(&source).await;
+        assert_eq!(saved.len(), 2);
+        let exported = export_configs_with_pool(&source).await.unwrap();
+
+        let target = setup_test_db().await;
+        import_configs_with_pool(exported.clone(), &target)
+            .await
+            .unwrap();
+        assert_eq!(endpoints(&target).await, saved);
+
+        import_configs_with_pool(exported.clone(), &source)
+            .await
+            .unwrap();
+        assert_eq!(endpoints(&source).await, saved);
+
+        let holds_second = setup_test_db().await;
+        let second_id = insert_config_with_pool(pair[1].clone(), &holds_second)
+            .await
+            .unwrap();
+        import_configs_with_pool(exported, &holds_second)
+            .await
+            .unwrap();
+        let rows = endpoints(&holds_second).await;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            (Some(second_id), saved[1].1.clone(), saved[1].2.clone())
+        );
+        assert_eq!((&rows[1].1, &rows[1].2), (&saved[0].1, &saved[0].2));
+    }
+
+    #[tokio::test]
+    async fn test_export_import_keeps_configs_that_differ_only_by_local_address() {
+        assert_round_trip_keeps_both([
+            same_port_service(Some("127.0.0.2"), "db", false),
+            same_port_service(Some("127.0.0.3"), "db", false),
+        ])
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_export_import_keeps_configs_that_differ_only_by_domain_alias() {
+        assert_round_trip_keeps_both([
+            same_port_service(Some("127.0.0.1"), "db-a.local", true),
+            same_port_service(Some("127.0.0.1"), "db-b.local", true),
+        ])
+        .await;
     }
 
     #[tokio::test]
