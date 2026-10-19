@@ -1,9 +1,12 @@
-use std::io::Read;
+use std::io::{
+    self,
+    Read,
+};
 use std::str;
 
 use anyhow::Result;
 use brotli::Decompressor;
-use flate2::read::GzDecoder;
+use flate2::bufread::GzDecoder;
 use httparse::{
     EMPTY_HEADER,
     Header,
@@ -18,6 +21,44 @@ const MAX_HEADERS: usize = 64;
 /// Maximum allowed chunk size (100MB) to prevent integer overflow and DoS
 /// attacks
 const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
+
+/// Decodes every gzip member in a body, like `cat a.gz b.gz | gunzip`.
+///
+/// Unlike `MultiGzDecoder`, it stops without an error at bytes after a
+/// member that do not start another one, such as the start of the next
+/// response in the same capture, and at a later member it cannot decode,
+/// such as one cut off at the end of the capture.
+pub(crate) struct GzipMembers<'a> {
+    member: GzDecoder<&'a [u8]>,
+    first_member: bool,
+}
+
+impl<'a> GzipMembers<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
+        Self {
+            member: GzDecoder::new(data),
+            first_member: true,
+        }
+    }
+}
+
+impl Read for GzipMembers<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let read = match self.member.read(buf) {
+                Ok(read) => read,
+                Err(_) if !self.first_member => return Ok(0),
+                Err(e) => return Err(e),
+            };
+            let rest = *self.member.get_ref();
+            if read > 0 || buf.is_empty() || !rest.starts_with(&[0x1f, 0x8b]) {
+                return Ok(read);
+            }
+            self.member = GzDecoder::new(rest);
+            self.first_member = false;
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 enum ContentCategory {
@@ -555,7 +596,7 @@ impl BodyParser {
 
         if data.len() >= 2 && data[0] == 0x1F && data[1] == 0x8B {
             task::spawn_blocking(move || {
-                let mut decoder = GzDecoder::new(&data[..]);
+                let mut decoder = GzipMembers::new(&data[..]);
                 let mut decompressed_data = Vec::new();
                 if decoder.read_to_end(&mut decompressed_data).is_err() {
                     if decompressed_data.is_empty() {
@@ -1309,6 +1350,26 @@ mod tests {
         let data_with_gzip_header = b"prefix\x1F\x8Bgzipped";
         let index = BodyParser::find_gzip_header(data_with_gzip_header);
         assert_eq!(index, Some(6));
+    }
+
+    #[tokio::test]
+    async fn test_multi_member_gzip_response_keeps_every_member() {
+        let mut body = Vec::new();
+        for line in ["first-member-line\n", "second-member-line\n"] {
+            let mut gzip =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut gzip, line.as_bytes()).unwrap();
+            body.extend(gzip.finish().unwrap());
+        }
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Encoding";
+        headers[0].value = b"gzip";
+
+        let result = BodyParser::process_response_body(&body, &headers)
+            .await
+            .unwrap();
+
+        assert_eq!(result, b"first-member-line\nsecond-member-line\n");
     }
 
     #[tokio::test]
