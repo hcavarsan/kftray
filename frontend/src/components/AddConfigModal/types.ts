@@ -1,5 +1,6 @@
 import type {
   CertIssuerKind,
+  ExposureProtocol,
   ExposureType,
   Protocol,
   StoredConfig,
@@ -22,6 +23,7 @@ export interface ConfigDraft {
   cert_manager_enabled?: boolean
   context?: string
   domain_enabled?: boolean
+  exposure_protocol?: ExposureProtocol
   exposure_type?: ExposureType
   ingress_annotations?: string
   ingress_class?: string

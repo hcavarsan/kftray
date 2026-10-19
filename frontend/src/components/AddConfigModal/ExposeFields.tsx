@@ -13,6 +13,10 @@ const exposureOptions: StringOption[] = [
   { value: 'cluster', label: 'Cluster Only (Internal)' },
   { value: 'public', label: 'Public (Internet)' },
 ]
+const exposureProtocolOptions: StringOption[] = [
+  { value: 'http', label: 'HTTP' },
+  { value: 'tcp', label: 'TCP' },
+]
 const issuerOptions: StringOption[] = [
   { value: 'ClusterIssuer', label: 'ClusterIssuer' },
   { value: 'Issuer', label: 'Issuer' },
@@ -47,7 +51,7 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
           onChange={option =>
             onUpdate(
               option?.value === 'public'
-                ? { exposure_type: 'public' }
+                ? { exposure_protocol: undefined, exposure_type: 'public' }
                 : {
                     cert_issuer: '',
                     cert_issuer_kind: undefined,
@@ -68,6 +72,30 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
           }
         />
       </Field>
+      {!isPublic && (
+        <Field
+          data-testid='config-exposure-protocol'
+          hint={
+            <Hint content='HTTP carries web requests. TCP carries raw bytes, such as Postgres or Redis.' />
+          }
+          label='Protocol'
+        >
+          <FieldSelect<StringOption>
+            onChange={option =>
+              onUpdate({
+                exposure_protocol: option?.value === 'tcp' ? 'tcp' : 'http',
+              })
+            }
+            options={exposureProtocolOptions}
+            styles={selectStyles<StringOption>()}
+            value={
+              exposureProtocolOptions.find(
+                option => option.value === (draft.exposure_protocol ?? 'http'),
+              ) ?? null
+            }
+          />
+        </Field>
+      )}
       <TextField
         error={errors.local_port}
         hint={<Hint content='Port of your local development server' />}

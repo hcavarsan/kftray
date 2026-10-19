@@ -52,6 +52,7 @@ mod tests {
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
             exposure_type: None,
+            exposure_protocol: None,
             cert_manager_enabled: None,
             cert_issuer: None,
             cert_issuer_kind: None,

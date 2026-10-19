@@ -227,7 +227,8 @@ pub(crate) async fn start_single_expose(
         websocket_port,
         local_service_address.clone(),
         local_service_port,
-    );
+    )
+    .carrying_tcp(config.exposes_tcp());
 
     info!(
         "Starting WebSocket tunnel: pod → localhost:{} → {}:{}",
