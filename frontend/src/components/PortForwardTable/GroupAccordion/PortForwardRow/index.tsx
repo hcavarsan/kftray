@@ -253,7 +253,11 @@ function PortForwardRowComponent({
               minWidth='48px'
               justifyContent='flex-end'
             >
-              {config.is_running ? (
+              {config.is_running &&
+              !(
+                config.workload_type === 'expose' &&
+                config.exposure_protocol === 'tcp'
+              ) ? (
                 <Tooltip content='Open in browser'>
                   <IconButton
                     size='2xs'

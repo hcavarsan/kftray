@@ -4,6 +4,8 @@ export type Protocol = 'tcp' | 'udp'
 
 export type ExposureType = 'cluster' | 'public'
 
+export type ExposureProtocol = 'http' | 'tcp'
+
 export type CertIssuerKind = 'ClusterIssuer' | 'Issuer'
 
 interface ConfigBase {
@@ -48,6 +50,7 @@ interface ExposeConfig extends ConfigBase {
   alias: string
   local_port: number
   exposure_type?: ExposureType
+  exposure_protocol?: ExposureProtocol
   cert_manager_enabled?: boolean
   cert_issuer?: string
   cert_issuer_kind?: CertIssuerKind

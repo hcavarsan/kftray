@@ -131,6 +131,9 @@ pub struct Config {
     pub exposure_type: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_protocol: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub cert_manager_enabled: Option<bool>,
     #[serde(default)]
@@ -173,6 +176,7 @@ impl Default for Config {
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
             exposure_type: None,
+            exposure_protocol: None,
             cert_manager_enabled: None,
             cert_issuer: None,
             cert_issuer_kind: None,
@@ -186,6 +190,13 @@ impl Default for Config {
 impl Config {
     pub const DEFAULT_CONTEXT: &'static str = "current-context";
     pub const DEFAULT_REMOTE_ADDRESS: &'static str = "default-remote-address";
+
+    /// A Cluster Only expose set to `tcp` carries raw bytes. Every other
+    /// expose carries HTTP, and a public one always goes through an Ingress.
+    pub fn exposes_tcp(&self) -> bool {
+        self.exposure_type.as_deref() != Some("public")
+            && self.exposure_protocol.as_deref() == Some("tcp")
+    }
 
     pub fn prepare_for_export(mut self) -> Self {
         self.id = None;
@@ -256,6 +267,9 @@ impl Config {
                 self.target = None;
                 self.remote_address = None;
                 self.remote_port = None;
+                if !self.exposes_tcp() {
+                    self.exposure_protocol = None;
+                }
                 if self.exposure_type.as_deref() == Some("cluster") {
                     self.cert_manager_enabled = None;
                     self.cert_issuer = None;
