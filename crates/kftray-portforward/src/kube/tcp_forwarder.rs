@@ -761,13 +761,17 @@ impl TcpForwarder {
             state.reset_for_new_response(current_req_id);
         }
 
-        if state.first_chunk_time.is_none() && !buffer.is_empty() {
-            state.first_chunk_time = Some(tokio::time::Instant::now());
-        }
-
         let scanned_len = state.buffer.len();
         state.buffer.extend_from_slice(buffer);
-        let scanned_len = scanned_len.saturating_sub(state.drop_interim_responses());
+        let dropped = state.drop_interim_responses();
+        let scanned_len = scanned_len.saturating_sub(dropped);
+
+        if dropped > 0 {
+            state.first_chunk_time = None;
+        }
+        if state.first_chunk_time.is_none() && !state.buffer.is_empty() {
+            state.first_chunk_time = Some(tokio::time::Instant::now());
+        }
 
         if !state.is_chunked && !state.found_end_marker {
             state.is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(&state.buffer);
@@ -1105,6 +1109,43 @@ mod tests {
             b"\n\r\n",
         ])
         .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chunked_response_after_a_slow_continue_waits_for_its_last_chunk() {
+        let mut state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+        };
+        let logger = Arc::new(Mutex::new(None));
+        let request_id = Arc::new(Mutex::new(Some("upload".to_string())));
+
+        TcpForwarder::handle_response_logging_static(
+            b"HTTP/1.1 100 Continue\r\n\r\n",
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        TcpForwarder::handle_response_logging_static(
+            b"HTTP/1.1 201 Created\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nfirst\r\n",
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+
+        assert!(
+            !TcpForwarder::should_log_response_static(&mut state),
+            "final response logged before its last chunk"
+        );
     }
 
     #[tokio::test]
