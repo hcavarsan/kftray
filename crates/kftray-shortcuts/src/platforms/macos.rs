@@ -60,7 +60,7 @@ impl MacOSPlatform {
                 "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
                 "alt" | "option" => modifiers |= Modifiers::ALT,
                 "shift" => modifiers |= Modifiers::SHIFT,
-                "super" | "cmd" | "meta" | "command" => modifiers |= Modifiers::SUPER,
+                "super" | "cmd" | "meta" | "command" => modifiers |= Modifiers::META,
                 key => key_code = Some(self.parse_key(key)?),
             }
         }
