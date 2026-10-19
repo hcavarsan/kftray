@@ -150,14 +150,15 @@ install_kftui() {
       case "$(basename "${SHELL:-sh}")" in
         zsh) profiles=("$HOME/.zshrc") ;;
         fish) profiles=("$HOME/.config/fish/config.fish") ;;
+        bash) profiles=("$HOME/.profile" "$HOME/.bashrc") ;;
         *) profiles=("$HOME/.profile") ;;
       esac
       mkdir -p "$(dirname "${profiles[0]}")"
     fi
     for profile in "${profiles[@]}"; do
       case "$profile" in
-        *config.fish) echo "set -U fish_user_paths $INSTALL_DIR \$fish_user_paths" >> "$profile" ;;
-        *) echo "export PATH=$INSTALL_DIR:\$PATH" >> "$profile" ;;
+        *config.fish) echo "set -U fish_user_paths \"$INSTALL_DIR\" \$fish_user_paths" >> "$profile" ;;
+        *) echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$profile" ;;
       esac
     done
     export PATH="$INSTALL_DIR:$PATH"

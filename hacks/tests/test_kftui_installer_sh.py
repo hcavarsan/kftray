@@ -57,6 +57,7 @@ def run_installer(
     arch: str,
     curl: str = CURL_SHIM,
     shell: str = "/bin/bash",
+    home_name: str = "home",
 ) -> subprocess.CompletedProcess[str]:
     shims = tmp_path / "shims"
     shims.mkdir()
@@ -64,7 +65,7 @@ def run_installer(
         shim = shims / name
         shim.write_text(body)
         shim.chmod(0o755)
-    home = tmp_path / "home"
+    home = tmp_path / home_name
     home.mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(INSTALLER)],
@@ -157,15 +158,19 @@ def test_home_without_profile_gets_one_for_the_user_shell(
     )
 
 
-def test_login_shell_finds_kftui_after_install_into_empty_home(tmp_path: Path) -> None:
-    run_installer(tmp_path, "Darwin", "arm64")
+@pytest.mark.parametrize("flags", ["-lc", "-ic"])
+def test_bash_finds_kftui_after_install_into_empty_home(
+    tmp_path: Path, flags: str
+) -> None:
+    home = tmp_path / "my home"
+    run_installer(tmp_path, "Darwin", "arm64", home_name=home.name)
 
     found = subprocess.run(
-        ["bash", "-lc", "command -v kftui"],
-        env={"HOME": str(tmp_path / "home"), "PATH": "/usr/bin:/bin"},
+        ["bash", flags, "command -v kftui"],
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
         capture_output=True,
         text=True,
         check=False,
     )
 
-    assert found.stdout.strip() == str(tmp_path / "home" / ".local" / "bin" / "kftui")
+    assert found.stdout.strip() == str(home / ".local" / "bin" / "kftui")
