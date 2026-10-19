@@ -1,5 +1,9 @@
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 use std::time::{
     Duration,
     Instant,
@@ -29,6 +33,15 @@ pub struct NetworkMonitor {
     config: MonitorConfig,
     network_checker: NetworkChecker,
     health_checker: HealthChecker,
+    stopped: Arc<AtomicBool>,
+}
+
+struct StopWorkersOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopWorkersOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 impl NetworkMonitor {
@@ -38,10 +51,12 @@ impl NetworkMonitor {
             network_checker: NetworkChecker::new(config.clone()),
             health_checker: HealthChecker::new(config.clone()),
             config,
+            stopped: Arc::default(),
         }
     }
 
     pub async fn start(self) {
+        let _stop_workers = StopWorkersOnDrop(self.stopped.clone());
         info!("Starting network monitor");
 
         let initial_configs = match ConfigManager::get_active_configs().await {
@@ -225,6 +240,11 @@ impl NetworkMonitor {
 
         sleep(Duration::from_secs(5)).await;
 
+        if self.stopped.load(Ordering::SeqCst) {
+            info!("Network monitor was turned off, skipping the reconnect restart");
+            return;
+        }
+
         info!("Restarting {} port forwards", active_configs.len());
 
         ConfigManager::restart_port_forwards(active_configs).await;
@@ -264,13 +284,18 @@ impl NetworkMonitor {
                 }
             }
 
-            if !confirmed_failed.is_empty() {
-                info!(
-                    "Restarting {} confirmed failed port forwards",
-                    confirmed_failed.len()
-                );
-                ConfigManager::restart_port_forwards(confirmed_failed).await;
+            if confirmed_failed.is_empty() {
+                return;
             }
+            if self.stopped.load(Ordering::SeqCst) {
+                info!("Network monitor was turned off, skipping the health check restart");
+                return;
+            }
+            info!(
+                "Restarting {} confirmed failed port forwards",
+                confirmed_failed.len()
+            );
+            ConfigManager::restart_port_forwards(confirmed_failed).await;
         }
     }
 
@@ -440,6 +465,7 @@ impl Clone for NetworkMonitor {
             config: self.config.clone(),
             network_checker: NetworkChecker::new(self.config.clone()),
             health_checker: HealthChecker::new(self.config.clone()),
+            stopped: self.stopped.clone(),
         }
     }
 }
@@ -476,13 +502,14 @@ mod tests {
             .to_string()
     });
 
-    async fn register_running_forward(local: &TcpListener) -> i64 {
+    async fn register_running_forward(local: &TcpListener, protocol: &str) -> i64 {
         let config = Config {
             service: Some("svc".to_string()),
             namespace: "ns".to_string(),
             local_address: Some("127.0.0.1".to_string()),
             local_port: Some(local.local_addr().unwrap().port()),
             remote_port: Some(80),
+            protocol: protocol.to_string(),
             ..Config::default()
         };
         let id = kftray_commons::config::insert_config(config).await.unwrap();
@@ -519,7 +546,7 @@ mod tests {
             .unwrap();
 
         let local = TcpListener::bind("127.0.0.1:0").unwrap();
-        let id = register_running_forward(&local).await;
+        let id = register_running_forward(&local, "").await;
 
         let probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
         let config = MonitorConfig {
@@ -533,6 +560,7 @@ mod tests {
             network_checker: NetworkChecker::new(config.clone()),
             health_checker: HealthChecker::new(config.clone()),
             config,
+            stopped: Arc::default(),
         };
         let state = monitor.get_task_state().await;
         *state.lock().await = TaskState::default();
@@ -570,7 +598,7 @@ mod tests {
             .unwrap();
 
         let local = TcpListener::bind("127.0.0.1:0").unwrap();
-        let id = register_running_forward(&local).await;
+        let id = register_running_forward(&local, "").await;
 
         let config = MonitorConfig {
             network_endpoints: vec![PROBE_ADDR.as_str()],
@@ -583,6 +611,7 @@ mod tests {
             network_checker: NetworkChecker::new(config.clone()),
             health_checker: HealthChecker::new(config.clone()),
             config,
+            stopped: Arc::default(),
         };
         let state = monitor.get_task_state().await;
         *state.lock().await = TaskState::default();
@@ -609,6 +638,113 @@ mod tests {
             last.is_some() && attempts == 1,
             "network came back and stayed up for 12s, one reconnect must start \
              (attempts={attempts}, last_reconnect={last:?})"
+        );
+    }
+
+    fn probing_monitor(health_interval: Duration) -> NetworkMonitor {
+        let config = MonitorConfig {
+            network_endpoints: vec![PROBE_ADDR.as_str()],
+            network_timeout: Duration::from_millis(200),
+            sleep_up: Duration::from_millis(100),
+            sleep_down: Duration::from_millis(100),
+            health_interval,
+            ..MonitorConfig::default()
+        };
+        NetworkMonitor {
+            network_checker: NetworkChecker::new(config.clone()),
+            health_checker: HealthChecker::new(config.clone()),
+            config,
+            stopped: Arc::default(),
+        }
+    }
+
+    async fn init_db() -> (EnvVarGuard, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+        (env, dir)
+    }
+
+    async fn stop_generations_around_stop(
+        id: i64, state: &Mutex<TaskState>, parent: tokio::task::JoinHandle<()>,
+        worker_started: impl Fn(&TaskState) -> bool, wait: Duration,
+    ) -> (u64, u64) {
+        let deadline = Instant::now() + Duration::from_secs(25);
+        while !worker_started(&*state.lock().await) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            worker_started(&*state.lock().await),
+            "the worker never started"
+        );
+        parent.abort();
+        let _ = parent.await;
+
+        let at_stop = kftray_portforward::kube::stop_generation(id);
+        tokio::time::sleep(wait).await;
+        let after = kftray_portforward::kube::stop_generation(id);
+        CHILD_PROCESSES.remove(&id);
+        (at_stop, after)
+    }
+
+    #[tokio::test]
+    async fn reconnect_started_before_stop_leaves_forwards_running() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let (_env, _dir) = init_db().await;
+        let local = TcpListener::bind("127.0.0.1:0").unwrap();
+        let id = register_running_forward(&local, "tcp").await;
+        let monitor = probing_monitor(Duration::from_secs(3600));
+        let state = monitor.get_task_state().await;
+        *state.lock().await = TaskState::default();
+
+        let parent = tokio::spawn(monitor.start());
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let _probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
+        let (at_stop, after) = stop_generations_around_stop(
+            id,
+            &state,
+            parent,
+            |s| s.reconnect_in_progress,
+            Duration::from_secs(7),
+        )
+        .await;
+
+        assert_eq!(
+            at_stop, after,
+            "the reconnect worker restarted a forward after the stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_check_started_before_stop_leaves_forwards_running() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let (_env, _dir) = init_db().await;
+        let local = TcpListener::bind("127.0.0.1:0").unwrap();
+        let id = register_running_forward(&local, "tcp").await;
+        drop(local);
+        let _probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
+        let monitor = probing_monitor(Duration::from_millis(500));
+        let state = monitor.get_task_state().await;
+        *state.lock().await = TaskState::default();
+
+        let parent = tokio::spawn(monitor.start());
+        let (at_stop, after) = stop_generations_around_stop(
+            id,
+            &state,
+            parent,
+            |s| s.health_check_in_progress,
+            Duration::from_secs(9),
+        )
+        .await;
+
+        assert_eq!(
+            at_stop, after,
+            "the health worker restarted a forward after the stop"
         );
     }
 }
