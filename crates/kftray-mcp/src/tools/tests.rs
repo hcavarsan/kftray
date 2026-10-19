@@ -763,6 +763,26 @@ async fn delete_config_refuses_a_config_another_live_process_forwards() {
     assert_eq!(gone.is_error, Some(true));
 }
 
+#[tokio::test]
+async fn delete_config_reports_an_error_for_an_unknown_id() {
+    let _db = temp_config_db().await;
+    let id = create_tagged("billing", "api", serde_json::json!({})).await;
+
+    let result = execute_tool(
+        "delete_config",
+        Some(serde_json::json!({"config_id": id + 1})),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(true), "{}", result_text(&result));
+    assert!(
+        result_text(&result).contains(&format!("No config found with id: {}", id + 1)),
+        "{}",
+        result_text(&result)
+    );
+    assert_eq!(list_services(serde_json::json!([])).await, ["billing"]);
+}
+
 async fn serve_forbidding_kube_api() -> (
     std::net::SocketAddr,
     std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,

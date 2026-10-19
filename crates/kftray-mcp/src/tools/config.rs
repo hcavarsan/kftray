@@ -633,7 +633,10 @@ impl McpTool for DeleteConfigTool {
         let deleted = kftray_portforward::kube::delete_configs_if_idle(
             &[id],
             kftray_commons::utils::db_mode::DatabaseMode::File,
-            || async move { kftray_commons::config::delete_config(id).await },
+            || async move {
+                kftray_commons::config::get_config(id).await?;
+                kftray_commons::config::delete_config(id).await
+            },
         )
         .await;
 
