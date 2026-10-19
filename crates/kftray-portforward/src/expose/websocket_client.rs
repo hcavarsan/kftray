@@ -23,7 +23,10 @@ use hyper_util::rt::{
     TokioExecutor,
     TokioIo,
 };
-use kftray_commons::models::tunnel_protocol::TunnelMessage;
+use kftray_commons::models::tunnel_protocol::{
+    STREAM_WINDOW,
+    TunnelMessage,
+};
 use log::{
     debug,
     error,
@@ -35,6 +38,7 @@ use tokio::io::{
     AsyncWriteExt,
 };
 use tokio::sync::{
+    Semaphore,
     mpsc,
     oneshot,
 };
@@ -46,6 +50,11 @@ use tokio_tungstenite::{
         Message,
     },
 };
+
+struct StreamRoute {
+    data: mpsc::UnboundedSender<Vec<u8>>,
+    credit: Arc<Semaphore>,
+}
 
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
@@ -162,7 +171,7 @@ impl WebSocketTunnelClient {
             self.local_service_port,
         ));
         let mut requests = JoinSet::new();
-        let mut streams: HashMap<String, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();
+        let mut streams: HashMap<String, StreamRoute> = HashMap::new();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<TunnelMessage>();
 
         loop {
@@ -183,9 +192,16 @@ impl WebSocketTunnelClient {
                     };
                     let _ = outgoing_tx.send(response_msg);
                     if let Some((id, upgraded)) = stream {
-                        let (to_local_tx, to_local_rx) = mpsc::unbounded_channel();
-                        streams.insert(id.clone(), to_local_tx);
-                        tokio::spawn(pipe_upgraded(id, upgraded, to_local_rx, outgoing_tx.clone()));
+                        let (data, to_local_rx) = mpsc::unbounded_channel();
+                        let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
+                        streams.insert(id.clone(), StreamRoute { data, credit: credit.clone() });
+                        tokio::spawn(pipe_upgraded(
+                            id,
+                            upgraded,
+                            to_local_rx,
+                            credit,
+                            outgoing_tx.clone(),
+                        ));
                     }
                     continue;
                 }
@@ -221,6 +237,7 @@ impl WebSocketTunnelClient {
                         headers,
                         body,
                         upgrade,
+                        flow_control,
                     }) => {
                         debug!("Received HTTP request: {} {}", method, path);
 
@@ -235,16 +252,21 @@ impl WebSocketTunnelClient {
                                     path,
                                     headers,
                                     body,
-                                    upgrade,
+                                    upgrade && flow_control,
                                 )
                                 .await
                         });
                     }
                     Ok(TunnelMessage::StreamData { id, data }) => {
-                        if let Some(to_local) = streams.get(&id)
-                            && to_local.send(data).is_err()
+                        if let Some(stream) = streams.get(&id)
+                            && stream.data.send(data).is_err()
                         {
                             streams.remove(&id);
+                        }
+                    }
+                    Ok(TunnelMessage::StreamCredit { id, bytes }) => {
+                        if let Some(stream) = streams.get(&id) {
+                            stream.credit.add_permits(bytes.min(STREAM_WINDOW));
                         }
                     }
                     Ok(TunnelMessage::StreamClose { id }) => {
@@ -380,6 +402,7 @@ impl WebSocketTunnelClient {
                                 headers: response_headers,
                                 body: Vec::new(),
                                 upgraded: true,
+                                flow_control: true,
                             },
                             Some(upgraded),
                         ),
@@ -407,6 +430,7 @@ impl WebSocketTunnelClient {
                             headers: response_headers,
                             body: body_bytes.to_vec(),
                             upgraded: false,
+                            flow_control: false,
                         }
                     }
                     Err(e) => {
@@ -442,16 +466,19 @@ impl WebSocketTunnelClient {
 
 async fn pipe_upgraded(
     id: String, upgraded: Upgraded, mut from_relay: mpsc::UnboundedReceiver<Vec<u8>>,
-    outgoing: mpsc::UnboundedSender<TunnelMessage>,
+    credit: Arc<Semaphore>, outgoing: mpsc::UnboundedSender<TunnelMessage>,
 ) {
     let (mut reader, mut writer) = tokio::io::split(TokioIo::new(upgraded));
     let mut buf = vec![0u8; 16 * 1024];
+    let mut granted = 0;
 
     let local_closed = loop {
         tokio::select! {
-            read = reader.read(&mut buf) => match read {
+            taken = take_credit(&credit, buf.len()), if granted == 0 => granted = taken,
+            read = reader.read(&mut buf[..granted]), if granted > 0 => match read {
                 Ok(0) | Err(_) => break true,
                 Ok(n) => {
+                    granted -= n;
                     let data = TunnelMessage::StreamData {
                         id: id.clone(),
                         data: buf[..n].to_vec(),
@@ -466,6 +493,13 @@ async fn pipe_upgraded(
                     if writer.write_all(&data).await.is_err() {
                         break true;
                     }
+                    let consumed = TunnelMessage::StreamCredit {
+                        id: id.clone(),
+                        bytes: data.len(),
+                    };
+                    if outgoing.send(consumed).is_err() {
+                        break false;
+                    }
                 }
                 None => break false,
             },
@@ -475,6 +509,19 @@ async fn pipe_upgraded(
     let _ = writer.shutdown().await;
     if local_closed {
         let _ = outgoing.send(TunnelMessage::StreamClose { id });
+    }
+}
+
+/// Waits for credit on a stream and takes up to `max` bytes of it. The
+/// stream ends through its data channel, so a closed semaphore never
+/// resolves and cannot win over data still queued for the local app.
+async fn take_credit(credit: &Semaphore, max: usize) -> usize {
+    match credit.acquire().await {
+        Ok(first) => {
+            first.forget();
+            1 + credit.forget_permits(max - 1)
+        }
+        Err(_) => std::future::pending().await,
     }
 }
 
@@ -817,6 +864,7 @@ mod tests {
                 headers: Vec::new(),
                 body: Vec::new(),
                 upgrade: false,
+                flow_control: false,
             }
             .serialize()
             .unwrap()
@@ -925,6 +973,7 @@ mod tests {
             ],
             body: Vec::new(),
             upgrade: true,
+            flow_control: true,
         };
         ws.send(Message::Binary(request.serialize().unwrap().into()))
             .await
@@ -971,15 +1020,255 @@ mod tests {
             .collect();
         assert_eq!(received, b"pong", "{replies:?}");
         assert!(
+            replies.iter().any(|reply| matches!(
+                reply,
+                TunnelMessage::StreamCredit { id, bytes: 4 } if id == "ws"
+            )),
+            "{replies:?}"
+        );
+        assert!(
             matches!(
                 replies.first(),
                 Some(TunnelMessage::HttpResponse {
                     status: 101,
                     upgraded: true,
+                    flow_control: true,
                     ..
                 })
             ),
             "{replies:?}"
         );
+    }
+
+    type Relay = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+    async fn connect_relay(
+        app_port: u16,
+    ) -> (
+        Relay,
+        tokio_util::task::AbortOnDropHandle<Result<(), String>>,
+    ) {
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            ws_listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            app_port,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (socket, _) = ws_listener.accept().await.unwrap();
+        let ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+        ready_rx.await.unwrap().unwrap();
+        (ws, task)
+    }
+
+    async fn send(relay: &mut Relay, message: super::TunnelMessage) {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        relay
+            .send(Message::Binary(message.serialize().unwrap().into()))
+            .await
+            .unwrap();
+    }
+
+    async fn recv(relay: &mut Relay) -> super::TunnelMessage {
+        use futures::StreamExt;
+
+        let message = tokio::time::timeout(Duration::from_secs(5), relay.next())
+            .await
+            .expect("no tunnel message within 5s")
+            .unwrap()
+            .unwrap();
+        super::TunnelMessage::deserialize(&message.into_data()).unwrap()
+    }
+
+    async fn assert_quiet(relay: &mut Relay) {
+        use futures::StreamExt;
+
+        if let Ok(message) = tokio::time::timeout(Duration::from_millis(300), relay.next()).await {
+            panic!("expected no tunnel message, got {message:?}");
+        }
+    }
+
+    async fn stream_bytes(relay: &mut Relay, id: &str, total: usize) -> usize {
+        let mut received = 0;
+        while received < total {
+            match recv(relay).await {
+                super::TunnelMessage::StreamData { id: got, data } if got == id => {
+                    received += data.len();
+                }
+                other => panic!("expected stream data for {id}, got {other:?}"),
+            }
+        }
+        received
+    }
+
+    fn upgrade_request(id: &str, flow_control: bool) -> super::TunnelMessage {
+        super::TunnelMessage::HttpRequest {
+            id: id.to_owned(),
+            method: "GET".to_owned(),
+            path: format!("/{id}"),
+            headers: vec![
+                ("connection".to_owned(), "upgrade".to_owned()),
+                ("upgrade".to_owned(), "websocket".to_owned()),
+            ],
+            body: Vec::new(),
+            upgrade: true,
+            flow_control,
+        }
+    }
+
+    async fn open_stream(relay: &mut Relay, id: &str) {
+        send(relay, upgrade_request(id, true)).await;
+        match recv(relay).await {
+            super::TunnelMessage::HttpResponse {
+                id: got,
+                status: 101,
+                upgraded: true,
+                flow_control: true,
+                ..
+            } => assert_eq!(got, id),
+            other => panic!("expected an upgraded response for {id}, got {other:?}"),
+        }
+    }
+
+    async fn flooding_app() -> (u16, tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>) {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        let (closed_tx, closed_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = app.accept().await.unwrap();
+                let closed_tx = closed_tx.clone();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(socket.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap();
+                    let path = head.split(' ').nth(1).unwrap().to_owned();
+                    if path == "/health" {
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                            )
+                            .await
+                            .unwrap();
+                        return;
+                    }
+                    socket
+                        .write_all(
+                            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                              Connection: Upgrade\r\n\r\n",
+                        )
+                        .await
+                        .unwrap();
+                    let (mut read, mut write) = socket.into_split();
+                    let flood = tokio::spawn(async move {
+                        let _ = write.write_all(&vec![7u8; 4 * super::STREAM_WINDOW]).await;
+                        std::future::pending::<()>().await;
+                    });
+                    let mut received = Vec::new();
+                    let _ = read.read_to_end(&mut received).await;
+                    flood.abort();
+                    let _ = closed_tx.send((path, received));
+                });
+            }
+        });
+        (port, closed_rx)
+    }
+
+    #[tokio::test]
+    async fn upgrade_request_without_flow_control_is_not_upgraded() {
+        let (app_port, _closed) = flooding_app().await;
+        let (mut relay, _task) = connect_relay(app_port).await;
+
+        send(&mut relay, upgrade_request("old", false)).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse {
+                id,
+                upgraded: false,
+                flow_control: false,
+                ..
+            } => assert_eq!(id, "old"),
+            other => panic!("expected a plain response, got {other:?}"),
+        }
+        assert_quiet(&mut relay).await;
+    }
+
+    #[tokio::test]
+    async fn stalled_stream_stops_at_the_window_and_other_traffic_keeps_moving() {
+        let (app_port, mut closed) = flooding_app().await;
+        let (mut relay, _task) = connect_relay(app_port).await;
+        let window = super::STREAM_WINDOW;
+
+        open_stream(&mut relay, "a").await;
+        assert_eq!(stream_bytes(&mut relay, "a", window).await, window);
+        assert_quiet(&mut relay).await;
+
+        open_stream(&mut relay, "b").await;
+        assert_eq!(stream_bytes(&mut relay, "b", window).await, window);
+        assert_quiet(&mut relay).await;
+
+        send(
+            &mut relay,
+            super::TunnelMessage::HttpRequest {
+                id: "health".to_owned(),
+                method: "GET".to_owned(),
+                path: "/health".to_owned(),
+                headers: Vec::new(),
+                body: Vec::new(),
+                upgrade: false,
+                flow_control: false,
+            },
+        )
+        .await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse {
+                id, status, body, ..
+            } => {
+                assert_eq!(
+                    (id.as_str(), status, body.as_slice()),
+                    ("health", 200, &b"ok"[..])
+                );
+            }
+            other => panic!("expected the health response, got {other:?}"),
+        }
+
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamCredit {
+                id: "a".to_owned(),
+                bytes: 1000,
+            },
+        )
+        .await;
+        assert_eq!(stream_bytes(&mut relay, "a", 1000).await, 1000);
+        assert_quiet(&mut relay).await;
+
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamData {
+                id: "a".to_owned(),
+                data: b"bye".to_vec(),
+            },
+        )
+        .await;
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamClose { id: "a".to_owned() },
+        )
+        .await;
+        let first = tokio::time::timeout(Duration::from_secs(5), closed.recv()).await;
+        assert_eq!(first.unwrap(), Some(("/a".to_owned(), b"bye".to_vec())));
+
+        drop(relay);
+        let second = tokio::time::timeout(Duration::from_secs(5), closed.recv()).await;
+        assert_eq!(second.unwrap(), Some(("/b".to_owned(), Vec::new())));
     }
 }
