@@ -17,6 +17,7 @@ use tracing::{
 use crate::message::LogMessage;
 use crate::parser::{
     BodyParser,
+    GzipMembers,
     RequestParser,
     ResponseParser,
 };
@@ -257,7 +258,7 @@ impl MessageFormatter {
 
         debug!("Decompressing gzip data of {} bytes", data.len());
 
-        let decompressed = Self::read_bounded(flate2::read::GzDecoder::new(data))?;
+        let decompressed = Self::read_bounded(GzipMembers::new(data))?;
 
         if decompressed.0.is_empty() {
             return Err(anyhow::anyhow!("Decompression produced empty result"));
@@ -578,10 +579,7 @@ impl MessageFormatter {
 
     async fn decompress_gzip_async(data: &[u8]) -> Result<(Vec<u8>, bool)> {
         let data_owned = data.to_vec();
-        task::spawn_blocking(move || {
-            Self::read_bounded(flate2::read::GzDecoder::new(&data_owned[..]))
-        })
-        .await?
+        task::spawn_blocking(move || Self::read_bounded(GzipMembers::new(&data_owned[..]))).await?
     }
 
     async fn try_decompress_brotli(body: &[u8]) -> Result<(Vec<u8>, bool)> {
@@ -915,6 +913,75 @@ mod formatter_tests {
                 "encoding {encoding}"
             );
         }
+    }
+
+    fn two_member_gzip() -> Vec<u8> {
+        let mut body = gzip_compress(b"first-member-line\n");
+        body.extend(gzip_compress(b"second-member-line\n"));
+        body
+    }
+
+    #[tokio::test]
+    async fn test_format_request_multi_member_gzip_body() {
+        let body = two_member_gzip();
+        let mut request = format!(
+            "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Encoding: \
+             gzip\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&body);
+
+        let LogMessage::Request(text) =
+            MessageFormatter::format_request(&Bytes::from(request), "t1", Utc::now())
+                .await
+                .unwrap()
+        else {
+            panic!("not a request")
+        };
+
+        assert!(
+            text.contains("first-member-line\nsecond-member-line"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn test_format_preformatted_response_multi_member_gzip() {
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n\r\n"
+                .to_vec();
+        response.extend(two_member_gzip());
+
+        let formatted = MessageFormatter::format_preformatted_response(
+            "gz2",
+            Utc::now(),
+            1,
+            &Bytes::from(response),
+        );
+
+        assert!(
+            formatted.contains("first-member-line\nsecond-member-line"),
+            "got:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_format_preformatted_response_gzip_with_trailing_bytes() {
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n\r\n"
+                .to_vec();
+        response.extend(gzip_compress(b"only-member-line\n"));
+        response.extend_from_slice(b"\r\nHTTP/1.1 200 OK\r\n");
+
+        let formatted = MessageFormatter::format_preformatted_response(
+            "gz3",
+            Utc::now(),
+            1,
+            &Bytes::from(response),
+        );
+
+        assert!(formatted.contains("only-member-line"), "got:\n{formatted}");
     }
 
     #[tokio::test]
