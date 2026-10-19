@@ -753,7 +753,10 @@ async fn create_deployment(
         failure_threshold: Some(30),
         ..Default::default()
     });
-    if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
+    // In TCP mode every connection to HTTP_PORT opens a connection to the local service.
+    if !config.exposes_tcp()
+        && let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080)
+    {
         let http_port = u16::try_from(http_port)
             .ok()
             .filter(|port| *port != 0)
@@ -2011,6 +2014,97 @@ mod tests {
         }
 
         result.expect_err("a deployment with no identifiable relay container must fail the create");
+    }
+
+    async fn created_relay_container(config: &Config) -> (Container, RelayProbe) {
+        use http_body_util::BodyExt;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config_dir = tempfile::tempdir().unwrap();
+        let original_config_dir = std::env::var("KFTRAY_CONFIG").ok();
+        unsafe { std::env::set_var("KFTRAY_CONFIG", config_dir.path()) };
+        kftray_commons::utils::manifests::create_expose_deployment_manifest().unwrap();
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::POST);
+            let body = request.into_body().collect().await.unwrap().to_bytes();
+            let posted: Deployment = serde_json::from_slice(&body).unwrap();
+            let created = serde_json::json!({
+                "apiVersion": "apps/v1", "kind": "Deployment",
+                "metadata": {"name": "relay-1", "namespace": "default", "uid": "deploy-uid"}
+            });
+            send.send_response(
+                Response::builder()
+                    .status(201)
+                    .body(Body::from(serde_json::to_vec(&created).unwrap()))
+                    .unwrap(),
+            );
+            posted
+        }));
+
+        let result = create_deployment(
+            &client,
+            "default",
+            "relay-1",
+            "4005",
+            config,
+            DatabaseMode::Memory,
+        )
+        .await;
+        let posted = server.await.unwrap();
+
+        if let Some(original) = original_config_dir {
+            unsafe { std::env::set_var("KFTRAY_CONFIG", original) };
+        } else {
+            unsafe { std::env::remove_var("KFTRAY_CONFIG") };
+        }
+
+        let (_, relay) = result.unwrap_or_else(|error| panic!("{}", error.message));
+        let container = posted
+            .spec
+            .unwrap()
+            .template
+            .spec
+            .unwrap()
+            .containers
+            .remove(0);
+        (container, relay)
+    }
+
+    #[tokio::test]
+    async fn a_tcp_expose_relay_is_not_readiness_probed_on_its_client_port() {
+        let mut config = Config {
+            id: Some(4005),
+            workload_type: Some("expose".to_owned()),
+            exposure_type: Some("private".to_owned()),
+            namespace: "default".to_owned(),
+            local_port: Some(5432),
+            ..Config::default()
+        };
+
+        let (http_relay, http_probe) = created_relay_container(&config).await;
+        assert_eq!(
+            http_relay
+                .readiness_probe
+                .and_then(|probe| probe.tcp_socket)
+                .map(|socket| socket.port),
+            Some(IntOrString::Int(8080))
+        );
+        assert!(http_probe.readiness_probe_present);
+
+        config.exposure_protocol = Some("tcp".to_owned());
+        let (tcp_relay, tcp_probe) = created_relay_container(&config).await;
+        assert!(
+            tcp_relay.readiness_probe.is_none(),
+            "every probe connection on HTTP_PORT opens a connection to the local service: {:?}",
+            tcp_relay.readiness_probe
+        );
+        assert!(!tcp_probe.readiness_probe_present);
+        assert!(tcp_relay.startup_probe.is_some());
     }
 
     #[test]
