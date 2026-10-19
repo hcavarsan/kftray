@@ -552,7 +552,7 @@ fn find_identity_match(configs: &[Config], incoming: &Config) -> IdentityMatch {
         let score = rank(config);
         match best {
             Some((_, best_score)) if score < best_score => {}
-            Some((_, best_score)) if score == best_score => ambiguous |= score < 2,
+            Some((_, best_score)) if score == best_score => ambiguous |= score < 3,
             _ => {
                 best = Some((index, score));
                 ambiguous = false;
@@ -2219,6 +2219,49 @@ mod tests {
             same_port_service(Some("127.0.0.1"), "db-b.local", true),
         ])
         .await;
+    }
+
+    async fn import_lone(config: Config, pool: &SqlitePool) {
+        let json = serde_json::to_string(&[config]).unwrap();
+        import_configs_with_pool(json, pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_import_lone_entry_with_new_address_updates_saved_row() {
+        let pool = setup_test_db().await;
+        let id = insert_config_with_pool(same_port_service(Some("127.0.0.2"), "db", false), &pool)
+            .await
+            .unwrap();
+
+        import_lone(same_port_service(Some("127.0.0.3"), "db", false), &pool).await;
+
+        assert_eq!(
+            endpoints(&pool).await,
+            vec![(
+                Some(id),
+                Some("127.0.0.3".to_string()),
+                Some("db".to_string())
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_lone_entry_adds_row_when_saved_endpoints_tie() {
+        let pool = setup_test_db().await;
+        for address in ["127.0.0.2", "127.0.0.3"] {
+            insert_config_with_pool(same_port_service(Some(address), "db", false), &pool)
+                .await
+                .unwrap();
+        }
+        let saved = endpoints(&pool).await;
+
+        for _ in 0..2 {
+            import_lone(same_port_service(Some("127.0.0.4"), "db", false), &pool).await;
+            let rows = endpoints(&pool).await;
+            assert_eq!(rows.len(), 3);
+            assert_eq!(rows[..2], saved[..]);
+            assert_eq!(rows[2].1.as_deref(), Some("127.0.0.4"));
+        }
     }
 
     #[tokio::test]
