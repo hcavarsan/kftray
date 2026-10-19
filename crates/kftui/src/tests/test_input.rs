@@ -401,6 +401,7 @@ mod tests {
         handle_delete_confirmation_input(app, KeyCode::Enter, DatabaseMode::Memory)
             .await
             .unwrap();
+        while app.forwarding_tasks.join_next().await.is_some() {}
         let mut remaining: Vec<String> = read_configs_with_mode(DatabaseMode::Memory)
             .await
             .unwrap()
@@ -449,6 +450,110 @@ mod tests {
 
         let remaining = confirm_delete(&mut app).await;
         assert_eq!(remaining, ["alpha", "gamma"]);
+    }
+
+    async fn mark_saved_config(app: &mut App, id: i64) {
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        let states =
+            kftray_commons::utils::config_state::read_config_states_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap();
+        app.update_configs(&configs, &states);
+        app.active_table = ActiveTable::Stopped;
+        let row = app
+            .stopped_configs
+            .iter()
+            .position(|config| config.id == Some(id))
+            .unwrap();
+        app.table_state_stopped.select(Some(row));
+        toggle_row_selection(app);
+    }
+
+    async fn config_exists(id: i64) -> bool {
+        read_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap()
+            .iter()
+            .any(|config| config.id == Some(id))
+    }
+
+    #[tokio::test]
+    async fn delete_keeps_a_proxy_config_that_still_owes_cluster_cleanup() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let config = Config {
+            alias: Some("proxy-db".into()),
+            service: Some("proxy-db".into()),
+            namespace: "default".into(),
+            protocol: "tcp".into(),
+            context: Some("dev".into()),
+            workload_type: Some("proxy".into()),
+            remote_address: Some("db.example".into()),
+            remote_port: Some(5432),
+            local_port: Some(15432),
+            ..Config::default()
+        };
+        let id = insert_config_with_mode(config.clone(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let config = Config {
+            id: Some(id),
+            ..config
+        };
+        kftray_commons::utils::settings::set_setting_with_mode(
+            &format!("uncertain_create:memory:{id}:0000000000000000"),
+            &serde_json::json!({"config": config, "destination": null}).to_string(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        let mut app = App::new(test_logger_state());
+        mark_saved_config(&mut app, id).await;
+
+        confirm_delete(&mut app).await;
+
+        assert!(config_exists(id).await);
+        app.update_configs(&[], &[]);
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        let shown = app.error_message.unwrap_or_default();
+        assert!(
+            shown.contains(&format!(
+                "Stop these configurations before deleting them: {id}"
+            )),
+            "{shown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_waits_for_a_start_in_flight_without_blocking_input() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut app = app_with_saved_configs(&["alpha"]).await;
+        let id = app.stopped_configs[0].id.unwrap();
+        mark_saved_config(&mut app, id).await;
+        let lock = kftray_portforward::kube::proxy_recovery::acquire_recovery_lock(id).await;
+        let start = lock.lock_owned().await;
+
+        show_delete_confirmation(&mut app);
+        app.selected_delete_button = DeleteButton::Confirm;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle_delete_confirmation_input(&mut app, KeyCode::Enter, DatabaseMode::Memory),
+        )
+        .await
+        .expect("the delete must not hold up the input loop")
+        .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(config_exists(id).await);
+
+        drop(start);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while app.forwarding_tasks.join_next().await.is_some() {}
+        })
+        .await
+        .unwrap();
+        assert!(!config_exists(id).await);
+        app.update_configs(&[], &[]);
+        assert_eq!(app.state, AppState::Normal);
     }
 
     async fn searching_for_gamma() -> (App, Option<i64>) {
