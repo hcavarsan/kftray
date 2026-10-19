@@ -3,6 +3,10 @@ use serde::{
     Serialize,
 };
 
+/// Bytes one side may send on one stream before the peer returns
+/// `StreamCredit`. Each direction of each stream has its own budget.
+pub const STREAM_WINDOW: usize = 256 * 1024;
+
 /// Messages sent over WebSocket tunnel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -18,6 +22,10 @@ pub enum TunnelMessage {
         /// that predates it never sees the flag and keeps the old path.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         upgrade: bool,
+        /// Set with `upgrade` by a relay that sends and honors
+        /// `StreamCredit`. Without it the app does not upgrade.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flow_control: bool,
     },
     HttpResponse {
         id: String,
@@ -27,6 +35,10 @@ pub enum TunnelMessage {
         body: Vec<u8>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         upgraded: bool,
+        /// Set with `upgraded` by an app that sends and honors
+        /// `StreamCredit`. Without it the relay answers 502.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flow_control: bool,
     },
     StreamData {
         id: String,
@@ -34,6 +46,13 @@ pub enum TunnelMessage {
     },
     StreamClose {
         id: String,
+    },
+    /// The receiver of `StreamData` sends this after it wrote `bytes` of
+    /// it to the destination. The sender may then send `bytes` more, so
+    /// bytes sent and not yet written stay within `STREAM_WINDOW`.
+    StreamCredit {
+        id: String,
+        bytes: usize,
     },
     Ping,
     Pong,

@@ -36,6 +36,7 @@ use uuid::Uuid;
 use super::websocket_server::{
     TunnelStream,
     WebSocketTunnelServer,
+    take_credit,
 };
 use crate::models::tunnel_protocol::TunnelMessage;
 
@@ -244,12 +245,16 @@ async fn pipe_upgraded(on_upgrade: OnUpgrade, mut stream: TunnelStream) {
     };
     let (mut reader, mut writer) = tokio::io::split(upgraded);
     let mut buf = vec![0u8; 16 * 1024];
+    let credit = stream.credit();
+    let mut granted = 0;
 
     loop {
         tokio::select! {
-            read = reader.read(&mut buf) => match read {
+            taken = take_credit(&credit, buf.len()), if granted == 0 => granted = taken,
+            read = reader.read(&mut buf[..granted]), if granted > 0 => match read {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
+                    granted -= n;
                     if !stream.send(buf[..n].to_vec()) {
                         break;
                     }
@@ -257,7 +262,9 @@ async fn pipe_upgraded(on_upgrade: OnUpgrade, mut stream: TunnelStream) {
             },
             data = stream.recv() => match data {
                 Some(data) => {
-                    if writer.write_all(&data).await.is_err() {
+                    if writer.write_all(&data).await.is_err()
+                        || !stream.return_credit(data.len())
+                    {
                         break;
                     }
                 }
@@ -278,6 +285,7 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+    use crate::models::tunnel_protocol::STREAM_WINDOW;
     use crate::proxy::test_utils;
 
     #[tokio::test]
@@ -404,6 +412,7 @@ mod tests {
             ],
             body: b"ok".to_vec(),
             upgraded: false,
+            flow_control: false,
         };
         ws_client
             .send(Message::Binary(reply.serialize().unwrap().into()))
@@ -572,6 +581,43 @@ mod tests {
                 .unwrap();
         }
 
+        async fn stream_bytes(&mut self, id: &str, total: usize) -> usize {
+            let mut received = 0;
+            while received < total {
+                match self.recv().await {
+                    TunnelMessage::StreamData { id: got, data } if got == id => {
+                        received += data.len();
+                    }
+                    other => panic!("expected stream data for {id}, got {other:?}"),
+                }
+            }
+            received
+        }
+
+        async fn assert_quiet(&mut self) {
+            use futures::StreamExt;
+
+            if let Ok(message) =
+                tokio::time::timeout(Duration::from_millis(300), self.client.next()).await
+            {
+                panic!("expected no tunnel message, got {message:?}");
+            }
+        }
+
+        async fn open_flood(&mut self) -> (tokio::net::tcp::OwnedReadHalf, String) {
+            use tokio::io::AsyncWriteExt;
+
+            let (mut browser, id) = self.open_upgrade().await;
+            self.send(switching_protocols(id.clone(), true, true)).await;
+            read_head(&mut browser).await;
+            let (read, mut write) = browser.into_split();
+            self.tasks.push(tokio::spawn(async move {
+                let _ = write.write_all(&vec![7u8; 4 * STREAM_WINDOW]).await;
+                std::future::pending().await
+            }));
+            (read, id)
+        }
+
         async fn open_upgrade(&mut self) -> (TcpStream, String) {
             use tokio::io::AsyncWriteExt;
 
@@ -584,7 +630,10 @@ mod tests {
                 .await
                 .unwrap();
             let TunnelMessage::HttpRequest {
-                id, upgrade: true, ..
+                id,
+                upgrade: true,
+                flow_control: true,
+                ..
             } = self.recv().await
             else {
                 panic!("expected an upgrade request");
@@ -610,7 +659,18 @@ mod tests {
         String::from_utf8(head).unwrap()
     }
 
-    fn switching_protocols(id: String, upgraded: bool) -> TunnelMessage {
+    async fn read_until_closed(stream: &mut tokio::net::tcp::OwnedReadHalf) -> Vec<u8> {
+        use tokio::io::AsyncReadExt;
+
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+            .await
+            .expect("the browser connection stayed open")
+            .unwrap();
+        rest
+    }
+
+    fn switching_protocols(id: String, upgraded: bool, flow_control: bool) -> TunnelMessage {
         TunnelMessage::HttpResponse {
             id,
             status: 101,
@@ -620,6 +680,7 @@ mod tests {
             ],
             body: Vec::new(),
             upgraded,
+            flow_control,
         }
     }
 
@@ -633,7 +694,9 @@ mod tests {
         let mut relay = Relay::start().await;
 
         let (mut browser, id) = relay.open_upgrade().await;
-        relay.send(switching_protocols(id.clone(), true)).await;
+        relay
+            .send(switching_protocols(id.clone(), true, true))
+            .await;
         let head = read_head(&mut browser).await;
         assert!(head.starts_with("HTTP/1.1 101"), "{head}");
 
@@ -658,6 +721,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(&reply, b"world");
+        match relay.recv().await {
+            TunnelMessage::StreamCredit { id: got, bytes } => {
+                assert_eq!(got, id);
+                assert_eq!(bytes, 5);
+            }
+            other => panic!("expected credit for the bytes the browser got, got {other:?}"),
+        }
 
         relay.send(TunnelMessage::StreamClose { id }).await;
         let mut rest = Vec::new();
@@ -668,7 +738,9 @@ mod tests {
         assert!(rest.is_empty());
 
         let (mut browser, id) = relay.open_upgrade().await;
-        relay.send(switching_protocols(id.clone(), true)).await;
+        relay
+            .send(switching_protocols(id.clone(), true, true))
+            .await;
         read_head(&mut browser).await;
         drop(browser);
         match relay.recv().await {
@@ -680,15 +752,95 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switching_protocols_from_a_client_without_streams_returns_bad_gateway() {
+    async fn switching_protocols_from_a_client_without_credit_support_returns_bad_gateway() {
         let mut relay = Relay::start().await;
 
-        let (mut browser, id) = relay.open_upgrade().await;
-        relay.send(switching_protocols(id, false)).await;
-        let head = tokio::time::timeout(Duration::from_secs(5), read_head(&mut browser))
+        for upgraded in [false, true] {
+            let (mut browser, id) = relay.open_upgrade().await;
+            relay.send(switching_protocols(id, upgraded, false)).await;
+            let head = tokio::time::timeout(Duration::from_secs(5), read_head(&mut browser))
+                .await
+                .unwrap();
+            assert!(head.starts_with("HTTP/1.1 502"), "{head}");
+        }
+
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn stalled_stream_stops_at_the_window_and_other_traffic_keeps_moving() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let mut relay = Relay::start().await;
+        let (mut stalled, id) = relay.open_flood().await;
+        assert_eq!(relay.stream_bytes(&id, STREAM_WINDOW).await, STREAM_WINDOW);
+        relay.assert_quiet().await;
+
+        let (mut other, other_id) = relay.open_upgrade().await;
+        relay
+            .send(switching_protocols(other_id.clone(), true, true))
+            .await;
+        read_head(&mut other).await;
+        other.write_all(b"hi").await.unwrap();
+        assert_eq!(relay.stream_bytes(&other_id, 2).await, 2);
+
+        let mut plain = TcpStream::connect(relay.http_addr).await.unwrap();
+        plain
+            .write_all(b"GET /health HTTP/1.1\r\nHost: app\r\nConnection: close\r\n\r\n")
             .await
             .unwrap();
-        assert!(head.starts_with("HTTP/1.1 502"), "{head}");
+        let TunnelMessage::HttpRequest { id: plain_id, .. } = relay.recv().await else {
+            panic!("expected the plain request");
+        };
+        relay
+            .send(TunnelMessage::HttpResponse {
+                id: plain_id,
+                status: 200,
+                headers: Vec::new(),
+                body: b"ok".to_vec(),
+                upgraded: false,
+                flow_control: false,
+            })
+            .await;
+        let mut response = String::new();
+        tokio::time::timeout(Duration::from_secs(5), plain.read_to_string(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+        relay
+            .send(TunnelMessage::StreamCredit {
+                id: id.clone(),
+                bytes: 1000,
+            })
+            .await;
+        assert_eq!(relay.stream_bytes(&id, 1000).await, 1000);
+        relay.assert_quiet().await;
+
+        relay
+            .send(TunnelMessage::StreamData {
+                id: id.clone(),
+                data: b"bye".to_vec(),
+            })
+            .await;
+        relay.send(TunnelMessage::StreamClose { id }).await;
+        assert_eq!(read_until_closed(&mut stalled).await, b"bye");
+
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn tunnel_drop_closes_a_stream_waiting_for_credit() {
+        let mut relay = Relay::start().await;
+        let (mut stalled, id) = relay.open_flood().await;
+        assert_eq!(relay.stream_bytes(&id, STREAM_WINDOW).await, STREAM_WINDOW);
+
+        relay.client.close(None).await.unwrap();
+        assert!(read_until_closed(&mut stalled).await.is_empty());
 
         relay.stop();
     }

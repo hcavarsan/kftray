@@ -23,6 +23,7 @@ use tokio::net::{
 use tokio::sync::{
     Notify,
     RwLock,
+    Semaphore,
     mpsc,
     oneshot,
 };
@@ -31,7 +32,10 @@ use tokio_tungstenite::{
     tungstenite::Message,
 };
 
-use crate::models::tunnel_protocol::TunnelMessage;
+use crate::models::tunnel_protocol::{
+    STREAM_WINDOW,
+    TunnelMessage,
+};
 
 const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -44,7 +48,12 @@ pub struct WebSocketTunnelServer {
     ws_port: u16,
 }
 
-type StreamSenders = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<Vec<u8>>>>>;
+struct StreamRoute {
+    data: mpsc::UnboundedSender<Vec<u8>>,
+    credit: Arc<Semaphore>,
+}
+
+type StreamSenders = Arc<Mutex<HashMap<String, StreamRoute>>>;
 
 struct TunnelConnection {
     request_tx: mpsc::UnboundedSender<TunnelMessage>,
@@ -57,6 +66,7 @@ struct TunnelConnection {
 pub struct TunnelStream {
     id: String,
     incoming: mpsc::UnboundedReceiver<Vec<u8>>,
+    credit: Arc<Semaphore>,
     request_tx: mpsc::UnboundedSender<TunnelMessage>,
     streams: StreamSenders,
 }
@@ -66,6 +76,10 @@ impl TunnelStream {
         self.incoming.recv().await
     }
 
+    pub fn credit(&self) -> Arc<Semaphore> {
+        self.credit.clone()
+    }
+
     pub fn send(&self, data: Vec<u8>) -> bool {
         self.request_tx
             .send(TunnelMessage::StreamData {
@@ -73,6 +87,28 @@ impl TunnelStream {
                 data,
             })
             .is_ok()
+    }
+
+    pub fn return_credit(&self, bytes: usize) -> bool {
+        self.request_tx
+            .send(TunnelMessage::StreamCredit {
+                id: self.id.clone(),
+                bytes,
+            })
+            .is_ok()
+    }
+}
+
+/// Waits for credit on a stream and takes up to `max` bytes of it. The
+/// stream ends through its data channel, so a closed semaphore never
+/// resolves and cannot win over data still queued for the browser.
+pub async fn take_credit(credit: &Semaphore, max: usize) -> usize {
+    match credit.acquire().await {
+        Ok(first) => {
+            first.forget();
+            1 + credit.forget_permits(max - 1)
+        }
+        Err(_) => std::future::pending().await,
     }
 }
 
@@ -202,6 +238,15 @@ impl WebSocketTunnelServer {
                                         .lock()
                                         .unwrap_or_else(PoisonError::into_inner)
                                         .remove(&id);
+                                }
+                                Ok(TunnelMessage::StreamCredit { id, bytes }) => {
+                                    if let Some(stream) = streams
+                                        .lock()
+                                        .unwrap_or_else(PoisonError::into_inner)
+                                        .get(&id)
+                                    {
+                                        stream.credit.add_permits(bytes.min(STREAM_WINDOW));
+                                    }
                                 }
                                 Ok(tunnel_msg) => {
                                     debug!("Received tunnel message: {:?}", tunnel_msg);
@@ -383,13 +428,20 @@ impl WebSocketTunnelServer {
                 .insert(id.clone(), response_tx);
 
             let incoming = upgrade.then(|| {
-                let (data_tx, data_rx) = mpsc::unbounded_channel();
+                let (data, data_rx) = mpsc::unbounded_channel();
+                let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
                 tunnel
                     .streams
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(id.clone(), data_tx);
-                data_rx
+                    .insert(
+                        id.clone(),
+                        StreamRoute {
+                            data,
+                            credit: credit.clone(),
+                        },
+                    );
+                (data_rx, credit)
             });
 
             tunnel
@@ -401,6 +453,7 @@ impl WebSocketTunnelServer {
                     headers,
                     body,
                     upgrade,
+                    flow_control: upgrade,
                 })
                 .map_err(|e| format!("Failed to send request: {}", e))?;
 
@@ -427,13 +480,15 @@ impl WebSocketTunnelServer {
             Ok(TunnelMessage::HttpResponse {
                 status: 101,
                 upgraded: true,
+                flow_control: true,
                 ..
             })
         );
         let stream = match incoming {
-            Some(incoming) if accepted => Some(TunnelStream {
+            Some((incoming, credit)) if accepted => Some(TunnelStream {
                 id,
                 incoming,
+                credit,
                 request_tx,
                 streams,
             }),
@@ -457,7 +512,9 @@ impl WebSocketTunnelServer {
 
 fn deliver_stream_data(streams: &StreamSenders, id: &str, data: Vec<u8>) -> bool {
     let mut open = streams.lock().unwrap_or_else(PoisonError::into_inner);
-    let delivered = open.get(id).is_some_and(|tx| tx.send(data).is_ok());
+    let delivered = open
+        .get(id)
+        .is_some_and(|stream| stream.data.send(data).is_ok());
     if !delivered {
         open.remove(id);
     }
