@@ -140,16 +140,29 @@ install_kftui() {
 
   # Add $INSTALL_DIR to PATH if it's not already there
   if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
+    local profiles=()
     for profile in "${PROFILE_FILES[@]}"; do
       if [ -f "$profile" ]; then
-        case "$profile" in
-          *config.fish) echo "set -U fish_user_paths $INSTALL_DIR \$fish_user_paths" >> "$profile" ;;
-          *) echo "export PATH=$INSTALL_DIR:\$PATH" >> "$profile" ;;
-        esac
+        profiles+=("$profile")
       fi
     done
+    if [ ${#profiles[@]} -eq 0 ]; then
+      case "$(basename "${SHELL:-sh}")" in
+        zsh) profiles=("$HOME/.zshrc") ;;
+        fish) profiles=("$HOME/.config/fish/config.fish") ;;
+        bash) profiles=("$HOME/.profile" "$HOME/.bashrc") ;;
+        *) profiles=("$HOME/.profile") ;;
+      esac
+      mkdir -p "$(dirname "${profiles[0]}")"
+    fi
+    for profile in "${profiles[@]}"; do
+      case "$profile" in
+        *config.fish) echo "set -U fish_user_paths \"$INSTALL_DIR\" \$fish_user_paths" >> "$profile" ;;
+        *) echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$profile" ;;
+      esac
+    done
     export PATH="$INSTALL_DIR:$PATH"
-    print_msg yellow "Added $INSTALL_DIR to PATH. Please restart your terminal or run 'source ~/.profile' to update your PATH."
+    print_msg yellow "Added $INSTALL_DIR to PATH in ${profiles[*]}. Please restart your terminal to update your PATH."
   fi
 
   if [ -x "$INSTALL_DIR/kftui" ]; then
