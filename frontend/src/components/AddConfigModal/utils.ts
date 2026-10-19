@@ -1,4 +1,5 @@
-import type { Facet } from '@/types'
+import { DEFAULT_KUBECONFIG } from '@/hooks/useKubeconfigPicker'
+import type { Facet, StoredConfig } from '@/types'
 
 import type { ConfigDraft, StringOption } from './types'
 
@@ -52,6 +53,74 @@ export const trimConfigValues = (draft: ConfigDraft): ConfigDraft => ({
   service: draft.service?.trim(),
   target: draft.target?.trim(),
 })
+
+export function toConfig(
+  draft: ConfigDraft,
+  initialConfig: StoredConfig | null,
+): StoredConfig {
+  const base = {
+    alias: draft.alias ?? '',
+    auto_loopback_address: draft.auto_loopback_address ?? false,
+    context: draft.context ?? '',
+    domain_enabled: draft.domain_enabled ?? false,
+    http_logs_auto_cleanup: initialConfig?.http_logs_auto_cleanup,
+    http_logs_enabled: initialConfig?.http_logs_enabled,
+    http_logs_max_file_size: initialConfig?.http_logs_max_file_size,
+    http_logs_retention_days: initialConfig?.http_logs_retention_days,
+    id: initialConfig?.id ?? 0,
+    kubeconfig: draft.kubeconfig ?? DEFAULT_KUBECONFIG,
+    local_address: draft.local_address ?? '127.0.0.1',
+    local_port: Number(draft.local_port),
+    namespace: draft.namespace ?? '',
+    protocol: draft.protocol ?? 'tcp',
+    tags: draft.tags,
+  }
+  const remote_port = draft.remote_port ? Number(draft.remote_port) : undefined
+
+  switch (draft.workload_type ?? 'service') {
+    case 'pod':
+      return {
+        ...base,
+        remote_port,
+        service: '',
+        target: draft.target ?? '',
+        workload_type: 'pod',
+      }
+    case 'proxy':
+      return {
+        ...base,
+        remote_address: draft.remote_address ?? '',
+        remote_port,
+        service: '',
+        workload_type: 'proxy',
+      }
+    case 'expose': {
+      const isPublic = draft.exposure_type === 'public'
+      return {
+        ...base,
+        ...(isPublic && {
+          cert_issuer: draft.cert_issuer,
+          cert_issuer_kind: draft.cert_issuer_kind,
+          cert_manager_enabled: draft.cert_manager_enabled,
+          ingress_annotations: draft.ingress_annotations,
+          ingress_class: draft.ingress_class,
+        }),
+        domain_enabled: isPublic && base.domain_enabled,
+        exposure_protocol:
+          draft.exposure_protocol === 'tcp' && !isPublic ? 'tcp' : undefined,
+        exposure_type: draft.exposure_type,
+        workload_type: 'expose',
+      }
+    }
+    case 'service':
+      return {
+        ...base,
+        remote_port,
+        service: draft.service ?? '',
+        workload_type: 'service',
+      }
+  }
+}
 
 const formatTag = (key: string, value: string) =>
   value ? `${key}=${value}` : key

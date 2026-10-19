@@ -82,3 +82,44 @@ describe('getConfigDetails', () => {
     )
   })
 })
+
+describe('getConfigDetails for expose', () => {
+  const expose: Config = {
+    alias: 'db',
+    exposure_type: 'cluster',
+    id: 2,
+    is_running: true,
+    local_port: 5432,
+    namespace: 'ns',
+    workload_type: 'expose',
+  }
+
+  it('shows TCP for a tcp cluster expose', () => {
+    const details = getConfigDetails(
+      { ...expose, exposure_protocol: 'tcp' },
+      null,
+    )
+
+    expect(details).toEqual(
+      expect.arrayContaining([{ label: 'Protocol', value: 'TCP' }]),
+    )
+    expect(details).not.toContainEqual(
+      expect.objectContaining({ value: expect.stringContaining('http://') }),
+    )
+  })
+
+  it('shows HTTP for a cluster expose without a protocol', () => {
+    expect(getConfigDetails(expose, null)).toEqual(
+      expect.arrayContaining([{ label: 'Protocol', value: 'HTTP' }]),
+    )
+  })
+
+  it('shows no protocol row for a public expose', () => {
+    const details = getConfigDetails(
+      { ...expose, exposure_type: 'public' },
+      null,
+    )
+
+    expect(details.some(detail => detail.label === 'Protocol')).toBe(false)
+  })
+})

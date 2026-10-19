@@ -26,10 +26,15 @@ use log::{
     info,
 };
 use tokio::io::{
+    AsyncRead,
     AsyncReadExt,
+    AsyncWrite,
     AsyncWriteExt,
 };
-use tokio::net::TcpListener;
+use tokio::net::{
+    TcpListener,
+    TcpStream,
+};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -68,22 +73,12 @@ impl ReverseHttpProxy {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, _)) => {
-                            let io = TokioIo::new(stream);
                             let tunnel = tunnel_server.clone();
-
                             tokio::spawn(async move {
-                                if let Err(err) = http1::Builder::new()
-                                    .serve_connection(
-                                        io,
-                                        service_fn(move |req| {
-                                            let tunnel = tunnel.clone();
-                                            async move { Self::handle_request(tunnel, req).await }
-                                        }),
-                                    )
-                                    .with_upgrades()
-                                    .await
-                                {
-                                    error!("Error serving connection: {:?}", err);
+                                if tunnel.carries_tcp().await {
+                                    Self::pipe_tcp(tunnel, stream).await;
+                                } else {
+                                    Self::serve_http(tunnel, stream).await;
                                 }
                             });
                         }
@@ -100,6 +95,29 @@ impl ReverseHttpProxy {
         }
 
         Ok(())
+    }
+
+    async fn serve_http(tunnel: Arc<WebSocketTunnelServer>, stream: TcpStream) {
+        if let Err(err) = http1::Builder::new()
+            .serve_connection(
+                TokioIo::new(stream),
+                service_fn(move |req| {
+                    let tunnel = tunnel.clone();
+                    async move { Self::handle_request(tunnel, req).await }
+                }),
+            )
+            .with_upgrades()
+            .await
+        {
+            error!("Error serving connection: {:?}", err);
+        }
+    }
+
+    async fn pipe_tcp(tunnel: Arc<WebSocketTunnelServer>, stream: TcpStream) {
+        match tunnel.open_stream(Uuid::new_v4().to_string()).await {
+            Ok(tunnel_stream) => pipe_stream(stream, tunnel_stream).await,
+            Err(e) => error!("Failed to open a TCP stream through the tunnel: {}", e),
+        }
     }
 
     async fn handle_request(
@@ -235,15 +253,15 @@ fn is_upgrade_request(req: &Request<Incoming>) -> bool {
         })
 }
 
-async fn pipe_upgraded(on_upgrade: OnUpgrade, mut stream: TunnelStream) {
-    let upgraded = match on_upgrade.await {
-        Ok(upgraded) => TokioIo::new(upgraded),
-        Err(e) => {
-            error!("Failed to upgrade the browser connection: {}", e);
-            return;
-        }
-    };
-    let (mut reader, mut writer) = tokio::io::split(upgraded);
+async fn pipe_upgraded(on_upgrade: OnUpgrade, stream: TunnelStream) {
+    match on_upgrade.await {
+        Ok(upgraded) => pipe_stream(TokioIo::new(upgraded), stream).await,
+        Err(e) => error!("Failed to upgrade the browser connection: {}", e),
+    }
+}
+
+async fn pipe_stream<T: AsyncRead + AsyncWrite>(io: T, mut stream: TunnelStream) {
+    let (mut reader, mut writer) = tokio::io::split(io);
     let mut buf = vec![0u8; 16 * 1024];
     let credit = stream.credit();
     let mut granted = 0;
@@ -510,12 +528,17 @@ mod tests {
     struct Relay {
         client: FakeClient,
         http_addr: std::net::SocketAddr,
+        mode_header: Option<String>,
         shutdown: Arc<Notify>,
         tasks: Vec<tokio::task::JoinHandle<Result<(), String>>>,
     }
 
     impl Relay {
         async fn start() -> Self {
+            Self::start_on("").await
+        }
+
+        async fn start_on(path: &str) -> Self {
             async fn free_port() -> u16 {
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 listener.local_addr().unwrap().port()
@@ -538,21 +561,41 @@ mod tests {
 
             let ws_addr = format!("127.0.0.1:{ws_port}").parse().unwrap();
             assert!(test_utils::wait_for_port(ws_addr).await);
-            let (client, _) = tokio_tungstenite::connect_async(format!("ws://{ws_addr}"))
-                .await
-                .unwrap();
+            let (client, response) =
+                tokio_tungstenite::connect_async(format!("ws://{ws_addr}{path}"))
+                    .await
+                    .unwrap();
+            let mode_header = response
+                .headers()
+                .get(crate::models::tunnel_protocol::TUNNEL_MODE_HEADER)
+                .map(|value| value.to_str().unwrap().to_owned());
             while !tunnel_server.is_connected().await {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             let http_addr = format!("127.0.0.1:{http_port}").parse().unwrap();
-            assert!(test_utils::wait_for_port(http_addr).await);
+            if mode_header.is_none() {
+                assert!(test_utils::wait_for_port(http_addr).await);
+            }
 
             Self {
                 client,
                 http_addr,
+                mode_header,
                 shutdown,
                 tasks: vec![ws_task, http_task],
             }
+        }
+
+        /// In TCP mode every accepted connection opens a stream, so the
+        /// client connection itself is the readiness probe.
+        async fn connect_client(&self) -> TcpStream {
+            for _ in 0..50 {
+                if let Ok(stream) = TcpStream::connect(self.http_addr).await {
+                    return stream;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            panic!("the relay never listened on {}", self.http_addr);
         }
 
         async fn recv(&mut self) -> TunnelMessage {
@@ -682,6 +725,88 @@ mod tests {
             upgraded,
             flow_control,
         }
+    }
+
+    #[tokio::test]
+    async fn tcp_tunnel_pipes_raw_bytes_between_a_client_and_the_app() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH).await;
+        assert_eq!(relay.mode_header.as_deref(), Some("tcp"));
+
+        let ssl_request = [0, 0, 0, 8, 4, 210, 22, 47];
+        let mut client = relay.connect_client().await;
+        client.write_all(&ssl_request).await.unwrap();
+        let TunnelMessage::StreamOpen { id } = relay.recv().await else {
+            panic!("expected a stream open");
+        };
+        match relay.recv().await {
+            TunnelMessage::StreamData { id: got, data } => {
+                assert_eq!(got, id);
+                assert_eq!(data, ssl_request);
+            }
+            other => panic!("expected the client bytes, got {other:?}"),
+        }
+
+        relay
+            .send(TunnelMessage::StreamData {
+                id: id.clone(),
+                data: b"N".to_vec(),
+            })
+            .await;
+        let mut reply = [0u8; 1];
+        tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut reply))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&reply, b"N");
+        assert!(matches!(
+            relay.recv().await,
+            TunnelMessage::StreamCredit { id: got, bytes: 1 } if got == id
+        ));
+
+        relay.send(TunnelMessage::StreamClose { id }).await;
+        let (mut read, _write) = client.into_split();
+        assert!(read_until_closed(&mut read).await.is_empty());
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn tcp_client_closing_closes_the_stream_in_the_app() {
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH).await;
+
+        let client = relay.connect_client().await;
+        let TunnelMessage::StreamOpen { id } = relay.recv().await else {
+            panic!("expected a stream open");
+        };
+        drop(client);
+        assert!(matches!(
+            relay.recv().await,
+            TunnelMessage::StreamClose { id: got } if got == id
+        ));
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn tunnel_without_tcp_mode_keeps_serving_http() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut relay = Relay::start().await;
+        assert_eq!(relay.mode_header, None);
+
+        let mut client = TcpStream::connect(relay.http_addr).await.unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: app\r\n\r\n")
+            .await
+            .unwrap();
+        assert!(matches!(
+            relay.recv().await,
+            TunnelMessage::HttpRequest { method, .. } if method == "GET"
+        ));
+        relay.stop();
     }
 
     #[tokio::test]

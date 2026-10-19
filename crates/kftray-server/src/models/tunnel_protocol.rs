@@ -7,6 +7,14 @@ use serde::{
 /// `StreamCredit`. Each direction of each stream has its own budget.
 pub const STREAM_WINDOW: usize = 256 * 1024;
 
+/// The app connects the tunnel on this path when the expose carries raw TCP.
+/// The relay then pipes every connection on its HTTP port as a stream.
+pub const TCP_MODE_PATH: &str = "/tcp";
+
+/// The relay answers the TCP mode handshake with this header set to `tcp`.
+/// An app that does not see it talks to a relay without TCP support.
+pub const TUNNEL_MODE_HEADER: &str = "x-kftray-tunnel-mode";
+
 /// Messages sent over WebSocket tunnel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -39,6 +47,12 @@ pub enum TunnelMessage {
         /// `StreamCredit`. Without it the relay answers 502.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         flow_control: bool,
+    },
+    /// Sent by a relay in TCP mode for each new connection. The app opens
+    /// its own connection to the local port and answers `StreamClose` when
+    /// that fails.
+    StreamOpen {
+        id: String,
     },
     StreamData {
         id: String,

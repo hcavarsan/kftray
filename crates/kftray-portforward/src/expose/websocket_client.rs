@@ -25,6 +25,8 @@ use hyper_util::rt::{
 };
 use kftray_commons::models::tunnel_protocol::{
     STREAM_WINDOW,
+    TCP_MODE_PATH,
+    TUNNEL_MODE_HEADER,
     TunnelMessage,
 };
 use log::{
@@ -34,9 +36,12 @@ use log::{
     warn,
 };
 use tokio::io::{
+    AsyncRead,
     AsyncReadExt,
+    AsyncWrite,
     AsyncWriteExt,
 };
+use tokio::net::TcpStream;
 use tokio::sync::{
     Semaphore,
     mpsc,
@@ -56,10 +61,28 @@ struct StreamRoute {
     credit: Arc<Semaphore>,
 }
 
+type StreamRoutes = HashMap<String, StreamRoute>;
+
+fn add_stream(
+    streams: &mut StreamRoutes, id: String,
+) -> (mpsc::UnboundedReceiver<Vec<u8>>, Arc<Semaphore>) {
+    let (data, data_rx) = mpsc::unbounded_channel();
+    let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
+    streams.insert(
+        id,
+        StreamRoute {
+            data,
+            credit: credit.clone(),
+        },
+    );
+    (data_rx, credit)
+}
+
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
     local_service_address: String,
     local_service_port: u16,
+    carries_tcp: bool,
 }
 
 impl WebSocketTunnelClient {
@@ -70,7 +93,14 @@ impl WebSocketTunnelClient {
             websocket_port,
             local_service_address,
             local_service_port,
+            carries_tcp: false,
         }
+    }
+
+    /// Asks the relay to pipe raw TCP to the local port instead of HTTP.
+    pub fn carrying_tcp(mut self, carries_tcp: bool) -> Self {
+        self.carries_tcp = carries_tcp;
+        self
     }
 
     pub async fn start(&self, ready: oneshot::Sender<Result<(), String>>) -> Result<(), String> {
@@ -83,7 +113,11 @@ impl WebSocketTunnelClient {
         &self, ready: oneshot::Sender<Result<(), String>>, max_retries: u32,
     ) -> Result<(), String> {
         let mut ready = Some(ready);
-        let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
+        let ws_url = format!(
+            "ws://127.0.0.1:{}{}",
+            self.websocket_port,
+            if self.carries_tcp { TCP_MODE_PATH } else { "" }
+        );
         let mut retry_count = 0;
 
         loop {
@@ -127,7 +161,7 @@ impl WebSocketTunnelClient {
     async fn connect_and_run(
         &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
     ) -> Result<(), String> {
-        let (ws_stream, _) = match connect_async(ws_url).await {
+        let (ws_stream, response) = match connect_async(ws_url).await {
             Ok(connection) => connection,
             Err(error) => {
                 let message = format!("Failed to connect to WebSocket: {error}");
@@ -150,6 +184,20 @@ impl WebSocketTunnelClient {
                 return Err(message);
             }
         };
+        if self.carries_tcp
+            && response
+                .headers()
+                .get(TUNNEL_MODE_HEADER)
+                .is_none_or(|mode| mode != "tcp")
+        {
+            let message = "The kftray-server relay in the cluster cannot carry TCP. Start the \
+                           expose again so the relay pod pulls the latest image"
+                .to_owned();
+            if let Some(ready) = ready.take() {
+                let _ = ready.send(Err(message.clone()));
+            }
+            return Err(message);
+        }
         if let Some(ready) = ready.take() {
             ready
                 .send(Ok(()))
@@ -171,7 +219,7 @@ impl WebSocketTunnelClient {
             self.local_service_port,
         ));
         let mut requests = JoinSet::new();
-        let mut streams: HashMap<String, StreamRoute> = HashMap::new();
+        let mut streams = StreamRoutes::new();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<TunnelMessage>();
 
         loop {
@@ -192,12 +240,10 @@ impl WebSocketTunnelClient {
                     };
                     let _ = outgoing_tx.send(response_msg);
                     if let Some((id, upgraded)) = stream {
-                        let (data, to_local_rx) = mpsc::unbounded_channel();
-                        let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
-                        streams.insert(id.clone(), StreamRoute { data, credit: credit.clone() });
-                        tokio::spawn(pipe_upgraded(
+                        let (to_local_rx, credit) = add_stream(&mut streams, id.clone());
+                        tokio::spawn(pipe_stream(
                             id,
-                            upgraded,
+                            TokioIo::new(upgraded),
                             to_local_rx,
                             credit,
                             outgoing_tx.clone(),
@@ -255,6 +301,26 @@ impl WebSocketTunnelClient {
                                     upgrade && flow_control,
                                 )
                                 .await
+                        });
+                    }
+                    Ok(TunnelMessage::StreamOpen { id }) => {
+                        let (to_local_rx, credit) = add_stream(&mut streams, id.clone());
+                        let address = (self.local_service_address.clone(), self.local_service_port);
+                        let outgoing = outgoing_tx.clone();
+                        tokio::spawn(async move {
+                            match TcpStream::connect(&address).await {
+                                Ok(local) => {
+                                    let _ = local.set_nodelay(true);
+                                    pipe_stream(id, local, to_local_rx, credit, outgoing).await;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to connect to local service at {}:{}: {}",
+                                        address.0, address.1, e
+                                    );
+                                    let _ = outgoing.send(TunnelMessage::StreamClose { id });
+                                }
+                            }
                         });
                     }
                     Ok(TunnelMessage::StreamData { id, data }) => {
@@ -464,11 +530,11 @@ impl WebSocketTunnelClient {
     }
 }
 
-async fn pipe_upgraded(
-    id: String, upgraded: Upgraded, mut from_relay: mpsc::UnboundedReceiver<Vec<u8>>,
-    credit: Arc<Semaphore>, outgoing: mpsc::UnboundedSender<TunnelMessage>,
+async fn pipe_stream<T: AsyncRead + AsyncWrite>(
+    id: String, local: T, mut from_relay: mpsc::UnboundedReceiver<Vec<u8>>, credit: Arc<Semaphore>,
+    outgoing: mpsc::UnboundedSender<TunnelMessage>,
 ) {
-    let (mut reader, mut writer) = tokio::io::split(TokioIo::new(upgraded));
+    let (mut reader, mut writer) = tokio::io::split(local);
     let mut buf = vec![0u8; 16 * 1024];
     let mut granted = 0;
 
@@ -1270,5 +1336,144 @@ mod tests {
         drop(relay);
         let second = tokio::time::timeout(Duration::from_secs(5), closed.recv()).await;
         assert_eq!(second.unwrap(), Some(("/b".to_owned(), Vec::new())));
+    }
+
+    #[allow(clippy::result_large_err)]
+    async fn connect_tcp_relay(
+        app_port: u16, relay_supports_tcp: bool,
+    ) -> (
+        Relay,
+        oneshot::Receiver<Result<(), String>>,
+        tokio_util::task::AbortOnDropHandle<Result<(), String>>,
+    ) {
+        use tokio_tungstenite::tungstenite::handshake::server::{
+            Request,
+            Response,
+        };
+
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            ws_listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            app_port,
+        )
+        .carrying_tcp(true);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (socket, _) = ws_listener.accept().await.unwrap();
+        let ws = tokio_tungstenite::accept_hdr_async(
+            socket,
+            |request: &Request, mut response: Response| {
+                assert_eq!(request.uri().path(), super::TCP_MODE_PATH);
+                if relay_supports_tcp {
+                    response
+                        .headers_mut()
+                        .insert(super::TUNNEL_MODE_HEADER, "tcp".parse().unwrap());
+                }
+                Ok(response)
+            },
+        )
+        .await
+        .unwrap();
+        (ws, ready_rx, task)
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_carries_bytes_to_the_local_port_and_back() {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app_port = app.local_addr().unwrap().port();
+        let app_task = tokio::spawn(async move {
+            let (mut socket, _) = app.accept().await.unwrap();
+            let mut request = [0u8; 8];
+            socket.read_exact(&mut request).await.unwrap();
+            socket.write_all(b"N").await.unwrap();
+            let mut rest = Vec::new();
+            socket.read_to_end(&mut rest).await.unwrap();
+            (request, rest)
+        });
+        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true).await;
+        ready.await.unwrap().unwrap();
+
+        let ssl_request = vec![0, 0, 0, 8, 4, 210, 22, 47];
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamOpen {
+                id: "db".to_owned(),
+            },
+        )
+        .await;
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamData {
+                id: "db".to_owned(),
+                data: ssl_request.clone(),
+            },
+        )
+        .await;
+
+        let mut credited = 0;
+        let mut reply = Vec::new();
+        while credited < ssl_request.len() || reply.is_empty() {
+            match recv(&mut relay).await {
+                super::TunnelMessage::StreamCredit { id, bytes } if id == "db" => {
+                    credited += bytes;
+                }
+                super::TunnelMessage::StreamData { id, data } if id == "db" => {
+                    reply.extend(data);
+                }
+                other => panic!("expected stream traffic for db, got {other:?}"),
+            }
+        }
+        assert_eq!(reply, b"N");
+
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamClose {
+                id: "db".to_owned(),
+            },
+        )
+        .await;
+        let (request, rest) = tokio::time::timeout(Duration::from_secs(5), app_task)
+            .await
+            .expect("the local connection stayed open after StreamClose")
+            .unwrap();
+        assert_eq!(request.to_vec(), ssl_request);
+        assert!(rest.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_to_a_closed_local_port_is_closed() {
+        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true).await;
+        ready.await.unwrap().unwrap();
+
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamOpen {
+                id: "db".to_owned(),
+            },
+        )
+        .await;
+        assert!(matches!(
+            recv(&mut relay).await,
+            super::TunnelMessage::StreamClose { id } if id == "db"
+        ));
+    }
+
+    #[tokio::test]
+    async fn tcp_expose_on_a_relay_without_tcp_support_fails_startup() {
+        let (_relay, ready, _task) = connect_tcp_relay(5432, false).await;
+        let error = tokio::time::timeout(Duration::from_secs(5), ready)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("cannot carry TCP"), "{error}");
     }
 }
