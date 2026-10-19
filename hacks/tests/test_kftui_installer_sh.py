@@ -52,7 +52,12 @@ pytestmark = pytest.mark.skipif(
 
 
 def run_installer(
-    tmp_path: Path, os_name: str, arch: str, curl: str = CURL_SHIM
+    tmp_path: Path,
+    os_name: str,
+    arch: str,
+    curl: str = CURL_SHIM,
+    shell: str = "/bin/bash",
+    home_name: str = "home",
 ) -> subprocess.CompletedProcess[str]:
     shims = tmp_path / "shims"
     shims.mkdir()
@@ -60,7 +65,7 @@ def run_installer(
         shim = shims / name
         shim.write_text(body)
         shim.chmod(0o755)
-    home = tmp_path / "home"
+    home = tmp_path / home_name
     home.mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(INSTALLER)],
@@ -70,6 +75,7 @@ def run_installer(
             "PATH": f"{shims}{os.pathsep}{os.environ['PATH']}",
             "SHIM_OS": os_name,
             "SHIM_ARCH": arch,
+            "SHELL": shell,
         },
         capture_output=True,
         text=True,
@@ -128,3 +134,43 @@ def test_http_error_on_download_keeps_the_installed_kftui(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert installed.read_text() == "working kftui"
+
+
+@pytest.mark.parametrize(
+    ("shell", "profile"),
+    [
+        ("/bin/bash", ".profile"),
+        ("/bin/zsh", ".zshrc"),
+        ("/usr/local/bin/fish", ".config/fish/config.fish"),
+    ],
+)
+def test_home_without_profile_gets_one_for_the_user_shell(
+    tmp_path: Path, shell: str, profile: str
+) -> None:
+    result = run_installer(tmp_path, "Darwin", "arm64", shell=shell)
+
+    assert result.returncode == 0, result.stderr
+    written = tmp_path / "home" / profile
+    assert str(tmp_path / "home" / ".local" / "bin") in written.read_text()
+    assert (
+        f"Added {tmp_path / 'home' / '.local' / 'bin'} to PATH in {written}"
+        in result.stdout
+    )
+
+
+@pytest.mark.parametrize("flags", ["-lc", "-ic"])
+def test_bash_finds_kftui_after_install_into_empty_home(
+    tmp_path: Path, flags: str
+) -> None:
+    home = tmp_path / "my home"
+    run_installer(tmp_path, "Darwin", "arm64", home_name=home.name)
+
+    found = subprocess.run(
+        ["bash", flags, "command -v kftui"],
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert found.stdout.strip() == str(home / ".local" / "bin" / "kftui")
