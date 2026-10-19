@@ -2177,29 +2177,24 @@ pub async fn handle_delete_confirmation_input(
                     .filter_map(|&row| configs.get(row).and_then(|config| config.id))
                     .collect();
 
-                // Clean up timeout tracking for these configs to prevent memory leaks
-                for id in &ids_to_delete {
-                    kftray_portforward::kube::clear_stopped_by_timeout(*id);
-                }
-
-                match kftray_commons::utils::config::delete_configs_with_mode(
-                    ids_to_delete.clone(),
-                    mode,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        app.delete_confirmation_message =
-                            Some("Configs deleted successfully.".to_string());
-                        app.stopped_configs.retain(|config| {
-                            !ids_to_delete.contains(&config.id.unwrap_or_default())
-                        });
+                let sender = app.error_sender.clone();
+                app.forwarding_tasks.spawn(async move {
+                    let ids = ids_to_delete.clone();
+                    let result = kftray_portforward::kube::delete_configs_if_idle(
+                        &ids_to_delete,
+                        mode,
+                        || async move {
+                            for id in &ids {
+                                kftray_portforward::kube::clear_stopped_by_timeout(*id);
+                            }
+                            kftray_commons::utils::config::delete_configs_with_mode(ids, mode).await
+                        },
+                    )
+                    .await;
+                    if let (Err(error), Some(sender)) = (result, sender) {
+                        let _ = sender.send(format!("Failed to delete configs: {error}"));
                     }
-                    Err(e) => {
-                        app.delete_confirmation_message =
-                            Some(format!("Failed to delete configs: {e}"));
-                    }
-                }
+                });
             }
             app.selected_rows_stopped.clear();
             app.state = AppState::Normal;
