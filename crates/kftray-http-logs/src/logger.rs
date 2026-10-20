@@ -285,24 +285,15 @@ impl HttpLogger {
         let timestamp = Utc::now();
         let is_preformatted = buffer.len() > 5 && &buffer[0..5] == b"HTTP/";
 
-        match self.trace_map.get(&request_id) {
-            Some(trace_info) => {
-                let took_ms = calculate_time_diff(trace_info.timestamp, timestamp);
-                self.send_response_log_internal(
-                    buffer,
-                    request_id,
-                    timestamp,
-                    took_ms,
-                    is_preformatted,
-                )
-                .await;
-            }
-            _ => {
+        let took_ms = match self.trace_map.get(&request_id) {
+            Some(trace_info) => calculate_time_diff(trace_info.timestamp, timestamp),
+            None => {
                 debug!("No trace info found for request ID: {}", request_id);
-                self.send_response_log_internal(buffer, request_id, timestamp, 0, is_preformatted)
-                    .await;
+                0
             }
-        }
+        };
+        self.send_response_log_internal(buffer, request_id, timestamp, took_ms, is_preformatted)
+            .await;
     }
 
     async fn send_response_log_internal(
@@ -884,6 +875,37 @@ mod tests {
 
         let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
         assert!(contents.contains("Single log test message"));
+    }
+
+    #[tokio::test]
+    async fn a_response_waiting_on_a_full_log_channel_leaves_its_trace_unlocked() {
+        let (log_sender, _log_receiver) = mpsc::channel(1);
+        let logger = HttpLogger {
+            log_sender,
+            trace_map: Arc::new(DashMap::new()),
+            shutdown: Arc::new(tokio::sync::watch::channel(()).0),
+            config: LogConfig::new(PathBuf::new()),
+            writer_task: Arc::new(tokio::sync::Mutex::new(None)),
+            cleanup_task: Arc::new(tokio::sync::Mutex::new(None)),
+        };
+        let request_id = logger
+            .log_request(Bytes::from_static(b"GET / HTTP/1.1\r\nHost: a\r\n\r\n"))
+            .await;
+
+        let response = tokio::spawn({
+            let logger = logger.clone();
+            let request_id = request_id.clone();
+            async move {
+                logger
+                    .log_response(Bytes::from_static(b"HTTP/1.1 200 OK\r\n\r\n"), request_id)
+                    .await;
+            }
+        });
+        tokio::task::yield_now().await;
+
+        assert!(!response.is_finished());
+        assert!(!logger.trace_map.try_get_mut(&request_id).is_locked());
+        response.abort();
     }
 
     async fn log_exchanges(
