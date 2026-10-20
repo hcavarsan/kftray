@@ -11,5 +11,5 @@ export async function withNativeDialog<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-export const selectFile = () =>
-  withNativeDialog(() => open({ multiple: false, directory: false }))
+export const selectPath = (directory: boolean) =>
+  withNativeDialog(() => open({ multiple: false, directory }))

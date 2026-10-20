@@ -1,6 +1,6 @@
 import { type MutationMeta, useMutation } from '@tanstack/react-query'
 
-import { selectFile } from '@/lib/nativeDialog'
+import { selectPath } from '@/lib/nativeDialog'
 
 export const DEFAULT_KUBECONFIG = 'default'
 
@@ -18,7 +18,7 @@ export function useKubeconfigPicker({
   onError,
 }: KubeconfigPickerOptions) {
   const { mutate: browse } = useMutation({
-    mutationFn: selectFile,
+    mutationFn: selectPath,
     onSuccess: path => {
       if (path) {
         onChange(path)
@@ -29,7 +29,8 @@ export function useKubeconfigPicker({
   })
 
   return {
-    browse: () => browse(),
+    browse: () => browse(false),
+    browseFolder: () => browse(true),
     isDefault: value === DEFAULT_KUBECONFIG,
     resetToDefault: () => onChange(DEFAULT_KUBECONFIG),
   }

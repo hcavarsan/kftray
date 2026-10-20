@@ -286,7 +286,7 @@ impl McpTool for CreateConfigTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 },
                 "alias": {
                     "type": "string",
@@ -467,7 +467,7 @@ impl McpTool for UpdateConfigTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Path to kubeconfig file"
+                    "description": "Path to a kubeconfig file or a folder of kubeconfig files"
                 },
                 "alias": {
                     "type": "string",
