@@ -16,7 +16,7 @@ export function KubeconfigControl({
   kubeconfig,
   onChange,
 }: KubeconfigControlProps) {
-  const { browse } = useKubeconfigPicker({
+  const { browse, browseFolder } = useKubeconfigPicker({
     value: kubeconfig,
     onChange,
     onError: () => onChange(DEFAULT_KUBECONFIG),
@@ -43,6 +43,16 @@ export function KubeconfigControl({
           </Text>
         </Button>
       </Tooltip>
+      <Button
+        height='20px'
+        onClick={browseFolder}
+        px={2}
+        size='xs'
+        variant='ghost'
+        _hover={{ bg: 'bg.hover' }}
+      >
+        <Text fontSize='2xs'>Folder</Text>
+      </Button>
     </HStack>
   )
 }

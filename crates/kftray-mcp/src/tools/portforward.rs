@@ -202,7 +202,7 @@ impl McpTool for StartPortForwardTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 },
                 "alias": {
                     "type": "string",
