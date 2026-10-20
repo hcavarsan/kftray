@@ -39,6 +39,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::websocket_server::{
+    StreamChunk,
     TunnelStream,
     WebSocketTunnelServer,
     take_credit,
@@ -265,11 +266,19 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(io: T, mut stream: TunnelStream)
     let mut buf = vec![0u8; 16 * 1024];
     let credit = stream.credit();
     let mut granted = 0;
+    let mut reading = true;
+    let mut writing = true;
 
-    loop {
+    while reading || writing {
         tokio::select! {
-            taken = take_credit(&credit, buf.len()), if granted == 0 => granted = taken,
-            read = reader.read(&mut buf[..granted]), if granted > 0 => match read {
+            taken = take_credit(&credit, buf.len()), if reading && granted == 0 => granted = taken,
+            read = reader.read(&mut buf[..granted]), if reading && granted > 0 => match read {
+                Ok(0) if stream.half_close() => {
+                    reading = false;
+                    if !stream.end() {
+                        break;
+                    }
+                }
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     granted -= n;
@@ -278,20 +287,26 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(io: T, mut stream: TunnelStream)
                     }
                 }
             },
-            data = stream.recv() => match data {
-                Some(data) => {
+            chunk = stream.recv() => match chunk {
+                Some(StreamChunk::Data(data)) => {
                     if writer.write_all(&data).await.is_err()
                         || !stream.return_credit(data.len())
                     {
                         break;
                     }
                 }
+                Some(StreamChunk::End) => {
+                    writing = false;
+                    let _ = writer.shutdown().await;
+                }
                 None => break,
             },
         }
     }
 
-    let _ = writer.shutdown().await;
+    if writing {
+        let _ = writer.shutdown().await;
+    }
 }
 
 #[cfg(test)]
@@ -535,10 +550,12 @@ mod tests {
 
     impl Relay {
         async fn start() -> Self {
-            Self::start_on("").await
+            Self::start_on("", false).await
         }
 
-        async fn start_on(path: &str) -> Self {
+        async fn start_on(path: &str, half_close: bool) -> Self {
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
             async fn free_port() -> u16 {
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 listener.local_addr().unwrap().port()
@@ -561,14 +578,26 @@ mod tests {
 
             let ws_addr = format!("127.0.0.1:{ws_port}").parse().unwrap();
             assert!(test_utils::wait_for_port(ws_addr).await);
-            let (client, response) =
-                tokio_tungstenite::connect_async(format!("ws://{ws_addr}{path}"))
-                    .await
-                    .unwrap();
+            let mut request = format!("ws://{ws_addr}{path}")
+                .into_client_request()
+                .unwrap();
+            if half_close {
+                request.headers_mut().insert(
+                    crate::models::tunnel_protocol::HALF_CLOSE_HEADER,
+                    "1".parse().unwrap(),
+                );
+            }
+            let (client, response) = tokio_tungstenite::connect_async(request).await.unwrap();
             let mode_header = response
                 .headers()
                 .get(crate::models::tunnel_protocol::TUNNEL_MODE_HEADER)
                 .map(|value| value.to_str().unwrap().to_owned());
+            assert_eq!(
+                response
+                    .headers()
+                    .contains_key(crate::models::tunnel_protocol::HALF_CLOSE_HEADER),
+                half_close
+            );
             while !tunnel_server.is_connected().await {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -734,7 +763,7 @@ mod tests {
             AsyncWriteExt,
         };
 
-        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH).await;
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH, false).await;
         assert_eq!(relay.mode_header.as_deref(), Some("tcp"));
 
         let ssl_request = [0, 0, 0, 8, 4, 210, 22, 47];
@@ -776,13 +805,64 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_client_closing_closes_the_stream_in_the_app() {
-        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH).await;
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH, false).await;
 
         let client = relay.connect_client().await;
         let TunnelMessage::StreamOpen { id } = relay.recv().await else {
             panic!("expected a stream open");
         };
         drop(client);
+        assert!(matches!(
+            relay.recv().await,
+            TunnelMessage::StreamClose { id: got } if got == id
+        ));
+        relay.stop();
+    }
+
+    #[tokio::test]
+    async fn tcp_client_half_close_still_gets_the_reply() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH, true).await;
+        let mut client = relay.connect_client().await;
+        client.write_all(b"ping").await.unwrap();
+        client.shutdown().await.unwrap();
+
+        let TunnelMessage::StreamOpen { id } = relay.recv().await else {
+            panic!("expected a stream open");
+        };
+        match relay.recv().await {
+            TunnelMessage::StreamData { id: got, data } if got == id => assert_eq!(data, b"ping"),
+            other => panic!("expected the client bytes, got {other:?}"),
+        }
+        match relay.recv().await {
+            TunnelMessage::StreamEnd { id: got } if got == id => {}
+            other => panic!("expected the client to end its side, got {other:?}"),
+        }
+
+        relay
+            .send(TunnelMessage::StreamData {
+                id: id.clone(),
+                data: b"pong".to_vec(),
+            })
+            .await;
+        relay
+            .send(TunnelMessage::StreamEnd { id: id.clone() })
+            .await;
+        let mut got = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut got))
+            .await
+            .expect("the client never got EOF after the app ended its side")
+            .unwrap();
+        assert_eq!(got, b"pong");
+
+        assert!(matches!(
+            relay.recv().await,
+            TunnelMessage::StreamCredit { id: got, bytes: 4 } if got == id
+        ));
         assert!(matches!(
             relay.recv().await,
             TunnelMessage::StreamClose { id: got } if got == id

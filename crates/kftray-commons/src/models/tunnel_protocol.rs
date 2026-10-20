@@ -15,6 +15,11 @@ pub const TCP_MODE_PATH: &str = "/tcp";
 /// An app that does not see it talks to a relay without TCP support.
 pub const TUNNEL_MODE_HEADER: &str = "x-kftray-tunnel-mode";
 
+/// The app sends this header in the tunnel handshake, and a relay that can
+/// carry `StreamEnd` echoes it. Without it on both sides, EOF from either
+/// end closes the whole stream.
+pub const HALF_CLOSE_HEADER: &str = "x-kftray-half-close";
+
 /// Messages sent over WebSocket tunnel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -59,6 +64,12 @@ pub enum TunnelMessage {
         data: Vec<u8>,
     },
     StreamClose {
+        id: String,
+    },
+    /// The sender read EOF from its end of the stream and sends no more
+    /// `StreamData` on it. The receiver shuts down writes to its end after
+    /// the queued data, and the other direction keeps flowing.
+    StreamEnd {
         id: String,
     },
     /// The receiver of `StreamData` sends this after it wrote `bytes` of

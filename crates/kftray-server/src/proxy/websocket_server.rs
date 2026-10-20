@@ -42,6 +42,7 @@ use tokio_tungstenite::{
 };
 
 use crate::models::tunnel_protocol::{
+    HALF_CLOSE_HEADER,
     STREAM_WINDOW,
     TCP_MODE_PATH,
     TUNNEL_MODE_HEADER,
@@ -60,8 +61,13 @@ pub struct WebSocketTunnelServer {
 }
 
 struct StreamRoute {
-    data: mpsc::UnboundedSender<Vec<u8>>,
+    data: mpsc::UnboundedSender<StreamChunk>,
     credit: Arc<Semaphore>,
+}
+
+pub enum StreamChunk {
+    Data(Vec<u8>),
+    End,
 }
 
 type StreamSenders = Arc<Mutex<HashMap<String, StreamRoute>>>;
@@ -71,10 +77,11 @@ struct TunnelConnection {
     pending_responses: Arc<RwLock<HashMap<String, oneshot::Sender<TunnelMessage>>>>,
     streams: StreamSenders,
     carries_tcp: bool,
+    half_close: bool,
 }
 
 impl TunnelConnection {
-    fn add_stream(&self, id: &str) -> (mpsc::UnboundedReceiver<Vec<u8>>, Arc<Semaphore>) {
+    fn add_stream(&self, id: &str) -> (mpsc::UnboundedReceiver<StreamChunk>, Arc<Semaphore>) {
         let (data, data_rx) = mpsc::unbounded_channel();
         let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
         self.streams
@@ -95,15 +102,20 @@ impl TunnelConnection {
 /// tells the client to close its side, unless the client closed first.
 pub struct TunnelStream {
     id: String,
-    incoming: mpsc::UnboundedReceiver<Vec<u8>>,
+    incoming: mpsc::UnboundedReceiver<StreamChunk>,
     credit: Arc<Semaphore>,
     request_tx: mpsc::UnboundedSender<TunnelMessage>,
     streams: StreamSenders,
+    half_close: bool,
 }
 
 impl TunnelStream {
-    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+    pub async fn recv(&mut self) -> Option<StreamChunk> {
         self.incoming.recv().await
+    }
+
+    pub fn half_close(&self) -> bool {
+        self.half_close
     }
 
     pub fn credit(&self) -> Arc<Semaphore> {
@@ -124,6 +136,14 @@ impl TunnelStream {
             .send(TunnelMessage::StreamCredit {
                 id: self.id.clone(),
                 bytes,
+            })
+            .is_ok()
+    }
+
+    pub fn end(&self) -> bool {
+        self.request_tx
+            .send(TunnelMessage::StreamEnd {
+                id: self.id.clone(),
             })
             .is_ok()
     }
@@ -217,9 +237,16 @@ impl WebSocketTunnelServer {
         ping_interval_duration: Duration, pong_timeout_duration: Duration,
     ) -> Result<(), String> {
         let mut carries_tcp = false;
-        let ws_stream = accept_hdr_async(stream, TunnelModeHandshake(&mut carries_tcp))
-            .await
-            .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
+        let mut half_close = false;
+        let ws_stream = accept_hdr_async(
+            stream,
+            TunnelModeHandshake {
+                carries_tcp: &mut carries_tcp,
+                half_close: &mut half_close,
+            },
+        )
+        .await
+        .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
 
         info!(
             "WebSocket tunnel established ({})",
@@ -240,6 +267,7 @@ impl WebSocketTunnelServer {
                 pending_responses: pending_responses.clone(),
                 streams: streams.clone(),
                 carries_tcp,
+                half_close,
             });
         }
 
@@ -273,6 +301,15 @@ impl WebSocketTunnelServer {
                                         .lock()
                                         .unwrap_or_else(PoisonError::into_inner)
                                         .remove(&id);
+                                }
+                                Ok(TunnelMessage::StreamEnd { id }) => {
+                                    if let Some(stream) = streams
+                                        .lock()
+                                        .unwrap_or_else(PoisonError::into_inner)
+                                        .get(&id)
+                                    {
+                                        let _ = stream.data.send(StreamChunk::End);
+                                    }
                                 }
                                 Ok(TunnelMessage::StreamCredit { id, bytes }) => {
                                     if let Some(stream) = streams
@@ -452,7 +489,7 @@ impl WebSocketTunnelServer {
     ) -> Result<(TunnelMessage, Option<TunnelStream>), String> {
         let (response_tx, response_rx) = oneshot::channel();
 
-        let (pending_responses, request_tx, streams, incoming) = {
+        let (pending_responses, request_tx, streams, incoming, half_close) = {
             let tunnel_lock = self.tunnel.read().await;
             let tunnel = tunnel_lock.as_ref().ok_or("No active tunnel connection")?;
 
@@ -482,6 +519,7 @@ impl WebSocketTunnelServer {
                 tunnel.request_tx.clone(),
                 tunnel.streams.clone(),
                 incoming,
+                tunnel.half_close,
             )
         };
 
@@ -511,6 +549,7 @@ impl WebSocketTunnelServer {
                 credit,
                 request_tx,
                 streams,
+                half_close,
             }),
             Some(_) => {
                 streams
@@ -551,6 +590,7 @@ impl WebSocketTunnelServer {
             credit,
             request_tx: tunnel.request_tx.clone(),
             streams: tunnel.streams.clone(),
+            half_close: tunnel.half_close,
         };
         tunnel
             .request_tx
@@ -560,17 +600,26 @@ impl WebSocketTunnelServer {
     }
 }
 
-struct TunnelModeHandshake<'a>(&'a mut bool);
+struct TunnelModeHandshake<'a> {
+    carries_tcp: &'a mut bool,
+    half_close: &'a mut bool,
+}
 
 impl Callback for TunnelModeHandshake<'_> {
     fn on_request(
         self, request: &Request, mut response: Response,
     ) -> Result<Response, ErrorResponse> {
-        *self.0 = request.uri().path() == TCP_MODE_PATH;
-        if *self.0 {
+        *self.carries_tcp = request.uri().path() == TCP_MODE_PATH;
+        if *self.carries_tcp {
             response
                 .headers_mut()
                 .insert(TUNNEL_MODE_HEADER, HeaderValue::from_static("tcp"));
+        }
+        *self.half_close = request.headers().contains_key(HALF_CLOSE_HEADER);
+        if *self.half_close {
+            response
+                .headers_mut()
+                .insert(HALF_CLOSE_HEADER, HeaderValue::from_static("1"));
         }
         Ok(response)
     }
@@ -580,7 +629,7 @@ fn deliver_stream_data(streams: &StreamSenders, id: &str, data: Vec<u8>) -> bool
     let mut open = streams.lock().unwrap_or_else(PoisonError::into_inner);
     let delivered = open
         .get(id)
-        .is_some_and(|stream| stream.data.send(data).is_ok());
+        .is_some_and(|stream| stream.data.send(StreamChunk::Data(data)).is_ok());
     if !delivered {
         open.remove(id);
     }
