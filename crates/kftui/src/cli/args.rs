@@ -104,7 +104,7 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Path to kubeconfig file for auto-discovery (default: system default)",
+        help = "Path to a kubeconfig file or a folder of kubeconfig files for auto-discovery (default: system default)",
         value_name = "PATH"
     )]
     pub kubeconfig: Option<String>,

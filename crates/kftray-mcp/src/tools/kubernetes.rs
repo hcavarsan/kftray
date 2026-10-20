@@ -43,7 +43,7 @@ impl McpTool for ListKubeContextsTool {
             json!({
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file. If not provided, uses default kubeconfig location."
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files. If not provided, uses default kubeconfig location."
                 }
             }),
             None,
@@ -103,7 +103,7 @@ impl McpTool for ListNamespacesTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 }
             }),
             Some(vec!["context".to_string()]),
@@ -176,7 +176,7 @@ impl McpTool for ListServicesTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 }
             }),
             Some(vec!["context".to_string(), "namespace".to_string()]),
@@ -267,7 +267,7 @@ impl McpTool for ListPodsTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 },
                 "label_selector": {
                     "type": "string",
@@ -395,7 +395,7 @@ impl McpTool for ListPortsTool {
                 },
                 "kubeconfig": {
                     "type": "string",
-                    "description": "Optional path to kubeconfig file"
+                    "description": "Optional path to a kubeconfig file or a folder of kubeconfig files"
                 }
             }),
             Some(vec![

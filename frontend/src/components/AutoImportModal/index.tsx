@@ -63,6 +63,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
 
   const {
     browse: handleSetKubeConfig,
+    browseFolder: handleSetKubeConfigFolder,
     isDefault: isDefaultKubeconfig,
     resetToDefault,
   } = useKubeconfigPicker({
@@ -72,7 +73,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
     meta: {
       errorToast: {
         title: 'Error',
-        description: 'Failed to select kubeconfig file.',
+        description: 'Failed to select kubeconfig.',
         duration: 1000,
       },
     },
@@ -144,10 +145,16 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
                   <Text fontSize='xs'>Default</Text>
                 </Button>
                 <Button
-                  {...kubeconfigButtonProps(!isDefaultKubeconfig)}
+                  {...kubeconfigButtonProps(false)}
                   onClick={handleSetKubeConfig}
                 >
-                  <Text fontSize='xs'>Set Custom Kubeconfig</Text>
+                  <Text fontSize='xs'>File</Text>
+                </Button>
+                <Button
+                  {...kubeconfigButtonProps(false)}
+                  onClick={handleSetKubeConfigFolder}
+                >
+                  <Text fontSize='xs'>Folder</Text>
                 </Button>
               </Flex>
             </Flex>
@@ -207,7 +214,7 @@ export function AutoImportModal({ onClose }: AutoImportModalProps) {
             )}
             {contextQuery.isError && (
               <Text color='danger.fg' fontSize='xs'>
-                Please select a valid kubeconfig file
+                Please select a valid kubeconfig file or folder
               </Text>
             )}
           </Stack>

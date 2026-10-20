@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use anyhow::{
     Context,
@@ -45,16 +48,38 @@ pub fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Ve
         }
         Some(path) => {
             info!("Using provided kubeconfig paths: {path}");
-            Ok(path
-                .split(if cfg!(windows) { ';' } else { ':' })
-                .map(PathBuf::from)
-                .collect())
+            let mut paths = Vec::new();
+            for entry in path.split(if cfg!(windows) { ';' } else { ':' }) {
+                let entry = PathBuf::from(entry);
+                if entry.is_dir() {
+                    paths.extend(kubeconfig_files_in(&entry)?);
+                } else {
+                    paths.push(entry);
+                }
+            }
+            Ok(paths)
         }
         None => {
             info!("No kubeconfig path provided, using default paths.");
             get_kubeconfig_paths()
         }
     }
+}
+
+fn kubeconfig_files_in(folder: &Path) -> Result<Vec<PathBuf>> {
+    let read_error = || format!("Failed to read kubeconfig folder {}", folder.display());
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder).with_context(read_error)? {
+        let path = entry.with_context(read_error)?.path();
+        if path.is_file() {
+            files.push(path);
+        }
+    }
+    if files.is_empty() {
+        anyhow::bail!("Kubeconfig folder {} has no files", folder.display());
+    }
+    files.sort();
+    Ok(files)
 }
 
 pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>)> {
@@ -250,6 +275,66 @@ mod tests {
         let (config, errors) = merge_kubeconfigs(&paths).unwrap();
         assert!(list_contexts(&config).is_empty());
         assert!(!errors.is_empty());
+    }
+
+    fn write_kubeconfig(path: &Path, context: &str) {
+        std::fs::write(
+            path,
+            format!(
+                "apiVersion: v1\nkind: Config\nclusters:\n- name: {context}\n  cluster:\n    \
+                 server: https://127.0.0.1:6443\ncontexts:\n- name: {context}\n  context:\n    \
+                 cluster: {context}\n    user: {context}\nusers:\n- name: {context}\n  user:\n    \
+                 token: t\ncurrent-context: {context}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    async fn context_names(kubeconfig: &str) -> Vec<String> {
+        crate::kube::operations::list_kube_contexts(Some(kubeconfig.to_owned()))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|context| context.name)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_kubeconfig_folder_lists_the_contexts_of_its_top_level_files() {
+        let folder = tempfile::TempDir::new().unwrap();
+        write_kubeconfig(&folder.path().join("eu-dev-1.yaml"), "eu-dev-1");
+        write_kubeconfig(&folder.path().join("us-prod"), "us-prod");
+        std::fs::write(folder.path().join(".DS_Store"), b"\0\0\0\x01Bud1\0\0\x10\0").unwrap();
+        std::fs::create_dir(folder.path().join("nested")).unwrap();
+        write_kubeconfig(&folder.path().join("nested").join("deep.yaml"), "deep");
+        let folder_path = folder.path().to_str().unwrap();
+
+        assert_eq!(context_names(folder_path).await, ["eu-dev-1", "us-prod"]);
+
+        write_kubeconfig(&folder.path().join("ap-new.yaml"), "ap-new");
+        assert_eq!(
+            context_names(folder_path).await,
+            ["ap-new", "eu-dev-1", "us-prod"]
+        );
+
+        let paths = get_kubeconfig_paths_from_option(Some(folder_path.to_owned())).unwrap();
+        let (merged, _) = merge_kubeconfigs(&paths).unwrap();
+        let config = create_config_with_context(&merged, "us-prod")
+            .await
+            .unwrap();
+        assert_eq!(config.cluster_url.to_string(), "https://127.0.0.1:6443/");
+    }
+
+    #[test]
+    fn an_empty_kubeconfig_folder_names_the_folder() {
+        let folder = tempfile::TempDir::new().unwrap();
+        let error =
+            get_kubeconfig_paths_from_option(Some(folder.path().to_str().unwrap().to_owned()))
+                .unwrap_err();
+        assert!(
+            error.to_string().contains(folder.path().to_str().unwrap()),
+            "{error}"
+        );
     }
 
     #[test]
