@@ -403,8 +403,8 @@ fn is_stderr_auth_error(stderr: &str) -> bool {
     lower.contains("authentication failed")
         || lower.contains("could not read username")
         || lower.contains("could not read password")
-        || stderr.contains("401")
-        || stderr.contains("403")
+        || lower.contains("returned error: 401")
+        || lower.contains("returned error: 403")
 }
 
 fn clone_failure_message(
@@ -1187,6 +1187,26 @@ mod tests {
         stub.finish();
         assert!(err.contains("check your credentials"), "no advice: {err}");
         assert!(!err.contains(TOKEN), "token leaked into error: {err}");
+    }
+
+    #[test]
+    fn stderr_auth_check_reads_the_http_status_and_not_other_digits() {
+        assert!(!is_stderr_auth_error(
+            "Cloning into '/tmp/.tmpokTnJw'...\nfatal: repository \
+             'http://127.0.0.1:40107/org/repo.git/' not found"
+        ));
+        assert!(!is_stderr_auth_error(
+            "Cloning into '/tmp/.tmp4031ab'...\nfatal: repository \
+             'https://github.com/org/team-4013.git/' not found"
+        ));
+        assert!(is_stderr_auth_error(
+            "fatal: unable to access 'https://github.com/org/repo.git/': The requested URL \
+             returned error: 403"
+        ));
+        assert!(is_stderr_auth_error(
+            "fatal: unable to access 'http://127.0.0.1:40107/repo.git/': The requested URL \
+             returned error: 401"
+        ));
     }
 
     #[test]
