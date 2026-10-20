@@ -14,6 +14,7 @@ use crate::tui::input::{
     AppState,
     Consent,
     DeleteButton,
+    HttpLogEntry,
     TelemetryButton,
     clear_selection,
     handle_about_input,
@@ -24,6 +25,7 @@ use crate::tui::input::{
     handle_error_popup_input,
     handle_help_input,
     handle_http_logs_config_input,
+    handle_http_logs_viewer_input,
     handle_logs_input,
     handle_menu_input,
     handle_normal_input,
@@ -1059,5 +1061,121 @@ mod tests {
         show_delete_confirmation(&mut app);
 
         assert_eq!(app.state, AppState::Normal);
+    }
+
+    fn app_replaying(local_address: &str, local_port: u16) -> App {
+        let mut app = App::new(test_logger_state());
+        app.running_configs = vec![Config {
+            id: Some(7),
+            local_address: Some(local_address.to_string()),
+            local_port: Some(local_port),
+            ..Config::default()
+        }];
+        app.http_logs_viewer_config_id = Some(7);
+        app.http_logs_detail_mode = true;
+        app.http_logs_selected_entry = Some(HttpLogEntry {
+            trace_id: "t1".into(),
+            request_timestamp: String::new(),
+            response_timestamp: None,
+            method: "GET".into(),
+            path: "/who".into(),
+            status_code: None,
+            duration_ms: None,
+            request_headers: vec![],
+            request_body: String::new(),
+            response_headers: vec![],
+            response_body: String::new(),
+        });
+        app
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn replay_goes_to_the_address_the_forward_listens_on() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+        use tokio::net::TcpListener;
+
+        async fn answer(listener: TcpListener, body: &'static str) {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        }
+
+        let forward = TcpListener::bind("127.0.0.2:0").await.unwrap();
+        let port = forward.local_addr().unwrap().port();
+        let other = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+        tokio::spawn(answer(forward, "forward"));
+        tokio::spawn(answer(other, "other-service"));
+
+        let mut app = app_replaying("127.0.0.2", port);
+        handle_http_logs_viewer_input(&mut app, KeyCode::Char('r'))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while app.http_logs_replay.is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                app.poll_http_logs_replay().await;
+            }
+        })
+        .await
+        .expect("the replay did not finish in 10 s");
+
+        let replayed = app.http_logs_selected_entry.unwrap();
+        assert_eq!(
+            replayed.response_body, "forward",
+            "{:?}",
+            app.http_logs_replay_result
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_to_a_server_that_never_answers_leaves_keys_working() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                held.push(socket);
+            }
+        });
+
+        let mut app = app_replaying("127.0.0.1", port);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            handle_http_logs_viewer_input(&mut app, KeyCode::Char('r')),
+        )
+        .await
+        .expect("the R key waited for the replay to answer")
+        .unwrap();
+        let replay = app
+            .http_logs_replay
+            .as_ref()
+            .expect("the replay runs in the background")
+            .abort_handle();
+
+        handle_http_logs_viewer_input(&mut app, KeyCode::Esc)
+            .await
+            .unwrap();
+
+        assert!(!app.http_logs_detail_mode);
+        assert!(app.http_logs_replay.is_none());
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !replay.is_finished() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Esc left the replay running");
     }
 }

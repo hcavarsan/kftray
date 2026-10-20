@@ -1824,6 +1824,14 @@ fn render_response_side(
         )));
     }
 
+    if app.http_logs_replay.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Replaying request...",
+            Style::default().bold().fg(YELLOW),
+        )));
+    }
+
     if let Some(replay_error) = &app.http_logs_replay_result
         && (replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to"))
     {

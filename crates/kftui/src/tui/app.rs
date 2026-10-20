@@ -204,6 +204,8 @@ where
             }
         }
 
+        app.poll_http_logs_replay().await;
+
         if app.state == AppState::Normal
             && let Some(consent) = app.pending_consents.pop_front()
         {
