@@ -52,9 +52,9 @@ struct Args {
     #[arg(short, long, default_value = "3000")]
     port: u16,
 
-    /// Log level (error, warn, info, debug, trace)
+    /// Log level (error, warn, info, debug, trace, off)
     #[arg(short, long, default_value = "info")]
-    log_level: String,
+    log_level: LevelFilter,
 }
 
 #[tokio::main]
@@ -62,17 +62,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Initialize logging
-    let log_level = match args.log_level.to_lowercase().as_str() {
-        "error" => LevelFilter::Error,
-        "warn" => LevelFilter::Warn,
-        "info" => LevelFilter::Info,
-        "debug" => LevelFilter::Debug,
-        "trace" => LevelFilter::Trace,
-        _ => LevelFilter::Info,
-    };
-
     env_logger::Builder::new()
-        .filter_level(log_level)
+        .filter_level(args.log_level)
         .format_timestamp_secs()
         .init();
 
@@ -107,4 +98,19 @@ async fn main() -> anyhow::Result<()> {
     info!("");
 
     kftray_mcp::server::start_server(addr).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_level_rejects_an_unknown_name_and_ignores_case() {
+        assert!(Args::try_parse_from(["kftray-mcp", "--log-level", "warning"]).is_err());
+
+        let args = Args::try_parse_from(["kftray-mcp", "--log-level", "WARN"]).unwrap();
+        assert_eq!(args.log_level, LevelFilter::Warn);
+        let args = Args::try_parse_from(["kftray-mcp"]).unwrap();
+        assert_eq!(args.log_level, LevelFilter::Info);
+    }
 }
