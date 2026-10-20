@@ -72,6 +72,8 @@ pub struct HttpLogEntry {
     pub response_body: String,
 }
 
+const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl HttpLogEntry {
     pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
         let url = if self.path.starts_with("http") {
@@ -94,6 +96,8 @@ impl HttpLogEntry {
         let client = reqwest::Client::builder()
             .default_headers(reqwest::header::HeaderMap::new())
             .http1_only()
+            .no_proxy()
+            .timeout(REPLAY_TIMEOUT)
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
@@ -321,7 +325,7 @@ pub struct App {
     pub http_logs_detail_mode: bool,
     pub http_logs_selected_entry: Option<HttpLogEntry>,
     pub http_logs_replay_result: Option<String>,
-    pub http_logs_replay_in_progress: bool,
+    pub http_logs_replay: Option<tokio::task::JoinHandle<Result<HttpLogEntry, String>>>,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
     pub configs_being_processed: PendingForwards,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
@@ -438,7 +442,7 @@ impl App {
             http_logs_detail_mode: false,
             http_logs_selected_entry: None,
             http_logs_replay_result: None,
-            http_logs_replay_in_progress: false,
+            http_logs_replay: None,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
             forwarding_tasks: tokio::task::JoinSet::new(),
@@ -1039,6 +1043,33 @@ impl App {
                 }
             }
             self.state = AppState::ShowErrorPopup;
+        }
+    }
+
+    pub async fn poll_http_logs_replay(&mut self) {
+        if self
+            .http_logs_replay
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+            && let Some(task) = self.http_logs_replay.take()
+        {
+            match task.await {
+                Ok(Ok(replay_entry)) => {
+                    self.http_logs_selected_entry = Some(replay_entry);
+                    self.http_logs_viewer_scroll = 0;
+                }
+                Ok(Err(error)) => self.http_logs_replay_result = Some(error),
+                Err(error) => {
+                    self.http_logs_replay_result =
+                        Some(format!("Failed to replay request: {error}"))
+                }
+            }
+        }
+    }
+
+    pub fn cancel_http_logs_replay(&mut self) {
+        if let Some(task) = self.http_logs_replay.take() {
+            task.abort();
         }
     }
 
@@ -2893,14 +2924,14 @@ async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
     }
 }
 
-async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc => {
             if app.http_logs_detail_mode {
                 app.http_logs_detail_mode = false;
                 app.http_logs_selected_entry = None;
                 app.http_logs_replay_result = None;
-                app.http_logs_replay_in_progress = false;
+                app.cancel_http_logs_replay();
             } else {
                 app.state = AppState::Normal;
                 app.http_logs_viewer_content.clear();
@@ -2913,7 +2944,7 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                 app.http_logs_detail_mode = false;
                 app.http_logs_selected_entry = None;
                 app.http_logs_replay_result = None;
-                app.http_logs_replay_in_progress = false;
+                app.cancel_http_logs_replay();
             }
         }
         KeyCode::Up => {
@@ -2975,36 +3006,25 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if app.http_logs_detail_mode
-                && app.http_logs_selected_entry.is_some()
-                && let Some(entry) = &app.http_logs_selected_entry
+                && app.http_logs_replay.is_none()
+                && let Some(entry) = app.http_logs_selected_entry.clone()
             {
-                let base_url = if let Some(config_id) = app.http_logs_viewer_config_id {
-                    let local_port = app
-                        .stopped_configs
+                let forward = app.http_logs_viewer_config_id.and_then(|config_id| {
+                    app.stopped_configs
                         .iter()
                         .chain(app.running_configs.iter())
                         .find(|c| c.id == Some(config_id))
-                        .and_then(|c| c.local_port)
-                        .unwrap_or(8080);
-                    format!("http://localhost:{}", local_port)
-                } else {
-                    "http://localhost:8080".to_string()
-                };
+                });
+                let local_address = forward
+                    .and_then(|c| c.local_address.as_deref())
+                    .unwrap_or("127.0.0.1");
+                let local_port = forward.and_then(|c| c.local_port).unwrap_or(8080);
+                let base_url = format!("http://{local_address}:{local_port}");
 
-                let entry_clone = entry.clone();
-
-                match entry_clone.replay(&base_url).await {
-                    Ok(replay_entry) => {
-                        app.http_logs_selected_entry = Some(replay_entry);
-                        app.http_logs_viewer_scroll = 0;
-                        app.http_logs_replay_result = None;
-                        app.http_logs_replay_in_progress = false;
-                    }
-                    Err(error) => {
-                        app.http_logs_replay_result = Some(error);
-                        app.http_logs_replay_in_progress = false;
-                    }
-                }
+                app.http_logs_replay_result = None;
+                app.http_logs_viewer_scroll = 0;
+                app.http_logs_replay =
+                    Some(tokio::spawn(async move { entry.replay(&base_url).await }));
             }
         }
         KeyCode::Enter => {
@@ -3019,7 +3039,6 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                 app.http_logs_detail_mode = true;
                 app.http_logs_viewer_scroll = 0;
                 app.http_logs_replay_result = None;
-                app.http_logs_replay_in_progress = false;
             }
         }
         _ => {}
