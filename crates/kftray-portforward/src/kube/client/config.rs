@@ -67,11 +67,14 @@ pub fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Ve
 }
 
 fn kubeconfig_files_in(folder: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = std::fs::read_dir(folder)
-        .with_context(|| format!("Failed to read kubeconfig folder {}", folder.display()))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
+    let read_error = || format!("Failed to read kubeconfig folder {}", folder.display());
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder).with_context(read_error)? {
+        let path = entry.with_context(read_error)?.path();
+        if path.is_file() {
+            files.push(path);
+        }
+    }
     if files.is_empty() {
         anyhow::bail!("Kubeconfig folder {} has no files", folder.display());
     }
