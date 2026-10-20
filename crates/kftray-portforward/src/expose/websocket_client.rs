@@ -24,6 +24,7 @@ use hyper_util::rt::{
     TokioIo,
 };
 use kftray_commons::models::tunnel_protocol::{
+    HALF_CLOSE_HEADER,
     STREAM_WINDOW,
     TCP_MODE_PATH,
     TUNNEL_MODE_HEADER,
@@ -53,19 +54,26 @@ use tokio_tungstenite::{
     tungstenite::{
         Error as WsError,
         Message,
+        client::IntoClientRequest,
+        http::HeaderValue,
     },
 };
 
 struct StreamRoute {
-    data: mpsc::UnboundedSender<Vec<u8>>,
+    data: mpsc::UnboundedSender<StreamChunk>,
     credit: Arc<Semaphore>,
+}
+
+enum StreamChunk {
+    Data(Vec<u8>),
+    End,
 }
 
 type StreamRoutes = HashMap<String, StreamRoute>;
 
 fn add_stream(
     streams: &mut StreamRoutes, id: String,
-) -> (mpsc::UnboundedReceiver<Vec<u8>>, Arc<Semaphore>) {
+) -> (mpsc::UnboundedReceiver<StreamChunk>, Arc<Semaphore>) {
     let (data, data_rx) = mpsc::unbounded_channel();
     let credit = Arc::new(Semaphore::new(STREAM_WINDOW));
     streams.insert(
@@ -161,7 +169,13 @@ impl WebSocketTunnelClient {
     async fn connect_and_run(
         &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
     ) -> Result<(), String> {
-        let (ws_stream, response) = match connect_async(ws_url).await {
+        let mut request = ws_url
+            .into_client_request()
+            .map_err(|e| format!("Invalid tunnel URL {ws_url}: {e}"))?;
+        request
+            .headers_mut()
+            .insert(HALF_CLOSE_HEADER, HeaderValue::from_static("1"));
+        let (ws_stream, response) = match connect_async(request).await {
             Ok(connection) => connection,
             Err(error) => {
                 let message = format!("Failed to connect to WebSocket: {error}");
@@ -198,6 +212,7 @@ impl WebSocketTunnelClient {
             }
             return Err(message);
         }
+        let half_close = response.headers().contains_key(HALF_CLOSE_HEADER);
         if let Some(ready) = ready.take() {
             ready
                 .send(Ok(()))
@@ -247,6 +262,7 @@ impl WebSocketTunnelClient {
                             to_local_rx,
                             credit,
                             outgoing_tx.clone(),
+                            half_close,
                         ));
                     }
                     continue;
@@ -311,7 +327,15 @@ impl WebSocketTunnelClient {
                             match TcpStream::connect(&address).await {
                                 Ok(local) => {
                                     let _ = local.set_nodelay(true);
-                                    pipe_stream(id, local, to_local_rx, credit, outgoing).await;
+                                    pipe_stream(
+                                        id,
+                                        local,
+                                        to_local_rx,
+                                        credit,
+                                        outgoing,
+                                        half_close,
+                                    )
+                                    .await;
                                 }
                                 Err(e) => {
                                     warn!(
@@ -325,9 +349,14 @@ impl WebSocketTunnelClient {
                     }
                     Ok(TunnelMessage::StreamData { id, data }) => {
                         if let Some(stream) = streams.get(&id)
-                            && stream.data.send(data).is_err()
+                            && stream.data.send(StreamChunk::Data(data)).is_err()
                         {
                             streams.remove(&id);
+                        }
+                    }
+                    Ok(TunnelMessage::StreamEnd { id }) => {
+                        if let Some(stream) = streams.get(&id) {
+                            let _ = stream.data.send(StreamChunk::End);
                         }
                     }
                     Ok(TunnelMessage::StreamCredit { id, bytes }) => {
@@ -531,17 +560,28 @@ impl WebSocketTunnelClient {
 }
 
 async fn pipe_stream<T: AsyncRead + AsyncWrite>(
-    id: String, local: T, mut from_relay: mpsc::UnboundedReceiver<Vec<u8>>, credit: Arc<Semaphore>,
-    outgoing: mpsc::UnboundedSender<TunnelMessage>,
+    id: String, local: T, mut from_relay: mpsc::UnboundedReceiver<StreamChunk>,
+    credit: Arc<Semaphore>, outgoing: mpsc::UnboundedSender<TunnelMessage>, half_close: bool,
 ) {
     let (mut reader, mut writer) = tokio::io::split(local);
     let mut buf = vec![0u8; 16 * 1024];
     let mut granted = 0;
+    let mut reading = true;
+    let mut writing = true;
 
     let local_closed = loop {
+        if !reading && !writing {
+            break true;
+        }
         tokio::select! {
-            taken = take_credit(&credit, buf.len()), if granted == 0 => granted = taken,
-            read = reader.read(&mut buf[..granted]), if granted > 0 => match read {
+            taken = take_credit(&credit, buf.len()), if reading && granted == 0 => granted = taken,
+            read = reader.read(&mut buf[..granted]), if reading && granted > 0 => match read {
+                Ok(0) if half_close => {
+                    reading = false;
+                    if outgoing.send(TunnelMessage::StreamEnd { id: id.clone() }).is_err() {
+                        break false;
+                    }
+                }
                 Ok(0) | Err(_) => break true,
                 Ok(n) => {
                     granted -= n;
@@ -554,8 +594,8 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(
                     }
                 }
             },
-            data = from_relay.recv() => match data {
-                Some(data) => {
+            chunk = from_relay.recv() => match chunk {
+                Some(StreamChunk::Data(data)) => {
                     if writer.write_all(&data).await.is_err() {
                         break true;
                     }
@@ -567,12 +607,18 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(
                         break false;
                     }
                 }
+                Some(StreamChunk::End) => {
+                    writing = false;
+                    let _ = writer.shutdown().await;
+                }
                 None => break false,
             },
         }
     };
 
-    let _ = writer.shutdown().await;
+    if writing {
+        let _ = writer.shutdown().await;
+    }
     if local_closed {
         let _ = outgoing.send(TunnelMessage::StreamClose { id });
     }
@@ -1340,7 +1386,7 @@ mod tests {
 
     #[allow(clippy::result_large_err)]
     async fn connect_tcp_relay(
-        app_port: u16, relay_supports_tcp: bool,
+        app_port: u16, relay_supports_tcp: bool, relay_half_close: bool,
     ) -> (
         Relay,
         oneshot::Receiver<Result<(), String>>,
@@ -1367,10 +1413,16 @@ mod tests {
             socket,
             |request: &Request, mut response: Response| {
                 assert_eq!(request.uri().path(), super::TCP_MODE_PATH);
+                assert!(request.headers().contains_key(super::HALF_CLOSE_HEADER));
                 if relay_supports_tcp {
                     response
                         .headers_mut()
                         .insert(super::TUNNEL_MODE_HEADER, "tcp".parse().unwrap());
+                }
+                if relay_half_close {
+                    response
+                        .headers_mut()
+                        .insert(super::HALF_CLOSE_HEADER, "1".parse().unwrap());
                 }
                 Ok(response)
             },
@@ -1395,7 +1447,7 @@ mod tests {
             socket.read_to_end(&mut rest).await.unwrap();
             (request, rest)
         });
-        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true).await;
+        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true, false).await;
         ready.await.unwrap().unwrap();
 
         let ssl_request = vec![0, 0, 0, 8, 4, 210, 22, 47];
@@ -1450,7 +1502,7 @@ mod tests {
         let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let app_port = closed.local_addr().unwrap().port();
         drop(closed);
-        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true).await;
+        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true, false).await;
         ready.await.unwrap().unwrap();
 
         send(
@@ -1468,12 +1520,57 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_expose_on_a_relay_without_tcp_support_fails_startup() {
-        let (_relay, ready, _task) = connect_tcp_relay(5432, false).await;
+        let (_relay, ready, _task) = connect_tcp_relay(5432, false, false).await;
         let error = tokio::time::timeout(Duration::from_secs(5), ready)
             .await
             .unwrap()
             .unwrap()
             .unwrap_err();
         assert!(error.contains("cannot carry TCP"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_end_lets_the_local_port_reply_after_eof() {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app_port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = app.accept().await.unwrap();
+            let mut request = Vec::new();
+            socket.read_to_end(&mut request).await.unwrap();
+            socket.write_all(b"pong").await.unwrap();
+        });
+        let (mut relay, ready, _task) = connect_tcp_relay(app_port, true, true).await;
+        ready.await.unwrap().unwrap();
+
+        let id = || "db".to_owned();
+        send(&mut relay, super::TunnelMessage::StreamOpen { id: id() }).await;
+        send(
+            &mut relay,
+            super::TunnelMessage::StreamData {
+                id: id(),
+                data: b"ping".to_vec(),
+            },
+        )
+        .await;
+        send(&mut relay, super::TunnelMessage::StreamEnd { id: id() }).await;
+
+        let mut reply = Vec::new();
+        let mut ended = false;
+        loop {
+            match recv(&mut relay).await {
+                super::TunnelMessage::StreamCredit { bytes: 4, .. } => {}
+                super::TunnelMessage::StreamData { data, .. } => reply.extend(data),
+                super::TunnelMessage::StreamEnd { .. } => ended = true,
+                super::TunnelMessage::StreamClose { id: got } if got == id() => break,
+                other => panic!("expected stream traffic for db, got {other:?}"),
+            }
+        }
+        assert_eq!(reply, b"pong");
+        assert!(
+            ended,
+            "the app closed the stream without ending its side first"
+        );
     }
 }
