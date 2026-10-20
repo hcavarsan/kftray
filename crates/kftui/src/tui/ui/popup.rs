@@ -1787,6 +1787,14 @@ fn render_response_side(
 ) {
     let mut lines = vec![];
 
+    if app.http_logs_replay.is_some() {
+        lines.push(Line::from(Span::styled(
+            "Replaying request...",
+            Style::default().bold().fg(YELLOW),
+        )));
+        lines.push(Line::from(""));
+    }
+
     if entry.status_code.is_some() {
         lines.push(Line::from(Span::styled(
             "Response Headers:",
@@ -1821,14 +1829,6 @@ fn render_response_side(
         lines.push(Line::from(Span::styled(
             "No response available",
             Style::default().fg(SUBTEXT0).italic(),
-        )));
-    }
-
-    if app.http_logs_replay.is_some() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Replaying request...",
-            Style::default().bold().fg(YELLOW),
         )));
     }
 

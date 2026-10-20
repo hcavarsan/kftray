@@ -96,6 +96,7 @@ impl HttpLogEntry {
         let client = reqwest::Client::builder()
             .default_headers(reqwest::header::HeaderMap::new())
             .http1_only()
+            .no_proxy()
             .timeout(REPLAY_TIMEOUT)
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
@@ -3021,6 +3022,7 @@ pub async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::R
                 let base_url = format!("http://{local_address}:{local_port}");
 
                 app.http_logs_replay_result = None;
+                app.http_logs_viewer_scroll = 0;
                 app.http_logs_replay =
                     Some(tokio::spawn(async move { entry.replay(&base_url).await }));
             }
