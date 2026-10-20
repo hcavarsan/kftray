@@ -268,6 +268,8 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(io: T, mut stream: TunnelStream)
     let mut granted = 0;
     let mut reading = true;
     let mut writing = true;
+    let mut to_client = Vec::new();
+    let mut written = 0;
 
     while reading || writing {
         tokio::select! {
@@ -287,14 +289,22 @@ async fn pipe_stream<T: AsyncRead + AsyncWrite>(io: T, mut stream: TunnelStream)
                     }
                 }
             },
-            chunk = stream.recv() => match chunk {
-                Some(StreamChunk::Data(data)) => {
-                    if writer.write_all(&data).await.is_err()
-                        || !stream.return_credit(data.len())
-                    {
-                        break;
+            sent = writer.write(&to_client[written..]), if !to_client.is_empty() => match sent {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    written += n;
+                    if written == to_client.len() {
+                        let consumed = to_client.len();
+                        to_client.clear();
+                        written = 0;
+                        if !stream.return_credit(consumed) {
+                            break;
+                        }
                     }
                 }
+            },
+            chunk = stream.recv(), if to_client.is_empty() => match chunk {
+                Some(StreamChunk::Data(data)) => to_client = data,
                 Some(StreamChunk::End) => {
                     writing = false;
                     let _ = writer.shutdown().await;
@@ -868,6 +878,89 @@ mod tests {
             TunnelMessage::StreamClose { id: got } if got == id
         ));
         relay.stop();
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_moves_both_ways_when_the_client_writes_before_it_reads() {
+        use futures::{
+            SinkExt,
+            StreamExt,
+        };
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+        use tokio::sync::Semaphore;
+        use tokio_tungstenite::tungstenite::Message;
+
+        const TOTAL: usize = 8 * 1024 * 1024;
+        const CHUNK: usize = 16 * 1024;
+        let mut relay = Relay::start_on(crate::models::tunnel_protocol::TCP_MODE_PATH, true).await;
+        let mut client = relay.connect_client().await;
+        let TunnelMessage::StreamOpen { id } = relay.recv().await else {
+            panic!("expected a stream open");
+        };
+        let pod_client = tokio::spawn(async move {
+            for _ in 0..TOTAL / CHUNK {
+                client.write_all(&[1u8; CHUNK]).await.unwrap();
+            }
+            let mut buf = vec![0u8; CHUNK];
+            let mut got = 0;
+            while got < TOTAL {
+                got += client.read(&mut buf).await.unwrap();
+            }
+        });
+
+        let (mut sink, mut stream) = relay.client.split();
+        let (out, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<TunnelMessage>();
+        let sender = tokio::spawn(async move {
+            while let Some(message) = out_rx.recv().await {
+                let bytes = message.serialize().unwrap();
+                sink.send(Message::Binary(bytes.into())).await.unwrap();
+            }
+        });
+        let window = Arc::new(Semaphore::new(STREAM_WINDOW));
+        let (credit, reply, stream_id) = (window.clone(), out.clone(), id.clone());
+        let receiver = tokio::spawn(async move {
+            while let Some(Ok(message)) = stream.next().await {
+                let Message::Binary(data) = message else {
+                    continue;
+                };
+                match TunnelMessage::deserialize(&data).unwrap() {
+                    TunnelMessage::StreamData { data, .. } => {
+                        let bytes = data.len();
+                        let id = stream_id.clone();
+                        reply
+                            .send(TunnelMessage::StreamCredit { id, bytes })
+                            .unwrap();
+                    }
+                    TunnelMessage::StreamCredit { bytes, .. } => credit.add_permits(bytes),
+                    _ => {}
+                }
+            }
+        });
+        let app_writer = tokio::spawn(async move {
+            for _ in 0..TOTAL / CHUNK {
+                window.acquire_many(CHUNK as u32).await.unwrap().forget();
+                let data = vec![2u8; CHUNK];
+                let id = id.clone();
+                out.send(TunnelMessage::StreamData { id, data }).unwrap();
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(60), async {
+            app_writer.await.unwrap();
+            pod_client.await.unwrap();
+        })
+        .await
+        .expect("8 MiB each way through the relay did not finish in 60 s");
+
+        sender.abort();
+        receiver.abort();
+        relay.shutdown.notify_waiters();
+        for task in relay.tasks {
+            task.abort();
+        }
     }
 
     #[tokio::test]
