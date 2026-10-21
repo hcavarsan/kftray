@@ -1,5 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react'
 
 import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
@@ -48,6 +54,7 @@ interface TableProps {
   handleDuplicateConfig: (id: number) => Promise<void>
   selectedConfigs: Config[]
   setSelectedConfigs: Dispatch<SetStateAction<Config[]>>
+  onVisibleConfigsChange: (configs: Config[]) => void
 }
 
 export function PortForwardTable({
@@ -67,6 +74,7 @@ export function PortForwardTable({
   deleteConfigs,
   selectedConfigs,
   setSelectedConfigs,
+  onVisibleConfigsChange,
 }: TableProps) {
   const [search, setSearch] = useState<string>('')
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
@@ -111,6 +119,10 @@ export function PortForwardTable({
     () => groups.flatMap(group => group.configs),
     [groups],
   )
+
+  useLayoutEffect(() => {
+    onVisibleConfigsChange(visibleConfigs)
+  }, [visibleConfigs, onVisibleConfigsChange])
 
   useEffect(() => {
     setExpandedIndices(groupBy === null ? [ALL_GROUP_ID] : [])

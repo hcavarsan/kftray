@@ -1,3 +1,4 @@
+import { visibleSelection } from '@/components/PortForwardTable/viewUtils'
 import type { Config } from '@/types'
 
 export interface ForwardBatchState {
@@ -13,8 +14,7 @@ export function forwardBatchState(
   selectedConfigs: Config[],
   allConfigs: Config[],
 ): ForwardBatchState {
-  const selectedIds = new Set(selectedConfigs.map(config => config.id))
-  const selected = configs.filter(config => selectedIds.has(config.id))
+  const selected = visibleSelection(configs, selectedConfigs)
   const startSelected = selected.some(config => !config.is_running)
   const stopSelected = selected.some(
     config => config.is_running && !config.owned_elsewhere,
