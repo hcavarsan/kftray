@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Footer } from '@/components/Footer'
 import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
+import { visibleSelection } from '@/components/PortForwardTable/viewUtils'
 import { invoke } from '@/lib/tauri'
 import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
@@ -70,6 +71,11 @@ type ActiveModal =
 
 export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
+  const [visibleConfigs, setVisibleConfigs] = useState<Config[]>([])
+  const visibleSelectedConfigs = useMemo(
+    () => visibleSelection(visibleConfigs, selectedConfigs),
+    [visibleConfigs, selectedConfigs],
+  )
   const [activeModal, setActiveModal] = useState<ActiveModal>(null)
   const queryClient = useQueryClient()
   const telemetry = useQuery(telemetryQuery)
@@ -198,6 +204,7 @@ export function Main() {
               deleteConfigs={deleteConfigs}
               selectedConfigs={selectedConfigs}
               setSelectedConfigs={setSelectedConfigs}
+              onVisibleConfigsChange={setVisibleConfigs}
             />
           </Box>
 
@@ -211,7 +218,7 @@ export function Main() {
             zIndex={1}
           >
             <Footer
-              selectedConfigs={selectedConfigs}
+              selectedConfigs={visibleSelectedConfigs}
               deleteConfigs={deleteConfigs}
               onAddConfig={() =>
                 setActiveModal({

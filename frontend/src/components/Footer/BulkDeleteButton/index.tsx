@@ -57,7 +57,7 @@ export function BulkDeleteButton({
       {idsToDelete && (
         <ConfirmDialog
           title='Delete Config(s)'
-          description='Are you sure you want to delete the selected config(s)? This action cannot be undone.'
+          description={`Are you sure you want to delete ${idsToDelete.length} selected config${idsToDelete.length === 1 ? '' : 's'}? This action cannot be undone.`}
           isPending={deleteMutation.isPending}
           onConfirm={() => deleteMutation.mutate(idsToDelete)}
           onClose={() => setIdsToDelete(null)}

@@ -1,4 +1,4 @@
-import type { ViewCondition } from '@/types'
+import type { Config, ViewCondition } from '@/types'
 
 const FIELD_LABELS: Record<string, string> = {
   context: 'Context',
@@ -35,4 +35,13 @@ export const toggleFilterAny = (
   const rest = filters.filter(c => c.field !== field)
 
   return current?.values.length === 0 ? rest : [...rest, { field, values: [] }]
+}
+
+export const visibleSelection = (
+  configs: Config[],
+  selectedConfigs: Config[],
+): Config[] => {
+  const selectedIds = new Set(selectedConfigs.map(config => config.id))
+
+  return configs.filter(config => selectedIds.has(config.id))
 }
