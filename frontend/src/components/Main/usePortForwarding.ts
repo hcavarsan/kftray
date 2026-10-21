@@ -12,8 +12,10 @@ import { usePendingActions } from './usePendingActions'
 import { usePortForwardBatch } from './usePortForwardBatch'
 import { usePrivilegeGate } from './usePrivilegeGate'
 
+const NO_CONFIGS: Config[] = []
+
 export function usePortForwarding() {
-  const { data: configs = [] } = useConfigs()
+  const { data: configs = NO_CONFIGS } = useConfigs()
   const configsRef = useRef(configs)
   const pending = usePendingActions(configs)
   const { pendingConfigActions, isBusy, markPending, clearPending } = pending
