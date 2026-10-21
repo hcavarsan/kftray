@@ -1,5 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react'
 
 import { Box, Button, Flex, Text } from '@chakra-ui/react'
 
@@ -114,7 +120,7 @@ export function PortForwardTable({
     [groups],
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onVisibleConfigsChange(visibleConfigs)
   }, [visibleConfigs, onVisibleConfigsChange])
 
