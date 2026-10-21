@@ -105,7 +105,14 @@ impl HttpLogEntry {
 
         let mut headers = reqwest::header::HeaderMap::new();
 
-        let skip_headers = ["host", "connection", "content-length", "transfer-encoding"];
+        let skip_headers = [
+            "host",
+            "connection",
+            "content-length",
+            "transfer-encoding",
+            "content-encoding",
+            "accept-encoding",
+        ];
         let mut added_headers = 0;
 
         for header_line in &self.request_headers {
