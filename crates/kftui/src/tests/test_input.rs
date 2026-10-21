@@ -1178,4 +1178,123 @@ mod tests {
         .await
         .expect("Esc left the replay running");
     }
+
+    async fn replay_to_one_request(
+        entry: HttpLogEntry, respond: fn(&str, &[u8]) -> Vec<u8>,
+    ) -> HttpLogEntry {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                request.extend_from_slice(&buf[..n]);
+                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    assert!(n > 0, "the replay closed before its headers ended");
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                if request.len() >= end + 4 + length || n == 0 {
+                    let reply = respond(&head, &request[end + 4..]);
+                    socket.write_all(&reply).await.unwrap();
+                    return;
+                }
+            }
+        });
+
+        entry
+            .replay(&format!("http://127.0.0.1:{port}"))
+            .await
+            .unwrap()
+    }
+
+    fn logged_request(method: &str, headers: &[&str], body: &str) -> HttpLogEntry {
+        HttpLogEntry {
+            trace_id: "t1".into(),
+            request_timestamp: String::new(),
+            response_timestamp: None,
+            method: method.into(),
+            path: "/api".into(),
+            status_code: None,
+            duration_ms: None,
+            request_headers: headers.iter().map(|h| h.to_string()).collect(),
+            request_body: body.into(),
+            response_headers: vec![],
+            response_body: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_of_a_request_that_accepted_gzip_shows_a_readable_body() {
+        use std::io::Write;
+
+        let entry = logged_request("GET", &["Accept-Encoding: gzip, deflate, br"], "");
+        let replayed = replay_to_one_request(entry, |head, _| {
+            let plain = br#"{"hello":"replay"}"#;
+            let (encoding, body) = if head.contains("accept-encoding: gzip") {
+                let mut gzip =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                gzip.write_all(plain).unwrap();
+                ("Content-Encoding: gzip\r\n", gzip.finish().unwrap())
+            } else {
+                ("", plain.to_vec())
+            };
+            let mut reply = format!(
+                "HTTP/1.1 200 OK\r\n{encoding}Content-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            reply.extend(body);
+            reply
+        })
+        .await;
+
+        assert_eq!(replayed.response_body, r#"{"hello":"replay"}"#);
+    }
+
+    #[tokio::test]
+    async fn replay_of_a_gzip_request_sends_the_logged_body_as_plain_text() {
+        use std::io::Read;
+
+        let entry = logged_request(
+            "POST",
+            &["Content-Type: application/json", "Content-Encoding: gzip"],
+            r#"{"name":"decoded in the log"}"#,
+        );
+        let replayed = replay_to_one_request(entry, |head, body| {
+            let readable = if head.contains("content-encoding: gzip") {
+                let mut decoded = String::new();
+                flate2::read::GzDecoder::new(body)
+                    .read_to_string(&mut decoded)
+                    .ok()
+                    .map(|_| decoded)
+            } else {
+                String::from_utf8(body.to_vec()).ok()
+            };
+            let (status, text) = match readable {
+                Some(text) => ("200 OK", text),
+                None => ("400 Bad Request", "bad gzip".to_string()),
+            };
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\n\r\n{text}",
+                text.len()
+            )
+            .into_bytes()
+        })
+        .await;
+
+        assert_eq!(replayed.status_code.as_deref(), Some("200"));
+        assert_eq!(replayed.response_body, r#"{"name":"decoded in the log"}"#);
+    }
 }
