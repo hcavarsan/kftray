@@ -3,7 +3,7 @@
 set -e
 
 INSTALL_DIR="$HOME/.local/bin"
-PROFILE_FILES=("$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish")
+PROFILE_FILES=("$HOME/.profile" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish")
 TMP_DIR="/tmp"
 TMP_FILE="$TMP_DIR/kftui"
 

@@ -174,3 +174,24 @@ def test_bash_finds_kftui_after_install_into_empty_home(
     )
 
     assert found.stdout.strip() == str(home / ".local" / "bin" / "kftui")
+
+
+@pytest.mark.parametrize("others", [(), (".profile",), (".bashrc",)])
+def test_bash_login_shell_finds_kftui_when_home_has_bash_profile(
+    tmp_path: Path, others: tuple[str, ...]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in (".bash_profile", *others):
+        (home / name).write_text("")
+    run_installer(tmp_path, "Darwin", "arm64")
+
+    found = subprocess.run(
+        ["bash", "-lc", "command -v kftui"],
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert found.stdout.strip() == str(home / ".local" / "bin" / "kftui")
