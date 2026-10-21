@@ -12,6 +12,7 @@ use std::{
     },
 };
 
+use log::warn;
 use serde::{
     Deserialize,
     Serialize,
@@ -131,11 +132,16 @@ impl AddressPoolManager {
             HelperError::AddressPool(format!("Could not read address pool storage: {e}"))
         })?;
 
-        let storage: AddressPoolStorage = serde_json::from_str(&content).map_err(|e| {
-            HelperError::AddressPool(format!("Could not parse address pool storage: {e}"))
-        })?;
-
-        Ok(storage.allocations)
+        match serde_json::from_str::<AddressPoolStorage>(&content) {
+            Ok(storage) => Ok(storage.allocations),
+            Err(e) => {
+                warn!(
+                    "Could not parse address pool storage at {}, starting with an empty pool: {e}",
+                    path.display()
+                );
+                Ok(HashMap::new())
+            }
+        }
     }
 
     async fn save_allocations(&self) -> Result<(), HelperError> {
@@ -504,5 +510,20 @@ mod tests {
             !allocations.iter().any(|(service, _)| service == "svc-i"),
             "{allocations:?}"
         );
+    }
+
+    #[test]
+    fn a_corrupt_pool_file_loads_as_an_empty_pool() {
+        for content in [
+            "",
+            "{\"allocations\":{\"127.0.0.2\":{\"service_name\":\"svc",
+        ] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            fs::write(file.path(), content).unwrap();
+
+            let allocations = AddressPoolManager::load_allocations(file.path())
+                .unwrap_or_else(|e| panic!("pool file {content:?} must not stop the helper: {e}"));
+            assert!(allocations.is_empty(), "{allocations:?}");
+        }
     }
 }
