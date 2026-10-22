@@ -1297,4 +1297,109 @@ mod tests {
         assert_eq!(replayed.status_code.as_deref(), Some("200"));
         assert_eq!(replayed.response_body, r#"{"name":"decoded in the log"}"#);
     }
+
+    #[test]
+    fn curl_command_keeps_the_headers_and_body_replay_sends() {
+        let entry = logged_request(
+            "post",
+            &[
+                "Host: web.svc",
+                "Content-Length: 11",
+                "Accept-Encoding: gzip",
+                "X-Empty: ",
+                "Content-Type: application/json",
+            ],
+            r#"{"a":"b"}"#,
+        );
+
+        assert_eq!(
+            entry.curl_command("http://127.0.0.2:8080/"),
+            "curl \\\n  -X 'POST' \\\n  --globoff \\\n  'http://127.0.0.2:8080/api' \\\n  \
+             -H 'Content-Type: application/json' \\\n  --data-raw '{\"a\":\"b\"}'"
+        );
+    }
+
+    #[test]
+    fn curl_command_sends_no_body_for_the_empty_body_markers_or_head() {
+        for body in ["", "<empty body>", "(empty)"] {
+            assert_eq!(
+                logged_request("GET", &[], body).curl_command("http://127.0.0.1:80"),
+                "curl \\\n  --globoff \\\n  'http://127.0.0.1:80/api'"
+            );
+        }
+        for body in ["", "ignored"] {
+            assert_eq!(
+                logged_request("HEAD", &[], body).curl_command("http://127.0.0.1:80"),
+                "curl \\\n  --head \\\n  --globoff \\\n  'http://127.0.0.1:80/api'"
+            );
+        }
+        assert_eq!(
+            logged_request("GET", &[], "q=1").curl_command("http://127.0.0.1:80"),
+            "curl \\\n  -X 'GET' \\\n  --globoff \\\n  'http://127.0.0.1:80/api' \\\n  \
+             -H 'Content-Type:' \\\n  --data-raw 'q=1'"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn curl_command_reaches_curl_with_quotes_and_newlines_intact() {
+        let body = "@it's $HOME `id`\nline two\\";
+        let mut entry = logged_request("PUT", &["X-Note: don't $(touch x)"], body);
+        entry.path = "/api?filter[name]={a,b}".into();
+        let script = format!(
+            "curl() {{ printf '%s\\0' \"$@\"; }}\n{}",
+            entry.curl_command("http://127.0.0.1:9")
+        );
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{output:?}");
+        let args: Vec<&str> = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .split_terminator('\0')
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "-X",
+                "PUT",
+                "--globoff",
+                "http://127.0.0.1:9/api?filter[name]={a,b}",
+                "-H",
+                "X-Note: don't $(touch x)",
+                "-H",
+                "Content-Type:",
+                "--data-raw",
+                body,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_key_confirms_in_the_detail_view_only() {
+        let mut app = app_replaying("127.0.0.2", 8080);
+        app.http_logs_detail_mode = false;
+        handle_http_logs_viewer_input(&mut app, KeyCode::Char('c'))
+            .await
+            .unwrap();
+        assert_eq!(app.http_logs_copy_message, None);
+
+        app.http_logs_detail_mode = true;
+        handle_http_logs_viewer_input(&mut app, KeyCode::Char('c'))
+            .await
+            .unwrap();
+        assert_eq!(
+            app.http_logs_copy_message.as_deref(),
+            Some("curl command sent to the clipboard (OSC 52)")
+        );
+
+        handle_http_logs_viewer_input(&mut app, KeyCode::Down)
+            .await
+            .unwrap();
+        assert_eq!(app.http_logs_copy_message, None);
+    }
 }

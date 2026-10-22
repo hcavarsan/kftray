@@ -1889,8 +1889,11 @@ fn format_body_content(body: &str, headers: &[String]) -> String {
 }
 
 fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    let instructions = if app.http_logs_detail_mode {
-        "↑/↓: Scroll | PgUp/PgDn: Page | R: Replay Request | Esc: Back to List".to_string()
+    let instructions = if let Some(message) = &app.http_logs_copy_message {
+        message.clone()
+    } else if app.http_logs_detail_mode {
+        "↑/↓: Scroll | PgUp/PgDn: Page | R: Replay Request | C: Copy as curl | Esc: Back to List"
+            .to_string()
     } else {
         let auto_scroll_status = if app.http_logs_viewer_auto_scroll {
             "ON"
