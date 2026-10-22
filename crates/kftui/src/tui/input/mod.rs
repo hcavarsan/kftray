@@ -118,19 +118,25 @@ impl HttpLogEntry {
 
     pub fn curl_command(&self, base_url: &str) -> String {
         let method = self.method.to_uppercase();
-        let body = self.replay_body();
+        let body = self.replay_body().filter(|_| method != "HEAD");
         let mut parts = vec!["curl".to_string()];
         match method.as_str() {
             "HEAD" => parts.push("--head".to_string()),
             "GET" if body.is_none() => {}
             _ => parts.push(format!("-X {}", shell_quote(&method))),
         }
+        parts.push("--globoff".to_string());
         parts.push(shell_quote(&self.request_url(base_url)));
+        let mut has_content_type = false;
         for (name, value) in self.replay_headers() {
+            has_content_type |= name.eq_ignore_ascii_case("content-type");
             parts.push(format!("-H {}", shell_quote(&format!("{name}: {value}"))));
         }
         if let Some(body) = body {
-            parts.push(format!("--data-binary {}", shell_quote(body)));
+            if !has_content_type {
+                parts.push("-H 'Content-Type:'".to_string());
+            }
+            parts.push(format!("--data-raw {}", shell_quote(body)));
         }
         parts.join(" \\\n  ")
     }

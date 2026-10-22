@@ -1314,34 +1314,38 @@ mod tests {
 
         assert_eq!(
             entry.curl_command("http://127.0.0.2:8080/"),
-            "curl \\\n  -X 'POST' \\\n  'http://127.0.0.2:8080/api' \\\n  \
-             -H 'Content-Type: application/json' \\\n  --data-binary '{\"a\":\"b\"}'"
+            "curl \\\n  -X 'POST' \\\n  --globoff \\\n  'http://127.0.0.2:8080/api' \\\n  \
+             -H 'Content-Type: application/json' \\\n  --data-raw '{\"a\":\"b\"}'"
         );
     }
 
     #[test]
-    fn curl_command_sends_no_body_for_the_empty_body_markers() {
+    fn curl_command_sends_no_body_for_the_empty_body_markers_or_head() {
         for body in ["", "<empty body>", "(empty)"] {
             assert_eq!(
                 logged_request("GET", &[], body).curl_command("http://127.0.0.1:80"),
-                "curl \\\n  'http://127.0.0.1:80/api'"
+                "curl \\\n  --globoff \\\n  'http://127.0.0.1:80/api'"
+            );
+        }
+        for body in ["", "ignored"] {
+            assert_eq!(
+                logged_request("HEAD", &[], body).curl_command("http://127.0.0.1:80"),
+                "curl \\\n  --head \\\n  --globoff \\\n  'http://127.0.0.1:80/api'"
             );
         }
         assert_eq!(
-            logged_request("HEAD", &[], "").curl_command("http://127.0.0.1:80"),
-            "curl \\\n  --head \\\n  'http://127.0.0.1:80/api'"
-        );
-        assert_eq!(
             logged_request("GET", &[], "q=1").curl_command("http://127.0.0.1:80"),
-            "curl \\\n  -X 'GET' \\\n  'http://127.0.0.1:80/api' \\\n  --data-binary 'q=1'"
+            "curl \\\n  -X 'GET' \\\n  --globoff \\\n  'http://127.0.0.1:80/api' \\\n  \
+             -H 'Content-Type:' \\\n  --data-raw 'q=1'"
         );
     }
 
     #[cfg(unix)]
     #[test]
     fn curl_command_reaches_curl_with_quotes_and_newlines_intact() {
-        let body = "it's $HOME `id`\nline two\\";
-        let entry = logged_request("PUT", &["X-Note: don't $(touch x)"], body);
+        let body = "@it's $HOME `id`\nline two\\";
+        let mut entry = logged_request("PUT", &["X-Note: don't $(touch x)"], body);
+        entry.path = "/api?filter[name]={a,b}".into();
         let script = format!(
             "curl() {{ printf '%s\\0' \"$@\"; }}\n{}",
             entry.curl_command("http://127.0.0.1:9")
@@ -1363,10 +1367,13 @@ mod tests {
             [
                 "-X",
                 "PUT",
-                "http://127.0.0.1:9/api",
+                "--globoff",
+                "http://127.0.0.1:9/api?filter[name]={a,b}",
                 "-H",
                 "X-Note: don't $(touch x)",
-                "--data-binary",
+                "-H",
+                "Content-Type:",
+                "--data-raw",
                 body,
             ]
         );
