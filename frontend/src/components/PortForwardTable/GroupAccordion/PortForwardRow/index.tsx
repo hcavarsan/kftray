@@ -344,6 +344,7 @@ function PortForwardRowComponent({
                 ? () => addPodForwards.mutate()
                 : undefined
             }
+            isAddingPodForwards={addPodForwards.isPending}
           />
         </Table.Cell>
       </Table.Row>

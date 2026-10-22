@@ -29,6 +29,7 @@ interface ActionsMenuProps {
   onInspectLogs: () => void
   onOpenHttpLogsConfig: () => void
   onAddPodForwards?: () => void
+  isAddingPodForwards: boolean
 }
 
 export function ActionsMenu({
@@ -42,6 +43,7 @@ export function ActionsMenu({
   onInspectLogs,
   onOpenHttpLogsConfig,
   onAddPodForwards,
+  isAddingPodForwards,
 }: ActionsMenuProps) {
   return (
     <MenuRoot>
@@ -96,7 +98,7 @@ export function ActionsMenu({
             data-testid='config-add-pod-forwards'
             className='menu-item'
             value='add-pod-forwards'
-            disabled={isPending}
+            disabled={isPending || isAddingPodForwards}
             onClick={onAddPodForwards}
           >
             <Box as={Layers} width='12px' height='12px' />
