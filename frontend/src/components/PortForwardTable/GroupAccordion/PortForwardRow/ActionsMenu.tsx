@@ -1,6 +1,7 @@
 import {
   Copy,
   FileIcon,
+  Layers,
   Menu,
   Pencil,
   SettingsIcon,
@@ -27,6 +28,8 @@ interface ActionsMenuProps {
   onToggleHttpLogs: () => void
   onInspectLogs: () => void
   onOpenHttpLogsConfig: () => void
+  onAddPodForwards?: () => void
+  isAddingPodForwards: boolean
 }
 
 export function ActionsMenu({
@@ -39,11 +42,14 @@ export function ActionsMenu({
   onToggleHttpLogs,
   onInspectLogs,
   onOpenHttpLogsConfig,
+  onAddPodForwards,
+  isAddingPodForwards,
 }: ActionsMenuProps) {
   return (
     <MenuRoot>
       <MenuTrigger asChild>
         <IconButton
+          data-testid='config-actions'
           size='xs'
           ml={5}
           variant='ghost'
@@ -87,6 +93,20 @@ export function ActionsMenu({
             Delete
           </Text>
         </MenuItem>
+        {onAddPodForwards && (
+          <MenuItem
+            data-testid='config-add-pod-forwards'
+            className='menu-item'
+            value='add-pod-forwards'
+            disabled={isPending || isAddingPodForwards}
+            onClick={onAddPodForwards}
+          >
+            <Box as={Layers} width='12px' height='12px' />
+            <Text ml={2} fontSize='xs'>
+              Add Pod Forwards
+            </Text>
+          </MenuItem>
+        )}
         {protocol === 'tcp' && (
           <>
             <MenuItem

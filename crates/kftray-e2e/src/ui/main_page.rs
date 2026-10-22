@@ -86,6 +86,17 @@ impl ConfigRow<'_> {
         self.desktop.wait_present(&warning, limit).await
     }
 
+    pub async fn add_pod_forwards(&self) -> Result<()> {
+        self.desktop.main().expand_groups().await?;
+        let actions = By::Css(format!("{} {}", self.selector, TestId::ConfigActions.css()));
+        self.desktop.click(&actions).await?;
+        let item = By::Css(format!(
+            "[data-state='open'] {}",
+            TestId::ConfigAddPodForwards.css()
+        ));
+        self.desktop.click(&item).await
+    }
+
     async fn toggle_from(&self, state: &str) -> Result<()> {
         let limit = self.desktop.timeouts().ui;
         self.desktop

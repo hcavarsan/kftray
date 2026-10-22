@@ -61,7 +61,7 @@ pub async fn resolve_pod_selector(
 
 /// Only a 404 means the Service is missing. Forbidden, a server error or an
 /// unreachable API server are different problems and must not read as one.
-fn service_lookup_error(service_name: &str, error: &kube::Error) -> anyhow::Error {
+pub(crate) fn service_lookup_error(service_name: &str, error: &kube::Error) -> anyhow::Error {
     match error {
         kube::Error::Api(status) if status.code == 404 => {
             anyhow::anyhow!("Service '{service_name}' not found: {error}")
