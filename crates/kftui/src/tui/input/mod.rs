@@ -81,8 +81,10 @@ fn is_tls_upgrade(from: &reqwest::Url, to: &reqwest::Url) -> bool {
         && from.port_or_known_default() == to.port_or_known_default()
 }
 
-fn tls_upgrade_location(response: &reqwest::Response) -> Option<reqwest::Url> {
-    if !response.status().is_redirection() {
+fn tls_upgrade_location(
+    response: &reqwest::Response, request_url: &reqwest::Url,
+) -> Option<reqwest::Url> {
+    if !response.status().is_redirection() || response.url() != request_url {
         return None;
     }
     let location = response
@@ -90,8 +92,8 @@ fn tls_upgrade_location(response: &reqwest::Response) -> Option<reqwest::Url> {
         .get(reqwest::header::LOCATION)?
         .to_str()
         .ok()?;
-    let target = response.url().join(location).ok()?;
-    is_tls_upgrade(response.url(), &target).then_some(target)
+    let target = request_url.join(location).ok()?;
+    is_tls_upgrade(request_url, &target).then_some(target)
 }
 
 impl HttpLogEntry {
@@ -119,10 +121,8 @@ impl HttpLogEntry {
             .no_proxy()
             .timeout(REPLAY_TIMEOUT)
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt
-                    .previous()
-                    .last()
-                    .is_some_and(|from| is_tls_upgrade(from, attempt.url()))
+                if let [request_url] = attempt.previous()
+                    && is_tls_upgrade(request_url, attempt.url())
                 {
                     attempt.stop()
                 } else {
@@ -189,10 +189,11 @@ impl HttpLogEntry {
         let request = request_builder
             .build()
             .map_err(|e| format!("Request failed: {}", e))?;
+        let request_url = request.url().clone();
         let upgraded_request = request.try_clone();
         let mut sent = client.execute(request).await;
         if let Ok(response) = &sent
-            && let Some(https_url) = tls_upgrade_location(response)
+            && let Some(https_url) = tls_upgrade_location(response, &request_url)
             && let Some(mut upgraded_request) = upgraded_request
         {
             *upgraded_request.url_mut() = https_url;
