@@ -683,6 +683,7 @@ async fn allocate_local_address_for_config(
     let service_name = config
         .service
         .clone()
+        .filter(|service| !service.is_empty())
         .unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()));
 
     let service = service_name.clone();
@@ -1617,6 +1618,76 @@ mod tests {
         assert_eq!(result, "192.168.1.1");
         assert_eq!(provenance, Allocation::Static);
         assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn pod_forwards_with_auto_select_get_their_own_address() {
+        use std::collections::HashMap;
+        use std::io::Write;
+        use std::os::unix::net::UnixListener;
+
+        use kftray_helper::messages::AddressCommand;
+        use kftray_helper::messages::HelperRequest;
+        use kftray_helper::messages::HelperResponse;
+        use kftray_helper::messages::RequestCommand;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("kftray-helper.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let _socket_path =
+            kftray_commons::test_utils::EnvVarGuard::set("SOCKET_PATH", socket.to_str().unwrap());
+        let helper = std::thread::spawn(move || {
+            let mut pool: HashMap<String, String> = HashMap::new();
+            let mut served = 0;
+            while served < 2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let Some(Ok(request)) = serde_json::Deserializer::from_reader(&mut stream)
+                    .into_iter::<HelperRequest>()
+                    .next()
+                else {
+                    continue;
+                };
+                let RequestCommand::Address(AddressCommand::Allocate { service_name }) =
+                    request.command
+                else {
+                    continue;
+                };
+                let next = format!("127.0.0.{}", pool.len() + 2);
+                let address = pool.entry(service_name).or_insert(next).clone();
+                let response = HelperResponse::string_success(request.request_id, address);
+                stream
+                    .write_all(&serde_json::to_vec(&response).unwrap())
+                    .unwrap();
+                served += 1;
+            }
+        });
+
+        let pod = |id: i64, target: &str| Config {
+            id: Some(id),
+            service: Some(String::new()),
+            workload_type: Some("pod".to_string()),
+            target: Some(target.to_string()),
+            auto_loopback_address: true,
+            local_port: Some(5432),
+            ..setup_test_config()
+        };
+        let mut primary = pod(1, "statefulset.kubernetes.io/pod-name=pg-0");
+        let mut replica = pod(2, "statefulset.kubernetes.io/pod-name=pg-1");
+
+        let (first, first_provenance) =
+            allocate_local_address_for_config(&mut primary, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        let (second, second_provenance) =
+            allocate_local_address_for_config(&mut replica, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        helper.join().unwrap();
+
+        assert_eq!(first_provenance, Allocation::Helper);
+        assert_eq!(second_provenance, Allocation::Helper);
+        assert_ne!(first, second);
     }
 
     #[tokio::test]
