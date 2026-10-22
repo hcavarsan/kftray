@@ -21,13 +21,16 @@ import {
   getStatusInfo,
 } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/statusInfo'
 import {
+  allHttpLogsEnabledQueryKey,
   httpLogsEnabledQueryKey,
   useHttpLogsEnabled,
   useSetHttpLogsEnabled,
 } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { configsQuery } from '@/hooks/useConfigs'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { invoke } from '@/lib/tauri'
 import type {
@@ -106,6 +109,26 @@ function PortForwardRowComponent({
   const openUrl = useMutation({
     mutationFn: (url: string) => openShell(url),
     meta: { errorToast: { title: 'Failed to open URL' } },
+  })
+
+  const addPodForwards = useMutation({
+    mutationFn: () =>
+      invoke<number>('add_headless_pod_configs_cmd', { id: config.id }),
+    onSuccess: added => {
+      queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
+      queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey })
+      toaster.success({
+        title: 'Pod forwards',
+        description:
+          added === 0
+            ? 'Every pod already has a forward.'
+            : `Added ${added} pod ${added === 1 ? 'forward' : 'forwards'}.`,
+        duration: 3000,
+      })
+    },
+    meta: {
+      errorToast: { title: 'Failed to add pod forwards', duration: 5000 },
+    },
   })
 
   const copyPodName = useCopyToClipboard({
@@ -316,6 +339,12 @@ function PortForwardRowComponent({
               inspectLogs.mutate(`${config.id}_${config.local_port}.http`)
             }
             onOpenHttpLogsConfig={() => setIsHttpLogsConfigOpen(true)}
+            onAddPodForwards={
+              config.workload_type === 'service' && config.protocol === 'tcp'
+                ? () => addPodForwards.mutate()
+                : undefined
+            }
+            isAddingPodForwards={addPodForwards.isPending}
           />
         </Table.Cell>
       </Table.Row>
