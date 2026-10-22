@@ -1131,6 +1131,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     async fn finish_replay(app: &mut App) {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             while app.http_logs_replay.is_some() {
