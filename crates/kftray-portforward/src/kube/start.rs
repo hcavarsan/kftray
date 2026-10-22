@@ -1637,10 +1637,11 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         let _socket_path =
             kftray_commons::test_utils::EnvVarGuard::set("SOCKET_PATH", socket.to_str().unwrap());
-        std::thread::spawn(move || {
+        let helper = std::thread::spawn(move || {
             let mut pool: HashMap<String, String> = HashMap::new();
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
+            let mut served = 0;
+            while served < 2 {
+                let (mut stream, _) = listener.accept().unwrap();
                 let Some(Ok(request)) = serde_json::Deserializer::from_reader(&mut stream)
                     .into_iter::<HelperRequest>()
                     .next()
@@ -1658,6 +1659,7 @@ mod tests {
                 stream
                     .write_all(&serde_json::to_vec(&response).unwrap())
                     .unwrap();
+                served += 1;
             }
         });
 
@@ -1681,6 +1683,7 @@ mod tests {
             allocate_local_address_for_config(&mut replica, DatabaseMode::Memory)
                 .await
                 .unwrap();
+        helper.join().unwrap();
 
         assert_eq!(first_provenance, Allocation::Helper);
         assert_eq!(second_provenance, Allocation::Helper);
