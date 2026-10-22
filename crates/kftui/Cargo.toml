@@ -46,6 +46,7 @@ uuid = { workspace = true }
 insta = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = { workspace = true }
 
 [build-dependencies]
 built = { workspace = true }
