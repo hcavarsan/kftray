@@ -74,13 +74,75 @@ pub struct HttpLogEntry {
 
 const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+const REPLAY_SKIPPED_HEADERS: [&str; 6] = [
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "content-encoding",
+    "accept-encoding",
+];
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
 impl HttpLogEntry {
-    pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
-        let url = if self.path.starts_with("http") {
+    fn request_url(&self, base_url: &str) -> String {
+        if self.path.starts_with("http") {
             self.path.clone()
         } else {
             format!("{}{}", base_url.trim_end_matches('/'), self.path)
-        };
+        }
+    }
+
+    fn replay_headers(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.request_headers.iter().filter_map(|header_line| {
+            let (name, value) = header_line.split_once(": ")?;
+            if REPLAY_SKIPPED_HEADERS.contains(&name.to_lowercase().as_str()) {
+                return None;
+            }
+            if value.is_empty() {
+                log::debug!("Skipping truly empty header: {}", name);
+                return None;
+            }
+            Some((name, value.trim()))
+        })
+    }
+
+    fn replay_body(&self) -> Option<&str> {
+        let actual_body = self.request_body.trim();
+        (!actual_body.is_empty() && actual_body != "<empty body>" && actual_body != "(empty)")
+            .then_some(self.request_body.as_str())
+    }
+
+    pub fn curl_command(&self, base_url: &str) -> String {
+        let method = self.method.to_uppercase();
+        let body = self.replay_body().filter(|_| method != "HEAD");
+        let mut parts = vec!["curl".to_string()];
+        match method.as_str() {
+            "HEAD" => parts.push("--head".to_string()),
+            "GET" if body.is_none() => {}
+            _ => parts.push(format!("-X {}", shell_quote(&method))),
+        }
+        parts.push("--globoff".to_string());
+        parts.push(shell_quote(&self.request_url(base_url)));
+        let mut has_content_type = false;
+        for (name, value) in self.replay_headers() {
+            has_content_type |= name.eq_ignore_ascii_case("content-type");
+            parts.push(format!("-H {}", shell_quote(&format!("{name}: {value}"))));
+        }
+        if let Some(body) = body {
+            if !has_content_type {
+                parts.push("-H 'Content-Type:'".to_string());
+            }
+            parts.push(format!("--data-raw {}", shell_quote(body)));
+        }
+        parts.join(" \\\n  ")
+    }
+
+    pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
+        let url = self.request_url(base_url);
 
         let method = match self.method.to_uppercase().as_str() {
             "GET" => reqwest::Method::GET,
@@ -104,48 +166,24 @@ impl HttpLogEntry {
         let mut request_builder = client.request(method.clone(), &url);
 
         let mut headers = reqwest::header::HeaderMap::new();
-
-        let skip_headers = [
-            "host",
-            "connection",
-            "content-length",
-            "transfer-encoding",
-            "content-encoding",
-            "accept-encoding",
-        ];
         let mut added_headers = 0;
 
-        for header_line in &self.request_headers {
-            if let Some((name, value)) = header_line.split_once(": ") {
-                let name_lower = name.to_lowercase();
-                let value_trimmed = value.trim();
+        for (name, value) in self.replay_headers() {
+            log::debug!("Adding header: {} = '{}'", name, value);
 
-                if skip_headers.contains(&name_lower.as_str()) {
-                    continue;
-                }
-
-                if value.is_empty() {
-                    log::debug!("Skipping truly empty header: {}", name);
-                    continue;
-                }
-
-                log::debug!("Adding header: {} = '{}'", name, value_trimmed);
-
-                if let (Ok(header_name), Ok(header_value)) = (
-                    reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-                    reqwest::header::HeaderValue::from_str(value_trimmed),
-                ) {
-                    headers.insert(header_name, header_value);
-                    added_headers += 1;
-                }
+            if let (Ok(header_name), Ok(header_value)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                reqwest::header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(header_name, header_value);
+                added_headers += 1;
             }
         }
 
         request_builder = request_builder.headers(headers);
 
-        let actual_body = self.request_body.trim();
-        if !actual_body.is_empty() && actual_body != "<empty body>" && actual_body != "(empty)" {
-            request_builder = request_builder.body(self.request_body.clone());
+        if let Some(body) = self.replay_body() {
+            request_builder = request_builder.body(body.to_string());
         }
 
         log::debug!(
@@ -333,6 +371,7 @@ pub struct App {
     pub http_logs_selected_entry: Option<HttpLogEntry>,
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay: Option<tokio::task::JoinHandle<Result<HttpLogEntry, String>>>,
+    pub http_logs_copy_message: Option<String>,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
     pub configs_being_processed: PendingForwards,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
@@ -450,6 +489,7 @@ impl App {
             http_logs_selected_entry: None,
             http_logs_replay_result: None,
             http_logs_replay: None,
+            http_logs_copy_message: None,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
             forwarding_tasks: tokio::task::JoinSet::new(),
@@ -2931,7 +2971,29 @@ async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
     }
 }
 
+fn http_logs_forward_base_url(app: &App) -> String {
+    let forward = app.http_logs_viewer_config_id.and_then(|config_id| {
+        app.stopped_configs
+            .iter()
+            .chain(app.running_configs.iter())
+            .find(|c| c.id == Some(config_id))
+    });
+    let local_address = forward
+        .and_then(|c| c.local_address.as_deref())
+        .unwrap_or("127.0.0.1");
+    let local_port = forward.and_then(|c| c.local_port).unwrap_or(8080);
+    format!("http://{local_address}:{local_port}")
+}
+
+fn copy_to_terminal_clipboard(text: &str) -> io::Result<()> {
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::clipboard::CopyToClipboard::to_clipboard_from(text)
+    )
+}
+
 pub async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    app.http_logs_copy_message = None;
     match key {
         KeyCode::Esc => {
             if app.http_logs_detail_mode {
@@ -3016,22 +3078,23 @@ pub async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::R
                 && app.http_logs_replay.is_none()
                 && let Some(entry) = app.http_logs_selected_entry.clone()
             {
-                let forward = app.http_logs_viewer_config_id.and_then(|config_id| {
-                    app.stopped_configs
-                        .iter()
-                        .chain(app.running_configs.iter())
-                        .find(|c| c.id == Some(config_id))
-                });
-                let local_address = forward
-                    .and_then(|c| c.local_address.as_deref())
-                    .unwrap_or("127.0.0.1");
-                let local_port = forward.and_then(|c| c.local_port).unwrap_or(8080);
-                let base_url = format!("http://{local_address}:{local_port}");
+                let base_url = http_logs_forward_base_url(app);
 
                 app.http_logs_replay_result = None;
                 app.http_logs_viewer_scroll = 0;
                 app.http_logs_replay =
                     Some(tokio::spawn(async move { entry.replay(&base_url).await }));
+            }
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            if app.http_logs_detail_mode
+                && let Some(entry) = &app.http_logs_selected_entry
+            {
+                let command = entry.curl_command(&http_logs_forward_base_url(app));
+                app.http_logs_copy_message = Some(match copy_to_terminal_clipboard(&command) {
+                    Ok(()) => "curl command sent to the clipboard (OSC 52)".to_string(),
+                    Err(e) => format!("Could not copy the curl command: {e}"),
+                });
             }
         }
         KeyCode::Enter => {
