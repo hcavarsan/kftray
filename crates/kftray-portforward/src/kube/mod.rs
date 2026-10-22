@@ -1,4 +1,5 @@
 pub mod client;
+mod headless;
 pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
@@ -14,6 +15,7 @@ pub mod target;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;
 
+pub use headless::headless_pod_configs;
 pub use http_log_watcher::{
     HttpLogStateEvent,
     HttpLogStateWatcher,

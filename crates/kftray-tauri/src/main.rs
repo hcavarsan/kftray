@@ -441,6 +441,7 @@ fn main() {
             commands::config::import_configs_cmd,
             commands::config::delete_configs_cmd,
             commands::config::delete_all_configs_cmd,
+            commands::config::add_headless_pod_configs_cmd,
             commands::window_state::open_save_dialog,
             commands::window_state::close_save_dialog,
             commands::github::import_configs_from_github,
