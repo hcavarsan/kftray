@@ -680,11 +680,18 @@ async fn allocate_local_address_for_config(
         return Ok((address, Allocation::Static));
     }
 
-    let service_name = config
+    let service_name = match config
         .service
-        .clone()
+        .as_deref()
         .filter(|service| !service.is_empty())
-        .unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()));
+    {
+        Some(service) => format!(
+            "{}/{}/{service}",
+            config.context.as_deref().unwrap_or_default(),
+            config.namespace
+        ),
+        None => format!("service-{}", config.id.unwrap_or_default()),
+    };
 
     let service = service_name.clone();
     let allocation = tokio::task::spawn_blocking(move || try_allocate_address(&service))
@@ -1621,8 +1628,13 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn pod_forwards_with_auto_select_get_their_own_address() {
+    fn serve_fake_helper(
+        requests: usize,
+    ) -> (
+        tempfile::TempDir,
+        kftray_commons::test_utils::EnvVarGuard,
+        std::thread::JoinHandle<()>,
+    ) {
         use std::collections::HashMap;
         use std::io::Write;
         use std::os::unix::net::UnixListener;
@@ -1635,12 +1647,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("kftray-helper.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        let _socket_path =
+        let socket_path =
             kftray_commons::test_utils::EnvVarGuard::set("SOCKET_PATH", socket.to_str().unwrap());
         let helper = std::thread::spawn(move || {
             let mut pool: HashMap<String, String> = HashMap::new();
             let mut served = 0;
-            while served < 2 {
+            while served < requests {
                 let (mut stream, _) = listener.accept().unwrap();
                 let Some(Ok(request)) = serde_json::Deserializer::from_reader(&mut stream)
                     .into_iter::<HelperRequest>()
@@ -1662,6 +1674,13 @@ mod tests {
                 served += 1;
             }
         });
+        (dir, socket_path, helper)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn pod_forwards_with_auto_select_get_their_own_address() {
+        let (_dir, _socket_path, helper) = serve_fake_helper(2);
 
         let pod = |id: i64, target: &str| Config {
             id: Some(id),
@@ -1688,6 +1707,38 @@ mod tests {
         assert_eq!(first_provenance, Allocation::Helper);
         assert_eq!(second_provenance, Allocation::Helper);
         assert_ne!(first, second);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn same_service_in_two_namespaces_gets_two_addresses_and_one_service_shares_one() {
+        let (_dir, _socket_path, helper) = serve_fake_helper(3);
+
+        let postgres = |id: i64, namespace: &str, local_port: u16| Config {
+            id: Some(id),
+            service: Some("postgres".to_string()),
+            namespace: namespace.to_string(),
+            auto_loopback_address: true,
+            local_port: Some(local_port),
+            ..setup_test_config()
+        };
+        let mut dev = postgres(1, "dev", 5432);
+        let mut staging = postgres(2, "staging", 5432);
+        let mut dev_metrics = postgres(3, "dev", 9187);
+
+        let mut addresses = Vec::new();
+        for config in [&mut dev, &mut staging, &mut dev_metrics] {
+            let (address, provenance) =
+                allocate_local_address_for_config(config, DatabaseMode::Memory)
+                    .await
+                    .unwrap();
+            assert_eq!(provenance, Allocation::Helper);
+            addresses.push(address);
+        }
+        helper.join().unwrap();
+
+        assert_ne!(addresses[0], addresses[1]);
+        assert_eq!(addresses[0], addresses[2]);
     }
 
     #[tokio::test]
