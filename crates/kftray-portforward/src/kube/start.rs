@@ -1712,7 +1712,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn same_service_in_two_namespaces_gets_two_addresses_and_one_service_shares_one() {
-        let (_dir, _socket_path, helper) = serve_fake_helper(3);
+        let (_dir, _socket_path, helper) = serve_fake_helper(4);
 
         let postgres = |id: i64, namespace: &str, local_port: u16| Config {
             id: Some(id),
@@ -1725,9 +1725,18 @@ mod tests {
         let mut dev = postgres(1, "dev", 5432);
         let mut staging = postgres(2, "staging", 5432);
         let mut dev_metrics = postgres(3, "dev", 9187);
+        let mut other_cluster_dev = Config {
+            context: Some("other-context".to_string()),
+            ..postgres(4, "dev", 5432)
+        };
 
         let mut addresses = Vec::new();
-        for config in [&mut dev, &mut staging, &mut dev_metrics] {
+        for config in [
+            &mut dev,
+            &mut staging,
+            &mut dev_metrics,
+            &mut other_cluster_dev,
+        ] {
             let (address, provenance) =
                 allocate_local_address_for_config(config, DatabaseMode::Memory)
                     .await
@@ -1739,6 +1748,7 @@ mod tests {
 
         assert_ne!(addresses[0], addresses[1]);
         assert_eq!(addresses[0], addresses[2]);
+        assert_ne!(addresses[0], addresses[3]);
     }
 
     #[tokio::test]
