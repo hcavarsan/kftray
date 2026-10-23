@@ -684,9 +684,12 @@ pub(crate) async fn import_configs_with_pool(
 }
 
 pub fn parse_import_configs(json: &str) -> Result<Vec<Config>, String> {
-    let configs = parse_config_json(json)?;
-    for config in &configs {
+    let mut configs = parse_config_json(json)?;
+    for config in &mut configs {
         validate_imported_config(config).map_err(|e| format!("Invalid config: {e}"))?;
+        if config.workload_type.as_deref() == Some("pod") && config.service.is_none() {
+            config.service = Some(String::new());
+        }
     }
     Ok(configs)
 }
@@ -1454,6 +1457,32 @@ mod tests {
                 (Some("web"), "default-namespace")
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn pod_forward_keeps_its_domain_alias_after_export_and_import() {
+        let pool = setup_test_db().await;
+        let saved = Config {
+            service: Some(String::new()),
+            namespace: "db".to_string(),
+            context: Some("kind-dev".to_string()),
+            workload_type: Some("pod".to_string()),
+            target: Some("app=postgres".to_string()),
+            alias: Some("postgres.local".to_string()),
+            domain_enabled: Some(true),
+            protocol: "tcp".to_string(),
+            local_port: Some(5432),
+            remote_port: Some(5432),
+            ..Config::default()
+        };
+        insert_config_with_pool(saved, &pool).await.unwrap();
+
+        let exported = export_configs_with_pool(&pool).await.unwrap();
+        let imported = parse_import_configs(&exported).unwrap();
+
+        assert_eq!(imported[0].service.as_deref(), Some(""));
+        assert_eq!(imported[0].alias.as_deref(), Some("postgres.local"));
+        assert_eq!(imported[0].domain_enabled, Some(true));
     }
 
     #[tokio::test]
