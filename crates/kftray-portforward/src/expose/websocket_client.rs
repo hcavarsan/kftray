@@ -427,15 +427,9 @@ impl WebSocketTunnelClient {
             }
         };
 
-        let http_method: Method = match method.as_str() {
-            "GET" => Method::GET,
-            "POST" => Method::POST,
-            "PUT" => Method::PUT,
-            "DELETE" => Method::DELETE,
-            "PATCH" => Method::PATCH,
-            "HEAD" => Method::HEAD,
-            "OPTIONS" => Method::OPTIONS,
-            _ => {
+        let http_method = match Method::from_bytes(method.as_bytes()) {
+            Ok(m) => m,
+            Err(_) => {
                 error!("Unsupported HTTP method: {}", method);
                 let message = format!("Unsupported method: {}", method);
                 return (
@@ -804,6 +798,55 @@ mod tests {
                 assert_eq!(status, 200);
                 assert_eq!(body, b"response");
             }
+            other => panic!("expected HTTP response, got {other:?}"),
+        }
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forwards_a_webdav_method_to_the_local_app() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper_util::client::legacy::Client;
+        use hyper_util::rt::TokioExecutor;
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            9999,
+            "127.0.0.1".to_owned(),
+            listener.local_addr().unwrap().port(),
+        );
+        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"PROPFIND /files/ HTTP/1.1\r\n"));
+            socket
+                .write_all(b"HTTP/1.1 207 Multi-Status\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.forward_to_local_service(
+                &http_client,
+                "dav".to_owned(),
+                "PROPFIND".to_owned(),
+                "/files/".to_owned(),
+                vec![("Depth".to_owned(), "1".to_owned())],
+                Vec::new(),
+                false,
+            ),
+        )
+        .await
+        .unwrap()
+        .0;
+        match response {
+            super::TunnelMessage::HttpResponse { status, .. } => assert_eq!(status, 207),
             other => panic!("expected HTTP response, got {other:?}"),
         }
         server.await.unwrap();
