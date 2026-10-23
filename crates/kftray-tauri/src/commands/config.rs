@@ -8,9 +8,11 @@ use kftray_commons::config::{
     get_configs,
     import_configs,
     insert_config,
+    insert_new_configs_with_mode,
     update_config,
 };
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::settings::get_ssl_enabled;
 use kftray_portforward::kube::clear_stopped_by_timeout;
 use kftray_portforward::ssl::cert_manager::CertificateManager;
@@ -374,6 +376,17 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
     result
 }
 
+#[tauri::command]
+pub async fn add_headless_pod_configs_cmd(id: i64) -> Result<usize, String> {
+    let source = get_config(id).await?;
+    let configs = kftray_portforward::kube::headless_pod_configs(&source).await?;
+    let added = insert_new_configs_with_mode(configs, DatabaseMode::File).await?;
+    if !added.is_empty() {
+        let _ = regenerate_ssl_certificate_if_needed(Arc::new(RealPortOperations)).await;
+    }
+    Ok(added.len())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -422,6 +435,26 @@ mod tests {
             !configs_after.iter().any(|c| c.id == Some(id)),
             "Config should have been deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn a_pod_forward_adds_no_pod_forwards() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _pool = setup_isolated_test_db().await;
+        insert_config_cmd(Config {
+            workload_type: Some("pod".to_string()),
+            protocol: "tcp".to_string(),
+            target: Some("app=mongo".to_string()),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        let id = get_configs_cmd().await.unwrap()[0].id.unwrap();
+
+        let error = add_headless_pod_configs_cmd(id).await.unwrap_err();
+
+        assert_eq!(error, "Only a TCP service forward can add pod forwards");
+        assert_eq!(get_configs_cmd().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

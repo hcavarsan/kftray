@@ -19,7 +19,7 @@ anyhow.workspace = true
 built = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-crossterm = { workspace = true }
+crossterm = { workspace = true, features = ["osc52"] }
 env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
