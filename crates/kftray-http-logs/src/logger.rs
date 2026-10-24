@@ -470,11 +470,7 @@ impl HttpLogger {
             total_size
         );
 
-        let responses_first = messages
-            .iter()
-            .filter(|message| message.is_response())
-            .chain(messages.iter().filter(|message| !message.is_response()));
-        for message in responses_first {
+        for message in messages {
             let bytes = message.as_bytes();
             if let Err(e) = Self::rotate_if_full(&mut log_file, bytes.len(), rotation).await {
                 error!("Failed to rotate HTTP log file: {:?}", e);
@@ -766,47 +762,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_log_write_batch() {
-        let temp_dir = tempdir().unwrap();
-        let file_path = temp_dir.path().join("batch_test.log");
-
-        let file = File::create(&file_path).await.unwrap();
-        let buf_writer = BufWriter::new(file);
-
-        let log_file = Arc::new(RwLock::new(buf_writer));
-
-        let messages = vec![
-            LogMessage::Request("Test request 1".to_string()),
-            LogMessage::Request("Test request 2".to_string()),
-            LogMessage::Response("Test response".to_string()),
-        ];
-
-        let config = LogConfig::new(temp_dir.path().to_path_buf());
-        HttpLogger::write_log_batch(&log_file, &messages, (&config, &file_path))
-            .await
-            .unwrap();
-
-        {
-            let mut writer = log_file.write().await;
-            writer.flush().await.unwrap();
-        }
-
-        let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
-
-        assert!(contents.contains("Test request 1"));
-        assert!(contents.contains("Test request 2"));
-        assert!(contents.contains("Test response"));
-
-        let response_pos = contents.find("Test response").unwrap();
-        let request1_pos = contents.find("Test request 1").unwrap();
-
-        assert!(
-            response_pos < request1_pos,
-            "Responses should appear before requests in the log file"
-        );
-    }
-
-    #[tokio::test]
     async fn test_request_response_logging() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("req_resp_test.log");
@@ -875,6 +830,26 @@ mod tests {
 
         let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
         assert!(contents.contains("Single log test message"));
+    }
+
+    #[tokio::test]
+    async fn a_batch_keeps_each_request_before_its_response() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("batch_order.http");
+        let file = File::create(&file_path).await.unwrap();
+        let log_file = Arc::new(RwLock::new(BufWriter::new(file)));
+        let messages = [
+            LogMessage::Request("GET /fast HTTP/1.1\n".to_string()),
+            LogMessage::Response("HTTP/1.1 201 Created\n".to_string()),
+        ];
+
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        HttpLogger::write_log_batch(&log_file, &messages, (&config, &file_path))
+            .await
+            .unwrap();
+
+        let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(contents, "GET /fast HTTP/1.1\nHTTP/1.1 201 Created\n");
     }
 
     #[tokio::test]
