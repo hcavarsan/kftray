@@ -494,7 +494,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@8b574cdc2dffdae49f803204a4f2b716a2fa1db7 # v1.44.2
+        uses: shogo82148/actions-setup-perl@a99edab616eaa8a66bbc16363c77a83361e5f2ce # v1.44.3
         with:
           perl-version: "5.42"
           distribution: "strawberry"
@@ -717,12 +717,12 @@ jobs:
           rustup default stable
 
       - name: Install cargo-cyclonedx
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-cyclonedx@0.5.9
 
       - name: Setup mise
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           cache: false
 
@@ -894,7 +894,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber
 
       - name: Setup uv for updater metadata
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
 
@@ -951,7 +951,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-commons)
         id: crates-io-auth-commons
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-commons
         env:
@@ -963,7 +963,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-telemetry)
         id: crates-io-auth-telemetry
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-telemetry
         env:
@@ -975,7 +975,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-helper)
         id: crates-io-auth-helper
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-helper
         env:
@@ -987,7 +987,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-http-logs)
         id: crates-io-auth-http-logs
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-http-logs
         env:
@@ -999,7 +999,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-portforward)
         id: crates-io-auth-portforward
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-portforward
         env:
@@ -1011,7 +1011,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-network-monitor)
         id: crates-io-auth-network-monitor
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-network-monitor
         env:
@@ -1023,7 +1023,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftui)
         id: crates-io-auth-kftui
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftui
         env:
@@ -1131,7 +1131,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
 

@@ -45,12 +45,12 @@ jobs:
           rustup default stable
 
       - name: Install nextest
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-nextest
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: e2e-${{ runner.os }}
           shared-key: deps-e2e-${{ runner.os }}
@@ -109,7 +109,7 @@ jobs:
           rustup default stable
 
       - name: Set up Perl
-        uses: shogo82148/actions-setup-perl@8b574cdc2dffdae49f803204a4f2b716a2fa1db7 # v1.44.2
+        uses: shogo82148/actions-setup-perl@a99edab616eaa8a66bbc16363c77a83361e5f2ce # v1.44.3
         with:
           perl-version: "5.42"
           distribution: "strawberry"
@@ -121,12 +121,12 @@ jobs:
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install nextest
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-nextest
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: e2e-${{ runner.os }}
           shared-key: deps-e2e-${{ runner.os }}
@@ -135,7 +135,7 @@ jobs:
             crates/kftray-helper
 
       - name: Install WSL
-        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
         with:
           distribution: Ubuntu-24.04
           wsl-version: 2
