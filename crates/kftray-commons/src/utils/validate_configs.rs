@@ -6,6 +6,7 @@ use std::path::{
 
 use crate::utils::config_dir::{
     DB_FILE_NAME,
+    env_dir,
     get_config_dir,
 };
 
@@ -34,13 +35,10 @@ fn holds_config(path: &Path) -> bool {
 /// where the app reads and writes, even when a lower-priority one has data.
 pub fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
     let candidates = [
-        (
-            "KFTRAY_CONFIG",
-            env::var_os("KFTRAY_CONFIG").map(PathBuf::from),
-        ),
+        ("KFTRAY_CONFIG", env_dir("KFTRAY_CONFIG")),
         (
             "XDG_CONFIG_HOME",
-            env::var_os("XDG_CONFIG_HOME").map(|dir| PathBuf::from(dir).join("kftray")),
+            env_dir("XDG_CONFIG_HOME").map(|dir| dir.join("kftray")),
         ),
         (
             "HOME",
@@ -120,6 +118,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_utils::EnvVarGuard;
 
     lazy_static! {
         static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -435,6 +434,30 @@ mod tests {
         let active = active.unwrap();
         assert_eq!(active.origin, "KFTRAY_CONFIG");
         assert_eq!(active.path, kftray_dir);
+    }
+
+    #[test]
+    fn test_detect_multiple_configs_skips_empty_env_vars() {
+        let _lock = ENV_TEST_MUTEX.lock();
+        let temp_dir = tempdir().unwrap();
+        let home_dir = temp_dir.path().join("home_dir");
+        create_config(&home_dir.join(".kftray"));
+        let _home = EnvVarGuard::set("HOME", home_dir.to_str().unwrap());
+        let _kftray = EnvVarGuard::set("KFTRAY_CONFIG", "");
+        let _xdg = EnvVarGuard::set("XDG_CONFIG_HOME", "");
+
+        let (configs, active) = detect_multiple_configs();
+
+        assert_eq!(
+            configs
+                .iter()
+                .map(|c| c.origin.as_str())
+                .collect::<Vec<_>>(),
+            ["HOME"]
+        );
+        let active = active.unwrap();
+        assert_eq!(active.origin, "HOME");
+        assert_eq!(active.path, home_dir.join(".kftray"));
     }
 
     #[test]
