@@ -1121,6 +1121,18 @@ mod tests {
         handle_http_logs_viewer_input(&mut app, KeyCode::Char('r'))
             .await
             .unwrap();
+        finish_replay(&mut app).await;
+
+        let replayed = app.http_logs_selected_entry.unwrap();
+        assert_eq!(
+            replayed.response_body, "forward",
+            "{:?}",
+            app.http_logs_replay_result
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn finish_replay(app: &mut App) {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             while app.http_logs_replay.is_some() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1129,13 +1141,6 @@ mod tests {
         })
         .await
         .expect("the replay did not finish in 10 s");
-
-        let replayed = app.http_logs_selected_entry.unwrap();
-        assert_eq!(
-            replayed.response_body, "forward",
-            "{:?}",
-            app.http_logs_replay_result
-        );
     }
 
     #[tokio::test]
@@ -1179,38 +1184,40 @@ mod tests {
         .expect("Esc left the replay running");
     }
 
+    async fn read_request(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> (String, Vec<u8>) {
+        use tokio::io::AsyncReadExt;
+
+        let mut request = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).await.unwrap();
+            request.extend_from_slice(&buf[..n]);
+            let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                assert!(n > 0, "the replay closed before its headers ended");
+                continue;
+            };
+            let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
+            let length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+            if request.len() >= end + 4 + length || n == 0 {
+                return (head, request[end + 4..].to_vec());
+            }
+        }
+    }
+
     async fn replay_to_one_request(
         entry: HttpLogEntry, respond: fn(&str, &[u8]) -> Vec<u8>,
     ) -> HttpLogEntry {
-        use tokio::io::{
-            AsyncReadExt,
-            AsyncWriteExt,
-        };
+        use tokio::io::AsyncWriteExt;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buf = [0u8; 4096];
-            loop {
-                let n = socket.read(&mut buf).await.unwrap();
-                request.extend_from_slice(&buf[..n]);
-                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
-                    assert!(n > 0, "the replay closed before its headers ended");
-                    continue;
-                };
-                let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                let length = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .map_or(0, |value| value.trim().parse::<usize>().unwrap());
-                if request.len() >= end + 4 + length || n == 0 {
-                    let reply = respond(&head, &request[end + 4..]);
-                    socket.write_all(&reply).await.unwrap();
-                    return;
-                }
-            }
+            let (head, body) = read_request(&mut socket).await;
+            socket.write_all(&respond(&head, &body)).await.unwrap();
         });
 
         entry
@@ -1296,6 +1303,86 @@ mod tests {
 
         assert_eq!(replayed.status_code.as_deref(), Some("200"));
         assert_eq!(replayed.response_body, r#"{"name":"decoded in the log"}"#);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn replay_of_a_post_on_an_https_forward_sends_the_post_and_its_body() {
+        use std::sync::Arc;
+
+        use kftray_commons::test_utils::EnvVarGuard;
+        use tokio::io::AsyncWriteExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let _test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+        *kftray_portforward::ssl::cert_store::TEST_SSL_VAULT
+            .lock()
+            .unwrap() = Default::default();
+        let cert =
+            kftray_portforward::ssl::cert_generator::CertificateGenerator::for_testing(dir.path())
+                .generate_for_alias("web")
+                .await
+                .unwrap();
+        let ca = dir.path().join("test-ca.crt");
+        let _trusted_ca = EnvVarGuard::set("SSL_CERT_FILE", ca.to_str().unwrap());
+        let _no_other_roots = EnvVarGuard::set("SSL_CERT_DIR", dir.path().to_str().unwrap());
+        let tls = tokio_rustls::TlsAcceptor::from(Arc::new(
+            tokio_rustls::rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(cert.certificate, cert.private_key)
+                .unwrap(),
+        ));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut first_byte = [0u8; 1];
+                socket.peek(&mut first_byte).await.unwrap();
+                if first_byte[0] != 0x16 {
+                    let (head, _) = read_request(&mut socket).await;
+                    let path = head.split_whitespace().nth(1).unwrap().to_string();
+                    let redirect = format!(
+                        "HTTP/1.1 301 Moved Permanently\r\nLocation: \
+                         https://127.0.0.1:{port}{path}\r\nContent-Length: 0\r\n\r\n"
+                    );
+                    socket.write_all(redirect.as_bytes()).await.unwrap();
+                    continue;
+                }
+                let mut socket = tls.accept(socket).await.unwrap();
+                let (head, body) = read_request(&mut socket).await;
+                let received = format!(
+                    "{} {}",
+                    head.lines().next().unwrap(),
+                    String::from_utf8_lossy(&body)
+                );
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{received}",
+                    received.len()
+                );
+                socket.write_all(reply.as_bytes()).await.unwrap();
+                socket.flush().await.unwrap();
+            }
+        });
+
+        let mut app = app_replaying("127.0.0.1", port);
+        app.http_logs_selected_entry = Some(logged_request(
+            "POST",
+            &["Content-Type: text/plain"],
+            "payload=original",
+        ));
+        handle_http_logs_viewer_input(&mut app, KeyCode::Char('r'))
+            .await
+            .unwrap();
+        finish_replay(&mut app).await;
+
+        let replayed = app.http_logs_selected_entry.unwrap();
+        assert_eq!(
+            replayed.response_body, "post /api http/1.1 payload=original",
+            "{:?}",
+            app.http_logs_replay_result
+        );
     }
 
     #[test]

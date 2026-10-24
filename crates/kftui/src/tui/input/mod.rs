@@ -74,6 +74,28 @@ pub struct HttpLogEntry {
 
 const REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+fn is_tls_upgrade(from: &reqwest::Url, to: &reqwest::Url) -> bool {
+    from.scheme() == "http"
+        && to.scheme() == "https"
+        && from.host_str() == to.host_str()
+        && from.port_or_known_default() == to.port_or_known_default()
+}
+
+fn tls_upgrade_location(
+    response: &reqwest::Response, request_url: &reqwest::Url,
+) -> Option<reqwest::Url> {
+    if !response.status().is_redirection() || response.url() != request_url {
+        return None;
+    }
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()?;
+    let target = request_url.join(location).ok()?;
+    is_tls_upgrade(request_url, &target).then_some(target)
+}
+
 const REPLAY_SKIPPED_HEADERS: [&str; 6] = [
     "host",
     "connection",
@@ -160,6 +182,15 @@ impl HttpLogEntry {
             .http1_only()
             .no_proxy()
             .timeout(REPLAY_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if let [request_url] = attempt.previous()
+                    && is_tls_upgrade(request_url, attempt.url())
+                {
+                    attempt.stop()
+                } else {
+                    reqwest::redirect::Policy::default().redirect(attempt)
+                }
+            }))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
@@ -193,7 +224,21 @@ impl HttpLogEntry {
             added_headers
         );
 
-        match request_builder.send().await {
+        let request = request_builder
+            .build()
+            .map_err(|e| format!("Request failed: {}", e))?;
+        let request_url = request.url().clone();
+        let upgraded_request = request.try_clone();
+        let mut sent = client.execute(request).await;
+        if let Ok(response) = &sent
+            && let Some(https_url) = tls_upgrade_location(response, &request_url)
+            && let Some(mut upgraded_request) = upgraded_request
+        {
+            *upgraded_request.url_mut() = https_url;
+            sent = client.execute(upgraded_request).await;
+        }
+
+        match sent {
             Ok(response) => {
                 let status = response.status();
                 let response_headers: Vec<String> = response
