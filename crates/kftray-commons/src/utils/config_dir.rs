@@ -12,15 +12,19 @@ pub fn create_config_dir() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub(crate) fn env_dir(key: &str) -> Option<PathBuf> {
+    env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 pub fn get_config_dir() -> Result<PathBuf, String> {
-    if let Ok(config_dir) = env::var("KFTRAY_CONFIG") {
-        return Ok(PathBuf::from(config_dir));
+    if let Some(config_dir) = env_dir("KFTRAY_CONFIG") {
+        return Ok(config_dir);
     }
 
-    if let Some(xdg_config_home) = env::var_os("XDG_CONFIG_HOME") {
-        let mut path = PathBuf::from(xdg_config_home);
-        path.push("kftray");
-        return Ok(path);
+    if let Some(xdg_config_home) = env_dir("XDG_CONFIG_HOME") {
+        return Ok(xdg_config_home.join("kftray"));
     }
 
     if let Some(home_dir) = dirs::home_dir() {
@@ -917,6 +921,21 @@ mod tests {
             get_config_dir().unwrap(),
             PathBuf::from(&fake_xdg).join("kftray")
         );
+    }
+
+    #[test]
+    fn test_get_config_dir_skips_empty_env_vars() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let fake_xdg = temp_dir.path().join("xdg");
+        let fake_home = temp_dir.path().join("home");
+        let _guard1 = EnvVarGuard::set("HOME", fake_home.to_str().unwrap());
+
+        let _guard2 = EnvVarGuard::set("KFTRAY_CONFIG", "");
+        let _guard3 = EnvVarGuard::set("XDG_CONFIG_HOME", fake_xdg.to_str().unwrap());
+        assert_eq!(get_config_dir().unwrap(), fake_xdg.join("kftray"));
+
+        let _guard4 = EnvVarGuard::set("XDG_CONFIG_HOME", "");
+        assert_eq!(get_config_dir().unwrap(), fake_home.join(".kftray"));
     }
 
     #[test]
