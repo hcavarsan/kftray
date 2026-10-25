@@ -44,7 +44,8 @@ impl MessageFormatter {
             log_entry.push('\n');
 
             if let Some(body) = RequestParser::extract_body(buffer) {
-                Self::format_body(body, &headers, &mut log_entry).await?;
+                let processed_body = Self::process_response_body(body, &headers);
+                Self::format_body(&processed_body, &headers, &mut log_entry).await?;
                 Self::append_log_separator(&mut log_entry);
             } else {
                 Self::append_log_separator(&mut log_entry);
@@ -874,6 +875,26 @@ mod formatter_tests {
 
         assert!(text.contains("\"user\": \"alice\""), "{text}");
         assert!(!text.contains("invalid JSON"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn test_format_request_chunked_json_body() {
+        let request = b"POST /items HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"a\":1}\r\n0\r\n\r\n";
+
+        let LogMessage::Request(text) =
+            MessageFormatter::format_request(&Bytes::from_static(request), "t1", Utc::now())
+                .await
+                .unwrap()
+        else {
+            panic!("not a request")
+        };
+
+        assert!(text.contains("\"a\": 1"), "{text}");
+        assert!(!text.contains("invalid JSON"), "{text}");
+        assert!(
+            !text.lines().any(|line| line == "7" || line == "0"),
+            "{text}"
+        );
     }
 
     #[tokio::test]
