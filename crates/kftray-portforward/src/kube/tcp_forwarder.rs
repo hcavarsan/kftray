@@ -612,6 +612,9 @@ impl TcpForwarder {
         let mut upgrade_detector = UpgradeDetector::default();
 
         loop {
+            let log_deadline = response_state
+                .as_ref()
+                .and_then(ResponseState::pending_log_deadline);
             tokio::select! {
                 result = upstream_reader.read(&mut buffer) => {
                     let n = match result {
@@ -721,6 +724,11 @@ impl TcpForwarder {
                             }
                     }
                 },
+                _ = tokio::time::sleep_until(log_deadline.unwrap_or_else(tokio::time::Instant::now)), if log_deadline.is_some() => {
+                    if let Some(state) = response_state.as_mut() {
+                        Self::log_response_if_ready(state, &logger).await;
+                    }
+                },
                 _ = cancellation_token.cancelled() => break,
             }
         }
@@ -797,29 +805,35 @@ impl TcpForwarder {
             }
         }
 
-        if !state.current_response_logged {
-            let maybe_logger = {
-                let guard = logger.lock().await;
-                guard.clone()
-            };
-            if let Some(log) = maybe_logger {
-                let should_log = Self::should_log_response_static(state);
-                if should_log && state.current_response_id.is_some() {
-                    let response_id = state.current_response_id.as_ref().unwrap().clone();
-                    state.current_response_logged = true;
-                    log.log_response(state.buffer.clone().into(), response_id)
-                        .await;
-
-                    if Self::can_clear_response_buffer_static(state) {
-                        state.reset_for_next_response();
-                    }
-                }
-            }
-        }
+        Self::log_response_if_ready(state, logger).await;
 
         // The caller switches to raw forwarding only after the handshake is
         // logged.
         is_websocket_upgrade
+    }
+
+    async fn log_response_if_ready(
+        state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
+    ) {
+        if state.current_response_logged {
+            return;
+        }
+        let maybe_logger = {
+            let guard = logger.lock().await;
+            guard.clone()
+        };
+        if let Some(log) = maybe_logger {
+            let should_log = Self::should_log_response_static(state);
+            if should_log && let Some(response_id) = state.current_response_id.clone() {
+                state.current_response_logged = true;
+                log.log_response(state.buffer.clone().into(), response_id)
+                    .await;
+
+                if Self::can_clear_response_buffer_static(state) {
+                    state.reset_for_next_response();
+                }
+            }
+        }
     }
 
     fn should_log_response_static(state: &mut ResponseState) -> bool {
@@ -837,16 +851,7 @@ impl TcpForwarder {
                 return delay <= tokio::time::Instant::now();
             }
             if let Some(force_time) = state.force_log_time {
-                let now = tokio::time::Instant::now();
-                if now >= force_time {
-                    let needs_more_time =
-                        state.buffer.windows(18).any(|w| {
-                            w == b"Content-Encoding: gzip" || w == b"content-encoding: gzip"
-                        }) && state.total_chunks_received < 20
-                            && now.saturating_duration_since(force_time)
-                                < tokio::time::Duration::from_millis(10);
-                    return !needs_more_time;
-                }
+                return tokio::time::Instant::now() >= force_time;
             } else if let Some(first_time) = state.first_chunk_time {
                 return first_time.elapsed().as_secs() > 5;
             }
@@ -889,6 +894,14 @@ impl ResponseState {
         self.current_response_id = request_id;
         self.first_chunk_time = Some(tokio::time::Instant::now());
         self.force_log_time = None;
+    }
+
+    fn pending_log_deadline(&self) -> Option<tokio::time::Instant> {
+        if self.current_response_logged || self.current_response_id.is_none() {
+            None
+        } else {
+            self.force_log_time
+        }
     }
 
     fn reset_for_next_response(&mut self) {
@@ -1229,6 +1242,54 @@ mod tests {
             contents.contains("first-part") && contents.contains("last-part"),
             "logged body must cover every chunk: {contents}"
         );
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn chunked_response_on_an_idle_keep_alive_connection_is_logged() {
+        let (_temp_dir, log_path, http_logger) = temp_http_logger("idle-chunked.log").await;
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /idle HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        pass_through(
+            &mut upstream_writer,
+            &mut client_reader,
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        )
+        .await;
+
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        assert!(
+            contents.contains("hello"),
+            "logged response must carry its body: {contents}"
+        );
+
+        upstream_writer.shutdown().await.unwrap();
+        forward.await.unwrap();
         http_logger.shutdown().await;
     }
 
