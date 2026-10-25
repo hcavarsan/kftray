@@ -466,7 +466,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
     if let WindowEvent::CloseRequested { api, .. } = event
         && webview_window.label() == "main"
-        && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
         let app_handle = webview_window.app_handle();
