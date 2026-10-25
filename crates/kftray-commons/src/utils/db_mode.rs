@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::db::{
     create_db_table,
@@ -26,7 +27,11 @@ static MEMORY_DB_POOL: PoolSlot = PoolSlot::new();
 
 async fn create_memory_pool() -> Result<Arc<SqlitePool>, String> {
     let pool = Arc::new(
-        SqlitePool::connect("sqlite::memory:")
+        SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_lifetime(None)
+            .idle_timeout(None)
+            .connect("sqlite::memory:")
             .await
             .map_err(|e| e.to_string())?,
     );
@@ -91,5 +96,17 @@ mod tests {
         if let Ok(ctx) = context {
             assert_eq!(ctx.mode, DatabaseMode::File);
         }
+    }
+
+    #[tokio::test]
+    async fn test_memory_pool_keeps_its_database_alive() {
+        let _db = crate::test_utils::test_db().await;
+        let context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let options = context.pool.options();
+        assert!(options.get_min_connections() >= 1);
+        assert_eq!(options.get_max_lifetime(), None);
+        assert_eq!(options.get_idle_timeout(), None);
     }
 }
