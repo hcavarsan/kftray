@@ -98,7 +98,7 @@ impl UdpProxy {
                     match reader.read_exact(payload).await {
                         Ok(_) => {
                             debug!("Received {size} bytes from TCP");
-                            udp_socket.send(payload).await?;
+                            Self::send_to_target(udp_socket, payload).await?;
                             debug!("Sent {size} bytes to UDP");
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -123,16 +123,39 @@ impl UdpProxy {
         }
     }
 
+    async fn send_to_target(udp_socket: &UdpSocket, payload: &[u8]) -> std::io::Result<()> {
+        match udp_socket.send(payload).await {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                debug!("UDP target refused an earlier datagram: {e}");
+                match udp_socket.send(payload).await {
+                    Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                        debug!("UDP target refused the datagram, dropping it: {e}");
+                        Ok(())
+                    }
+                    result => result.map(|_| ()),
+                }
+            }
+            result => result.map(|_| ()),
+        }
+    }
+
     async fn relay_to_client(
         udp_socket: &UdpSocket, writer: &Mutex<WriteHalf<'_>>,
     ) -> Result<(), ProxyError> {
         let mut response = vec![0u8; MAX_UDP_PAYLOAD_SIZE];
 
         loop {
-            let n = udp_socket.recv(&mut response).await.map_err(|e| {
-                error!("UDP receive error: {e}");
-                ProxyError::Io(e)
-            })?;
+            let n = match udp_socket.recv(&mut response).await {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    debug!("UDP target refused an earlier datagram: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    error!("UDP receive error: {e}");
+                    return Err(ProxyError::Io(e));
+                }
+            };
             debug!("Received {n} bytes from UDP");
 
             let mut writer = writer.lock().await;
@@ -424,6 +447,54 @@ mod tests {
         }
 
         shutdown.notify_one();
+    }
+
+    #[tokio::test]
+    async fn a_datagram_to_a_closed_port_keeps_the_tunnel_open() {
+        let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target_addr = target.local_addr().unwrap();
+        let (shutdown, proxy_addr) = start_proxy(target_addr).await;
+        let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+
+        write_frame(&mut stream, b"one").await;
+        let mut buf = [0u8; 16];
+        let n = target.recv(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], b"one");
+
+        drop(target);
+        write_frame(&mut stream, b"two").await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let target = UdpSocket::bind(target_addr).await.unwrap();
+        write_frame(&mut stream, b"thr").await;
+        let n = tokio::time::timeout(Duration::from_secs(1), target.recv(&mut buf))
+            .await
+            .expect("the relay closed the tunnel after the target refused a datagram")
+            .unwrap();
+        assert_eq!(&buf[..n], b"thr");
+
+        shutdown.notify_one();
+    }
+
+    #[tokio::test]
+    async fn a_send_after_a_refused_datagram_reaches_the_target() {
+        let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target_addr = target.local_addr().unwrap();
+        drop(target);
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(target_addr).await.unwrap();
+
+        socket.send(b"two").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let target = UdpSocket::bind(target_addr).await.unwrap();
+
+        UdpProxy::send_to_target(&socket, b"thr").await.unwrap();
+        let mut buf = [0u8; 16];
+        let n = tokio::time::timeout(Duration::from_secs(1), target.recv(&mut buf))
+            .await
+            .expect("the relay dropped the datagram sent after the refused one")
+            .unwrap();
+        assert_eq!(&buf[..n], b"thr");
     }
 
     #[test]
