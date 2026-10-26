@@ -51,15 +51,19 @@ function Install-Kftui {
     & "$INSTALL_DIR\kftui.exe" --version
 }
 
-# Get the latest release tag from GitHub
-$LATEST_RELEASE = (Invoke-RestMethod -Uri https://api.github.com/repos/hcavarsan/kftray/releases/latest).tag_name
-$BASE_URL = "https://github.com/hcavarsan/kftray/releases/download/$LATEST_RELEASE"
+& {
+    $ErrorActionPreference = "Stop"
 
-# Determine architecture
-$ARCH = if ([System.Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
+    # Get the latest release tag from GitHub
+    $LATEST_RELEASE = (Invoke-RestMethod -Uri https://api.github.com/repos/hcavarsan/kftray/releases/latest).tag_name
+    $BASE_URL = "https://github.com/hcavarsan/kftray/releases/download/$LATEST_RELEASE"
 
-# Set the download URL based on architecture
-$URL = "$BASE_URL/kftui_windows_$ARCH.exe"
+    # Determine architecture
+    $ARCH = if ([System.Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
 
-# Install kftui
-Install-Kftui -Url $URL -Filename "kftui.exe"
+    # Set the download URL based on architecture
+    $URL = "$BASE_URL/kftui_windows_$ARCH.exe"
+
+    # Install kftui
+    Install-Kftui -Url $URL -Filename "kftui.exe"
+}
