@@ -369,6 +369,10 @@ impl ProxyRecoveryManager {
                 };
                 match result {
                     Ok(()) => {
+                        while matches!(
+                            rx.try_recv(),
+                            Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
+                        ) {}
                         log::info!(
                             "Recovery succeeded for config {} on attempt {}",
                             self.config_id,
@@ -980,6 +984,179 @@ pub async fn recover_deployment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn successful_recovery_discards_queued_signals_but_accepts_a_later_outage() {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+        use tokio::sync::{
+            Semaphore,
+            mpsc,
+        };
+        use tokio_util::task::AbortOnDropHandle;
+
+        crate::ssl::ensure_crypto_provider_installed();
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+
+        for queued_signals in [2, 32] {
+            let deployment = format!("{}tcp-1-a", crate::kube::proxy::proxy_resource_prefix());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (lookups_tx, mut lookups_rx) = mpsc::unbounded_channel();
+            let replies = Arc::new(Semaphore::new(0));
+            let server_replies = Arc::clone(&replies);
+            let server_deployment = deployment.clone();
+            let _server = AbortOnDropHandle::new(tokio::spawn(async move {
+                loop {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    loop {
+                        let mut buffer = [0; 1024];
+                        let count = socket.read(&mut buffer).await.unwrap();
+                        if count == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&buffer[..count]);
+                        if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let request = String::from_utf8(request).unwrap();
+                    let path = request.split_whitespace().nth(1).unwrap();
+                    let body = if path.contains("/deployments") {
+                        lookups_tx.send(()).unwrap();
+                        server_replies.acquire().await.unwrap().forget();
+                        serde_json::json!({
+                            "metadata": {"resourceVersion": "1"},
+                            "items": [{
+                                "metadata": {"name": server_deployment},
+                                "spec": {"template": {"spec": {"containers": [{
+                                    "name": "kftray-relay",
+                                    "env": [{"name": "LOCAL_PORT", "value": "8080"}]
+                                }]}}}
+                            }]
+                        })
+                    } else if path.contains("/pods") {
+                        serde_json::json!({
+                            "metadata": {"resourceVersion": "1"},
+                            "items": [{
+                                "metadata": {"name": format!("{server_deployment}-pod")},
+                                "status": {
+                                    "phase": "Running",
+                                    "conditions": [{"type": "Ready", "status": "True"}],
+                                    "containerStatuses": [{
+                                        "name": "kftray-relay", "started": true,
+                                        "ready": true, "restartCount": 0,
+                                        "image": "kftray-server", "imageID": ""
+                                    }]
+                                }
+                            }]
+                        })
+                    } else {
+                        assert_eq!(path, "/version");
+                        serde_json::json!({
+                            "major": "1", "minor": "30", "gitVersion": "v1.30.0",
+                            "gitCommit": "x", "gitTreeState": "clean", "buildDate": "x",
+                            "goVersion": "x", "compiler": "gc", "platform": "linux/amd64"
+                        })
+                    }
+                    .to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                }
+            }));
+            let kubeconfig = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(kubeconfig.path(), format!(
+                "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    server: http://{address}\nusers:\n- name: u\n  user: {{}}\n"
+            )).unwrap();
+            let mut config = Config {
+                kubeconfig: Some(kubeconfig.path().to_string_lossy().into_owned()),
+                context: Some("ctx".to_string()),
+                namespace: "default".to_string(),
+                protocol: "tcp".to_string(),
+                workload_type: Some("proxy".to_string()),
+                remote_address: Some("db.internal".to_string()),
+                service: Some(deployment),
+                ..Default::default()
+            };
+            let id = kftray_commons::utils::config::insert_config_with_mode(
+                config.clone(),
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
+            config.id = Some(id);
+            let client_key = crate::kube::shared_client::ServiceClientKey::new(
+                config.context.clone(),
+                config.kubeconfig.clone(),
+            );
+            let manager = Arc::new(ProxyRecoveryManager::new(
+                config,
+                ProxyType::Deployment,
+                DatabaseMode::Memory,
+                false,
+                crate::kube::client::cluster_identity(
+                    &format!("http://{address}").parse().unwrap(),
+                ),
+            ));
+            let rx = manager.subscribe_recovery_signals();
+            let runner = Arc::clone(&manager);
+            let handle = AbortOnDropHandle::new(tokio::spawn(async move {
+                runner.run_recovery_loop_with_rx(rx).await;
+            }));
+            manager.signal_recovery(RecoverySignal::StreamFailed);
+            tokio::time::timeout(Duration::from_secs(10), lookups_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            for index in 0..queued_signals {
+                manager.signal_recovery(if index % 2 == 0 {
+                    RecoverySignal::StreamFailed
+                } else {
+                    RecoverySignal::PodDied
+                });
+            }
+            replies.add_permits(1);
+            let stale_recovery = tokio::time::timeout(
+                Duration::from_secs(BASE_BACKOFF_SECS + 2),
+                lookups_rx.recv(),
+            )
+            .await;
+            if stale_recovery.is_err() {
+                assert_eq!(*manager.state.read().await, RecoveryState::Monitoring);
+                manager.signal_recovery(RecoverySignal::HealthCheckFailed);
+                tokio::time::timeout(Duration::from_secs(10), lookups_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                replies.add_permits(1);
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while *manager.state.read().await != RecoveryState::Monitoring {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+            }
+            manager.cancel();
+            tokio::time::timeout(Duration::from_secs(5), handle)
+                .await
+                .unwrap()
+                .unwrap();
+            remove_recovery_lock(id);
+            crate::kube::shared_client::SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
+            assert!(
+                stale_recovery.is_err(),
+                "{queued_signals} queued signals started another recovery"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_recovery_loop_cancels_cleanly() {
