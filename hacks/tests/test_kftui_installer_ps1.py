@@ -50,9 +50,11 @@ def run_installer(
 ) -> subprocess.CompletedProcess[str]:
     command = (
         stubs
-        + "Invoke-Expression (Get-Content -Raw -LiteralPath $env:KFTUI_INSTALLER)\n"
-        + 'Write-Output "SESSION_PATH=$env:PATH"\n'
-        + 'Write-Output "SESSION_EAP=$ErrorActionPreference"\n'
+        + "try { Invoke-Expression (Get-Content -Raw -LiteralPath $env:KFTUI_INSTALLER) }\n"
+        + "finally {\n"
+        + '    Write-Output "SESSION_PATH=$env:PATH"\n'
+        + '    Write-Output "SESSION_EAP=$ErrorActionPreference"\n'
+        + "}\n"
     )
     return subprocess.run(
         ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
@@ -113,3 +115,4 @@ def test_installer_stops_and_keeps_old_kftui_when_a_request_fails(
     assert "installed successfully" not in result.stdout
     assert "kftui 0.0.1" not in result.stdout
     assert (install_dir / "kftui.exe").read_text() == OLD_KFTUI
+    assert "SESSION_EAP=Continue" in result.stdout
