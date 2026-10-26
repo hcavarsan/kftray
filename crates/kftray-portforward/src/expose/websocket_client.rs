@@ -136,7 +136,11 @@ impl WebSocketTunnelClient {
                 max_retries
             );
 
-            match self.connect_and_run(&ws_url, &mut ready).await {
+            let mut connected = false;
+            match self
+                .connect_and_run(&ws_url, &mut ready, &mut connected)
+                .await
+            {
                 Ok(_) => {
                     info!("WebSocket tunnel disconnected gracefully");
                 }
@@ -145,6 +149,9 @@ impl WebSocketTunnelClient {
                 }
             }
 
+            if connected {
+                retry_count = 0;
+            }
             retry_count += 1;
             if retry_count >= max_retries {
                 let message = format!("Max reconnection attempts ({}) reached", max_retries);
@@ -168,6 +175,7 @@ impl WebSocketTunnelClient {
 
     async fn connect_and_run(
         &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
+        connected: &mut bool,
     ) -> Result<(), String> {
         let mut request = ws_url
             .into_client_request()
@@ -219,6 +227,7 @@ impl WebSocketTunnelClient {
                 .map_err(|_| "Expose startup was cancelled".to_owned())?;
         }
 
+        *connected = true;
         info!("WebSocket tunnel connected");
 
         let (mut ws_write, mut ws_read) = ws_stream.split();
@@ -747,6 +756,30 @@ mod tests {
             .await
             .expect("ready must be resolved with the failure, not dropped silently");
         assert_eq!(ready_result, Err(error));
+    }
+
+    #[tokio::test]
+    async fn a_tunnel_that_connected_does_not_spend_the_retry_budget() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = WebSocketTunnelClient::new(port, "127.0.0.1".to_owned(), 8080);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { client.reconnect_loop(ready_tx, 2).await });
+
+        let mut ready_rx = Some(ready_rx);
+        for connection in 1..=3 {
+            let (socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                .await
+                .unwrap_or_else(|_| panic!("the client gave up before connection {connection}"))
+                .unwrap();
+            let peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+            if let Some(ready) = ready_rx.take() {
+                ready.await.unwrap().unwrap();
+            }
+            drop(peer);
+        }
+        assert!(!task.is_finished(), "{:?}", task.await);
+        task.abort();
     }
 
     #[tokio::test]
