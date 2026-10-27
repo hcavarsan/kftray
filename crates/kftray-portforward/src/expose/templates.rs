@@ -76,7 +76,7 @@ pub fn build_ingress_annotations(
             _ => "cert-manager.io/cluster-issuer",
         };
 
-        annotations.push(format!(r#""{}": "{}""#, annotation_key, issuer));
+        annotations.push(annotation_entry(annotation_key, issuer));
     }
 
     if let Some(json_str) = additional_annotations
@@ -88,7 +88,7 @@ pub fn build_ingress_annotations(
         {
             for (key, value) in obj {
                 if let Some(val_str) = value.as_str() {
-                    annotations.push(format!(r#""{}": "{}""#, key, val_str));
+                    annotations.push(annotation_entry(key, val_str));
                 }
             }
         }
@@ -105,6 +105,14 @@ pub fn build_ingress_annotations(
     } else {
         String::new()
     }
+}
+
+fn annotation_entry(key: &str, value: &str) -> String {
+    format!(
+        "{}: {}",
+        serde_json::Value::from(key),
+        serde_json::Value::from(value)
+    )
 }
 
 pub fn build_tls_section(cert_manager_enabled: bool, domain: &str, config_id: &str) -> String {
@@ -126,5 +134,39 @@ pub fn build_ingress_class_name(ingress_class: Option<&str>) -> String {
         format!(r#""ingressClassName": "{}","#, class)
     } else {
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotations_with_quotes_and_newlines_keep_their_values() {
+        let snippet = "more_set_headers \"X-Frame-Options: DENY\";";
+        let server_snippet = "location /a {\n  return 404;\n}";
+        let additional = serde_json::json!({
+            "nginx.ingress.kubernetes.io/configuration-snippet": snippet,
+            "nginx.ingress.kubernetes.io/server-snippet": server_snippet,
+        })
+        .to_string();
+        let annotations =
+            build_ingress_annotations(true, Some("my \"issuer\""), None, Some(&additional));
+        let rendered = render_template(
+            r#"{"metadata": {"name": "app"{annotations}}}"#,
+            &HashMap::from([("annotations", annotations)]),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let parsed = &parsed["metadata"]["annotations"];
+        assert_eq!(
+            parsed["nginx.ingress.kubernetes.io/configuration-snippet"],
+            snippet
+        );
+        assert_eq!(
+            parsed["nginx.ingress.kubernetes.io/server-snippet"],
+            server_snippet
+        );
+        assert_eq!(parsed["cert-manager.io/cluster-issuer"], "my \"issuer\"");
     }
 }
