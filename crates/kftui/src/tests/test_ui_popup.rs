@@ -4,6 +4,7 @@ use crate::tests::test_logger_state;
 use crate::tui::input::{
     App,
     DeleteButton,
+    HttpLogEntry,
 };
 use crate::tui::ui::popup::{
     render_about_popup,
@@ -13,6 +14,7 @@ use crate::tui::ui::popup::{
     render_delete_confirmation_popup,
     render_error_popup,
     render_help_popup,
+    render_http_logs_viewer_popup,
     render_input_prompt,
 };
 
@@ -288,5 +290,35 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         assert!(!buffer.content.is_empty());
+    }
+
+    #[test]
+    fn http_log_detail_shows_the_logged_duration_once() {
+        for (duration_ms, expected) in [
+            (Some("150 ms"), "Duration: 150 ms "),
+            (None, "Duration: N/A "),
+        ] {
+            let mut app = create_test_app();
+            app.http_logs_detail_mode = true;
+            app.http_logs_selected_entry = Some(HttpLogEntry {
+                trace_id: "abc123".into(),
+                request_timestamp: String::new(),
+                response_timestamp: None,
+                method: "GET".into(),
+                path: "/health".into(),
+                status_code: None,
+                duration_ms: duration_ms.map(str::to_string),
+                request_headers: vec![],
+                request_body: String::new(),
+                response_headers: vec![],
+                response_body: String::new(),
+            });
+
+            let screen = rendered_screen(160, 50, |frame| {
+                render_http_logs_viewer_popup(frame, &mut app, frame.area());
+            });
+
+            assert!(screen.contains(expected), "{expected:?} not on screen");
+        }
     }
 }

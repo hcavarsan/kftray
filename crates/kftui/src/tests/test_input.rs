@@ -1271,6 +1271,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_shows_how_long_the_request_took() {
+        let entry = logged_request("GET", &[], "");
+        let replayed = replay_to_one_request(entry, |_, _| {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec()
+        })
+        .await;
+
+        let duration = replayed.duration_ms.unwrap();
+        let millis: u128 = duration
+            .strip_suffix(" ms")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("duration {duration:?} is not in the logged `<n> ms` form"));
+        assert!(
+            millis >= 60,
+            "replay took {millis} ms, expected at least 60"
+        );
+    }
+
+    #[tokio::test]
     async fn replay_of_a_gzip_request_sends_the_logged_body_as_plain_text() {
         use std::io::Read;
 
