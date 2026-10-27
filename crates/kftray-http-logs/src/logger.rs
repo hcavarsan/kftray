@@ -178,6 +178,13 @@ impl HttpLogger {
                         _ = shutdown_rx_writer.changed() => {
                             debug!("Shutting down log writer - processing final messages");
 
+                            log_receiver.close();
+                            while let Ok(log_message) = log_receiver.try_recv() {
+                                if !log_message.is_flush_trigger() {
+                                    message_batch.push(log_message);
+                                }
+                            }
+
                             if !message_batch.is_empty() {
                                 debug!("Writing final batch of {} messages during shutdown", message_batch.len());
 
@@ -1029,5 +1036,42 @@ mod tests {
                 "auto_cleanup {auto_cleanup}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn entries_queued_before_the_logger_is_dropped_reach_the_file() {
+        let mut lost = 0;
+        for round in 0..40 {
+            let temp_dir = tempdir().unwrap();
+            let file_path = temp_dir.path().join(format!("{round}_8080.http"));
+            let logger = HttpLogger::new(
+                LogConfig::new(temp_dir.path().to_path_buf()),
+                file_path.clone(),
+            )
+            .await
+            .unwrap();
+            let writer = logger.writer_task.lock().await.take().unwrap();
+
+            let id = logger
+                .log_request(Bytes::from_static(b"GET /x HTTP/1.1\r\nHost: a\r\n\r\n"))
+                .await;
+            logger
+                .log_response(
+                    Bytes::from_static(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"),
+                    id,
+                )
+                .await;
+            drop(logger);
+            writer.await.unwrap();
+
+            let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
+            if !(contents.contains("GET /x") && contents.contains("200 OK")) {
+                lost += 1;
+            }
+        }
+        assert_eq!(
+            lost, 0,
+            "{lost} of 40 loggers lost entries queued before drop"
+        );
     }
 }
