@@ -77,6 +77,45 @@ pub enum RecoverySignal {
     TargetChanged,
 }
 
+pub(crate) struct PendingSignals {
+    rx: tokio::sync::broadcast::Receiver<RecoverySignal>,
+    target_changed: bool,
+}
+
+impl PendingSignals {
+    fn new(rx: tokio::sync::broadcast::Receiver<RecoverySignal>) -> Self {
+        Self {
+            rx,
+            target_changed: false,
+        }
+    }
+
+    async fn recv(&mut self) -> Result<RecoverySignal, tokio::sync::broadcast::error::RecvError> {
+        if std::mem::take(&mut self.target_changed) {
+            return Ok(RecoverySignal::TargetChanged);
+        }
+        self.rx.recv().await
+    }
+
+    /// Called once the forward being recovered can no longer send: what it
+    /// queued describes the outage this round repairs, and would start another
+    /// round after it succeeds. A destination change is kept unless
+    /// `redeploying`, since only a new relay resolves its destination again.
+    fn discard_stale(&mut self, redeploying: bool) {
+        use tokio::sync::broadcast::error::TryRecvError;
+        loop {
+            match self.rx.try_recv() {
+                Ok(RecoverySignal::TargetChanged) => self.target_changed = true,
+                Ok(_) | Err(TryRecvError::Lagged(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            }
+        }
+        if redeploying {
+            self.target_changed = false;
+        }
+    }
+}
+
 // ============================================================================
 // T3: Per-Config Recovery Coordinator
 // ============================================================================
@@ -274,8 +313,9 @@ impl ProxyRecoveryManager {
     }
 
     pub async fn run_recovery_loop_with_rx(
-        &self, mut rx: tokio::sync::broadcast::Receiver<RecoverySignal>,
+        &self, rx: tokio::sync::broadcast::Receiver<RecoverySignal>,
     ) {
+        let mut signals = PendingSignals::new(rx);
         {
             let mut s = self.state.write().await;
             *s = RecoveryState::Monitoring;
@@ -284,7 +324,7 @@ impl ProxyRecoveryManager {
         loop {
             // Wait for a signal or cancellation
             let signal = tokio::select! {
-                result = rx.recv() => {
+                result = signals.recv() => {
                     match result {
                         Ok(sig) => sig,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -364,15 +404,11 @@ impl ProxyRecoveryManager {
                     }
                     result = kftray_telemetry::measure(
                         kftray_telemetry::Operation::Recover,
-                        self.do_recovery_attempt(&signal),
+                        self.do_recovery_attempt(&signal, &mut signals),
                     ) => result,
                 };
                 match result {
                     Ok(()) => {
-                        while matches!(
-                            rx.try_recv(),
-                            Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
-                        ) {}
                         log::info!(
                             "Recovery succeeded for config {} on attempt {}",
                             self.config_id,
@@ -484,7 +520,9 @@ impl ProxyRecoveryManager {
     ///   address needs a new relay
     /// - [`ProxyType::BarePod`] → full re-deployment via [`recover_bare_pod()`]
     /// - [`ProxyType::Deployment`] → stream reconnection via [`recover_deployment()`]
-    async fn do_recovery_attempt(&self, signal: &RecoverySignal) -> anyhow::Result<()> {
+    async fn do_recovery_attempt(
+        &self, signal: &RecoverySignal, signals: &mut PendingSignals,
+    ) -> anyhow::Result<()> {
         // Under the same cross-process lock as a start, stop or delete, and
         // against the row as it is now: another instance can have stopped or
         // deleted this configuration since the last attempt, and recovering
@@ -546,6 +584,7 @@ impl ProxyRecoveryManager {
                 self.ssl_override,
                 &self.cancel_token,
                 &self.destination,
+                signals,
             )
             .await
         } else {
@@ -556,6 +595,7 @@ impl ProxyRecoveryManager {
                 self.ssl_override,
                 &self.cancel_token,
                 &self.destination,
+                signals,
             )
             .await
         }
@@ -620,9 +660,9 @@ async fn cleanup_child_processes_for_config(config_id: i64) -> anyhow::Result<()
 ///    config
 /// 3. Re-deploys a fresh proxy pod via
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
-pub async fn recover_bare_pod(
+pub(crate) async fn recover_bare_pod(
     config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
-    cancellation: &CancellationToken, destination: &str,
+    cancellation: &CancellationToken, destination: &str, signals: &mut PendingSignals,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -633,6 +673,7 @@ pub async fn recover_bare_pod(
         .await
         .map_err(anyhow::Error::msg)?;
     cleanup_child_processes_for_config(config_id).await?;
+    signals.discard_stale(true);
 
     // Registered in STARTING_PROXIES for the whole redeploy: between the
     // CHILD_PROCESSES cleanup above and the fresh entry `start_proxy_config`
@@ -829,9 +870,9 @@ async fn watch_relay_target(manager: Arc<ProxyRecoveryManager>) {
 /// 3. If present, waits up to [`POD_READY_TIMEOUT_SECS`] for a ready pod
 /// 4. For UDP: restarts the port forward (UDP streams are single-shot)
 /// 5. For TCP: the existing pod_watcher detects the new pod automatically
-pub async fn recover_deployment(
+pub(crate) async fn recover_deployment(
     config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
-    cancellation: &CancellationToken, destination: &str,
+    cancellation: &CancellationToken, destination: &str, signals: &mut PendingSignals,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -877,6 +918,7 @@ pub async fn recover_deployment(
             ssl_override,
             cancellation,
             destination,
+            signals,
         )
         .await;
     };
@@ -914,6 +956,7 @@ pub async fn recover_deployment(
             if crate::kube::proxy::relay_started(Some(&pod), &container_name, customized) {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await?;
+                    signals.discard_stale(false);
                     // Registered for the whole restart: between the
                     // CHILD_PROCESSES cleanup above and the fresh entry this
                     // call inserts, nothing else marks this config active,
@@ -969,6 +1012,8 @@ pub async fn recover_deployment(
                     };
                     drop(startup);
                     result.map_err(anyhow::Error::msg)?;
+                } else {
+                    signals.discard_stale(false);
                 }
                 return Ok::<_, anyhow::Error>(());
             }
@@ -985,113 +1030,144 @@ pub async fn recover_deployment(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn successful_recovery_discards_queued_signals_but_accepts_a_later_outage() {
+    /// A fake API server for recovering `deployment`, whose relay pod has
+    /// started. Each request whose path contains `gated` is reported on the
+    /// returned channel and answered once `replies` has a permit.
+    async fn serve_recovery_api(
+        deployment: String, gated: &'static str, replies: Arc<tokio::sync::Semaphore>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio_util::task::AbortOnDropHandle<()>,
+        tokio::sync::mpsc::UnboundedReceiver<()>,
+    ) {
         use tokio::io::{
             AsyncReadExt,
             AsyncWriteExt,
         };
-        use tokio::sync::{
-            Semaphore,
-            mpsc,
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (gated_tx, gated_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut buffer = [0; 1024];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8(request).unwrap();
+                let path = request.split_whitespace().nth(1).unwrap();
+                if path.contains(gated) {
+                    let _ = gated_tx.send(());
+                    replies.acquire().await.unwrap().forget();
+                }
+                let body = if path.contains("/deployments") {
+                    serde_json::json!({
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{
+                            "metadata": {"name": deployment},
+                            "spec": {"template": {"spec": {"containers": [{
+                                "name": "kftray-relay",
+                                "env": [{"name": "LOCAL_PORT", "value": "8080"}]
+                            }]}}}
+                        }]
+                    })
+                } else if path.contains("/pods") {
+                    serde_json::json!({
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{
+                            "metadata": {"name": format!("{deployment}-pod")},
+                            "status": {
+                                "phase": "Running",
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "containerStatuses": [{
+                                    "name": "kftray-relay", "started": true,
+                                    "ready": true, "restartCount": 0,
+                                    "image": "kftray-server", "imageID": ""
+                                }]
+                            }
+                        }]
+                    })
+                } else {
+                    assert_eq!(path, "/version");
+                    serde_json::json!({
+                        "major": "1", "minor": "30", "gitVersion": "v1.30.0",
+                        "gitCommit": "x", "gitTreeState": "clean", "buildDate": "x",
+                        "goVersion": "x", "compiler": "gc", "platform": "linux/amd64"
+                    })
+                }
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        }));
+        (address, server, gated_rx)
+    }
+
+    /// A forward through `deployment` on the API server at `address`, saved in
+    /// memory, with the kubeconfig file it names.
+    async fn relay_config(
+        address: std::net::SocketAddr, deployment: &str, protocol: &str,
+    ) -> (Config, tempfile::NamedTempFile) {
+        let kubeconfig = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(kubeconfig.path(), format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    server: http://{address}\nusers:\n- name: u\n  user: {{}}\n"
+        )).unwrap();
+        let free_port = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut config = Config {
+            kubeconfig: Some(kubeconfig.path().to_string_lossy().into_owned()),
+            context: Some("ctx".to_string()),
+            namespace: "default".to_string(),
+            protocol: protocol.to_string(),
+            workload_type: Some("proxy".to_string()),
+            remote_address: Some("db.internal".to_string()),
+            service: Some(deployment.to_string()),
+            local_address: Some("127.0.0.1".to_string()),
+            local_port: Some(free_port),
+            remote_port: Some(53),
+            ..Default::default()
         };
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            config.clone(),
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        config.id = Some(id);
+        (config, kubeconfig)
+    }
+
+    #[tokio::test]
+    async fn successful_recovery_discards_only_the_signals_it_repaired() {
+        use tokio::sync::Semaphore;
         use tokio_util::task::AbortOnDropHandle;
 
         crate::ssl::ensure_crypto_provider_installed();
         let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
 
-        for queued_signals in [2, 32] {
+        for (queued_signals, target_changed) in [(2, false), (32, false), (2, true)] {
             let deployment = format!("{}tcp-1-a", crate::kube::proxy::proxy_resource_prefix());
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let (lookups_tx, mut lookups_rx) = mpsc::unbounded_channel();
             let replies = Arc::new(Semaphore::new(0));
-            let server_replies = Arc::clone(&replies);
-            let server_deployment = deployment.clone();
-            let _server = AbortOnDropHandle::new(tokio::spawn(async move {
-                loop {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::new();
-                    loop {
-                        let mut buffer = [0; 1024];
-                        let count = socket.read(&mut buffer).await.unwrap();
-                        if count == 0 {
-                            break;
-                        }
-                        request.extend_from_slice(&buffer[..count]);
-                        if request.windows(4).any(|part| part == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    let request = String::from_utf8(request).unwrap();
-                    let path = request.split_whitespace().nth(1).unwrap();
-                    let body = if path.contains("/deployments") {
-                        lookups_tx.send(()).unwrap();
-                        server_replies.acquire().await.unwrap().forget();
-                        serde_json::json!({
-                            "metadata": {"resourceVersion": "1"},
-                            "items": [{
-                                "metadata": {"name": server_deployment},
-                                "spec": {"template": {"spec": {"containers": [{
-                                    "name": "kftray-relay",
-                                    "env": [{"name": "LOCAL_PORT", "value": "8080"}]
-                                }]}}}
-                            }]
-                        })
-                    } else if path.contains("/pods") {
-                        serde_json::json!({
-                            "metadata": {"resourceVersion": "1"},
-                            "items": [{
-                                "metadata": {"name": format!("{server_deployment}-pod")},
-                                "status": {
-                                    "phase": "Running",
-                                    "conditions": [{"type": "Ready", "status": "True"}],
-                                    "containerStatuses": [{
-                                        "name": "kftray-relay", "started": true,
-                                        "ready": true, "restartCount": 0,
-                                        "image": "kftray-server", "imageID": ""
-                                    }]
-                                }
-                            }]
-                        })
-                    } else {
-                        assert_eq!(path, "/version");
-                        serde_json::json!({
-                            "major": "1", "minor": "30", "gitVersion": "v1.30.0",
-                            "gitCommit": "x", "gitTreeState": "clean", "buildDate": "x",
-                            "goVersion": "x", "compiler": "gc", "platform": "linux/amd64"
-                        })
-                    }
-                    .to_string();
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    socket.write_all(response.as_bytes()).await.unwrap();
-                }
-            }));
-            let kubeconfig = tempfile::NamedTempFile::new().unwrap();
-            std::fs::write(kubeconfig.path(), format!(
-                "apiVersion: v1\nkind: Config\ncurrent-context: ctx\ncontexts:\n- name: ctx\n  context:\n    cluster: c\n    user: u\nclusters:\n- name: c\n  cluster:\n    server: http://{address}\nusers:\n- name: u\n  user: {{}}\n"
-            )).unwrap();
-            let mut config = Config {
-                kubeconfig: Some(kubeconfig.path().to_string_lossy().into_owned()),
-                context: Some("ctx".to_string()),
-                namespace: "default".to_string(),
-                protocol: "tcp".to_string(),
-                workload_type: Some("proxy".to_string()),
-                remote_address: Some("db.internal".to_string()),
-                service: Some(deployment),
-                ..Default::default()
-            };
-            let id = kftray_commons::utils::config::insert_config_with_mode(
-                config.clone(),
-                DatabaseMode::Memory,
-            )
-            .await
-            .unwrap();
-            config.id = Some(id);
+            let (address, _server, mut lookups_rx) =
+                serve_recovery_api(deployment.clone(), "/deployments", Arc::clone(&replies)).await;
+            let (config, _kubeconfig) = relay_config(address, &deployment, "tcp").await;
+            let id = config.id.unwrap();
             let client_key = crate::kube::shared_client::ServiceClientKey::new(
                 config.context.clone(),
                 config.kubeconfig.clone(),
@@ -1122,13 +1198,17 @@ mod tests {
                     RecoverySignal::PodDied
                 });
             }
+            if target_changed {
+                manager.signal_recovery(RecoverySignal::TargetChanged);
+            }
             replies.add_permits(1);
-            let stale_recovery = tokio::time::timeout(
+            let next_round = tokio::time::timeout(
                 Duration::from_secs(BASE_BACKOFF_SECS + 2),
                 lookups_rx.recv(),
             )
-            .await;
-            if stale_recovery.is_err() {
+            .await
+            .is_ok();
+            if !next_round {
                 assert_eq!(*manager.state.read().await, RecoveryState::Monitoring);
                 manager.signal_recovery(RecoverySignal::HealthCheckFailed);
                 tokio::time::timeout(Duration::from_secs(10), lookups_rx.recv())
@@ -1151,11 +1231,65 @@ mod tests {
                 .unwrap();
             remove_recovery_lock(id);
             crate::kube::shared_client::SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
-            assert!(
-                stale_recovery.is_err(),
-                "{queued_signals} queued signals started another recovery"
+            assert_eq!(
+                next_round, target_changed,
+                "{queued_signals} queued signals, destination change queued: {target_changed}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn udp_recovery_keeps_failures_from_the_restarted_forward() {
+        crate::ssl::ensure_crypto_provider_installed();
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+
+        let deployment = format!("{}udp-1-a", crate::kube::proxy::proxy_resource_prefix());
+        let replies = Arc::new(tokio::sync::Semaphore::new(0));
+        let (address, _server, mut forwards) =
+            serve_recovery_api(deployment.clone(), "/portforward", Arc::clone(&replies)).await;
+        let (config, _kubeconfig) = relay_config(address, &deployment, "udp").await;
+        let cluster_url: http::Uri = format!("http://{address}").parse().unwrap();
+        let client = kube::Client::try_from(kube::Config::new(cluster_url.clone())).unwrap();
+        let destination = crate::kube::client::cluster_identity(&cluster_url);
+        let (signal_tx, signal_rx) = tokio::sync::broadcast::channel(16);
+        let mut signals = PendingSignals::new(signal_rx);
+        signal_tx.send(RecoverySignal::PodDied).unwrap();
+        let cancellation = CancellationToken::new();
+
+        let _ = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(
+                recover_deployment(
+                    &config,
+                    &client,
+                    DatabaseMode::Memory,
+                    false,
+                    &cancellation,
+                    &destination,
+                    &mut signals,
+                ),
+                async {
+                    forwards.recv().await.unwrap();
+                    signal_tx.send(RecoverySignal::StreamFailed).unwrap();
+                    replies.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
+                },
+            )
+        })
+        .await
+        .unwrap();
+        crate::port_forward::CHILD_PROCESSES.remove(&config.id.unwrap());
+        crate::kube::shared_client::SHARED_CLIENT_MANAGER.invalidate_client(
+            &crate::kube::shared_client::ServiceClientKey::new(
+                config.context.clone(),
+                config.kubeconfig.clone(),
+            ),
+        );
+
+        assert_eq!(signals.rx.try_recv(), Ok(RecoverySignal::StreamFailed));
+        assert_eq!(
+            signals.rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        );
     }
 
     #[tokio::test]
@@ -1556,6 +1690,8 @@ mod tests {
             }
         }));
         let cancellation = CancellationToken::new();
+        let (_signal_tx, signal_rx) = tokio::sync::broadcast::channel(1);
+        let mut signals = PendingSignals::new(signal_rx);
         let _guard = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         tokio::time::timeout(Duration::from_secs(2), async {
             for name in &owned {
@@ -1578,6 +1714,7 @@ mod tests {
                     false,
                     &cancellation,
                     "http://127.0.0.1:1/",
+                    &mut signals,
                 )
                 .await
                 .unwrap();
