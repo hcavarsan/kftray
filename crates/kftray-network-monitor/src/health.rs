@@ -103,6 +103,7 @@ impl HealthChecker {
 
         let mut futs: FuturesUnordered<_> = configs
             .iter()
+            .filter(|config| listens_locally(config))
             .map(|config_clone| {
                 let checker = self.clone();
                 let config_clone = config_clone.clone();
@@ -143,6 +144,7 @@ impl HealthChecker {
 
         let mut futs: FuturesUnordered<_> = configs
             .iter()
+            .filter(|config| listens_locally(config))
             .map(|config_clone| {
                 let checker = self.clone();
                 let config_clone = config_clone.clone();
@@ -175,6 +177,10 @@ impl HealthChecker {
 
         failed_configs
     }
+}
+
+fn listens_locally(config: &Config) -> bool {
+    config.workload_type.as_deref() != Some("expose")
 }
 
 async fn udp_port_in_use(local_address: &str, local_port: u16) -> bool {

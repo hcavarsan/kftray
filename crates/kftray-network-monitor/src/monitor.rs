@@ -747,4 +747,47 @@ mod tests {
             "the health worker restarted a forward after the stop"
         );
     }
+
+    #[tokio::test]
+    async fn health_check_leaves_an_expose_running_while_its_local_app_is_down() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let (_env, _dir) = init_db().await;
+        let app_port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let config = Config {
+            alias: Some("myapp".to_string()),
+            namespace: "default".to_string(),
+            local_address: Some("127.0.0.1".to_string()),
+            local_port: Some(app_port),
+            protocol: "tcp".to_string(),
+            workload_type: Some("expose".to_string()),
+            exposure_type: Some("public".to_string()),
+            kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_string()),
+            ..Config::default()
+        };
+        let id = kftray_commons::config::insert_config(config).await.unwrap();
+        kftray_commons::utils::config_state::update_config_state(&ConfigState::new(id, true))
+            .await
+            .unwrap();
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        CHILD_PROCESSES.insert(id, PortForwardProcess::new(handle, id.to_string()));
+
+        let before = kftray_portforward::kube::stop_generation(id);
+        probing_monitor(Duration::from_secs(3600))
+            .check_health()
+            .await;
+        let after = kftray_portforward::kube::stop_generation(id);
+        let registered = CHILD_PROCESSES.contains_key(&id);
+        CHILD_PROCESSES.remove(&id);
+
+        assert_eq!(
+            before, after,
+            "the health check stopped an expose because its local app was down"
+        );
+        assert!(registered, "the expose must stay registered");
+    }
 }
