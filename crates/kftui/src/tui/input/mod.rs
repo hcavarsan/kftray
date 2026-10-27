@@ -229,6 +229,7 @@ impl HttpLogEntry {
             .map_err(|e| format!("Request failed: {}", e))?;
         let request_url = request.url().clone();
         let upgraded_request = request.try_clone();
+        let started = std::time::Instant::now();
         let mut sent = client.execute(request).await;
         if let Ok(response) = &sent
             && let Some(https_url) = tls_upgrade_location(response, &request_url)
@@ -260,7 +261,7 @@ impl HttpLogEntry {
                             method: self.method.clone(),
                             path: self.path.clone(),
                             status_code: Some(status.as_u16().to_string()),
-                            duration_ms: Some("0".to_string()),
+                            duration_ms: Some(format!("{} ms", started.elapsed().as_millis())),
                             request_headers: self.request_headers.clone(),
                             request_body: self.request_body.clone(),
                             response_headers,

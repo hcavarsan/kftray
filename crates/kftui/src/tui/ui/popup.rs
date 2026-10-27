@@ -1733,7 +1733,6 @@ fn render_request_side(
         Line::from(vec![
             Span::styled("Duration: ", Style::default().bold()),
             Span::raw(entry.duration_ms.as_deref().unwrap_or("N/A")),
-            Span::raw("ms"),
         ]),
         Line::from(""),
         Line::from(Span::styled(
