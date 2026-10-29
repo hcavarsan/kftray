@@ -123,3 +123,55 @@ describe('getConfigDetails for expose', () => {
     expect(details.some(detail => detail.label === 'Protocol')).toBe(false)
   })
 })
+
+describe('ssh-port-forward status', () => {
+  const ssh: Config = {
+    alias: 'lynn-proxy',
+    id: 3,
+    is_running: true,
+    local_port: 8080,
+    protocol: 'tcp',
+    remote_address: 'proxy.internal',
+    remote_port: 80,
+    ssh_provider: {
+      instance: 'jumper',
+      project: 'my-project',
+      type: 'gcp-bastion',
+      zone: 'us-central1-b',
+    },
+    workload_type: 'ssh-port-forward',
+  }
+
+  it('shows a running forward as running without an active pod', () => {
+    expect(getStatusInfo(ssh, null, null)).toEqual({
+      color: 'accent.fg',
+      status: 'Running',
+      description:
+        'GCP Bastion (IAP): jumper (my-project/us-central1-b) → proxy.internal:80',
+    })
+  })
+
+  it('blames the SSH session when connections fail', () => {
+    const status = getStatusInfo({ ...ssh, last_error: 'lost' }, null, null)
+
+    expect(status).toMatchObject({
+      description: 'Connections through the SSH session fail',
+      status: 'Failing',
+    })
+  })
+
+  it('lists the bastion and destination instead of context and namespace', () => {
+    const details = getConfigDetails(ssh, null)
+
+    expect(details).toEqual(
+      expect.arrayContaining([
+        { label: 'Provider', value: 'GCP Bastion (IAP)' },
+        { label: 'Bastion', value: 'jumper (my-project/us-central1-b)' },
+        { label: 'Destination', value: 'proxy.internal:80' },
+        { label: 'Protocol', value: 'tcp' },
+      ]),
+    )
+    expect(details.map(detail => detail.label)).not.toContain('Context')
+    expect(details.map(detail => detail.label)).not.toContain('Namespace')
+  })
+})

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import type { SshProvider } from '@/types'
+
 import type { ConfigDraft } from './types'
-import { applyDraftChange, toConfig } from './utils'
+import { applyDraftChange, toConfig, validateDraft } from './utils'
 
 const draft: ConfigDraft = {
   context: 'ctx',
@@ -119,5 +121,76 @@ describe('toConfig for expose', () => {
     )
 
     expect(config).toHaveProperty('exposure_protocol', undefined)
+  })
+})
+
+describe('ssh-port-forward drafts', () => {
+  const provider: SshProvider = {
+    instance: ' jumper ',
+    project: 'my-project',
+    type: 'gcp-bastion',
+    zone: 'us-central1-b',
+  }
+  const sshDraft: ConfigDraft = {
+    alias: 'lynn-proxy',
+    local_port: '8080',
+    remote_address: 'proxy.internal',
+    remote_port: '80',
+    ssh_provider: provider,
+    workload_type: 'ssh-port-forward',
+  }
+
+  it('saves the provider as tcp without kubernetes fields', () => {
+    const config = toConfig(
+      { ...sshDraft, context: 'ctx', namespace: 'ns', protocol: 'udp' },
+      null,
+    )
+
+    expect(config).toMatchObject({
+      local_port: 8080,
+      protocol: 'tcp',
+      remote_address: 'proxy.internal',
+      remote_port: 80,
+      ssh_provider: {
+        instance: 'jumper',
+        project: 'my-project',
+        type: 'gcp-bastion',
+        zone: 'us-central1-b',
+      },
+      workload_type: 'ssh-port-forward',
+    })
+    expect(config.context).toBeUndefined()
+    expect(config.namespace).toBeUndefined()
+    expect(config.kubeconfig).toBeUndefined()
+  })
+
+  it('needs the destination but no context or namespace', () => {
+    expect(validateDraft(sshDraft)).toEqual({})
+    expect(
+      validateDraft({ ...sshDraft, remote_address: '', remote_port: '' }),
+    ).toEqual({
+      remote_address: 'Remote host is required',
+      remote_port: 'Enter a port from 1 to 65535',
+    })
+  })
+
+  it('reports the first invalid provider field', () => {
+    const errors = validateDraft({
+      ...sshDraft,
+      ssh_provider: { ...provider, zone: 'central' },
+    })
+
+    expect(errors.ssh_provider).toBe(
+      'GCP zone "central" is not valid (example: us-central1-b)',
+    )
+  })
+
+  it('rejects a provider this version does not know', () => {
+    const errors = validateDraft({
+      ...sshDraft,
+      ssh_provider: JSON.parse('{"type":"aws-ssm"}'),
+    })
+
+    expect(errors.ssh_provider).toBe('This SSH provider needs a newer kftray')
   })
 })
