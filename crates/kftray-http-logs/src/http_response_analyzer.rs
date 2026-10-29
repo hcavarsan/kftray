@@ -313,19 +313,15 @@ fn find_headers_end(data: &[u8]) -> Option<usize> {
 }
 
 fn parse_content_length(headers: &[u8]) -> Option<usize> {
-    std::str::from_utf8(headers)
-        .ok()
-        .and_then(|h| h.to_lowercase().find("content-length:"))
-        .and_then(|pos| {
-            let remaining = &headers[pos + 15..];
-            let end_pos = remaining
-                .iter()
-                .position(|&b| b == b'\r')
-                .unwrap_or(remaining.len());
-            std::str::from_utf8(&remaining[..end_pos])
-                .ok()
-                .and_then(|s| s.trim().parse::<usize>().ok())
+    headers
+        .split(|&b| b == b'\n')
+        .filter_map(|line| {
+            let colon = line.iter().position(|&b| b == b':')?;
+            Some((&line[..colon], &line[colon + 1..]))
         })
+        .find(|(name, _)| name.eq_ignore_ascii_case(b"content-length"))
+        .and_then(|(_, value)| std::str::from_utf8(value).ok())
+        .and_then(|value| value.trim().parse::<usize>().ok())
 }
 
 pub use DEFAULT_MIN_VALID_HEADERS_SIZE as MIN_VALID_HEADERS_SIZE;
@@ -545,6 +541,25 @@ mod tests {
         assert_eq!(parse_content_length(no_cl_headers), None);
         assert_eq!(parse_content_length(invalid_cl_headers), None);
         assert_eq!(parse_content_length(empty_headers), None);
+    }
+
+    #[test]
+    fn test_content_length_ignores_longer_header_names() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nX-Goog-Stored-Content-Length: 3\r\nContent-Length: 10\r\n\r\nabc";
+
+        assert_eq!(parse_content_length(response), Some(10));
+        assert!(!HttpResponseAnalyzer::check_content_length_match(response));
+    }
+
+    #[test]
+    fn test_content_length_after_header_that_grows_when_lowercased() {
+        let response = "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; \
+                        filename=\"\u{130}\u{130}\u{130}\u{130}.pdf\"\r\nContent-Length: 5\r\n\r\nhello";
+
+        assert!(HttpResponseAnalyzer::check_content_length_match(
+            response.as_bytes()
+        ));
     }
 
     #[test]
