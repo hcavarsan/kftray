@@ -132,13 +132,33 @@ async fn import_config_content(config_content: &str, flush: bool) -> Result<(), 
             .await;
     }
 
-    let ids: Vec<i64> = kftray_commons::utils::config::get_configs()
+    let ids = saved_config_ids().await?;
+    flush_and_import(&ids, config_content).await
+}
+
+async fn saved_config_ids() -> Result<Vec<i64>, String> {
+    Ok(kftray_commons::utils::config::get_configs()
         .await?
         .into_iter()
         .filter_map(|config| config.id)
-        .collect();
-    kftray_portforward::kube::delete_configs_if_idle(&ids, DatabaseMode::File, || {
-        GitHubRepository::process_config_content(config_content, true, DatabaseMode::File)
+        .collect())
+}
+
+async fn flush_and_import(ids: &[i64], config_content: &str) -> Result<(), String> {
+    kftray_portforward::kube::delete_configs_if_idle(ids, DatabaseMode::File, || async move {
+        let unguarded: Vec<String> = saved_config_ids()
+            .await?
+            .into_iter()
+            .filter(|id| !ids.contains(id))
+            .map(|id| id.to_string())
+            .collect();
+        if !unguarded.is_empty() {
+            return Err(format!(
+                "Configurations were saved during the sync: {}. Sync again.",
+                unguarded.join(", ")
+            ));
+        }
+        GitHubRepository::process_config_content(config_content, true, DatabaseMode::File).await
     })
     .await
 }
@@ -435,5 +455,59 @@ mod tests {
             .map(|config| config.alias)
             .collect();
         assert_eq!(aliases, vec![Some("api".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn a_flush_sync_keeps_a_config_saved_and_started_after_it_read_the_saved_ids() {
+        let _file_db = use_file_db().await;
+        kftray_commons::utils::config::insert_config(service_config("api"))
+            .await
+            .unwrap();
+        let repo_file = kftray_commons::utils::config::export_configs()
+            .await
+            .unwrap();
+        let ids_read_by_the_sync = saved_config_ids().await.unwrap();
+        let web = kftray_commons::utils::config::insert_config(service_config("web"))
+            .await
+            .unwrap();
+        kftray_commons::utils::config_state::update_config_state(
+            &kftray_commons::models::config_state_model::ConfigState::new(web, true),
+        )
+        .await
+        .unwrap();
+        let handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async { Ok(()) });
+        kftray_portforward::port_forward::CHILD_PROCESSES.insert(
+            web,
+            kftray_portforward::port_forward::PortForwardProcess::new(handle, web.to_string()),
+        );
+
+        let result = flush_and_import(&ids_read_by_the_sync, &repo_file).await;
+        kftray_portforward::port_forward::CHILD_PROCESSES.remove(&web);
+
+        assert_eq!(
+            result,
+            Err(format!(
+                "Configurations were saved during the sync: {web}. Sync again."
+            ))
+        );
+        let aliases: Vec<Option<String>> = kftray_commons::utils::config::get_configs()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|config| config.alias)
+            .collect();
+        assert_eq!(
+            aliases,
+            vec![Some("api".to_string()), Some("web".to_string())]
+        );
+        let states = kftray_commons::utils::config_state::get_configs_state()
+            .await
+            .unwrap();
+        assert!(
+            states
+                .iter()
+                .any(|state| state.config_id == web && state.is_running),
+            "{states:?}"
+        );
     }
 }
