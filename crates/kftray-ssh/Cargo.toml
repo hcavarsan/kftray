@@ -18,7 +18,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 
 [features]
-default = []
+default = ["provider-gcp"]
 iap = [
   "dep:base64",
   "dep:bytes",
@@ -28,7 +28,14 @@ iap = [
   "dep:rustls-native-certs",
   "dep:tokio-tungstenite",
 ]
-testing = []
+provider-gcp = [
+  "iap",
+  "dep:google-cloud-auth",
+  "dep:reqwest",
+  "dep:serde_json",
+]
+testing = ["dep:wiremock"]
+e2e = ["provider-gcp"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -36,9 +43,14 @@ base64 = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 dashmap = { workspace = true }
 futures = { workspace = true, optional = true }
+google-cloud-auth = { version = "1.18", default-features = false, optional = true }
 log = { workspace = true }
 percent-encoding = { version = "2.3", optional = true }
 rand = { workspace = true, optional = true }
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "json",
+  "rustls-no-provider",
+], optional = true }
 russh = { version = "0.65", default-features = false, features = [
   "flate2",
   "ring",
@@ -47,12 +59,15 @@ russh = { version = "0.65", default-features = false, features = [
 rustls = { workspace = true }
 rustls-native-certs = { version = "0.8", optional = true }
 secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true, features = [
   "rustls-tls-native-roots",
 ], optional = true }
 tokio-util = { workspace = true }
+wiremock = { version = "0.6.5", optional = true }
 
 [dev-dependencies]
 kftray-ssh = { path = ".", default-features = false, features = ["testing"] }

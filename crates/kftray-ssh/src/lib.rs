@@ -17,6 +17,8 @@ pub mod consts;
 mod error;
 mod host_keys;
 mod key;
+#[cfg(feature = "provider-gcp")]
+mod providers;
 mod route;
 pub mod session;
 #[cfg(test)]
@@ -25,6 +27,20 @@ mod test_support;
 pub mod testing;
 #[cfg(feature = "iap")]
 pub mod transport;
+
+/// The `gcp-bastion` provider.
+#[cfg(feature = "provider-gcp")]
+pub mod gcp {
+    #[cfg(any(test, feature = "testing", feature = "e2e"))]
+    pub use crate::providers::gcp::StaticToken;
+    pub use crate::providers::gcp::{
+        GcpContext,
+        GcpEndpoints,
+        GcpError,
+        GcpInstance,
+        bastion_route,
+    };
+}
 
 use consts::CHANNEL_OPEN_TIMEOUT;
 pub use error::{
