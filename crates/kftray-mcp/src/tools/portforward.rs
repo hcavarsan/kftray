@@ -21,10 +21,7 @@ use crate::protocol::{
 use crate::tools::McpTool;
 
 async fn start_config(config: Config) -> Result<Vec<CustomResponse>, String> {
-    let workload_type = config.workload_type.as_deref();
-    let direct = workload_type == Some("expose")
-        || (matches!(workload_type, None | Some("service" | "pod")) && config.protocol == "tcp");
-    if direct {
+    if config.forwards_directly() {
         kftray_portforward::start_port_forward(vec![config], "tcp").await
     } else {
         kftray_portforward::deploy_and_forward_pod(vec![config]).await

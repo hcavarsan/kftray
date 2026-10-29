@@ -92,7 +92,7 @@ fn create_static_timeout_callback(mode: DatabaseMode) -> Arc<dyn Fn(i64) + Send 
     })
 }
 
-async fn build_tls_acceptor(
+pub(crate) async fn build_tls_acceptor(
     _config: &Config, settings: &AppSettings,
 ) -> Result<tokio_rustls::TlsAcceptor> {
     crate::ssl::ensure_crypto_provider_installed();
@@ -111,7 +111,7 @@ async fn build_tls_acceptor(
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
 
-async fn load_ssl_settings(
+pub(crate) async fn load_ssl_settings(
     config: &Config, mode: DatabaseMode, ssl_override: bool,
 ) -> (Option<AppSettings>, bool) {
     let settings = get_app_settings_with_mode(mode).await.ok();
@@ -230,7 +230,7 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// Releases what a startup registered outside the process before it had a
 /// forwarder, and keeps the configuration recorded only if that did not
 /// finish.
-async fn rollback_local_resources(
+pub(crate) async fn rollback_local_resources(
     config: &Config, address: &str, reason: String, mode: DatabaseMode,
 ) -> String {
     let mut errors = Vec::new();
@@ -862,19 +862,28 @@ pub async fn start_port_forward(
     start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
-/// `cancellation` covers the phase after the relay is ready: loopback
-/// allocation, TLS setup and stream acquisition all run while the proxy
-/// lifecycle lock is held, so a stop issued during them would otherwise wait
-/// for the whole startup to finish.
-pub(super) async fn start_config_cancellable(
-    mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
-    cancellation: Option<&CancellationToken>, expected_destination: Option<String>,
-) -> Result<CustomResponse, String> {
+/// Local resources a startup holds until its process is registered: the
+/// claimed loopback address and the claim on the config's hosts entries.
+/// Dropping it before [`register_started`] releases both claims.
+pub(crate) struct LocalStartup {
+    pub(crate) address: String,
+    _address_claim: Option<crate::kube::stop::AddressClaim>,
+    hosts_claim: crate::kube::stop::HostsClaimGuard,
+}
+
+impl LocalStartup {
+    pub(crate) fn hosts_claim(&self) -> u64 {
+        self.hosts_claim.token()
+    }
+}
+
+/// Picks and claims the local address and claims the hosts entries of
+/// `config`, writing the chosen address back into it.
+pub(crate) async fn claim_local_resources(
+    config: &mut Config, mode: DatabaseMode, cancellation: Option<&CancellationToken>,
+) -> Result<LocalStartup, String> {
     let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
     let config_id = config.id.ok_or("Config has no ID")?;
-    if !matches!(protocol, "tcp" | "udp") {
-        return Err(format!("Unsupported protocol: {protocol}"));
-    }
     if cancelled() {
         return Err(format!("Startup cancelled for config {config_id}"));
     }
@@ -890,7 +899,7 @@ pub(super) async fn start_config_cancellable(
         let phase = kftray_telemetry::phase(Phase::AllocateAddress);
         let allocation = tokio::time::timeout(
             ALLOCATION_TIMEOUT,
-            allocate_local_address_owned(&mut config, mode),
+            allocate_local_address_owned(config, mode),
         )
         .await;
         drop(phase);
@@ -914,7 +923,7 @@ pub(super) async fn start_config_cancellable(
             return Err(match &config.local_address {
                 Some(address) => {
                     let address = address.clone();
-                    rollback_local_resources(&config, &address, reason, mode).await
+                    rollback_local_resources(config, &address, reason, mode).await
                 }
                 None => reason,
             });
@@ -928,7 +937,7 @@ pub(super) async fn start_config_cancellable(
     // before an abandoned allocation task started removing the same address.
     // The claim is held for the whole startup, and the registered process
     // takes over from there.
-    let _address_claim = match (allocated_claim, &config.local_address) {
+    let address_claim = match (allocated_claim, &config.local_address) {
         (Some(claim), _) => Some(claim),
         (None, Some(address)) => match crate::kube::stop::AddressClaim::take(address, config.id) {
             Some(claim) => Some(claim),
@@ -943,14 +952,165 @@ pub(super) async fn start_config_cancellable(
     // Claimed once for the whole startup, before any hosts entry is written,
     // so a deferred cleanup task spawned by an earlier, abandoned attempt for
     // this id can tell it has been superseded rather than deleting what this
-    // attempt writes. Held by a guard so a return before registration (below,
-    // or from any `?` in between) still releases it instead of leaking it
-    // until the next start of this id silently overwrites it.
-    let mut hosts_claim_guard = crate::kube::stop::HostsClaimGuard::new(config_id);
-    let hosts_claim = hosts_claim_guard.token();
-    if let Some(config_id) = config.id {
-        clear_stopped_by_timeout(config_id);
+    // attempt writes. Held by a guard so a return before registration still
+    // releases it instead of leaking it until the next start of this id
+    // silently overwrites it.
+    let hosts_claim = crate::kube::stop::HostsClaimGuard::new(config_id);
+    clear_stopped_by_timeout(config_id);
+
+    let address = config
+        .local_address
+        .clone()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    Ok(LocalStartup {
+        address,
+        _address_claim: address_claim,
+        hosts_claim,
+    })
+}
+
+/// Writes the domain alias of `config` to the hosts file when it asks for
+/// one. On failure it rolls the local resources back itself and returns the
+/// message to show.
+pub(crate) async fn write_domain_alias(
+    config: &Config, local: &LocalStartup, mode: DatabaseMode,
+) -> Result<(), String> {
+    if !config.domain_alias_eligible() {
+        return Ok(());
     }
+    // Validated first: nothing has been created yet, so a rejected address
+    // must not leave a cleanup record that would then block deleting the
+    // configuration.
+    let Ok(ip_addr) = local.address.parse::<std::net::IpAddr>() else {
+        let error_message = format!(
+            "Invalid IP address format for domain alias: {}",
+            local.address
+        );
+        error!("{}", error_message);
+        return Err(error_message);
+    };
+
+    // Recorded before the alias exists: from here the startup owns a hosts
+    // entry, and being dropped before the process is registered would
+    // otherwise leave it behind with nothing tracking it.
+    if let Some(id) = config.id {
+        crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
+    }
+    let host_entry = HostEntry {
+        ip: ip_addr,
+        hostname: config.alias.clone().unwrap_or_default(),
+    };
+    let phase = kftray_telemetry::phase(Phase::HostsEntry);
+    let written = add_host_entry_owned(
+        config.id.unwrap_or_default(),
+        config,
+        &local.address,
+        host_entry,
+        mode,
+        local.hosts_claim(),
+    )
+    .await;
+    drop(phase);
+    if let Err(e) = written {
+        let name = config
+            .service
+            .as_deref()
+            .or(config.alias.as_deref())
+            .unwrap_or_default();
+        let error_message = format!(
+            "Failed to write to the hostfile for {name}: {e}. Domain alias feature requires \
+             hostfile access."
+        );
+        error!("{}", error_message);
+
+        // Releases the address this startup may already have allocated, and
+        // keeps the configuration recorded only if that did not finish.
+        return Err(rollback_local_resources(config, &local.address, error_message, mode).await);
+    }
+    Ok(())
+}
+
+/// Records a started forward as running and hands the local resources over
+/// to its registered process. When recording fails the process is shut down
+/// and the reason returned; the caller rolls back while `local` is alive.
+pub(crate) async fn register_started(
+    config: &Config, mut process: crate::port_forward::PortForwardProcess,
+    local: &mut LocalStartup, ssl_write_deferred: bool, mode: DatabaseMode,
+) -> Result<(), String> {
+    let config_id = config.id.ok_or("Config has no ID")?;
+    // The snapshot goes first: what this forward holds is written
+    // before anything says it is running, so another process never
+    // reads a running row with no record of its resources.
+    let phase = kftray_telemetry::phase(Phase::PersistState);
+    let recorded =
+        kftray_commons::utils::config_state::set_running_snapshot(config_id, config, mode).await;
+    let config_state = ConfigState::new(config_id, true);
+    let persisted = match recorded {
+        Ok(()) => update_config_state_with_mode(&config_state, mode).await,
+        Err(error) => Err(error),
+    };
+    drop(phase);
+    if let Err(error) = persisted {
+        // A listener still bound after the shutdown bound is a leftover
+        // of this rollback: the retry would meet it on the same port.
+        let reason = match process.cleanup_and_abort().await {
+            Ok(()) => error,
+            Err(held) => format!("{error}; cleanup incomplete: listener: {held}"),
+        };
+        kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
+        return Err(reason);
+    }
+
+    process.set_config(config.clone());
+    CHILD_PROCESSES.insert(config_id, process);
+    // Ownership of these hosts entries is now signified by the
+    // registered process, not the claim: nothing else is racing this
+    // id's entries, and leaving the claim in place after a successful
+    // start would only ever be cleared by chance, on the next start.
+    // The deferred SSL write below still needs the claim to tell its
+    // own orphan cleanup apart from a superseding attempt, so it is
+    // only released here on the path that has no such write.
+    if !ssl_write_deferred {
+        crate::kube::stop::take_host_entry_claim_if_current(config_id, local.hosts_claim());
+    }
+    // The claim's fate is now owned by whichever of the two paths
+    // above applies, not by this guard: releasing it again here
+    // would be a no-op for the direct path, and would wrongly steal
+    // it out from under the deferred SSL write's own cleanup.
+    local.hosts_claim.disarm();
+    // The process now owns the local resources, so the record taken
+    // when the address was allocated is no longer needed. Only the
+    // local obligation goes: a cluster obligation left by an earlier
+    // attempt on another server is not settled by this start.
+    crate::kube::stop::settle_local_cleanup(config_id, config, mode).await;
+    let timeout_callback = create_static_timeout_callback(mode);
+
+    if let Err(e) = start_timeout_for_forward(config_id, timeout_callback, mode).await {
+        error!("Failed to start timeout for config {config_id}: {e}");
+    }
+
+    if ssl_write_deferred
+        && let Err(e) = update_hosts_with_ssl(config, mode, local.hosts_claim()).await
+    {
+        warn!("Failed to update hosts file for SSL: {}", e);
+    }
+    Ok(())
+}
+
+/// `cancellation` covers the phase after the relay is ready: loopback
+/// allocation, TLS setup and stream acquisition all run while the proxy
+/// lifecycle lock is held, so a stop issued during them would otherwise wait
+/// for the whole startup to finish.
+pub(super) async fn start_config_cancellable(
+    mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    cancellation: Option<&CancellationToken>, expected_destination: Option<String>,
+) -> Result<CustomResponse, String> {
+    let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
+    let config_id = config.id.ok_or("Config has no ID")?;
+    if !matches!(protocol, "tcp" | "udp") {
+        return Err(format!("Unsupported protocol: {protocol}"));
+    }
+    let mut local = claim_local_resources(&mut config, mode, cancellation).await?;
 
     // Every UDP forward and every proxy runs through a relay the deploy step
     // created and recorded in `service`, so all of them select the relay pod.
@@ -987,65 +1147,9 @@ pub(super) async fn start_config_cancellable(
         _ => info!("Attempting to forward to service: {:?}", config.service),
     }
 
-    let final_local_address = config
-        .local_address
-        .clone()
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    write_domain_alias(&config, &local, mode).await?;
 
-    if config.domain_enabled.unwrap_or_default()
-        && let Some(service_name) = &config.service
-    {
-        // Validated first: nothing has been created yet, so a rejected address
-        // must not leave a cleanup record that would then block deleting the
-        // configuration.
-        let Ok(ip_addr) = final_local_address.parse::<std::net::IpAddr>() else {
-            let error_message =
-                format!("Invalid IP address format for domain alias: {final_local_address}");
-            error!("{}", error_message);
-            return Err(error_message);
-        };
-
-        // Recorded before the alias exists: from here the startup owns a hosts
-        // entry, and being dropped before the process is registered would
-        // otherwise leave it behind with nothing tracking it.
-        if let Some(id) = config.id {
-            crate::kube::stop::record_local_cleanup(id, config.clone(), mode).await;
-        }
-        let host_entry = HostEntry {
-            ip: ip_addr,
-            hostname: config.alias.clone().unwrap_or_default(),
-        };
-        let phase = kftray_telemetry::phase(Phase::HostsEntry);
-        let written = add_host_entry_owned(
-            config.id.unwrap_or_default(),
-            &config,
-            &final_local_address,
-            host_entry,
-            mode,
-            hosts_claim,
-        )
-        .await;
-        drop(phase);
-        if let Err(e) = written {
-            let error_message = format!(
-                "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
-                 requires hostfile access."
-            );
-            error!("{}", error_message);
-
-            // Releases the address this startup may already have allocated, and
-            // keeps the configuration recorded only if that did not finish.
-            return Err(rollback_local_resources(
-                &config,
-                &final_local_address,
-                error_message,
-                mode,
-            )
-            .await);
-        }
-    }
-
-    let local_address_clone = Some(final_local_address);
+    let local_address_clone = Some(local.address.clone());
 
     let (settings, should_use_ssl) = load_ssl_settings(&config, mode, ssl_override).await;
 
@@ -1137,64 +1241,11 @@ pub(super) async fn start_config_cancellable(
                 return Err(rollback_startup(&port_forward, config, reason, mode).await);
             }
 
-            // The snapshot goes first: what this forward holds is written
-            // before anything says it is running, so another process never
-            // reads a running row with no record of its resources.
-            let phase = kftray_telemetry::phase(Phase::PersistState);
-            let recorded =
-                kftray_commons::utils::config_state::set_running_snapshot(config_id, &config, mode)
-                    .await;
-            let config_state = ConfigState::new(config_id, true);
-            let persisted = match recorded {
-                Ok(()) => update_config_state_with_mode(&config_state, mode).await,
-                Err(error) => Err(error),
-            };
-            drop(phase);
-            if let Err(error) = persisted {
-                // A listener still bound after the shutdown bound is a leftover
-                // of this rollback: the retry would meet it on the same port.
-                let reason = match handle.cleanup_and_abort().await {
-                    Ok(()) => error,
-                    Err(held) => format!("{error}; cleanup incomplete: listener: {held}"),
-                };
-                kftray_commons::utils::config_state::clear_running_snapshot(config_id, mode).await;
-                return Err(rollback_startup(&port_forward, config, reason, mode).await);
-            }
-
-            handle.set_config(config.clone());
-            CHILD_PROCESSES.insert(config_id, handle);
-            // Ownership of these hosts entries is now signified by the
-            // registered process, not the claim: nothing else is racing this
-            // id's entries, and leaving the claim in place after a successful
-            // start would only ever be cleared by chance, on the next start.
-            // The deferred SSL write below still needs the claim to tell its
-            // own orphan cleanup apart from a superseding attempt, so it is
-            // only released here on the path that has no such write.
             let ssl_write_deferred = should_use_ssl && protocol == "tcp";
-            if !ssl_write_deferred {
-                crate::kube::stop::take_host_entry_claim_if_current(config_id, hosts_claim);
-            }
-            // The claim's fate is now owned by whichever of the two paths
-            // above applies, not by this guard: releasing it again here
-            // would be a no-op for the direct path, and would wrongly steal
-            // it out from under the deferred SSL write's own cleanup.
-            hosts_claim_guard.disarm();
-            // The process now owns the local resources, so the record taken
-            // when the address was allocated is no longer needed. Only the
-            // local obligation goes: a cluster obligation left by an earlier
-            // attempt on another server is not settled by this start.
-            crate::kube::stop::settle_local_cleanup(config_id, &config, mode).await;
-            let timeout_callback = create_static_timeout_callback(mode);
-
-            if let Err(e) = start_timeout_for_forward(config_id, timeout_callback, mode).await {
-                error!("Failed to start timeout for config {config_id}: {e}");
-            }
-
-            if should_use_ssl
-                && protocol == "tcp"
-                && let Err(e) = update_hosts_with_ssl(&config, mode, hosts_claim).await
+            if let Err(reason) =
+                register_started(&config, handle, &mut local, ssl_write_deferred, mode).await
             {
-                warn!("Failed to update hosts file for SSL: {}", e);
+                return Err(rollback_startup(&port_forward, config, reason, mode).await);
             }
 
             let target_name =
@@ -1309,6 +1360,16 @@ pub(super) async fn start_config_locked(
                     Err(format!("Config {id} no longer exists"))
                 } else if config.workload_type.as_deref() == Some("expose") {
                     crate::expose::start_single_expose(config, mode, cancellation).await
+                } else if config.workload_type.as_deref()
+                    == Some(kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD)
+                {
+                    crate::ssh_forward::start_single_ssh_forward(
+                        config,
+                        mode,
+                        ssl_override,
+                        cancellation,
+                    )
+                    .await
                 } else {
                     start_config_cancellable(
                         config,

@@ -59,6 +59,22 @@ impl PortForwardProcess {
         }
     }
 
+    /// Like [`Self::new`], with a token the forward's tasks already watch, so
+    /// a stop cancels them before aborting.
+    pub fn with_token(
+        handle: JoinHandle<anyhow::Result<()>>, config_id: String,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self {
+            handle: Some(handle),
+            direct_forwarder: None,
+            cancellation_token,
+            config_id,
+            ws_client_handle: None,
+            config: None,
+        }
+    }
+
     pub fn with_forwarder_and_token(
         handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
         cancellation_token: CancellationToken,

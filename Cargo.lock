@@ -4542,6 +4542,7 @@ version = "0.34.0"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
+ "async-trait",
  "base64 0.23.1",
  "bytes",
  "core-foundation 0.10.1",
@@ -4562,6 +4563,7 @@ dependencies = [
  "kftray-commons",
  "kftray-helper",
  "kftray-http-logs",
+ "kftray-ssh",
  "kftray-telemetry",
  "kube",
  "kube-portforward",

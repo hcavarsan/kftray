@@ -190,14 +190,9 @@ fn report_restart_failure(error: &str, protocol: &str, kind: &str) {
 /// Splits a restart batch into configs that need a fresh relay pod and
 /// configs that forward directly. The stop pass deletes the relay of every
 /// UDP and proxy forward, so only `deploy_and_forward_pod` can bring those
-/// back. Matches `is_direct_tcp_forward` in `kftray-tauri`.
+/// back.
 fn partition_relay_configs(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
-    configs.into_iter().partition(|c| {
-        let workload_type = c.workload_type.as_deref();
-        let direct = workload_type == Some("expose")
-            || (matches!(workload_type, None | Some("service" | "pod")) && c.protocol == "tcp");
-        !direct
-    })
+    configs.into_iter().partition(|c| !c.forwards_directly())
 }
 
 #[cfg(test)]
@@ -242,6 +237,11 @@ mod tests {
             make_config(3, "pod", "tcp"),
             make_config(4, "proxy", "udp"),
             make_config(5, "service", "udp"),
+            make_config(
+                6,
+                kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD,
+                "tcp",
+            ),
         ];
 
         let (relay, direct) = partition_relay_configs(configs);
@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(relay_ids, vec![2, 4, 5]);
 
         let direct_ids: Vec<i64> = direct.iter().filter_map(|c| c.id).collect();
-        assert_eq!(direct_ids, vec![1, 3]);
+        assert_eq!(direct_ids, vec![1, 3, 6]);
     }
 
     #[test]
