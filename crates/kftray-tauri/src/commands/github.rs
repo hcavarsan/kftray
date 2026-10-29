@@ -126,6 +126,23 @@ pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomEr
         .map_err(CustomError::from)
 }
 
+async fn import_config_content(config_content: &str, flush: bool) -> Result<(), String> {
+    if !flush {
+        return GitHubRepository::process_config_content(config_content, false, DatabaseMode::File)
+            .await;
+    }
+
+    let ids: Vec<i64> = kftray_commons::utils::config::get_configs()
+        .await?
+        .into_iter()
+        .filter_map(|config| config.id)
+        .collect();
+    kftray_portforward::kube::delete_configs_if_idle(&ids, DatabaseMode::File, || {
+        GitHubRepository::process_config_content(config_content, true, DatabaseMode::File)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn import_configs_from_github(
     repo_url: String, config_paths: Vec<String>, use_system_credentials: bool, flush: bool,
@@ -145,12 +162,7 @@ pub async fn import_configs_from_github(
         drop(guard);
 
         let _guard = phase(Phase::GitImport);
-        GitHubRepository::process_config_content(
-            &config_content,
-            config.flush_existing,
-            DatabaseMode::File,
-        )
-        .await
+        import_config_content(&config_content, config.flush_existing).await
     })
     .await
 }
@@ -323,5 +335,105 @@ mod tests {
             err.contains("Failed to clone repository") || err.contains("failed to resolve address"),
             "Error should indicate clone or network failure: {err}"
         );
+    }
+
+    async fn use_file_db() -> (
+        kftray_commons::test_utils::TestDb,
+        tokio::sync::MutexGuard<'static, ()>,
+        kftray_commons::test_utils::EnvVarGuard,
+        tempfile::TempDir,
+    ) {
+        let db = kftray_commons::test_utils::test_db().await;
+        let process_lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+            .lock()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+        (db, process_lock, env, dir)
+    }
+
+    fn service_config(name: &str) -> kftray_commons::models::config_model::Config {
+        kftray_commons::models::config_model::Config {
+            alias: Some(name.to_string()),
+            service: Some(name.to_string()),
+            namespace: "default".to_string(),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_sync_refuses_to_replace_configs_while_a_forward_is_running() {
+        let _file_db = use_file_db().await;
+        kftray_commons::utils::config::insert_config(service_config("api"))
+            .await
+            .unwrap();
+        let web = kftray_commons::utils::config::insert_config(service_config("web"))
+            .await
+            .unwrap();
+        kftray_commons::utils::config_state::update_config_state(
+            &kftray_commons::models::config_state_model::ConfigState::new(web, true),
+        )
+        .await
+        .unwrap();
+        let handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async { Ok(()) });
+        kftray_portforward::port_forward::CHILD_PROCESSES.insert(
+            web,
+            kftray_portforward::port_forward::PortForwardProcess::new(handle, web.to_string()),
+        );
+        let repo_file = kftray_commons::utils::config::export_configs()
+            .await
+            .unwrap();
+
+        let result = import_config_content(&repo_file, true).await;
+        kftray_portforward::port_forward::CHILD_PROCESSES.remove(&web);
+
+        assert_eq!(
+            result,
+            Err(format!(
+                "Stop these configurations before deleting them: {web}"
+            ))
+        );
+        let states = kftray_commons::utils::config_state::get_configs_state()
+            .await
+            .unwrap();
+        assert!(
+            states
+                .iter()
+                .any(|state| state.config_id == web && state.is_running),
+            "{states:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_flush_sync_with_no_running_forward_replaces_the_saved_configs() {
+        let _file_db = use_file_db().await;
+        kftray_commons::utils::config::insert_config(service_config("api"))
+            .await
+            .unwrap();
+        let repo_file = kftray_commons::utils::config::export_configs()
+            .await
+            .unwrap();
+        kftray_commons::utils::config::insert_config(service_config("web"))
+            .await
+            .unwrap();
+
+        import_config_content(&repo_file, true).await.unwrap();
+
+        let aliases: Vec<Option<String>> = kftray_commons::utils::config::get_configs()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|config| config.alias)
+            .collect();
+        assert_eq!(aliases, vec![Some("api".to_string())]);
     }
 }
