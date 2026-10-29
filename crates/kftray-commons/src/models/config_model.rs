@@ -6,6 +6,11 @@ use serde::{
     Serialize,
 };
 
+use super::ssh_provider::{
+    SshProvider,
+    WORKLOAD_SSH_PORT_FORWARD,
+};
+
 fn deserialize_bool_from_anything<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
     D: Deserializer<'de>,
@@ -96,6 +101,8 @@ pub struct Config {
     pub protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_provider: Option<SshProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_address: Option<String>,
     #[serde(default)]
@@ -165,6 +172,7 @@ impl Default for Config {
             workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
             remote_address: Some(Self::DEFAULT_REMOTE_ADDRESS.to_string()),
+            ssh_provider: None,
             local_address: Some("127.0.0.1".to_string()),
             auto_loopback_address: false,
             domain_enabled: Some(false),
@@ -196,6 +204,24 @@ impl Config {
     pub fn exposes_tcp(&self) -> bool {
         self.exposure_type.as_deref() != Some("public")
             && self.exposure_protocol.as_deref() == Some("tcp")
+    }
+
+    /// An ssh-port-forward config needs no Service, so the alias is enough
+    /// for a hosts entry.
+    pub fn domain_alias_eligible(&self) -> bool {
+        self.domain_enabled == Some(true)
+            && self.alias.as_deref().is_some_and(|a| !a.is_empty())
+            && (self.service.is_some()
+                || self.workload_type.as_deref() == Some(WORKLOAD_SSH_PORT_FORWARD))
+    }
+
+    /// Started by `start_port_forward(.., "tcp")` without a relay pod.
+    pub fn forwards_directly(&self) -> bool {
+        let workload_type = self.workload_type.as_deref();
+        matches!(
+            workload_type,
+            Some("expose") | Some(WORKLOAD_SSH_PORT_FORWARD)
+        ) || (matches!(workload_type, None | Some("service" | "pod")) && self.protocol == "tcp")
     }
 
     pub fn prepare_for_export(mut self) -> Self {
@@ -277,6 +303,13 @@ impl Config {
                     self.ingress_class = None;
                     self.ingress_annotations = None;
                 }
+            }
+            Some(WORKLOAD_SSH_PORT_FORWARD) => {
+                self.service = None;
+                self.target = None;
+                self.context = None;
+                self.kubeconfig = None;
+                self.namespace = String::new();
             }
             _ => {}
         }
@@ -380,5 +413,118 @@ mod tests {
                 panic!("Failed to deserialize config array: {}", e);
             }
         }
+    }
+
+    fn ssh_config() -> Config {
+        Config {
+            workload_type: Some(WORKLOAD_SSH_PORT_FORWARD.to_string()),
+            protocol: "tcp".to_string(),
+            service: None,
+            target: None,
+            context: None,
+            kubeconfig: None,
+            namespace: String::new(),
+            remote_address: Some("proxy.internal".to_string()),
+            remote_port: Some(80),
+            ssh_provider: Some(
+                serde_json::from_value(serde_json::json!({
+                    "type": "gcp-bastion",
+                    "project": "p",
+                    "zone": "us-central1-b",
+                    "instance": "jumper",
+                    "interface": "nic0"
+                }))
+                .unwrap(),
+            ),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn forwards_directly_should_match_workload_and_protocol() {
+        let cases = [
+            (None, "tcp", true),
+            (None, "udp", false),
+            (Some("service"), "tcp", true),
+            (Some("service"), "udp", false),
+            (Some("pod"), "tcp", true),
+            (Some("pod"), "udp", false),
+            (Some("expose"), "tcp", true),
+            (Some("expose"), "udp", true),
+            (Some("proxy"), "tcp", false),
+            (Some("proxy"), "udp", false),
+            (Some(WORKLOAD_SSH_PORT_FORWARD), "tcp", true),
+        ];
+        for (workload_type, protocol, expected) in cases {
+            let config = Config {
+                workload_type: workload_type.map(str::to_string),
+                protocol: protocol.to_string(),
+                ..Config::default()
+            };
+            assert_eq!(
+                config.forwards_directly(),
+                expected,
+                "{workload_type:?} {protocol}"
+            );
+        }
+    }
+
+    #[test]
+    fn domain_alias_eligible_should_need_alias_and_service_or_ssh() {
+        let service = Config {
+            domain_enabled: Some(true),
+            alias: Some("a".to_string()),
+            service: Some("svc".to_string()),
+            ..Config::default()
+        };
+        assert!(service.domain_alias_eligible());
+        assert!(
+            !Config {
+                domain_enabled: Some(false),
+                ..service.clone()
+            }
+            .domain_alias_eligible()
+        );
+        assert!(
+            !Config {
+                service: None,
+                ..service.clone()
+            }
+            .domain_alias_eligible()
+        );
+
+        let ssh = Config {
+            domain_enabled: Some(true),
+            alias: Some("jumper".to_string()),
+            ..ssh_config()
+        };
+        assert!(ssh.domain_alias_eligible());
+        assert!(
+            !Config {
+                alias: Some(String::new()),
+                ..ssh.clone()
+            }
+            .domain_alias_eligible()
+        );
+        assert!(!Config { alias: None, ..ssh }.domain_alias_eligible());
+    }
+
+    #[test]
+    fn prepare_for_export_should_strip_kube_keys_and_default_interface_for_ssh() {
+        let exported = Config {
+            service: Some("svc".to_string()),
+            target: Some("t".to_string()),
+            context: Some("ctx".to_string()),
+            kubeconfig: Some("/k".to_string()),
+            namespace: "ns".to_string(),
+            ..ssh_config()
+        }
+        .prepare_for_export();
+        let value = serde_json::to_value(&exported).unwrap();
+        for key in ["namespace", "context", "kubeconfig", "service", "target"] {
+            assert!(value.get(key).is_none(), "{key} should be stripped");
+        }
+        assert!(value["ssh_provider"].get("interface").is_none());
+        assert_eq!(value["remote_address"], "proxy.internal");
     }
 }

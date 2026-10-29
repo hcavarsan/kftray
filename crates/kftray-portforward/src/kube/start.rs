@@ -1429,6 +1429,7 @@ mod tests {
             target: None,
             local_address: None,
             remote_address: None,
+            ssh_provider: None,
             domain_enabled: None,
             auto_loopback_address: false,
             http_logs_enabled: Some(false),

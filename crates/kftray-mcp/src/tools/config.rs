@@ -348,6 +348,7 @@ impl McpTool for CreateConfigTool {
             workload_type: Some(workload_type),
             protocol: args.protocol.unwrap_or_else(|| "tcp".to_string()),
             remote_address: args.remote_address,
+            ssh_provider: None,
             local_address: args.local_address.or_else(|| Some("127.0.0.1".to_string())),
             auto_loopback_address: false,
             alias: args.alias,

@@ -17,6 +17,7 @@ use crate::db::{
 use crate::hostsfile::HostsFile;
 use crate::migration::migrate_configs;
 use crate::models::config_model::Config;
+use crate::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD;
 use crate::utils::config_view::{
     normalize_tags,
     validate_tags,
@@ -383,8 +384,13 @@ pub async fn export_configs() -> Result<String, String> {
 fn validate_imported_config(config: &Config) -> Result<(), String> {
     validate_tags(&normalize_tags(config.tags.clone())?)?;
 
-    if config.namespace.is_empty() {
+    let is_ssh = config.workload_type.as_deref() == Some(WORKLOAD_SSH_PORT_FORWARD);
+    if !is_ssh && config.namespace.is_empty() {
         return Err("Namespace is required and cannot be empty".to_string());
+    }
+
+    if !is_ssh && config.ssh_provider.is_some() {
+        return Err("ssh_provider is only valid for ssh-port-forward".to_string());
     }
 
     if !matches!(config.protocol.as_str(), "tcp" | "udp") {
@@ -446,9 +452,26 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
                 }
             }
         }
+        Some(WORKLOAD_SSH_PORT_FORWARD) => {
+            if config.protocol != "tcp" {
+                return Err("Protocol must be 'tcp' for ssh-port-forward".to_string());
+            }
+            let provider = config
+                .ssh_provider
+                .as_ref()
+                .ok_or("ssh_provider is required for ssh-port-forward")?;
+            provider.kind()?.validate()?;
+            if config.remote_address.as_deref().is_none_or(str::is_empty) {
+                return Err("Remote address is required for ssh-port-forward".to_string());
+            }
+            if config.remote_port.is_none_or(|port| port == 0) {
+                return Err("Remote port is required for ssh-port-forward".to_string());
+            }
+        }
         Some(workload_type) => {
             return Err(format!(
-                "Invalid workload type: {workload_type}. Must be 'service', 'pod', 'proxy', or 'expose'"
+                "Invalid workload type: {workload_type}. Must be 'service', 'pod', 'proxy', \
+                 'expose', or 'ssh-port-forward'"
             ));
         }
         None => {
@@ -498,6 +521,11 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
         Some("service") => existing.service == incoming.service,
         Some("pod") => existing.target == incoming.target,
         Some("proxy") => existing.remote_address == incoming.remote_address,
+        Some(WORKLOAD_SSH_PORT_FORWARD) => {
+            existing.ssh_provider == incoming.ssh_provider
+                && existing.remote_address == incoming.remote_address
+                && existing.remote_port == incoming.remote_port
+        }
         Some("expose") => {
             return existing.alias.as_deref().map(str::trim)
                 == incoming.alias.as_deref().map(str::trim)
@@ -2175,6 +2203,117 @@ mod tests {
         );
         let unknown = validate_imported_config(&expose("cluster", "udp")).unwrap_err();
         assert!(unknown.contains("got 'udp'"), "{unknown}");
+    }
+
+    fn ssh_import(overrides: serde_json::Value) -> String {
+        let mut base = json!({"workload_type": "ssh-port-forward", "protocol": "tcp",
+            "alias": "jumper", "local_port": 8080, "remote_address": "proxy.internal",
+            "remote_port": 80,
+            "ssh_provider": {"type": "gcp-bastion", "project": "p", "zone": "us-central1-b",
+                "instance": "jumper"}});
+        base.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        json!([base]).to_string()
+    }
+
+    #[test]
+    fn test_import_should_accept_ssh_config_without_namespace() {
+        let configs = parse_import_configs(&ssh_import(json!({}))).unwrap();
+        assert_eq!(configs[0].namespace, "");
+    }
+
+    #[test]
+    fn test_import_should_report_missing_zone_for_gcp_bastion() {
+        let provider = json!({"type": "gcp-bastion", "project": "p", "instance": "jumper"});
+        let error =
+            parse_import_configs(&ssh_import(json!({"ssh_provider": provider}))).unwrap_err();
+        assert!(error.contains("missing field `zone`"), "{error}");
+    }
+
+    #[test]
+    fn test_import_should_reject_invalid_ssh_configs() {
+        let cases = [
+            (
+                json!({"protocol": "udp"}),
+                "Protocol must be 'tcp' for ssh-port-forward",
+            ),
+            (json!({"remote_address": ""}), "Remote address is required"),
+            (json!({"remote_port": 0}), "Remote port is required"),
+            (
+                json!({"ssh_provider": {"type": "aws-ssm"}}),
+                "\"aws-ssm\" is not supported",
+            ),
+            (
+                json!({"ssh_provider": {"type": "gcp-bastion", "project": "p",
+                    "zone": "nope", "instance": "j"}}),
+                "GCP zone \"nope\"",
+            ),
+        ];
+        for (overrides, expected) in cases {
+            let error = parse_import_configs(&ssh_import(overrides)).unwrap_err();
+            assert!(
+                error.contains(expected),
+                "{error} should contain {expected}"
+            );
+        }
+
+        let no_provider = json!([{"workload_type": "ssh-port-forward", "protocol": "tcp",
+            "remote_address": "h", "remote_port": 1}]);
+        let error = parse_import_configs(&no_provider.to_string()).unwrap_err();
+        assert!(error.contains("ssh_provider is required"), "{error}");
+
+        let on_service = json!([{"workload_type": "service", "protocol": "tcp",
+            "namespace": "default", "service": "s", "context": "c",
+            "ssh_provider": {"type": "gcp-bastion", "project": "p", "zone": "us-central1-b",
+                "instance": "j"}}]);
+        let error = parse_import_configs(&on_service.to_string()).unwrap_err();
+        assert!(error.contains("only valid for ssh-port-forward"), "{error}");
+    }
+
+    #[test]
+    fn test_configs_match_identity_should_compare_ssh_provider_and_destination() {
+        let base = parse_import_configs(&ssh_import(json!({})))
+            .unwrap()
+            .remove(0);
+        assert!(configs_match_identity(&base, &base.clone()));
+        let other_port = Config {
+            remote_port: Some(81),
+            ..base.clone()
+        };
+        assert!(!configs_match_identity(&base, &other_port));
+        let other_host = Config {
+            remote_address: Some("other".into()),
+            ..base.clone()
+        };
+        assert!(!configs_match_identity(&base, &other_host));
+        let other_instance = parse_import_configs(&ssh_import(json!({"ssh_provider":
+            {"type": "gcp-bastion", "project": "p", "zone": "us-central1-b", "instance": "x"}})))
+        .unwrap()
+        .remove(0);
+        assert!(!configs_match_identity(&base, &other_instance));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_ssh_provider_should_survive_insert_read_and_export() {
+        let pool = setup_test_db().await;
+        let provider = json!({"type": "aws-ssm", "target": "i-1"});
+        let config: Config = serde_json::from_value(json!({
+            "workload_type": "ssh-port-forward", "protocol": "tcp", "alias": "x",
+            "remote_address": "h", "remote_port": 1, "ssh_provider": provider
+        }))
+        .unwrap();
+        insert_config_with_pool(config, &pool).await.unwrap();
+
+        let stored = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&stored[0].ssh_provider).unwrap(),
+            provider
+        );
+
+        let exported: serde_json::Value =
+            serde_json::from_str(&export_configs_with_pool(&pool).await.unwrap()).unwrap();
+        assert_eq!(exported[0]["ssh_provider"], provider);
     }
 
     #[tokio::test]

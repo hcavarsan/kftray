@@ -313,6 +313,7 @@ impl McpTool for StartPortForwardTool {
                 workload_type: Some(workload_type),
                 protocol: args.protocol.unwrap_or_else(|| "tcp".to_string()),
                 remote_address: None,
+                ssh_provider: None,
                 local_address: Some("127.0.0.1".to_string()),
                 auto_loopback_address: false,
                 alias: args.alias,
