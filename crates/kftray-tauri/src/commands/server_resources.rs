@@ -66,6 +66,29 @@ fn config_targets(config: &Config, context_name: &str, kubeconfig: Option<&str>)
         && normalized_kubeconfig(config.kubeconfig.as_deref()) == normalized_kubeconfig(kubeconfig)
 }
 
+#[derive(Default)]
+struct KnownConfigIds {
+    in_context: Vec<String>,
+    saved: Vec<String>,
+}
+
+impl KnownConfigIds {
+    fn contains(
+        &self, config_id: &str, labels: &std::collections::BTreeMap<String, String>,
+        installation_id: &str,
+    ) -> bool {
+        let labeled_by_this_installation = labels
+            .get(kftray_portforward::kube::INSTALLATION_LABEL)
+            .is_some_and(|owner| owner == installation_id);
+        let ids = if labeled_by_this_installation {
+            &self.saved
+        } else {
+            &self.in_context
+        };
+        ids.iter().any(|id| id == config_id)
+    }
+}
+
 #[tauri::command]
 pub async fn list_all_kftray_resources(
     context_name: &str, kubeconfig: Option<String>,
@@ -91,10 +114,16 @@ pub async fn list_all_kftray_resources(
         .filter(|c| config_targets(c, context_name, kubeconfig.as_deref()))
         .collect();
 
-    let config_ids: Vec<String> = context_configs
-        .iter()
-        .filter_map(|c| c.id.map(|id| id.to_string()))
-        .collect();
+    let known_config_ids = KnownConfigIds {
+        in_context: context_configs
+            .iter()
+            .filter_map(|c| c.id.map(|id| id.to_string()))
+            .collect(),
+        saved: configs
+            .iter()
+            .filter_map(|c| c.id.map(|id| id.to_string()))
+            .collect(),
+    };
 
     let namespaces: Vec<String> = context_configs
         .iter()
@@ -116,13 +145,13 @@ pub async fn list_all_kftray_resources(
         let mut resources = Vec::new();
 
         resources.extend(
-            list_pods_in_namespace(&client, &namespace, &config_ids, installation_id)
+            list_pods_in_namespace(&client, &namespace, &known_config_ids, installation_id)
                 .await
                 .unwrap_or_default(),
         );
 
         let user_deployments =
-            list_deployments_in_namespace(&client, &namespace, &config_ids, installation_id)
+            list_deployments_in_namespace(&client, &namespace, &known_config_ids, installation_id)
                 .await
                 .unwrap_or_default();
 
@@ -138,7 +167,7 @@ pub async fn list_all_kftray_resources(
                 &client,
                 &namespace,
                 &deployment_config_ids,
-                &config_ids,
+                &known_config_ids,
                 installation_id,
             )
             .await
@@ -149,7 +178,7 @@ pub async fn list_all_kftray_resources(
                 &client,
                 &namespace,
                 &deployment_config_ids,
-                &config_ids,
+                &known_config_ids,
                 installation_id,
             )
             .await
@@ -271,7 +300,7 @@ fn attribution_for_delete(
 }
 
 async fn list_pods_in_namespace(
-    client: &Client, namespace: &str, config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, known_config_ids: &KnownConfigIds, installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
@@ -299,7 +328,7 @@ async fn list_pods_in_namespace(
 
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id))
+                .map(|id| !known_config_ids.contains(id, pod.labels(), installation_id))
                 .unwrap_or(true);
 
             let age = pod
@@ -331,7 +360,7 @@ async fn list_pods_in_namespace(
 }
 
 async fn list_deployments_in_namespace(
-    client: &Client, namespace: &str, config_ids: &[String], installation_id: &str,
+    client: &Client, namespace: &str, known_config_ids: &KnownConfigIds, installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
@@ -358,7 +387,7 @@ async fn list_deployments_in_namespace(
 
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id))
+                .map(|id| !known_config_ids.contains(id, deployment.labels(), installation_id))
                 .unwrap_or(true);
 
             let age = deployment
@@ -394,8 +423,8 @@ async fn list_deployments_in_namespace(
 }
 
 async fn list_services_in_namespace(
-    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
-    installation_id: &str,
+    client: &Client, namespace: &str, deployment_config_ids: &[String],
+    known_config_ids: &KnownConfigIds, installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let services_api: Api<Service> = Api::namespaced(client.clone(), namespace);
 
@@ -428,7 +457,10 @@ async fn list_services_in_namespace(
             // to. It is listed as orphaned so it can be removed from here.
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id) || !deployment_config_ids.contains(id))
+                .map(|id| {
+                    !known_config_ids.contains(id, service.labels(), installation_id)
+                        || !deployment_config_ids.contains(id)
+                })
                 .unwrap_or(true);
 
             let age = service
@@ -460,8 +492,8 @@ async fn list_services_in_namespace(
 }
 
 async fn list_ingresses_in_namespace(
-    client: &Client, namespace: &str, deployment_config_ids: &[String], config_ids: &[String],
-    installation_id: &str,
+    client: &Client, namespace: &str, deployment_config_ids: &[String],
+    known_config_ids: &KnownConfigIds, installation_id: &str,
 ) -> Result<Vec<ServerResource>, String> {
     let ingresses_api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
@@ -493,7 +525,10 @@ async fn list_ingresses_in_namespace(
             // it can be removed from here.
             let is_orphaned = config_id
                 .as_ref()
-                .map(|id| !config_ids.contains(id) || !deployment_config_ids.contains(id))
+                .map(|id| {
+                    !known_config_ids.contains(id, ingress.labels(), installation_id)
+                        || !deployment_config_ids.contains(id)
+                })
                 .unwrap_or(true);
 
             let age = ingress
@@ -641,14 +676,17 @@ pub async fn delete_kftray_resource(
             namespaces.push(just_deleted_namespace.to_string());
         }
 
+        let unknown = KnownConfigIds::default();
         for namespace in namespaces {
-            let pods = list_pods_in_namespace(client, &namespace, &[], installation_id).await?;
+            let pods =
+                list_pods_in_namespace(client, &namespace, &unknown, installation_id).await?;
             if matches(&pods) {
                 return Ok(true);
             }
 
             let deployments =
-                list_deployments_in_namespace(client, &namespace, &[], installation_id).await?;
+                list_deployments_in_namespace(client, &namespace, &unknown, installation_id)
+                    .await?;
             if matches(&deployments) {
                 return Ok(true);
             }
@@ -661,7 +699,7 @@ pub async fn delete_kftray_resource(
                 client,
                 &namespace,
                 &deployment_config_ids,
-                &[],
+                &unknown,
                 installation_id,
             )
             .await?;
@@ -673,7 +711,7 @@ pub async fn delete_kftray_resource(
                 client,
                 &namespace,
                 &deployment_config_ids,
-                &[],
+                &unknown,
                 installation_id,
             )
             .await?;
@@ -709,11 +747,16 @@ pub async fn delete_kftray_resource(
         let labels = object.meta().labels.clone().unwrap_or_default();
         let object_config_id = label_config_id(&labels);
         let deployment_config_ids: Vec<String> = if matches!(kind, "service" | "ingress") {
-            list_deployments_in_namespace(client, namespace, &[], installation_id)
-                .await?
-                .into_iter()
-                .filter_map(|d| d.config_id)
-                .collect()
+            list_deployments_in_namespace(
+                client,
+                namespace,
+                &KnownConfigIds::default(),
+                installation_id,
+            )
+            .await?
+            .into_iter()
+            .filter_map(|d| d.config_id)
+            .collect()
         } else {
             Vec::new()
         };
@@ -1146,5 +1189,241 @@ mod tests {
         assert_eq!(calculate_age(&created_ago(5 * 60 + 10)), "5m");
         assert_eq!(calculate_age(&created_ago(30)), "30s");
         assert_eq!(calculate_age(&created_ago(-30)), "0s");
+    }
+
+    fn kube_response(status: &str, body: serde_json::Value) -> String {
+        let body = body.to_string();
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn empty_list(api_version: &str, kind: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": api_version, "kind": kind,
+            "metadata": {"resourceVersion": "1"}, "items": []
+        })
+    }
+
+    async fn serve_fake_kube_api(
+        pods: Vec<serde_json::Value>,
+    ) -> (
+        std::net::SocketAddr,
+        std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    ) {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let deletes = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let recorded = deletes.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let pods = pods.clone();
+                let recorded = recorded.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let line = request.lines().next().unwrap_or_default();
+                    let mut parts = line.split_whitespace();
+                    let method = parts.next().unwrap_or_default();
+                    let path = parts
+                        .next()
+                        .unwrap_or_default()
+                        .split('?')
+                        .next()
+                        .unwrap_or_default();
+                    let named_pod = path.rsplit_once("/pods/").map(|(_, name)| name);
+                    let response = if method == "DELETE" {
+                        recorded.lock().await.push(path.to_string());
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                                "status": "Success", "code": 200
+                            }),
+                        )
+                    } else if path == "/version" {
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "major": "1", "minor": "30", "gitVersion": "v1.30.0",
+                                "gitCommit": "x", "gitTreeState": "clean",
+                                "buildDate": "2024-01-01T00:00:00Z", "goVersion": "go1",
+                                "compiler": "gc", "platform": "linux/amd64"
+                            }),
+                        )
+                    } else if let Some(pod) = named_pod.and_then(|name| {
+                        pods.iter()
+                            .find(|pod| pod["metadata"]["name"] == name)
+                            .cloned()
+                    }) {
+                        kube_response("200 OK", pod)
+                    } else if path.ends_with("/pods") {
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "apiVersion": "v1", "kind": "PodList",
+                                "metadata": {"resourceVersion": "1"}, "items": pods
+                            }),
+                        )
+                    } else if path.ends_with("/deployments") {
+                        kube_response("200 OK", empty_list("apps/v1", "DeploymentList"))
+                    } else if path.ends_with("/services") {
+                        kube_response("200 OK", empty_list("v1", "ServiceList"))
+                    } else if path.ends_with("/ingresses") {
+                        kube_response("200 OK", empty_list("networking.k8s.io/v1", "IngressList"))
+                    } else {
+                        kube_response(
+                            "404 Not Found",
+                            serde_json::json!({
+                                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                                "status": "Failure", "reason": "NotFound", "code": 404,
+                                "message": "not found"
+                            }),
+                        )
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (addr, deletes)
+    }
+
+    fn relay_pod(name: &str, config_id: i64, installation_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {
+                "name": name, "namespace": "apps", "uid": format!("uid-{name}"),
+                "labels": {
+                    "config_id": config_id.to_string(),
+                    kftray_portforward::kube::INSTALLATION_LABEL: installation_id
+                }
+            },
+            "status": {"phase": "Running"}
+        })
+    }
+
+    struct TwoContextsOneCluster {
+        _db: kftray_commons::test_utils::TestDb,
+        _config_dir_guard: kftray_commons::test_utils::EnvVarGuard,
+        _config_dir: tempfile::TempDir,
+        _kube_dir: tempfile::TempDir,
+        kubeconfig: String,
+        deletes: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    }
+
+    async fn relays_of_a_config_under_ctx_x_and_of_a_deleted_config() -> TwoContextsOneCluster {
+        kftray_portforward::ssl::ensure_crypto_provider_installed();
+        let db = kftray_commons::test_utils::test_db().await;
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .unwrap();
+        kftray_commons::utils::db::set_db_pool(std::sync::Arc::new(pool));
+
+        let config_dir = tempfile::tempdir().unwrap();
+        let config_dir_guard = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            config_dir.path().to_str().unwrap(),
+        );
+        let installation_id = kftray_commons::utils::config_dir::installation_id()
+            .await
+            .unwrap();
+
+        let kube_dir = tempfile::tempdir().unwrap();
+        let kubeconfig_path = kube_dir.path().join("config");
+        let kubeconfig = kubeconfig_path.to_string_lossy().into_owned();
+        let saved_in = |context: &str| Config {
+            context: Some(context.to_string()),
+            kubeconfig: Some(kubeconfig.clone()),
+            namespace: "apps".to_string(),
+            ..Config::default()
+        };
+        let config_under_ctx_x = kftray_commons::utils::config::insert_config(saved_in("ctx-x"))
+            .await
+            .unwrap();
+        kftray_commons::utils::config::insert_config(saved_in("ctx-y"))
+            .await
+            .unwrap();
+        let deleted_config = kftray_commons::utils::config::insert_config(saved_in("ctx-y"))
+            .await
+            .unwrap();
+        kftray_commons::utils::config::delete_config(deleted_config)
+            .await
+            .unwrap();
+
+        let (addr, deletes) = serve_fake_kube_api(vec![
+            relay_pod("relay-of-ctx-x-config", config_under_ctx_x, installation_id),
+            relay_pod("relay-of-deleted-config", deleted_config, installation_id),
+        ])
+        .await;
+        std::fs::write(
+            &kubeconfig_path,
+            format!(
+                "apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: http://{addr}\nusers:\n- name: u\n  user: {{}}\ncontexts:\n- name: ctx-x\n  context:\n    cluster: c\n    user: u\n- name: ctx-y\n  context:\n    cluster: c\n    user: u\ncurrent-context: ctx-y\n"
+            ),
+        )
+        .unwrap();
+
+        TwoContextsOneCluster {
+            _db: db,
+            _config_dir_guard: config_dir_guard,
+            _config_dir: config_dir,
+            _kube_dir: kube_dir,
+            kubeconfig,
+            deletes,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_whose_config_is_saved_under_another_context_of_the_cluster_is_not_orphaned() {
+        let cluster = relays_of_a_config_under_ctx_x_and_of_a_deleted_config().await;
+
+        let groups = list_all_kftray_resources("ctx-y", Some(cluster.kubeconfig.clone()))
+            .await
+            .unwrap();
+
+        let orphaned: Vec<(String, bool)> = groups
+            .iter()
+            .flat_map(|group| group.resources.iter())
+            .map(|resource| (resource.name.clone(), resource.is_orphaned))
+            .collect();
+        assert_eq!(
+            orphaned,
+            vec![
+                ("relay-of-ctx-x-config".to_string(), false),
+                ("relay-of-deleted-config".to_string(), true),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cleaning_orphans_keeps_the_relay_of_a_config_saved_under_another_context() {
+        let cluster = relays_of_a_config_under_ctx_x_and_of_a_deleted_config().await;
+
+        let result = cleanup_orphaned_kftray_resources("ctx-y", Some(cluster.kubeconfig.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            CleanupResult {
+                deleted: 1,
+                errors: 0
+            }
+        );
+        assert_eq!(
+            *cluster.deletes.lock().await,
+            vec!["/api/v1/namespaces/apps/pods/relay-of-deleted-config".to_string()]
+        );
     }
 }
