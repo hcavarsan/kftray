@@ -1,0 +1,44 @@
+[package]
+name = "kftray-ssh"
+version = "0.34.0"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
+edition = "2024"
+description = "SSH port forwarding engine for kftray"
+homepage = "https://kftray.app"
+repository = "https://github.com/hcavarsan/kftray"
+license = "GPL-3.0"
+readme = "README.md"
+
+[lib]
+name = "kftray_ssh"
+path = "src/lib.rs"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[features]
+default = []
+testing = []
+
+[dependencies]
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+log = { workspace = true }
+russh = { version = "0.65", default-features = false, features = [
+  "flate2",
+  "ring",
+  "rsa",
+] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+kftray-ssh = { path = ".", default-features = false, features = ["testing"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [
+  "macros",
+  "rt-multi-thread",
+  "test-util",
+] }
