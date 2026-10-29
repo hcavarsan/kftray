@@ -19,23 +19,44 @@ expect_used = "deny"
 
 [features]
 default = []
+iap = [
+  "dep:base64",
+  "dep:bytes",
+  "dep:futures",
+  "dep:percent-encoding",
+  "dep:rand",
+  "dep:rustls-native-certs",
+  "dep:tokio-tungstenite",
+]
 testing = []
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
 dashmap = { workspace = true }
+futures = { workspace = true, optional = true }
 log = { workspace = true }
+percent-encoding = { version = "2.3", optional = true }
+rand = { workspace = true, optional = true }
 russh = { version = "0.65", default-features = false, features = [
   "flate2",
   "ring",
   "rsa",
 ] }
+rustls = { workspace = true }
+rustls-native-certs = { version = "0.8", optional = true }
+secrecy = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-tungstenite = { workspace = true, features = [
+  "rustls-tls-native-roots",
+], optional = true }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
 kftray-ssh = { path = ".", default-features = false, features = ["testing"] }
+proptest = "1.12"
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [
   "macros",

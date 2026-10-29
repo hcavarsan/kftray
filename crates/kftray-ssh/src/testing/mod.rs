@@ -5,6 +5,9 @@ mod duplex;
 mod memory_store;
 mod mock_sshd;
 
+#[cfg(feature = "iap")]
+pub mod iap;
+
 pub use conformance::route_conformance;
 pub use duplex::DuplexTransport;
 pub use memory_store::MemoryHostKeyStore;

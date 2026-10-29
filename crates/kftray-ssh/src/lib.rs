@@ -23,6 +23,8 @@ pub mod session;
 mod test_support;
 #[cfg(feature = "testing")]
 pub mod testing;
+#[cfg(feature = "iap")]
+pub mod transport;
 
 use consts::CHANNEL_OPEN_TIMEOUT;
 pub use error::{
