@@ -4442,6 +4442,7 @@ dependencies = [
  "futures",
  "k8s-openapi",
  "kftray-commons",
+ "kftray-ssh",
  "kube",
  "kube-runtime",
  "libc",

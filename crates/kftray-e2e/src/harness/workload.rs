@@ -34,7 +34,8 @@ use tokio::time::timeout;
 
 pub const NAMESPACE: &str = "e2e";
 
-const HTTP_ECHO_IMAGE: &str = "hashicorp/http-echo:1.0.0";
+pub const HTTP_ECHO_NAME: &str = "hashicorp/http-echo";
+pub const HTTP_ECHO_TAG: &str = "1.0.0";
 const SOCAT_IMAGE: &str = "alpine/socat:1.8.0.3";
 // Go port of httpbin: /json, /get, /status/<n>, /delay/<s>, /headers, /stream/<n>, /gzip.
 // A JSON-speaking HTTP target for scenarios that need more than a fixed echo body.
@@ -83,30 +84,34 @@ impl Workload {
         }
     }
 
+    pub fn echo_http_args() -> Vec<String> {
+        vec![
+            "-text=kftray-e2e".to_owned(),
+            format!("-listen=:{}", Self::EchoHttp.port()),
+        ]
+    }
+
     fn container(self) -> Container {
         let (image, args) = match self {
             Self::EchoHttp => (
-                HTTP_ECHO_IMAGE,
-                vec![
-                    "-text=kftray-e2e".to_owned(),
-                    format!("-listen=:{}", self.port()),
-                ],
+                format!("{HTTP_ECHO_NAME}:{HTTP_ECHO_TAG}"),
+                Self::echo_http_args(),
             ),
             Self::EchoUdp => (
-                SOCAT_IMAGE,
+                SOCAT_IMAGE.to_owned(),
                 vec![
                     format!("UDP4-LISTEN:{},fork", self.port()),
                     "EXEC:cat".to_owned(),
                 ],
             ),
             Self::Httpbin => (
-                HTTPBIN_IMAGE,
+                HTTPBIN_IMAGE.to_owned(),
                 vec!["-port".to_owned(), self.port().to_string()],
             ),
         };
         Container {
             name: self.name().to_owned(),
-            image: Some(image.to_owned()),
+            image: Some(image),
             args: Some(args),
             ports: Some(vec![ContainerPort {
                 container_port: self.port().into(),
