@@ -1845,13 +1845,35 @@ pub async fn handle_common_hotkeys(
             app.search_focused = true;
             if !app.search_query.is_empty() {
                 app.search_query.clear();
-                app.update_filtered_configs();
-                app.selected_rows_stopped.clear();
-                app.selected_rows_running.clear();
+                apply_search_query(app);
             }
             Ok(true)
         }
         _ => Ok(false),
+    }
+}
+
+fn apply_search_query(app: &mut App) {
+    let active_list_was_empty = match app.active_table {
+        ActiveTable::Stopped => app.filtered_stopped_configs.is_empty(),
+        ActiveTable::Running => app.filtered_running_configs.is_empty(),
+    };
+    app.update_filtered_configs();
+    app.selected_rows_stopped.clear();
+    app.selected_rows_running.clear();
+    if !active_list_was_empty {
+        return;
+    }
+    match app.active_table {
+        ActiveTable::Stopped if !app.filtered_stopped_configs.is_empty() => {
+            app.table_state_stopped
+                .select(Some(app.selected_row_stopped));
+        }
+        ActiveTable::Running if !app.filtered_running_configs.is_empty() => {
+            app.table_state_running
+                .select(Some(app.selected_row_running));
+        }
+        _ => {}
     }
 }
 
@@ -1861,9 +1883,7 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             app.active_component = ActiveComponent::StoppedTable;
             app.search_focused = false;
             app.search_query.clear();
-            app.update_filtered_configs();
-            app.selected_rows_stopped.clear();
-            app.selected_rows_running.clear();
+            apply_search_query(app);
         }
         KeyCode::Up => {
             app.active_component = ActiveComponent::Menu;
@@ -1884,15 +1904,11 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
         }
         KeyCode::Backspace => {
             app.search_query.pop();
-            app.update_filtered_configs();
-            app.selected_rows_stopped.clear();
-            app.selected_rows_running.clear();
+            apply_search_query(app);
         }
         KeyCode::Char(c) => {
             app.search_query.push(c);
-            app.update_filtered_configs();
-            app.selected_rows_stopped.clear();
-            app.selected_rows_running.clear();
+            apply_search_query(app);
         }
         _ => {}
     }
@@ -2459,7 +2475,9 @@ pub async fn handle_settings_input(
                         _ => {
                             // Control network monitor at runtime
                             if app.settings_network_monitor {
-                                if let Err(e) = kftray_network_monitor::restart().await {
+                                if let Err(e) =
+                                    kftray_network_monitor::restart_with_mode(mode).await
+                                {
                                     app.error_message =
                                         Some(format!("Failed to start network monitor: {e}"));
                                     app.state = AppState::ShowErrorPopup;

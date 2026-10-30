@@ -686,6 +686,59 @@ mod tests {
         assert_eq!(app.state, AppState::Normal);
     }
 
+    fn stopped_cursor_on_third_row_with_search_matching_nothing() -> App {
+        let mut app = setup_app();
+        app.active_table = ActiveTable::Stopped;
+        app.active_component = ActiveComponent::SearchBar;
+        app.search_focused = true;
+        app.table_state_stopped.select(Some(2));
+        app.selected_row_stopped = 2;
+        handle_search_input(&mut app, KeyCode::Char('z')).unwrap();
+        assert_eq!(app.table_state_stopped.selected(), None);
+        app
+    }
+
+    fn assert_forward_and_hotkeys_target_the_highlighted_row(app: &App, row: usize) {
+        assert_eq!(app.table_state_stopped.selected(), Some(row));
+        assert_eq!(app.selected_row_stopped, row);
+        assert_eq!(
+            app.selected_config().and_then(|c| c.id),
+            app.stopped_configs[row].id
+        );
+    }
+
+    #[test]
+    fn esc_after_a_search_matching_nothing_highlights_the_row_f_starts() {
+        let mut app = stopped_cursor_on_third_row_with_search_matching_nothing();
+
+        handle_search_input(&mut app, KeyCode::Esc).unwrap();
+
+        assert_forward_and_hotkeys_target_the_highlighted_row(&app, 2);
+    }
+
+    #[test]
+    fn backspace_out_of_a_search_matching_nothing_highlights_the_row_f_starts() {
+        let mut app = stopped_cursor_on_third_row_with_search_matching_nothing();
+
+        handle_search_input(&mut app, KeyCode::Backspace).unwrap();
+
+        assert_forward_and_hotkeys_target_the_highlighted_row(&app, 2);
+    }
+
+    #[tokio::test]
+    async fn reopening_a_search_matching_nothing_highlights_the_row_f_starts() {
+        let mut app = stopped_cursor_on_third_row_with_search_matching_nothing();
+        app.active_component = ActiveComponent::StoppedTable;
+        app.search_focused = false;
+
+        handle_normal_input(&mut app, KeyCode::Char('/'), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        handle_search_input(&mut app, KeyCode::Esc).unwrap();
+
+        assert_forward_and_hotkeys_target_the_highlighted_row(&app, 2);
+    }
+
     #[tokio::test]
     async fn test_handle_context_selection_input() {
         let mut app = setup_app();

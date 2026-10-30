@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::info;
 use tokio::sync::{
     Mutex,
@@ -35,7 +36,7 @@ impl NetworkMonitorController {
         }
     }
 
-    pub async fn start(&self) -> Result<(), NetworkMonitorError> {
+    pub async fn start(&self, mode: DatabaseMode) -> Result<(), NetworkMonitorError> {
         let mut running = self.state.is_running.lock().await;
         if *running {
             return Err(NetworkMonitorError::AlreadyRunning);
@@ -43,7 +44,7 @@ impl NetworkMonitorController {
 
         info!("Starting network monitor");
 
-        let handle = tokio::spawn(start_network_monitor());
+        let handle = tokio::spawn(start_network_monitor(mode));
 
         let mut task_handle = self.state.task_handle.write().await;
         *task_handle = Some(handle);
@@ -72,11 +73,11 @@ impl NetworkMonitorController {
         Ok(())
     }
 
-    pub async fn restart(&self) -> Result<(), NetworkMonitorError> {
+    pub async fn restart(&self, mode: DatabaseMode) -> Result<(), NetworkMonitorError> {
         if self.is_running().await {
             self.stop().await?;
         }
-        self.start().await
+        self.start(mode).await
     }
 
     pub async fn is_running(&self) -> bool {
@@ -92,6 +93,7 @@ mod tests {
         EnvVarGuard,
         test_db,
     };
+    use kftray_commons::utils::db_mode::DatabaseMode;
 
     use super::NetworkMonitorController;
 
@@ -106,7 +108,7 @@ mod tests {
         let controller = NetworkMonitorController::new();
 
         for _ in 0..3 {
-            controller.start().await.unwrap();
+            controller.start(DatabaseMode::File).await.unwrap();
             tokio::time::sleep(Duration::from_millis(300)).await;
             assert!(metrics.num_alive_tasks() > baseline);
 

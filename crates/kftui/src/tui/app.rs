@@ -79,7 +79,7 @@ pub async fn run_tui(
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
         && enabled
     {
-        match kftray_network_monitor::start().await {
+        match kftray_network_monitor::start_with_mode(mode).await {
             Ok(()) => network_monitor_started = true,
             Err(e) => error!("Failed to start network monitor: {e}"),
         }
