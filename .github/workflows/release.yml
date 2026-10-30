@@ -755,17 +755,17 @@ jobs:
       # === SBOM Scanning ===
       - name: Scan kftray SBOM
         run: |
-          grype sbom:sbom-kftray.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray.json
+          grype sbom:sbom-kftray.cdx.json --fail-on high --show-suppressed -o table -o json=vuln-report-kftray.json
 
       - name: Scan kftui SBOM
         run: |
-          grype sbom:sbom-kftui.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftui.json
+          grype sbom:sbom-kftui.cdx.json --fail-on high --show-suppressed -o table -o json=vuln-report-kftui.json
 
       - name: Scan kftray-server image
         env:
           DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server@${{ needs.kftray-server.outputs.digest }}
         run: |
-          grype "$DOCKER_IMAGE" --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray-server.json
+          grype "$DOCKER_IMAGE" --fail-on high --show-suppressed -o table -o json=vuln-report-kftray-server.json
 
       # === SBOM Signing ===
       - name: Install Cosign
