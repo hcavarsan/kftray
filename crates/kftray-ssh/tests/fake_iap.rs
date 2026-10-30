@@ -10,7 +10,16 @@ use std::sync::atomic::{
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::{
+    SinkExt,
+    StreamExt,
+};
 use kftray_ssh::testing::iap::FakeIap;
+use kftray_ssh::transport::iap::consts::RESEND_LIMIT;
+use kftray_ssh::transport::iap::frame::{
+    self,
+    Frame,
+};
 use kftray_ssh::transport::iap::{
     IapError,
     IapTarget,
@@ -35,11 +44,13 @@ use tokio::net::{
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Error as WsError;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{
     HeaderName,
     HeaderValue,
 };
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 const TOKEN: &str = "test-token";
 
@@ -344,6 +355,83 @@ async fn tunnel_should_close_upstream_when_client_half_is_dropped() {
     drop(open(&fake).await);
 
     within(eof_rx).await.unwrap();
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "tungstenite fixes the callback's error type"
+)]
+#[tokio::test]
+async fn tunnel_should_close_when_dropped_with_a_full_unacknowledged_window() {
+    let (listener, addr) = listen().await;
+    let (full_tx, full_rx) = oneshot::channel();
+    let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_hdr_async(
+            tcp,
+            |_: &tokio_tungstenite::tungstenite::handshake::server::Request,
+             mut response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                response.headers_mut().insert(
+                    "sec-websocket-protocol",
+                    HeaderValue::from_static(kftray_ssh::transport::iap::consts::SUBPROTOCOL),
+                );
+                Ok(response)
+            },
+        )
+        .await
+        .unwrap();
+        ws.send(Message::Binary(
+            frame::encode_connect_success_sid(b"stalled").into(),
+        ))
+        .await
+        .unwrap();
+        let mut full_tx = Some(full_tx);
+        let mut received = 0;
+        // No ACKs or return DATA: neither duplex arm can detect the caller dropping.
+        while let Some(message) = ws.next().await {
+            match message.unwrap() {
+                Message::Binary(payload) => {
+                    let (Frame::Data(data), _) = frame::decode(&payload).unwrap() else {
+                        panic!("expected DATA");
+                    };
+                    received += data.len();
+                    if received == RESEND_LIMIT {
+                        full_tx.take().unwrap().send(()).unwrap();
+                    }
+                }
+                Message::Close(Some(close)) => {
+                    assert_eq!(close.code, CloseCode::Normal);
+                    ws.flush().await.unwrap();
+                    return;
+                }
+                other => panic!("unexpected message: {other:?}"),
+            }
+        }
+        panic!("the client did not close cleanly");
+    }));
+    let transport = IapTransport::new(
+        IapTarget::Instance {
+            project: "p".into(),
+            zone: "z".into(),
+            instance: "vm".into(),
+            interface: "nic0".into(),
+            port: 22,
+        },
+        format!("ws://{addr}"),
+        Tokens::new(TOKEN),
+    );
+    let mut stream = within(transport.connect()).await.unwrap();
+    within(stream.write_all(&vec![7; RESEND_LIMIT]))
+        .await
+        .unwrap();
+    within(full_rx).await.unwrap();
+
+    drop(stream);
+
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("dropping a saturated tunnel must close its WebSocket without an ACK")
+        .unwrap();
 }
 
 #[tokio::test]

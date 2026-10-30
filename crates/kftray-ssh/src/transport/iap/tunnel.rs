@@ -3,7 +3,13 @@
 //! the socket drops, resumes the same session through `/v4/reconnect`.
 
 use std::collections::VecDeque;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{
+    Context,
+    Poll,
+};
 use std::time::Duration;
 
 use bytes::{
@@ -21,9 +27,12 @@ use log::{
     warn,
 };
 use tokio::io::{
+    AsyncRead,
     AsyncReadExt,
+    AsyncWrite,
     AsyncWriteExt,
     DuplexStream,
+    ReadBuf,
     ReadHalf,
     WriteHalf,
 };
@@ -39,6 +48,10 @@ use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_util::sync::{
+    CancellationToken,
+    DropGuard,
+};
 
 use super::connect::{
     Dialer,
@@ -65,8 +78,8 @@ use super::frame::{
 };
 use crate::error::SshError;
 
-/// Opens the tunnel and returns the client half of the local stream.
-pub(crate) async fn open(dialer: Arc<Dialer>) -> Result<DuplexStream, SshError> {
+/// Opens the tunnel and returns a stream that cancels its actor when dropped.
+pub(crate) async fn open(dialer: Arc<Dialer>) -> Result<TunnelStream, SshError> {
     let (ws, sid) = timeout(OPEN_TIMEOUT, async {
         let mut ws = dialer.connect().await?;
         let first = first_binary(&mut ws).await?;
@@ -78,6 +91,11 @@ pub(crate) async fn open(dialer: Arc<Dialer>) -> Result<DuplexStream, SshError> 
     info!("[iap {}] tunnel open", dialer.name());
 
     let (client, server) = tokio::io::duplex(DUPLEX_BUFFER);
+    let cancel = CancellationToken::new();
+    let client = TunnelStream {
+        inner: client,
+        _cancel_on_drop: cancel.clone().drop_guard(),
+    };
     let (local_read, local_write) = tokio::io::split(server);
     tokio::spawn(
         Actor {
@@ -94,9 +112,39 @@ pub(crate) async fn open(dialer: Arc<Dialer>) -> Result<DuplexStream, SshError> 
             pending: VecDeque::new(),
             draining: false,
         }
-        .run(),
+        .run(cancel),
     );
     Ok(client)
+}
+
+/// Dropping the duplex alone cannot wake an actor whose resend window is full.
+pub(crate) struct TunnelStream {
+    inner: DuplexStream,
+    _cancel_on_drop: DropGuard,
+}
+
+impl AsyncRead for TunnelStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TunnelStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 /// First binary message of a fresh WebSocket; a close frame becomes the error it means.
@@ -236,12 +284,13 @@ struct Actor {
 }
 
 impl Actor {
-    async fn run(mut self) {
+    async fn run(mut self, cancel: CancellationToken) {
         let mut idle = interval_at(Instant::now() + ACK_IDLE_FLUSH, ACK_IDLE_FLUSH);
         idle.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut buf = vec![0u8; MAX_DATA_FRAME];
         loop {
             let step = tokio::select! {
+                _ = cancel.cancelled() => Step::Stop,
                 // Not biased, so a busy socket cannot starve the local side. Delivering a DATA
                 // frame to the local stream is an arm of its own: awaiting it inline would stop
                 // reading the local side, and if that side is blocked writing to us too (russh
@@ -271,8 +320,12 @@ impl Actor {
                 Step::Continue => {}
                 Step::Stop => break,
                 Step::Resume(reason) => {
-                    if !self.resume(&reason).await {
-                        break;
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => break,
+                        resumed = self.resume(&reason) => if !resumed {
+                            break;
+                        },
                     }
                 }
             }
@@ -426,8 +479,8 @@ impl Actor {
         }
     }
 
-    /// Reconnects with backoff until it works, fails for good, the budget
-    /// ends or the local side is gone. The local stream is not read meanwhile.
+    /// Reconnects with backoff until it works, fails for good or the budget
+    /// ends. The run loop races this against stream-drop cancellation.
     async fn resume(&mut self, reason: &str) -> bool {
         let name = self.dialer.name().to_owned();
         warn!("[iap {name}] tunnel interrupted ({reason}); resuming");
@@ -436,10 +489,6 @@ impl Actor {
         while started.elapsed() < RECONNECT_BUDGET {
             let jitter = rand::random_range(0..RECONNECT_JITTER.as_millis() as u64);
             tokio::time::sleep(backoff(attempt, jitter)).await;
-            // Writing nothing fails once the client half is dropped.
-            if self.local_write.write(&[]).await.is_err() {
-                return false;
-            }
             match self.try_reconnect().await {
                 Ok(()) => {
                     info!("[iap {name}] resumed after {:?}", started.elapsed());

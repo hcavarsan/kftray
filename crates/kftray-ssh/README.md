@@ -35,7 +35,9 @@ providers/gcp ── IapTransport (transport/iap) + OS Login + guest-attribute h
   - The session closes when the last lease drops.
 - **IAP transport**: a resumable tunnel that follows gcloud's protocol
   (`/v4/connect`, `/v4/reconnect`, ACKs, close codes). Its frame decoder is
-  fuzzed by `fuzz/fuzz_targets/fuzz_iap_frame_decode.rs`.
+  fuzzed by `fuzz/fuzz_targets/fuzz_iap_frame_decode.rs`. Dropping its byte stream
+  cancels the tunnel, even while ACKs are stalled or a reconnect is pending;
+  the WebSocket gets a bounded two-second grace period to send its close frame.
 
 Feature flags:
 
