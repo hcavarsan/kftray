@@ -101,6 +101,12 @@ impl PortForwardProcess {
         self.config.as_ref()
     }
 
+    /// Id of the forward's main task, which tells this process apart from
+    /// a later one registered for the same config.
+    pub fn task_id(&self) -> Option<tokio::task::Id> {
+        self.handle.as_ref().map(JoinHandle::id)
+    }
+
     /// The API server the forward was established against, when it is known
     /// to this process.
     pub fn destination(&self) -> Option<String> {

@@ -279,7 +279,9 @@ pub(crate) async fn start_single_ssh_forward(
             mode,
             task_token.clone(),
         );
-        run_until_listener_ends(serve, state, config_id, mode, task_token).await
+        // This task's id is what the registered process is recognized by.
+        let owner = tokio::task::id();
+        run_until_listener_ends(serve, state, config_id, mode, task_token, owner).await
     });
     let mut process = PortForwardProcess::with_token(handle, config_id.to_string(), token);
 
@@ -330,7 +332,7 @@ pub(crate) async fn start_single_ssh_forward(
 /// the config is not left registered and shown as running.
 async fn run_until_listener_ends(
     serve: impl Future<Output = anyhow::Result<()>>, state: watch::Receiver<SessionState>,
-    config_id: i64, mode: DatabaseMode, token: CancellationToken,
+    config_id: i64, mode: DatabaseMode, token: CancellationToken, owner: tokio::task::Id,
 ) -> anyhow::Result<()> {
     let served = async {
         let served = serve.await;
@@ -340,18 +342,18 @@ async fn run_until_listener_ends(
     let (served, ()) = tokio::join!(served, watch_state(state, config_id, mode, token.clone()));
     if let Err(listener_error) = &served {
         error!("SSH listener of config {config_id} failed, stopping the forward: {listener_error}");
-        // Detached: the stop aborts the task this runs in.
-        tokio::spawn(async move {
-            if let Err(stop_error) =
-                crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
-            {
-                error!(
-                    "Failed to clean up config {config_id} after its listener failed: {stop_error}"
-                );
-            }
-        });
+        // Detached: the stop aborts `owner`, the task this runs in.
+        tokio::spawn(stop_after_listener_failure(config_id, owner, mode));
     }
     served
+}
+
+/// Stops the forward whose listener task `owner` failed, unless it has
+/// been stopped or replaced meanwhile.
+async fn stop_after_listener_failure(config_id: i64, owner: tokio::task::Id, mode: DatabaseMode) {
+    if let Err(error) = crate::kube::stop::stop_failed_forward(config_id, owner, mode).await {
+        error!("Failed to clean up config {config_id} after its listener failed: {error}");
+    }
 }
 
 /// Mirrors the SSH session state into the forward's retry columns, so the

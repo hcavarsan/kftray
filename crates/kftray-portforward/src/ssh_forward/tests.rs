@@ -247,22 +247,23 @@ async fn two_ssh_forwards_on_one_bastion_should_share_one_session() {
     assert_eq!(sessions, 1);
 }
 
-/// Waits (bounded) until no forward is registered any more.
-async fn wait_unregistered() -> bool {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while !CHILD_PROCESSES.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .is_ok()
+/// Id of a task that is no forward's.
+fn unrelated_task() -> tokio::task::Id {
+    tokio::spawn(async {}).id()
+}
+
+async fn is_running(config: &Config) -> bool {
+    get_configs_state_with_mode(MODE)
+        .await
+        .unwrap()
+        .iter()
+        .any(|state| state.config_id == config.id.unwrap() && state.is_running)
 }
 
 #[tokio::test]
-async fn a_failed_listener_should_stop_its_forward_while_the_session_lives() {
-    let bastion = bastion().await;
-    let config = ssh_config("ssh-echo", bastion.mock.echo_addr()).await;
-    let port = start(&config).await.unwrap();
+async fn a_failed_listener_should_end_the_forward_task_while_the_session_lives() {
+    // Held so the cleanup this spawns cannot touch another test's forwards.
+    let _bastion = bastion().await;
     // The sender stands in for the live session the lease keeps open.
     let (_session, state) = tokio::sync::watch::channel(kftray_ssh::SessionState::Ready);
     let failing = async { Err(anyhow::anyhow!("accept failed")) };
@@ -272,22 +273,56 @@ async fn a_failed_listener_should_stop_its_forward_while_the_session_lives() {
         super::run_until_listener_ends(
             failing,
             state,
-            config.id.unwrap(),
+            1,
             MODE,
             tokio_util::sync::CancellationToken::new(),
+            unrelated_task(),
         ),
     )
     .await;
 
-    let unregistered = wait_unregistered().await;
-    let running = get_configs_state_with_mode(MODE)
-        .await
-        .unwrap()
-        .iter()
-        .any(|state| state.config_id == config.id.unwrap() && state.is_running);
-    let released = TcpStream::connect(("127.0.0.1", port)).await.is_err();
     assert!(matches!(ended, Ok(Err(_))), "the forward task kept running");
-    assert_eq!((unregistered, running, released), (true, false, true));
+}
+
+#[tokio::test]
+async fn cleanup_after_a_listener_failure_should_stop_its_forward() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-echo", bastion.mock.echo_addr()).await;
+    let port = start(&config).await.unwrap();
+    let owner = CHILD_PROCESSES
+        .get(&config.id.unwrap())
+        .and_then(|process| process.task_id())
+        .unwrap();
+
+    super::stop_after_listener_failure(config.id.unwrap(), owner, MODE).await;
+
+    let stopped = (
+        CHILD_PROCESSES.is_empty(),
+        is_running(&config).await,
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+    );
+    assert_eq!(stopped, (true, false, true));
+}
+
+#[tokio::test]
+async fn cleanup_after_a_listener_failure_should_leave_a_replacement_running() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-echo", bastion.mock.echo_addr()).await;
+    let port = start(&config).await.unwrap();
+
+    // A task that is not the registered one: the forward was replaced.
+    super::stop_after_listener_failure(config.id.unwrap(), unrelated_task(), MODE).await;
+
+    let kept = (
+        CHILD_PROCESSES.contains_key(&config.id.unwrap()),
+        is_running(&config).await,
+    );
+    let received = echo(port, b"ping").await;
+    stop(&config).await;
+    assert_eq!(
+        (kept, received.as_slice()),
+        ((true, true), b"ping".as_slice())
+    );
 }
 
 #[tokio::test]
