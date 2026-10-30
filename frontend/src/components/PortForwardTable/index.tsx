@@ -19,11 +19,11 @@ import {
   useGroupActivePods,
 } from '@/components/PortForwardTable/useActivePods'
 import {
-  ALL_GROUP_ID,
   NO_PENDING,
   useConfigView,
   useGroupPendingActions,
 } from '@/components/PortForwardTable/useConfigView'
+import { useGroupExpansion } from '@/components/PortForwardTable/useGroupExpansion'
 import {
   AccordionRoot,
   type ValueChangeDetails,
@@ -78,7 +78,6 @@ export function PortForwardTable({
   onVisibleConfigsChange,
 }: TableProps) {
   const [search, setSearch] = useState<string>('')
-  const [expandedIndices, setExpandedIndices] = useState<string[]>([])
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
 
   const selectedIds = useMemo(
@@ -120,7 +119,11 @@ export function PortForwardTable({
   )
   const groupPods = useGroupActivePods(groups, activePods)
   const groupPending = useGroupPendingActions(groups, pendingConfigActions)
-  const groupBy = view?.group_by
+  const { expanded, setExpanded } = useGroupExpansion(
+    groups,
+    view?.group_by ?? null,
+    search !== '',
+  )
   const visibleConfigs = useMemo(
     () => groups.flatMap(group => group.configs),
     [groups],
@@ -129,10 +132,6 @@ export function PortForwardTable({
   useLayoutEffect(() => {
     onVisibleConfigsChange(visibleConfigs)
   }, [visibleConfigs, onVisibleConfigsChange])
-
-  useEffect(() => {
-    setExpandedIndices(groupBy === null ? [ALL_GROUP_ID] : [])
-  }, [groupBy])
 
   useEffect(() => {
     setSelectedConfigs(prev => {
@@ -152,16 +151,14 @@ export function PortForwardTable({
   }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
-    const allGroups = groups.map(group => group.id)
-
-    setExpandedIndices(current =>
-      current.length === allGroups.length ? [] : allGroups,
+    setExpanded(
+      expanded.length === groups.length ? [] : groups.map(group => group.id),
     )
   }
 
   const handleAccordionChange = (details: ValueChangeDetails) => {
     if (!isCheckboxAction) {
-      setExpandedIndices(details.value)
+      setExpanded(details.value)
     }
   }
 
@@ -230,7 +227,7 @@ export function PortForwardTable({
             isInitiating={isInitiating}
             isStopping={isStopping}
             toggleExpandAll={toggleExpandAll}
-            expandedIndices={expandedIndices}
+            expandedIndices={expanded}
             groupCount={groups.length}
             view={view}
             facets={facets}
@@ -287,7 +284,7 @@ export function PortForwardTable({
         <AccordionRoot
           className='accordion-root'
           multiple
-          value={expandedIndices}
+          value={expanded}
           onValueChange={handleAccordionChange}
         >
           {groups.map(group => (
