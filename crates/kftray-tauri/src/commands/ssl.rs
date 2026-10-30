@@ -90,6 +90,7 @@ async fn apply_ssl_settings(
         return Err(format!("Failed to set SSL CA auto install: {e}"));
     }
 
+    let mut ca_install_error = None;
     if ssl_enabled {
         info!("SSL enabled, generating global certificate for all configs");
 
@@ -115,7 +116,10 @@ async fn apply_ssl_settings(
                                 Ok(_) => info!(
                                     "Successfully installed CA certificate to system trust store"
                                 ),
-                                Err(e) => warn!("Failed to install CA certificate: {e}"),
+                                Err(e) => {
+                                    warn!("Failed to install CA certificate: {e}");
+                                    ca_install_error = Some(e);
+                                }
                             }
                         }
                     }
@@ -149,6 +153,12 @@ async fn apply_ssl_settings(
                 "SSL settings saved, but these forwards did not restart: {failed_ids:?}"
             ));
         }
+    }
+
+    if let Some(e) = ca_install_error {
+        return Err(format!(
+            "SSL settings saved, but the CA certificate was not added to the system trust store: {e:#}"
+        ));
     }
 
     info!("SSL settings updated successfully");
@@ -475,5 +485,26 @@ mod tests {
         let result = apply_ssl_settings(Arc::new(mock), true, 365, true, false).await;
 
         assert!(result.unwrap_err().contains(&id.to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_ca_that_does_not_install_fails_the_ssl_save() {
+        let ca_dir = std::path::Path::new("/usr/local/share/ca-certificates");
+        if !ca_dir.exists() || tempfile::tempfile_in(ca_dir).is_ok() {
+            return;
+        }
+        let _db = kftray_commons::test_utils::test_db().await;
+        let (_env, id) = running_forward_with_alias("ssl-ca-install-fails", false).await;
+        let _install_ca = EnvVarGuard::remove("KFTRAY_SKIP_CA_INSTALL");
+
+        let result = apply_ssl_settings(expect_one_restart(id), true, 365, true, true).await;
+
+        assert!(get_ssl_enabled().await.unwrap());
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("insufficient permissions to write to"),
+            "unexpected error: {error}"
+        );
     }
 }
