@@ -35,6 +35,7 @@ use serde::Serialize;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{
+    error,
     info,
     warn,
 };
@@ -162,6 +163,7 @@ pub(crate) async fn start_single_ssh_forward(
     cancellation: Option<&CancellationToken>,
 ) -> Result<CustomResponse, String> {
     let config_id = config.id.ok_or("Config has no ID")?;
+    let cancelled_reason = || format!("Startup cancelled for config {config_id}");
     let (provider, host, remote_port) = validate(&config)?;
     let (provider, host) = (provider.clone(), host.to_owned());
     let runtime = runtime(mode)?;
@@ -181,7 +183,7 @@ pub(crate) async fn start_single_ssh_forward(
     let connected = match cancellation {
         Some(token) => tokio::select! {
             biased;
-            _ = token.cancelled() => Err(format!("Startup cancelled for config {config_id}")),
+            _ = token.cancelled() => Err(cancelled_reason()),
             connected = connect => connected,
         },
         None => connect.await,
@@ -198,13 +200,24 @@ pub(crate) async fn start_single_ssh_forward(
     };
 
     // A wrong destination fails the start instead of the user's first
-    // connection.
+    // connection. Raced against the startup token: a stop waits on the
+    // lifecycle lock this startup holds.
     let opener = Arc::new(lease.opener(host.clone(), remote_port));
     let check = tokio::time::timeout(
         DESTINATION_CHECK_TIMEOUT,
         opener.open(std::net::SocketAddr::from(([127, 0, 0, 1], 0))),
-    )
-    .await;
+    );
+    let check = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                let reason = cancelled_reason();
+                return Err(rollback_local_resources(&config, &local.address, reason, mode).await);
+            }
+            check = check => check,
+        },
+        None => check.await,
+    };
     match check {
         Ok(Ok(_test_stream)) => {}
         Ok(Err(SshError::TargetUnreachable { .. } | SshError::Timeout { .. })) | Err(_) => {
@@ -268,7 +281,18 @@ pub(crate) async fn start_single_ssh_forward(
         );
         run_until_listener_ends(serve, state, config_id, mode, task_token).await
     });
-    let process = PortForwardProcess::with_token(handle, config_id.to_string(), token);
+    let mut process = PortForwardProcess::with_token(handle, config_id.to_string(), token);
+
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        let reason = match process.cleanup_and_abort().await {
+            Ok(()) => cancelled_reason(),
+            Err(held) => format!(
+                "{}; cleanup incomplete: listener: {held}",
+                cancelled_reason()
+            ),
+        };
+        return Err(rollback_local_resources(&config, &local.address, reason, mode).await);
+    }
 
     let ssl = should_use_ssl;
     if let Err(reason) = register_started(&config, process, &mut local, ssl, mode).await {
@@ -302,6 +326,8 @@ pub(crate) async fn start_single_ssh_forward(
 /// Runs the listener with the state watcher beside it. When the listener
 /// ends, even with an error, the watcher is stopped too, so the task ends
 /// and drops its lease instead of waiting on a session that stays alive.
+/// A listener that fails, rather than being stopped, stops its forward, so
+/// the config is not left registered and shown as running.
 async fn run_until_listener_ends(
     serve: impl Future<Output = anyhow::Result<()>>, state: watch::Receiver<SessionState>,
     config_id: i64, mode: DatabaseMode, token: CancellationToken,
@@ -312,6 +338,19 @@ async fn run_until_listener_ends(
         served
     };
     let (served, ()) = tokio::join!(served, watch_state(state, config_id, mode, token.clone()));
+    if let Err(listener_error) = &served {
+        error!("SSH listener of config {config_id} failed, stopping the forward: {listener_error}");
+        // Detached: the stop aborts the task this runs in.
+        tokio::spawn(async move {
+            if let Err(stop_error) =
+                crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
+            {
+                error!(
+                    "Failed to clean up config {config_id} after its listener failed: {stop_error}"
+                );
+            }
+        });
+    }
     served
 }
 

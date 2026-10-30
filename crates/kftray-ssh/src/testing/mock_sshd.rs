@@ -58,6 +58,9 @@ pub struct MockSshdOptions {
     /// `false` makes the sshd refuse every `direct-tcpip` channel, like
     /// `AllowTcpForwarding no`.
     pub forwarding: bool,
+    /// `true` leaves every `direct-tcpip` open unanswered, like a
+    /// destination behind a firewall that drops packets.
+    pub hold_channel_opens: bool,
 }
 
 impl Default for MockSshdOptions {
@@ -66,6 +69,7 @@ impl Default for MockSshdOptions {
             authorized: Vec::new(),
             user_ca: None,
             forwarding: true,
+            hold_channel_opens: false,
         }
     }
 }
@@ -82,6 +86,8 @@ pub struct MockSshd {
 
 pub(super) struct Shared {
     forwarding: bool,
+    hold_channel_opens: bool,
+    held_opens: watch::Sender<usize>,
     authorized: Mutex<Vec<PublicKey>>,
     user_cas: Mutex<Vec<PublicKey>>,
     host: Mutex<Host>,
@@ -122,6 +128,8 @@ impl MockSshd {
 
         let shared = Arc::new(Shared {
             forwarding: options.forwarding,
+            hold_channel_opens: options.hold_channel_opens,
+            held_opens: watch::channel(0).0,
             authorized: Mutex::new(options.authorized),
             user_cas: Mutex::new(options.user_ca.into_iter().collect()),
             host: Mutex::new(random_host()),
@@ -178,6 +186,14 @@ impl MockSshd {
             .is_ok_and(|reached| reached.is_ok())
     }
 
+    /// Waits (bounded) until a `direct-tcpip` open is being held.
+    pub async fn wait_held_open(&self) -> bool {
+        let mut held = self.shared.held_opens.subscribe();
+        timeout(SESSION_WAIT, held.wait_for(|held| *held > 0))
+            .await
+            .is_ok_and(|reached| reached.is_ok())
+    }
+
     /// Disconnects every open session; the sshd keeps accepting new ones.
     pub async fn drop_sessions(&self) {
         let handles: Vec<server::Handle> = lock(&self.shared.live).values().cloned().collect();
@@ -227,6 +243,7 @@ impl Shared {
             let _counted = Counted(Arc::clone(&shared));
             let handler = MockHandler {
                 shared: Arc::clone(&shared),
+                held: Vec::new(),
             };
             let Ok(session) = server::run_stream(config, stream, handler).await else {
                 return;
@@ -268,6 +285,8 @@ async fn echo_loop(listener: TcpListener) {
 
 struct MockHandler {
     shared: Arc<Shared>,
+    /// Opens never answered; dropped with the session.
+    held: Vec<(Channel<Msg>, ChannelOpenHandle)>,
 }
 
 impl Handler for MockHandler {
@@ -311,6 +330,11 @@ impl Handler for MockHandler {
             reply
                 .reject(ChannelOpenFailure::AdministrativelyProhibited)
                 .await;
+            return Ok(());
+        }
+        if self.shared.hold_channel_opens {
+            self.held.push((channel, reply));
+            self.shared.held_opens.send_modify(|held| *held += 1);
             return Ok(());
         }
 

@@ -14,6 +14,7 @@ use kftray_commons::test_utils::{
     test_db,
 };
 use kftray_commons::utils::config::insert_config_with_mode;
+use kftray_commons::utils::config_state::get_configs_state_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_ssh::KftrayKey;
 use kftray_ssh::testing::gcp::{
@@ -59,6 +60,10 @@ struct Bastion {
 }
 
 async fn bastion() -> Bastion {
+    bastion_with(MockSshdOptions::default()).await
+}
+
+async fn bastion_with(options: MockSshdOptions) -> Bastion {
     let db = test_db().await;
     let lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -67,7 +72,7 @@ async fn bastion() -> Bastion {
     let key = KftrayKey::load_or_create(dir.path()).unwrap();
     let mock = MockSshd::start(MockSshdOptions {
         authorized: vec![key.public()],
-        ..MockSshdOptions::default()
+        ..options
     })
     .await
     .unwrap();
@@ -242,8 +247,22 @@ async fn two_ssh_forwards_on_one_bastion_should_share_one_session() {
     assert_eq!(sessions, 1);
 }
 
+/// Waits (bounded) until no forward is registered any more.
+async fn wait_unregistered() -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !CHILD_PROCESSES.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
 #[tokio::test]
-async fn a_failed_listener_should_end_the_forward_task_while_the_session_lives() {
+async fn a_failed_listener_should_stop_its_forward_while_the_session_lives() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-echo", bastion.mock.echo_addr()).await;
+    let port = start(&config).await.unwrap();
     // The sender stands in for the live session the lease keeps open.
     let (_session, state) = tokio::sync::watch::channel(kftray_ssh::SessionState::Ready);
     let failing = async { Err(anyhow::anyhow!("accept failed")) };
@@ -253,12 +272,53 @@ async fn a_failed_listener_should_end_the_forward_task_while_the_session_lives()
         super::run_until_listener_ends(
             failing,
             state,
-            1,
+            config.id.unwrap(),
             MODE,
             tokio_util::sync::CancellationToken::new(),
         ),
     )
     .await;
 
+    let unregistered = wait_unregistered().await;
+    let running = get_configs_state_with_mode(MODE)
+        .await
+        .unwrap()
+        .iter()
+        .any(|state| state.config_id == config.id.unwrap() && state.is_running);
+    let released = TcpStream::connect(("127.0.0.1", port)).await.is_err();
     assert!(matches!(ended, Ok(Err(_))), "the forward task kept running");
+    assert_eq!((unregistered, running, released), (true, false, true));
+}
+
+#[tokio::test]
+async fn a_start_cancelled_during_the_destination_check_should_end_and_leave_nothing() {
+    let bastion = bastion_with(MockSshdOptions {
+        hold_channel_opens: true,
+        ..MockSshdOptions::default()
+    })
+    .await;
+    let config = ssh_config("ssh-held", bastion.mock.echo_addr()).await;
+    let token = tokio_util::sync::CancellationToken::new();
+    let startup = tokio::spawn({
+        let (config, token) = (config.clone(), token.clone());
+        async move { super::start_single_ssh_forward(config, MODE, false, Some(&token)).await }
+    });
+    assert!(
+        bastion.mock.wait_held_open().await,
+        "the destination check never started"
+    );
+
+    token.cancel();
+    // Well under the 10 s destination check bound.
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(3), startup).await;
+
+    let hosts = std::fs::read_to_string(&bastion.hosts).unwrap();
+    let error = ended
+        .expect("startup kept running after cancel")
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        error.contains("cancelled") && CHILD_PROCESSES.is_empty() && !hosts.contains("ssh-held"),
+        "{error}"
+    );
 }
