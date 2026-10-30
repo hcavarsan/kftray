@@ -10,6 +10,7 @@ use std::time::{
 };
 
 use futures::FutureExt;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::{
     debug,
     error,
@@ -34,6 +35,7 @@ pub struct NetworkMonitor {
     network_checker: NetworkChecker,
     health_checker: HealthChecker,
     stopped: Arc<AtomicBool>,
+    mode: DatabaseMode,
 }
 
 struct StopWorkersOnDrop(Arc<AtomicBool>);
@@ -45,13 +47,14 @@ impl Drop for StopWorkersOnDrop {
 }
 
 impl NetworkMonitor {
-    pub fn new() -> Self {
+    pub fn new(mode: DatabaseMode) -> Self {
         let config = MonitorConfig::default();
         Self {
             network_checker: NetworkChecker::new(config.clone()),
             health_checker: HealthChecker::new(config.clone()),
             config,
             stopped: Arc::default(),
+            mode,
         }
     }
 
@@ -59,7 +62,7 @@ impl NetworkMonitor {
         let _stop_workers = StopWorkersOnDrop(self.stopped.clone());
         info!("Starting network monitor");
 
-        let initial_configs = match ConfigManager::get_active_configs().await {
+        let initial_configs = match ConfigManager::get_active_configs(self.mode).await {
             Ok(configs) => configs,
             Err(e) => {
                 error!("Failed to get initial active configs: {e}");
@@ -91,7 +94,7 @@ impl NetworkMonitor {
             sleep(self.get_sleep_duration(network_up, failure_count)).await;
 
             let active_configs: Vec<kftray_commons::config_model::Config> =
-                (ConfigManager::get_active_configs().await).unwrap_or_default();
+                (ConfigManager::get_active_configs(self.mode).await).unwrap_or_default();
 
             if active_configs.is_empty() {
                 debug!("No active port forward configs found, network monitor idling");
@@ -168,7 +171,7 @@ impl NetworkMonitor {
             sleep(self.config.monitor_interval).await;
 
             let active_configs: Vec<kftray_commons::config_model::Config> =
-                (ConfigManager::get_active_configs().await).unwrap_or_default();
+                (ConfigManager::get_active_configs(self.mode).await).unwrap_or_default();
 
             if active_configs.is_empty() {
                 debug!("No active port forward configs found, background monitor idling");
@@ -225,7 +228,7 @@ impl NetworkMonitor {
     async fn handle_reconnect(&self) {
         info!("Handling network reconnection");
 
-        let active_configs = match ConfigManager::get_active_configs().await {
+        let active_configs = match ConfigManager::get_active_configs(self.mode).await {
             Ok(configs) => configs,
             Err(e) => {
                 error!("Failed to get active configs: {e}");
@@ -247,11 +250,11 @@ impl NetworkMonitor {
 
         info!("Restarting {} port forwards", active_configs.len());
 
-        ConfigManager::restart_port_forwards(active_configs).await;
+        ConfigManager::restart_port_forwards(active_configs, self.mode).await;
     }
 
     async fn check_health(&self) {
-        let active_configs = match ConfigManager::get_active_configs().await {
+        let active_configs = match ConfigManager::get_active_configs(self.mode).await {
             Ok(configs) => configs,
             Err(_) => return,
         };
@@ -295,12 +298,12 @@ impl NetworkMonitor {
                 "Restarting {} confirmed failed port forwards",
                 confirmed_failed.len()
             );
-            ConfigManager::restart_port_forwards(confirmed_failed).await;
+            ConfigManager::restart_port_forwards(confirmed_failed, self.mode).await;
         }
     }
 
     async fn check_health_fast(&self) -> Vec<kftray_commons::models::config_model::Config> {
-        let active_configs = match ConfigManager::get_active_configs().await {
+        let active_configs = match ConfigManager::get_active_configs(self.mode).await {
             Ok(configs) => configs,
             Err(_) => return Vec::new(),
         };
@@ -333,7 +336,7 @@ impl NetworkMonitor {
 
     async fn should_start_reconnect(&self) -> bool {
         let active_configs: Vec<kftray_commons::config_model::Config> =
-            (ConfigManager::get_active_configs().await).unwrap_or_default();
+            (ConfigManager::get_active_configs(self.mode).await).unwrap_or_default();
 
         if active_configs.is_empty() {
             debug!("Cannot reconnect: no active port forward configs");
@@ -393,7 +396,7 @@ impl NetworkMonitor {
 
     async fn should_start_health_check(&self) -> bool {
         let active_configs: Vec<kftray_commons::config_model::Config> =
-            (ConfigManager::get_active_configs().await).unwrap_or_default();
+            (ConfigManager::get_active_configs(self.mode).await).unwrap_or_default();
 
         if active_configs.is_empty() {
             return false;
@@ -466,12 +469,13 @@ impl Clone for NetworkMonitor {
             network_checker: NetworkChecker::new(self.config.clone()),
             health_checker: HealthChecker::new(self.config.clone()),
             stopped: self.stopped.clone(),
+            mode: self.mode,
         }
     }
 }
 
-pub async fn start_network_monitor() {
-    let monitor = NetworkMonitor::new();
+pub async fn start_network_monitor(mode: DatabaseMode) {
+    let monitor = NetworkMonitor::new(mode);
     monitor.start().await;
 }
 
@@ -561,6 +565,7 @@ mod tests {
             health_checker: HealthChecker::new(config.clone()),
             config,
             stopped: Arc::default(),
+            mode: DatabaseMode::File,
         };
         let state = monitor.get_task_state().await;
         *state.lock().await = TaskState::default();
@@ -612,6 +617,7 @@ mod tests {
             health_checker: HealthChecker::new(config.clone()),
             config,
             stopped: Arc::default(),
+            mode: DatabaseMode::File,
         };
         let state = monitor.get_task_state().await;
         *state.lock().await = TaskState::default();
@@ -655,6 +661,7 @@ mod tests {
             health_checker: HealthChecker::new(config.clone()),
             config,
             stopped: Arc::default(),
+            mode: DatabaseMode::File,
         }
     }
 
