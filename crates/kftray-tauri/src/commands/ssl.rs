@@ -491,7 +491,10 @@ mod tests {
     #[tokio::test]
     async fn a_ca_that_does_not_install_fails_the_ssl_save() {
         let ca_dir = std::path::Path::new("/usr/local/share/ca-certificates");
-        if !ca_dir.exists() || tempfile::tempfile_in(ca_dir).is_ok() {
+        if !ca_dir.exists()
+            || ca_dir.join("kftray-ca.crt").exists()
+            || tempfile::tempfile_in(ca_dir).is_ok()
+        {
             return;
         }
         let _db = kftray_commons::test_utils::test_db().await;
