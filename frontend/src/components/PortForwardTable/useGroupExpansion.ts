@@ -8,6 +8,8 @@ import {
 } from '@tanstack/react-query'
 
 import {
+  applyEdits,
+  type ExpansionEdit,
   NO_EXPANSION,
   parseSavedExpansion,
   pickVisible,
@@ -15,7 +17,6 @@ import {
   type SearchCollapsed,
   savedExpanded,
   searchExpanded,
-  withExpanded,
 } from '@/components/PortForwardTable/groupExpansion'
 import { invoke } from '@/lib/tauri'
 import type { ResolvedGroup } from '@/types'
@@ -42,7 +43,7 @@ export function useGroupExpansion(
 ) {
   const queryClient = useQueryClient()
   const { data: saved } = useQuery(groupExpansionQuery)
-  const [unsaved, setUnsaved] = useState(NO_EXPANSION)
+  const [pendingEdits, setPendingEdits] = useState<ExpansionEdit[]>([])
   const [searchCollapsed, setSearchCollapsed] = useState<SearchCollapsed>({
     groupBy,
     ids: [],
@@ -60,6 +61,16 @@ export function useGroupExpansion(
   })
 
   useEffect(() => {
+    if (saved === undefined || pendingEdits.length === 0) {
+      return
+    }
+    const value = applyEdits(saved, pendingEdits)
+    queryClient.setQueryData(groupExpansionQuery.queryKey, value)
+    save(value)
+    setPendingEdits([])
+  }, [saved, pendingEdits, queryClient, save])
+
+  useEffect(() => {
     setSearchCollapsed(prev => {
       const ids = searching ? pickVisible(prev.ids, groupIds) : []
 
@@ -71,8 +82,14 @@ export function useGroupExpansion(
     () =>
       searching
         ? searchExpanded(searchCollapsed, groupBy, groupIds)
-        : pickVisible(savedExpanded(saved ?? unsaved, groupBy), groupIds),
-    [searching, searchCollapsed, saved, unsaved, groupBy, groupIds],
+        : pickVisible(
+            savedExpanded(
+              applyEdits(saved ?? NO_EXPANSION, pendingEdits),
+              groupBy,
+            ),
+            groupIds,
+          ),
+    [searching, searchCollapsed, saved, pendingEdits, groupBy, groupIds],
   )
 
   const setExpanded = useCallback(
@@ -85,22 +102,12 @@ export function useGroupExpansion(
 
         return
       }
-      void queryClient.ensureQueryData(groupExpansionQuery).then(
-        () => {
-          const value = withExpanded(
-            queryClient.getQueryData(groupExpansionQuery.queryKey) ??
-              NO_EXPANSION,
-            groupBy,
-            groupIds,
-            next,
-          )
-          queryClient.setQueryData(groupExpansionQuery.queryKey, value)
-          save(value)
-        },
-        () => setUnsaved(prev => withExpanded(prev, groupBy, groupIds, next)),
-      )
+      setPendingEdits(prev => [...prev, { groupBy, groupIds, expanded: next }])
+      if (saved === undefined) {
+        void queryClient.refetchQueries(groupExpansionQuery)
+      }
     },
-    [searching, groupIds, groupBy, queryClient, save],
+    [searching, groupIds, groupBy, saved, queryClient],
   )
 
   return { expanded, setExpanded }

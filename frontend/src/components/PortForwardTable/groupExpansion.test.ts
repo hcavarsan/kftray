@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  applyEdits,
   NO_EXPANSION,
   parseSavedExpansion,
   pickVisible,
@@ -55,6 +56,24 @@ describe('saved group expansion', () => {
     expect(parseSavedExpansion('not json')).toEqual({})
     expect(parseSavedExpansion('["a"]')).toEqual({})
     expect(parseSavedExpansion('{"context":[1]}')).toEqual({})
+  })
+
+  it('applies choices made while the saved state could not be read', () => {
+    const saved = { context: ['"qa"'], 'tag:team': ['"core"'] }
+    const next = applyEdits(saved, [
+      {
+        groupBy: 'context',
+        groupIds: ['"dev"', '"prod"'],
+        expanded: ['"dev"'],
+      },
+      { groupBy: 'namespace', groupIds: ['"default"'], expanded: [] },
+    ])
+
+    expect(next).toEqual({
+      context: ['"qa"', '"dev"'],
+      namespace: [],
+      'tag:team': ['"core"'],
+    })
   })
 })
 

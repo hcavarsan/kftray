@@ -9,6 +9,12 @@ export interface SearchCollapsed {
   ids: string[]
 }
 
+export interface ExpansionEdit {
+  groupBy: string | null
+  groupIds: string[]
+  expanded: string[]
+}
+
 const isSavedExpansion = (value: unknown): value is SavedExpansion =>
   typeof value === 'object' &&
   value !== null &&
@@ -50,6 +56,13 @@ export const withExpanded = (
     ...expanded,
   ],
 })
+
+export const applyEdits = (saved: SavedExpansion, edits: ExpansionEdit[]) =>
+  edits.reduce(
+    (current, edit) =>
+      withExpanded(current, edit.groupBy, edit.groupIds, edit.expanded),
+    saved,
+  )
 
 export const searchExpanded = (
   collapsed: SearchCollapsed,
