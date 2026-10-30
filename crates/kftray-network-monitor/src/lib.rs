@@ -8,6 +8,7 @@ mod types;
 use std::sync::OnceLock;
 
 pub use controller::NetworkMonitorController;
+use kftray_commons::utils::db_mode::DatabaseMode;
 pub use types::{
     MonitorConfig,
     NetworkMonitorError,
@@ -20,7 +21,11 @@ fn get_default_controller() -> &'static NetworkMonitorController {
 }
 
 pub async fn start() -> Result<(), NetworkMonitorError> {
-    get_default_controller().start().await
+    start_with_mode(DatabaseMode::File).await
+}
+
+pub async fn start_with_mode(mode: DatabaseMode) -> Result<(), NetworkMonitorError> {
+    get_default_controller().start(mode).await
 }
 
 pub async fn stop() -> Result<(), NetworkMonitorError> {
@@ -32,5 +37,9 @@ pub async fn is_running() -> bool {
 }
 
 pub async fn restart() -> Result<(), NetworkMonitorError> {
-    get_default_controller().restart().await
+    restart_with_mode(DatabaseMode::File).await
+}
+
+pub async fn restart_with_mode(mode: DatabaseMode) -> Result<(), NetworkMonitorError> {
+    get_default_controller().restart(mode).await
 }

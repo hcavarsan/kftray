@@ -1,5 +1,6 @@
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::stop_generation;
 use kftray_telemetry::{
     Operation,
@@ -20,9 +21,11 @@ fn is_forward_registered(id: i64) -> bool {
 }
 
 impl ConfigManager {
-    pub async fn get_active_configs()
-    -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
-        let config_states = kftray_commons::utils::config_state::get_configs_state().await?;
+    pub async fn get_active_configs(
+        mode: DatabaseMode,
+    ) -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
+        let config_states =
+            kftray_commons::utils::config_state::get_configs_state_with_mode(mode).await?;
         let current_process_id = std::process::id();
 
         let active_config_ids: Vec<i64> = config_states
@@ -42,9 +45,11 @@ impl ConfigManager {
         let config_futures: Vec<_> = active_config_ids
             .into_iter()
             .map(|config_id| {
-                tokio::spawn(
-                    async move { kftray_commons::config::get_config(config_id).await.ok() },
-                )
+                tokio::spawn(async move {
+                    kftray_commons::config::get_config_with_mode(config_id, mode)
+                        .await
+                        .ok()
+                })
             })
             .collect();
 
@@ -60,7 +65,7 @@ impl ConfigManager {
         Ok(configs)
     }
 
-    pub async fn restart_port_forwards(configs: Vec<Config>) {
+    pub async fn restart_port_forwards(configs: Vec<Config>, mode: DatabaseMode) {
         for protocol in ["tcp", "udp"] {
             let protocol_configs: Vec<Config> = configs
                 .iter()
@@ -69,12 +74,12 @@ impl ConfigManager {
                 .collect();
 
             if !protocol_configs.is_empty() {
-                Self::restart_protocol_batch(protocol_configs, protocol).await;
+                Self::restart_protocol_batch(protocol_configs, protocol, mode).await;
             }
         }
     }
 
-    async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str) {
+    async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str, mode: DatabaseMode) {
         // Only what this process is still running is restarted: a forward the
         // user stopped between the health check that flagged it and now must
         // stay stopped. The stop generation catches a stop landing after
@@ -107,7 +112,8 @@ impl ConfigManager {
             .map(|(id, _, _)| {
                 let id = *id;
                 let stop = tokio::spawn(async move {
-                    kftray_portforward::kube::stop_port_forward(id.to_string()).await
+                    kftray_portforward::kube::stop_port_forward_with_mode(id.to_string(), mode)
+                        .await
                 });
                 (id, stop)
             })
@@ -141,7 +147,12 @@ impl ConfigManager {
         if !direct_configs.is_empty() {
             match measure(
                 Operation::Restart,
-                kftray_portforward::kube::start_port_forward(direct_configs, protocol),
+                kftray_portforward::kube::start_port_forward_with_mode(
+                    direct_configs,
+                    protocol,
+                    mode,
+                    false,
+                ),
             )
             .await
             {
@@ -153,7 +164,11 @@ impl ConfigManager {
         if !relay_configs.is_empty() {
             match measure(
                 Operation::Restart,
-                kftray_portforward::kube::deploy_and_forward_pod(relay_configs),
+                kftray_portforward::kube::deploy_and_forward_pod_with_mode(
+                    relay_configs,
+                    mode,
+                    false,
+                ),
             )
             .await
             {
@@ -203,6 +218,7 @@ fn partition_relay_configs(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
 #[cfg(test)]
 mod tests {
     use kftray_commons::models::config_model::Config;
+    use kftray_commons::utils::db_mode::DatabaseMode;
 
     use super::partition_relay_configs;
 
@@ -333,7 +349,7 @@ mod tests {
     }
 
     async fn register_running_udp_service_forward(
-        dir: &std::path::Path,
+        dir: &std::path::Path, mode: DatabaseMode,
     ) -> (Config, std::sync::Arc<tokio::sync::Mutex<Vec<String>>>) {
         use kftray_commons::models::config_state_model::ConfigState;
         use kftray_portforward::port_forward::{
@@ -370,13 +386,16 @@ mod tests {
             ..make_config(0, "service", "udp")
         };
         config.id = None;
-        let id = kftray_commons::config::insert_config(config.clone())
+        let id = kftray_commons::config::insert_config_with_mode(config.clone(), mode)
             .await
             .unwrap();
         config.id = Some(id);
-        kftray_commons::utils::config_state::update_config_state(&ConfigState::new(id, true))
-            .await
-            .unwrap();
+        kftray_commons::utils::config_state::update_config_state_with_mode(
+            &ConfigState::new(id, true),
+            mode,
+        )
+        .await
+        .unwrap();
         let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
         CHILD_PROCESSES.insert(id, PortForwardProcess::new(handle, id.to_string()));
         (config, requests)
@@ -398,12 +417,13 @@ mod tests {
         let _process = PROCESS_TEST_MUTEX.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
-        let (config, requests) = register_running_udp_service_forward(dir.path()).await;
+        let (config, requests) =
+            register_running_udp_service_forward(dir.path(), DatabaseMode::File).await;
         let id = config.id.unwrap();
 
         let restart = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            super::ConfigManager::restart_port_forwards(vec![config]),
+            super::ConfigManager::restart_port_forwards(vec![config], DatabaseMode::File),
         )
         .await;
         CHILD_PROCESSES.remove(&id);
@@ -418,12 +438,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_monitor_sees_a_forward_loaded_without_save() {
+        use kftray_commons::test_utils::{
+            EnvVarGuard,
+            test_db,
+        };
+        use kftray_portforward::port_forward::{
+            CHILD_PROCESSES,
+            PROCESS_TEST_MUTEX,
+        };
+
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        let (config, _requests) =
+            register_running_udp_service_forward(dir.path(), DatabaseMode::Memory).await;
+        let id = config.id.unwrap();
+
+        let active = super::ConfigManager::get_active_configs(DatabaseMode::Memory).await;
+        CHILD_PROCESSES.remove(&id);
+
+        let ids: Vec<i64> = active.unwrap().iter().filter_map(|c| c.id).collect();
+        assert_eq!(
+            ids,
+            vec![id],
+            "the monitor must see the running memory forward"
+        );
+    }
+
+    #[tokio::test]
+    async fn restarting_a_forward_loaded_without_save_records_its_state_in_memory() {
+        use kftray_commons::test_utils::{
+            EnvVarGuard,
+            test_db,
+        };
+        use kftray_commons::utils::config_state::get_configs_state_with_mode;
+        use kftray_portforward::port_forward::{
+            CHILD_PROCESSES,
+            PROCESS_TEST_MUTEX,
+        };
+
+        kftray_portforward::ssl::ensure_crypto_provider_installed();
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        let (config, requests) =
+            register_running_udp_service_forward(dir.path(), DatabaseMode::Memory).await;
+        let id = config.id.unwrap();
+
+        let restart = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::ConfigManager::restart_port_forwards(vec![config], DatabaseMode::Memory),
+        )
+        .await;
+        CHILD_PROCESSES.remove(&id);
+
+        let state_in = |states: Vec<kftray_commons::models::config_state_model::ConfigState>| {
+            states.into_iter().find(|state| state.config_id == id)
+        };
+        let memory_state = state_in(
+            get_configs_state_with_mode(DatabaseMode::Memory)
+                .await
+                .unwrap(),
+        );
+        let file_state = state_in(
+            get_configs_state_with_mode(DatabaseMode::File)
+                .await
+                .unwrap(),
+        );
+        let seen = requests.lock().await.clone();
+
+        assert!(restart.is_ok(), "restart did not finish within 30s");
+        assert!(
+            seen.iter()
+                .any(|line| line.starts_with("POST /apis/apps/v1/namespaces/test-ns/deployments")),
+            "no relay deployment requested, requests: {seen:?}"
+        );
+        assert!(
+            file_state.is_none(),
+            "the restart wrote state to the saved database: {file_state:?}"
+        );
+        assert!(
+            memory_state.as_ref().is_some_and(|state| !state.is_running),
+            "the failed restart left the memory state at {memory_state:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_relay_forward_in_recovery_keeps_its_recovery_through_a_restart() {
         use kftray_commons::test_utils::{
             EnvVarGuard,
             test_db,
         };
-        use kftray_commons::utils::db_mode::DatabaseMode;
         use kftray_portforward::kube::proxy_recovery::{
             ProxyRecoveryManager,
             ProxyType,
@@ -440,7 +548,8 @@ mod tests {
         let _process = PROCESS_TEST_MUTEX.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
-        let (config, _requests) = register_running_udp_service_forward(dir.path()).await;
+        let (config, _requests) =
+            register_running_udp_service_forward(dir.path(), DatabaseMode::File).await;
         let id = config.id.unwrap();
 
         let manager = std::sync::Arc::new(ProxyRecoveryManager::new(
@@ -465,7 +574,7 @@ mod tests {
 
         let restart = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            super::ConfigManager::restart_port_forwards(vec![config]),
+            super::ConfigManager::restart_port_forwards(vec![config], DatabaseMode::File),
         )
         .await;
         let still_registered = CHILD_PROCESSES.contains_key(&id);
