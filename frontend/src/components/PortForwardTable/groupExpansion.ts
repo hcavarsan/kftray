@@ -4,6 +4,11 @@ export type SavedExpansion = Record<string, string[]>
 
 export const NO_EXPANSION: SavedExpansion = {}
 
+export interface SearchCollapsed {
+  groupBy: string | null
+  ids: string[]
+}
+
 const isSavedExpansion = (value: unknown): value is SavedExpansion =>
   typeof value === 'object' &&
   value !== null &&
@@ -33,12 +38,6 @@ export const savedExpanded = (
 export const pickVisible = (ids: string[], groupIds: string[]) =>
   groupIds.filter(id => ids.includes(id))
 
-export const mergeVisible = (
-  previous: string[],
-  groupIds: string[],
-  visible: string[],
-) => [...previous.filter(id => !groupIds.includes(id)), ...visible]
-
 export const withExpanded = (
   saved: SavedExpansion,
   groupBy: string | null,
@@ -46,9 +45,17 @@ export const withExpanded = (
   expanded: string[],
 ): SavedExpansion => ({
   ...saved,
-  [groupBy ?? '']: mergeVisible(
-    savedExpanded(saved, groupBy),
-    groupIds,
-    expanded,
-  ),
+  [groupBy ?? '']: [
+    ...savedExpanded(saved, groupBy).filter(id => !groupIds.includes(id)),
+    ...expanded,
+  ],
 })
+
+export const searchExpanded = (
+  collapsed: SearchCollapsed,
+  groupBy: string | null,
+  groupIds: string[],
+) =>
+  groupIds.filter(
+    id => collapsed.groupBy !== groupBy || !collapsed.ids.includes(id),
+  )

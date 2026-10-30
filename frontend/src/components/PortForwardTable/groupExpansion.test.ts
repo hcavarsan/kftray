@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  mergeVisible,
   NO_EXPANSION,
   parseSavedExpansion,
   pickVisible,
   savedExpanded,
+  searchExpanded,
   withExpanded,
 } from './groupExpansion'
 import { ALL_GROUP_ID } from './useConfigView'
@@ -65,11 +65,22 @@ describe('expansion of the shown groups', () => {
       '"b"',
     ])
   })
+})
 
-  it('replaces the state of shown groups and keeps the others', () => {
-    expect(mergeVisible(['"a"', '"hidden"'], ['"a"', '"b"'], ['"b"'])).toEqual([
-      '"hidden"',
-      '"b"',
-    ])
+describe('expansion during a search', () => {
+  const groupIds = ['"dev"', '"prod"']
+
+  it('opens a collapsed match again once it stopped matching', () => {
+    const collapsed = { groupBy: 'context', ids: ['"prod"'] }
+    const pruned = { ...collapsed, ids: pickVisible(collapsed.ids, ['"dev"']) }
+
+    expect(searchExpanded(pruned, 'context', groupIds)).toEqual(groupIds)
+  })
+
+  it('does not carry a collapse over to another grouping', () => {
+    const collapsed = { groupBy: 'context', ids: ['"prod"'] }
+
+    expect(searchExpanded(collapsed, 'namespace', groupIds)).toEqual(groupIds)
+    expect(searchExpanded(collapsed, 'context', groupIds)).toEqual(['"dev"'])
   })
 })

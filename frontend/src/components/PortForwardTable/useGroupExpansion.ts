@@ -8,12 +8,13 @@ import {
 } from '@tanstack/react-query'
 
 import {
-  mergeVisible,
   NO_EXPANSION,
   parseSavedExpansion,
   pickVisible,
   type SavedExpansion,
+  type SearchCollapsed,
   savedExpanded,
+  searchExpanded,
   withExpanded,
 } from '@/components/PortForwardTable/groupExpansion'
 import { invoke } from '@/lib/tauri'
@@ -27,9 +28,11 @@ const groupExpansionQuery = queryOptions({
     parseSavedExpansion(
       await invoke<string | null>('get_setting_value', {
         key: GROUP_EXPANSION_SETTING,
-      }).catch(() => null),
+      }),
     ),
   staleTime: Number.POSITIVE_INFINITY,
+  retry: false,
+  meta: { errorToast: { title: 'Failed to load expanded groups' } },
 })
 
 export function useGroupExpansion(
@@ -38,8 +41,12 @@ export function useGroupExpansion(
   searching: boolean,
 ) {
   const queryClient = useQueryClient()
-  const { data: saved = NO_EXPANSION } = useQuery(groupExpansionQuery)
-  const [searchCollapsed, setSearchCollapsed] = useState<string[]>([])
+  const { data: saved } = useQuery(groupExpansionQuery)
+  const [unsaved, setUnsaved] = useState(NO_EXPANSION)
+  const [searchCollapsed, setSearchCollapsed] = useState<SearchCollapsed>({
+    groupBy,
+    ids: [],
+  })
   const groupIds = useMemo(() => groups.map(group => group.id), [groups])
 
   const { mutate: save } = useMutation({
@@ -53,43 +60,45 @@ export function useGroupExpansion(
   })
 
   useEffect(() => {
-    if (!searching) {
-      setSearchCollapsed([])
-    }
-  }, [searching])
+    setSearchCollapsed(prev => {
+      const ids = searching ? pickVisible(prev.ids, groupIds) : []
+
+      return ids.length === prev.ids.length ? prev : { ...prev, ids }
+    })
+  }, [searching, groupIds])
 
   const expanded = useMemo(
     () =>
       searching
-        ? groupIds.filter(id => !searchCollapsed.includes(id))
-        : pickVisible(savedExpanded(saved, groupBy), groupIds),
-    [searching, searchCollapsed, saved, groupBy, groupIds],
+        ? searchExpanded(searchCollapsed, groupBy, groupIds)
+        : pickVisible(savedExpanded(saved ?? unsaved, groupBy), groupIds),
+    [searching, searchCollapsed, saved, unsaved, groupBy, groupIds],
   )
 
   const setExpanded = useCallback(
     (next: string[]) => {
       if (searching) {
-        setSearchCollapsed(prev =>
-          mergeVisible(
-            prev,
-            groupIds,
-            groupIds.filter(id => !next.includes(id)),
-          ),
-        )
+        setSearchCollapsed({
+          groupBy,
+          ids: groupIds.filter(id => !next.includes(id)),
+        })
 
         return
       }
-      void queryClient.ensureQueryData(groupExpansionQuery).then(() => {
-        const value = withExpanded(
-          queryClient.getQueryData(groupExpansionQuery.queryKey) ??
-            NO_EXPANSION,
-          groupBy,
-          groupIds,
-          next,
-        )
-        queryClient.setQueryData(groupExpansionQuery.queryKey, value)
-        save(value)
-      })
+      void queryClient.ensureQueryData(groupExpansionQuery).then(
+        () => {
+          const value = withExpanded(
+            queryClient.getQueryData(groupExpansionQuery.queryKey) ??
+              NO_EXPANSION,
+            groupBy,
+            groupIds,
+            next,
+          )
+          queryClient.setQueryData(groupExpansionQuery.queryKey, value)
+          save(value)
+        },
+        () => setUnsaved(prev => withExpanded(prev, groupBy, groupIds, next)),
+      )
     },
     [searching, groupIds, groupBy, queryClient, save],
   )
