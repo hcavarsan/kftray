@@ -1,0 +1,21 @@
+{
+  "app": {
+    "windows": [
+      {
+        "backgroundColor": "#111111",
+        "decorations": false,
+        "focus": true,
+        "fullscreen": false,
+        "height": 500,
+        "hiddenTitle": true,
+        "resizable": true,
+        "skipTaskbar": true,
+        "title": "kftray",
+        "transparent": false,
+        "useHttpsScheme": true,
+        "visible": false,
+        "width": 450
+      }
+    ]
+  }
+}
