@@ -68,6 +68,11 @@ fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
                 "remote_address is required when workload_type is 'ssh-port-forward'",
             ));
         }
+        if config.remote_port.is_none_or(|port| port == 0) {
+            return Err(CallToolResult::error(
+                "remote_port must be greater than 0 when workload_type is 'ssh-port-forward'",
+            ));
+        }
         if config.protocol != "tcp" {
             return Err(CallToolResult::error(
                 "protocol must be 'tcp' when workload_type is 'ssh-port-forward'",
@@ -883,6 +888,15 @@ mod tests {
     #[test]
     fn ssh_config_with_provider_should_not_need_context_or_namespace() {
         assert!(check_workload_fields(&ssh_config(Some(gcp_bastion()))).is_ok());
+    }
+
+    #[test]
+    fn ssh_config_with_remote_port_zero_should_be_rejected() {
+        let config = Config {
+            remote_port: Some(0),
+            ..ssh_config(Some(gcp_bastion()))
+        };
+        assert!(check_workload_fields(&config).is_err());
     }
 
     #[test]
