@@ -67,6 +67,8 @@ Download [kftray or kftui](https://kftray.app/downloads), follow the [installati
 
 Read the [contribution guide](https://kftray.app/docs/resources/contributing) and [code of conduct](https://kftray.app/docs/resources/code-of-conduct). For local builds, see [development](https://kftray.app/docs/resources/development) and [building from source](https://kftray.app/docs/resources/building-from-source).
 
+Release scans block publication on High or Critical vulnerabilities. Each Grype step prints its findings in the job log and saves a JSON report.
+
 Report bugs or request features through [GitHub issues](https://github.com/hcavarsan/kftray/issues). Use [Discussions](https://github.com/hcavarsan/kftray/discussions) or [Slack](https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA) for questions.
 
 ## License

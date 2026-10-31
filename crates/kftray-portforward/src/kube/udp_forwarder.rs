@@ -1426,7 +1426,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_read_tcp_length_and_packet_empty() {
-        let (mut reader, _) = duplex(0);
+        let mut reader = tokio::io::empty();
 
         let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
         assert!(result.unwrap().is_none());

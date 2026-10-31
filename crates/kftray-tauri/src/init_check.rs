@@ -518,7 +518,13 @@ async fn find_process_by_port_internal(
 }
 
 fn get_process_name_by_pid(pid: i32) -> String {
-    let mut system = System::new();
+    let mut system = match System::new() {
+        Ok(system) => system,
+        Err(error) => {
+            warn!("Could not inspect process {pid}: {error}");
+            return "unknown".to_string();
+        }
+    };
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
 
     system

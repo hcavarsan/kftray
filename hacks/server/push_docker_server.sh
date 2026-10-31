@@ -13,7 +13,10 @@ KFTRAY_SERVER_DIR="$CURRENT_DIR/crates/kftray-server"
 
 cd "$KFTRAY_SERVER_DIR" || exit
 
-docker buildx build --platform linux/amd64 -t ghcr.io/hcavarsan/kftray-server:"$TAG" --load .
+# Do not publish an existing tag if the build fails.
+docker buildx build --platform linux/amd64 \
+  --file "$KFTRAY_SERVER_DIR/Dockerfile" \
+  -t ghcr.io/hcavarsan/kftray-server:"$TAG" --load "$CURRENT_DIR" || exit
 
 
 cd "$CURRENT_DIR" || exit

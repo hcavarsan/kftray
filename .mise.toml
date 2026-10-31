@@ -1,6 +1,6 @@
 [tools]
 node = "26"
-pnpm = "12.15.0"
+pnpm = "12.16.1"
 syft = "1.55.0"
 grype = "0.121.0"
 
@@ -151,7 +151,7 @@ description = "Setup development environment for all platforms"
 run = "bash hacks/setup.sh"
 
 [tasks."sbom:install-tools"]
-description = "Install sbomasm and cargo-cyclonedx if not present"
+description = "Install SBOM tooling"
 run = """
 # Install cargo-cyclonedx if not present
 if ! command -v cargo-cyclonedx > /dev/null 2>&1; then
@@ -161,37 +161,40 @@ else
   echo "cargo-cyclonedx already installed"
 fi
 
-# Check if sbomasm is already installed
-if command -v sbomasm > /dev/null 2>&1 && sbomasm version > /dev/null 2>&1; then
+SBOMASM_VERSION="2.1.2"
+if command -v sbomasm > /dev/null 2>&1 &&
+   sbomasm version --json 2>/dev/null |
+     jq -e --arg version "$SBOMASM_VERSION" '(.gitVersion | ltrimstr("v")) == $version' > /dev/null 2>&1; then
   echo "sbomasm already installed: $(sbomasm version)"
   exit 0
 fi
 
-if [ -x "$HOME/.local/bin/sbomasm" ] && "$HOME/.local/bin/sbomasm" version > /dev/null 2>&1; then
-  echo "sbomasm already installed at ~/.local/bin: $($HOME/.local/bin/sbomasm version)"
+if [ -x "$HOME/.local/bin/sbomasm" ] &&
+   "$HOME/.local/bin/sbomasm" version --json 2>/dev/null |
+     jq -e --arg version "$SBOMASM_VERSION" '(.gitVersion | ltrimstr("v")) == $version' > /dev/null 2>&1; then
+  echo "sbomasm already installed at ~/.local/bin: $("$HOME/.local/bin/sbomasm" version)"
   exit 0
 fi
 
 echo "Installing sbomasm..."
 mkdir -p ~/.local/bin
-# Checksums from: https://github.com/interlynk-io/sbomasm/releases/tag/v2.1.1
-SBOMASM_VERSION="2.1.1"
+# Checksums from: https://github.com/interlynk-io/sbomasm/releases/tag/v2.1.2
 OS=$(uname -s)
 ARCH=$(uname -m)
 
 if [ "$ARCH" = "x86_64" ]; then
   SBOMASM_ARCH="x86_64"
   if [ "$OS" = "Darwin" ]; then
-    EXPECTED_SHA="3ca7812b8289fd3a882e1870dc016508bee06e81f804c535210e0c1f43cffff9"
+    EXPECTED_SHA="6dd31bcae19f0316e9b7efc31a248c55ef1ff1e6890f5bc460559f783adb596e"
   else
-    EXPECTED_SHA="643595183bb2f79fc123bee2fa7525f0e6585cb3806c38df1a8e758d66631a31"
+    EXPECTED_SHA="d366e32bb25b9bdd6dac3655fa3d238b9eddd2d385dc7fb49364a9cca5bdba46"
   fi
 elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
   SBOMASM_ARCH="arm64"
   if [ "$OS" = "Darwin" ]; then
-    EXPECTED_SHA="cde3f4fd7e78617b0a337eaa246137ba0c613ff800efbad03ca5907cc02d6920"
+    EXPECTED_SHA="46f0b363e287c830bc77be23b3c3c9b8f4ba79fdb511705cf333c6e0140e78b5"
   else
-    EXPECTED_SHA="2af1103251f3227bc78e4e8df53305aa1cd4e83a4e5d9cbd7cf6ebf42c15ede6"
+    EXPECTED_SHA="38addc75d7ecfe483639d44e2ad4dd14bcb00cc9e147d658b23c8b5935480b82"
   fi
 else
   echo "ERROR: Unsupported architecture: $ARCH" >&2
@@ -226,7 +229,8 @@ tar -xzf "$TEMP_FILE" -C ~/.local/bin sbomasm
 chmod +x ~/.local/bin/sbomasm
 rm -f "$TEMP_FILE"
 
-if ! ~/.local/bin/sbomasm version > /dev/null 2>&1; then
+if ! ~/.local/bin/sbomasm version --json |
+     jq -e --arg version "$SBOMASM_VERSION" '(.gitVersion | ltrimstr("v")) == $version' > /dev/null; then
   echo "ERROR: sbomasm installation failed" >&2
   exit 1
 fi

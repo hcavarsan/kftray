@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.34.0"
+version = "0.35.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
@@ -79,7 +79,7 @@ core-foundation = "0.10.1"
 security-framework = "3.7.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-schannel = "0.1.29"
+schannel = "0.1.30"
 windows = { workspace = true }
 windows-native-keyring-store = { workspace = true }
 

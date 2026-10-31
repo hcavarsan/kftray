@@ -494,7 +494,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@8b574cdc2dffdae49f803204a4f2b716a2fa1db7 # v1.44.2
+        uses: shogo82148/actions-setup-perl@3b59bd33efdae98406a9bc4b75a4aa041e11993a # v1.44.4
         with:
           perl-version: "5.42"
           distribution: "strawberry"
@@ -646,7 +646,7 @@ jobs:
             network=host
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -717,12 +717,12 @@ jobs:
           rustup default stable
 
       - name: Install cargo-cyclonedx
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-cyclonedx@0.5.9
 
       - name: Setup mise
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           cache: false
 
@@ -730,7 +730,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -755,17 +755,17 @@ jobs:
       # === SBOM Scanning ===
       - name: Scan kftray SBOM
         run: |
-          grype sbom:sbom-kftray.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray.json
+          grype sbom:sbom-kftray.cdx.json --fail-on high --show-suppressed -o table -o json=vuln-report-kftray.json
 
       - name: Scan kftui SBOM
         run: |
-          grype sbom:sbom-kftui.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftui.json
+          grype sbom:sbom-kftui.cdx.json --fail-on high --show-suppressed -o table -o json=vuln-report-kftui.json
 
       - name: Scan kftray-server image
         env:
           DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server@${{ needs.kftray-server.outputs.digest }}
         run: |
-          grype "$DOCKER_IMAGE" --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray-server.json
+          grype "$DOCKER_IMAGE" --fail-on high --show-suppressed -o table -o json=vuln-report-kftray-server.json
 
       # === SBOM Signing ===
       - name: Install Cosign
@@ -894,7 +894,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber
 
       - name: Setup uv for updater metadata
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
 
@@ -951,7 +951,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-commons)
         id: crates-io-auth-commons
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-commons
         env:
@@ -963,7 +963,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-telemetry)
         id: crates-io-auth-telemetry
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-telemetry
         env:
@@ -975,7 +975,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-helper)
         id: crates-io-auth-helper
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-helper
         env:
@@ -987,7 +987,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-http-logs)
         id: crates-io-auth-http-logs
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-http-logs
         env:
@@ -1011,7 +1011,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-portforward)
         id: crates-io-auth-portforward
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-portforward
         env:
@@ -1023,7 +1023,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftray-network-monitor)
         id: crates-io-auth-network-monitor
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftray-network-monitor
         env:
@@ -1035,7 +1035,7 @@ jobs:
 
       - name: Authenticate with crates.io (kftui)
         id: crates-io-auth-kftui
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
       - name: Publish kftui
         env:
@@ -1091,7 +1091,7 @@ jobs:
           name: sbom-signed
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1143,7 +1143,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
 
