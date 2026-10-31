@@ -17,6 +17,7 @@ import type { PendingActions } from './usePendingActions'
 
 const ALREADY_RUNNING = /already (running|in progress)/i
 const CONCURRENCY_LIMIT = 8
+const MAX_FAILURE_DETAILS = 3
 export const BATCH_DEADLINE_MS = 180_000
 export const DEADLINE_GRACE_MS = 30_000
 
@@ -129,9 +130,17 @@ export async function executeBatch(
 
       return
     }
+    const details = reporting
+      .slice(0, MAX_FAILURE_DETAILS)
+      .map(({ id, error }) => `Config ${id}: ${errorMessage(error)}`)
+    const remaining = reporting.length - details.length
+
     toaster.error({
       title: failureTitle,
-      description: `${reporting.length} configs failed to ${verb}`,
+      description: [
+        ...details,
+        ...(remaining > 0 ? [`and ${remaining} more`] : []),
+      ].join('\n'),
       duration: 3000,
     })
   }
