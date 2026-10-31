@@ -1,4 +1,9 @@
-use crossterm::event::KeyCode;
+use crossterm::event::{
+    Event,
+    KeyCode,
+    KeyEvent,
+    KeyModifiers,
+};
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::{
     insert_config_with_mode,
@@ -26,6 +31,7 @@ use crate::tui::input::{
     handle_help_input,
     handle_http_logs_config_input,
     handle_http_logs_viewer_input,
+    handle_input_with_reader,
     handle_logs_input,
     handle_menu_input,
     handle_normal_input,
@@ -86,6 +92,52 @@ mod tests {
         app.selected_row_stopped = 1;
         app.selected_row_running = 0;
         app
+    }
+
+    #[tokio::test]
+    async fn test_resize_returns_without_more_input_and_preserves_next_keys() {
+        for height in [40, 24, 10] {
+            let mut app = setup_app();
+            app.stopped_configs = create_test_configs(50);
+            app.update_visible_rows(24);
+            let mut events = std::collections::VecDeque::from([Event::Resize(100, height)]);
+            let mut read_event = || {
+                events
+                    .pop_front()
+                    .ok_or_else(|| std::io::Error::other("no input event available"))
+            };
+
+            assert!(
+                !handle_input_with_reader(&mut app, DatabaseMode::Memory, &mut read_event)
+                    .await
+                    .unwrap()
+            );
+            let expected_rows = height.saturating_sub(19) as usize;
+            assert_eq!(app.visible_rows, expected_rows);
+
+            let mut events = std::collections::VecDeque::from([
+                Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+                Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            ]);
+            let mut read_event = || {
+                events
+                    .pop_front()
+                    .ok_or_else(|| std::io::Error::other("no input event available"))
+            };
+            assert!(
+                !handle_input_with_reader(&mut app, DatabaseMode::Memory, &mut read_event)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(app.selected_row_stopped, 1 + expected_rows);
+            assert_eq!(app.table_state_stopped.selected(), Some(1 + expected_rows));
+            assert!(
+                handle_input_with_reader(&mut app, DatabaseMode::Memory, &mut read_event)
+                    .await
+                    .unwrap()
+            );
+            assert!(app.should_quit);
+        }
     }
 
     #[test]
