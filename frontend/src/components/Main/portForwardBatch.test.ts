@@ -215,6 +215,58 @@ describe('executeBatch', () => {
     )
   })
 
+  it('includes bounded, configuration-specific reasons for multiple start failures', async () => {
+    const { deps } = setup()
+    const reasons: Record<number, string> = {
+      1: 'port 8080 is already in use',
+      2: 'context prod not found',
+      3: 'pod api not found',
+      4: 'connection refused',
+    }
+    const runForwardCommand = vi.fn<RunForwardCommand>(async config => {
+      throw new Error(reasons[config.id])
+    })
+
+    await executeBatch(
+      { ...deps, runForwardCommand },
+      configsWithIds(range(1, 4)),
+      'starting',
+    )
+
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Start Failed',
+        description: expect.stringMatching(
+          /Config 1: port 8080 is already in use.*Config 2: context prod not found.*Config 3: pod api not found.*and 1 more/s,
+        ),
+      }),
+    )
+  })
+
+  it('includes configuration-specific reasons for multiple stop failures', async () => {
+    const { deps, gate } = setup()
+    const batch = executeBatch(deps, configsWithIds([1, 2]), 'stopping')
+
+    await flushPromises()
+    gate(1).reject(new Error('port forward is not running'))
+    gate(2).reject(new Error('pod api not found'))
+    await batch
+
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Stop Failed',
+        description: expect.stringContaining(
+          'Config 1: port forward is not running',
+        ),
+      }),
+    )
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('Config 2: pod api not found'),
+      }),
+    )
+  })
+
   it('reports a failure that settles after the deadline on its own', async () => {
     const { deps, gate } = setup()
     const batch = executeBatch(deps, configsWithIds([1]), 'stopping')
