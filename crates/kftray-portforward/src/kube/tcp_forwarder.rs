@@ -334,7 +334,10 @@ impl TcpForwarder {
     }
 
     pub async fn initialize_logger(&mut self, local_port: u16) -> anyhow::Result<()> {
-        if self.workload_type != "service" && self.workload_type != "pod" {
+        if !matches!(
+            self.workload_type.as_str(),
+            "service" | "pod" | kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD
+        ) {
             return Ok(());
         }
 

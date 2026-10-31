@@ -3,6 +3,7 @@ import type {
   ExposureProtocol,
   ExposureType,
   Protocol,
+  SshProvider,
   StoredConfig,
   StringOption,
   WorkloadType,
@@ -35,6 +36,7 @@ export interface ConfigDraft {
   remote_address?: string
   remote_port?: string
   service?: string
+  ssh_provider?: SshProvider
   tags?: Record<string, string>
   target?: string
   workload_type?: WorkloadType

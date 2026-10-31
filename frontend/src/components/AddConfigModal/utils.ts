@@ -1,6 +1,7 @@
 import { DEFAULT_KUBECONFIG } from '@/hooks/useKubeconfigPicker'
 import type { Facet, StoredConfig } from '@/types'
 
+import { SSH_PROVIDERS, sshProviderUi } from './ssh/providers'
 import type { ConfigDraft, StringOption } from './types'
 
 type ClearableField =
@@ -112,6 +113,25 @@ export function toConfig(
         workload_type: 'expose',
       }
     }
+    case 'ssh-port-forward': {
+      const provider =
+        draft.ssh_provider ?? SSH_PROVIDERS['gcp-bastion'].empty()
+
+      return {
+        ...base,
+        context: undefined,
+        kubeconfig: undefined,
+        namespace: undefined,
+        protocol: 'tcp',
+        remote_address: draft.remote_address ?? '',
+        remote_port: Number(draft.remote_port),
+        service: undefined,
+        ssh_provider:
+          sshProviderUi(provider.type)?.normalize(provider) ?? provider,
+        target: undefined,
+        workload_type: 'ssh-port-forward',
+      }
+    }
     case 'service':
       return {
         ...base,
@@ -188,6 +208,17 @@ const isPort = (value: string | undefined) => {
   return Number.isInteger(port) && port >= 1 && port <= 65535
 }
 
+const sshProviderError = (provider: ConfigDraft['ssh_provider']) => {
+  if (!provider) {
+    return 'SSH provider is required'
+  }
+  const ui = sshProviderUi(provider.type)
+
+  return ui
+    ? Object.values(ui.validate(provider))[0]
+    : 'This SSH provider needs a newer kftray'
+}
+
 export function validateDraft(draft: ConfigDraft): Record<string, string> {
   const errors: Record<string, string> = {}
   const required = (field: keyof ConfigDraft, label: string) => {
@@ -195,10 +226,14 @@ export function validateDraft(draft: ConfigDraft): Record<string, string> {
       errors[field] = `${label} is required`
     }
   }
-  required('context', 'Context')
-  required('namespace', 'Namespace')
+  const isSsh = draft.workload_type === 'ssh-port-forward'
+
   required('workload_type', 'Workload type')
-  required('protocol', 'Protocol')
+  if (!isSsh) {
+    required('context', 'Context')
+    required('namespace', 'Namespace')
+    required('protocol', 'Protocol')
+  }
 
   const workloadType = draft.workload_type
   if (workloadType === 'expose') {
@@ -214,6 +249,12 @@ export function validateDraft(draft: ConfigDraft): Record<string, string> {
   } else {
     if (workloadType === 'proxy') {
       required('remote_address', 'Remote address')
+    } else if (isSsh) {
+      required('remote_address', 'Remote host')
+      const providerError = sshProviderError(draft.ssh_provider)
+      if (providerError) {
+        errors.ssh_provider = providerError
+      }
     } else {
       required(
         workloadType === 'pod' ? 'target' : 'service',

@@ -56,6 +56,7 @@ pub struct Desktop {
 impl Desktop {
     pub async fn launch(env: &TestEnv, profile: Profile) -> Result<Self> {
         let port = free_port()?;
+        profile.seed_ssh_key(&env.ssh_key)?;
         let mut child = Command::new(&env.kftray)
             .envs(profile.env(env, Some(port)))
             .stdin(Stdio::null())

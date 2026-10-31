@@ -77,7 +77,7 @@ impl Default for ListenerConfig {
 
 /// Saves on the forward's state row why a new connection could not reach the
 /// pod, and clears it once a later connection does.
-struct ConnectionErrors {
+pub(crate) struct ConnectionErrors {
     config_id: i64,
     mode: Option<DatabaseMode>,
     /// Set when a failure is reported, so a good connection only takes the
@@ -91,7 +91,7 @@ struct ConnectionErrors {
 }
 
 impl ConnectionErrors {
-    fn new(config_id: i64, mode: Option<DatabaseMode>) -> Self {
+    pub(crate) fn new(config_id: i64, mode: Option<DatabaseMode>) -> Self {
         Self {
             config_id,
             mode,
@@ -101,7 +101,7 @@ impl ConnectionErrors {
         }
     }
 
-    async fn failed(&self, message: String) {
+    pub(crate) async fn failed(&self, message: String) {
         let Some(mode) = self.mode else {
             return;
         };
@@ -121,7 +121,7 @@ impl ConnectionErrors {
         self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn succeeded(&self) {
+    pub(crate) async fn succeeded(&self) {
         let Some(mode) = self.mode else {
             return;
         };
@@ -1014,22 +1014,9 @@ impl PortForwarder {
             })?;
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
 
-        let listener = TcpListener::bind(addr).await.map_err(|e| match e.kind() {
-            std::io::ErrorKind::AddrInUse => {
-                crate::local_port::port_in_use(ip, addr.port(), Protocol::Tcp)
-            }
-            std::io::ErrorKind::PermissionDenied => crate::local_port::bind_denied(
-                &listener_config.local_address,
-                addr.port(),
-                Protocol::Tcp,
-            ),
-            std::io::ErrorKind::AddrNotAvailable => crate::local_port::address_unavailable(
-                &listener_config.local_address,
-                addr.port(),
-                Protocol::Tcp,
-            ),
-            _ => anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e),
-        })?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| map_bind_error(e, &listener_config.local_address, ip, addr.port()))?;
         let port = listener.local_addr()?.port();
 
         let tls_acceptor = listener_config.tls_acceptor;
@@ -1264,7 +1251,7 @@ fn spawn_udp_forward_owner(
     })
 }
 
-async fn is_http_request(client_conn: &TcpStream) -> bool {
+pub(crate) async fn is_http_request(client_conn: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 64];
 
     if client_conn.peek(&mut peek_buf).await.is_ok() {
@@ -1280,7 +1267,7 @@ async fn is_http_request(client_conn: &TcpStream) -> bool {
     }
 }
 
-async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Result<()> {
+pub(crate) async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Result<()> {
     let mut buffer = [0u8; 1024];
     let n = stream.read(&mut buffer).await?;
 
@@ -1310,6 +1297,27 @@ async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Resul
 
     stream.write_all(response.as_bytes()).await?;
     Ok(())
+}
+
+/// Turns a TCP bind failure into the message the user sees, naming the
+/// busy port, the missing permission or the unconfigured address.
+pub(crate) fn map_bind_error(
+    error: std::io::Error, address: &str, ip: std::net::IpAddr, port: u16,
+) -> anyhow::Error {
+    match error.kind() {
+        std::io::ErrorKind::AddrInUse => crate::local_port::port_in_use(ip, port, Protocol::Tcp),
+        std::io::ErrorKind::PermissionDenied => {
+            crate::local_port::bind_denied(address, port, Protocol::Tcp)
+        }
+        std::io::ErrorKind::AddrNotAvailable => {
+            crate::local_port::address_unavailable(address, port, Protocol::Tcp)
+        }
+        _ => anyhow::anyhow!(
+            "Failed to bind TCP listener to {}: {}",
+            std::net::SocketAddr::new(ip, port),
+            error
+        ),
+    }
 }
 
 #[cfg(test)]

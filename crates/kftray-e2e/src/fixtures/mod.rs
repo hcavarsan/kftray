@@ -5,6 +5,7 @@ pub use forwards::{
     proxy_http,
     service_http,
     service_udp,
+    ssh_gcp_bastion_http,
 };
 use kftray_commons::models::config_model::Config;
 

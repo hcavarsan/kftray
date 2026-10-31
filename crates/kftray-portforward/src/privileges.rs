@@ -94,7 +94,7 @@ async fn needs_for(
         .clone()
         .or_else(|| config.service.clone())
         .unwrap_or_default();
-    if config.domain_enabled.unwrap_or_default() && config.service.is_some() && !hosts_writable {
+    if config.domain_alias_eligible() && !hosts_writable {
         needs.push((PrivilegedResource::HostsFile, label.clone()));
     }
     if config.auto_loopback_address {

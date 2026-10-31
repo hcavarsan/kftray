@@ -11,6 +11,7 @@ pub mod portforward;
 pub mod server_resources;
 pub mod settings;
 pub mod shortcuts;
+pub mod ssh;
 pub mod ssl;
 pub mod telemetry;
 pub mod updater;

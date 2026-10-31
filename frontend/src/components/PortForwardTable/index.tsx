@@ -12,6 +12,7 @@ import { Box, Button, Flex, Text } from '@chakra-ui/react'
 import { Header } from '@/components/Header'
 import { HeaderMenu } from '@/components/HeaderMenu'
 import { GroupAccordion } from '@/components/PortForwardTable/GroupAccordion'
+import { sshProviderInfo } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/statusInfo'
 import {
   NO_PODS,
   useActivePods,
@@ -93,8 +94,13 @@ export function PortForwardTable({
         config =>
           (config.alias ?? '').toLowerCase().includes(searchLower) ||
           (config.context ?? '').toLowerCase().includes(searchLower) ||
-          (config.workload_type === 'proxy' &&
+          ((config.workload_type === 'proxy' ||
+            config.workload_type === 'ssh-port-forward') &&
             config.remote_address.toLowerCase().includes(searchLower)) ||
+          (config.workload_type === 'ssh-port-forward' &&
+            sshProviderInfo(config.ssh_provider)
+              .summary.toLowerCase()
+              .includes(searchLower)) ||
           String(config.local_port ?? '').includes(searchLower) ||
           Object.entries(config.tags ?? {}).some(([key, value]) =>
             `${key}=${value}`.toLowerCase().includes(searchLower),

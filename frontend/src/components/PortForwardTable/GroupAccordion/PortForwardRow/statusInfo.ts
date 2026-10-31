@@ -1,9 +1,20 @@
-import type { Config, PendingConfigAction } from '@/types'
+import { sshProviderUi } from '@/components/AddConfigModal/ssh/providers'
+import type { Config, PendingConfigAction, SshProvider } from '@/types'
 
 export interface StatusInfo {
   color: string
   status: string
   description: string
+}
+
+export function sshProviderInfo(provider: SshProvider) {
+  const ui = sshProviderUi(provider.type)
+
+  return {
+    badge: ui?.badge ?? provider.type,
+    label: ui?.label ?? provider.type,
+    summary: ui?.summary(provider) ?? '',
+  }
 }
 
 export function getStatusInfo(
@@ -81,7 +92,20 @@ export function getStatusInfo(
       return {
         color: 'warning.fg',
         status: 'Failing',
-        description: 'Connections to the pod fail',
+        description:
+          config.workload_type === 'ssh-port-forward'
+            ? 'Connections through the SSH session fail'
+            : 'Connections to the pod fail',
+      }
+    }
+
+    if (config.workload_type === 'ssh-port-forward') {
+      const { label, summary } = sshProviderInfo(config.ssh_provider)
+
+      return {
+        color: 'accent.fg',
+        status: 'Running',
+        description: `${label}: ${summary} → ${config.remote_address}:${config.remote_port}`,
       }
     }
 
@@ -175,6 +199,16 @@ export function getConfigDetails(
       details.push({ label: 'Service Name', value: config.alias })
     }
     details.push({ label: 'Local Port', value: String(config.local_port) })
+  } else if (config.workload_type === 'ssh-port-forward') {
+    const { label, summary } = sshProviderInfo(config.ssh_provider)
+
+    details.push({ label: 'Provider', value: label })
+    details.push({ label: 'Bastion', value: summary })
+    details.push({
+      label: 'Destination',
+      value: `${config.remote_address}:${config.remote_port}`,
+    })
+    details.push({ label: 'Protocol', value: config.protocol ?? '' })
   } else {
     details.push({
       label: 'Service',
@@ -187,8 +221,10 @@ export function getConfigDetails(
     details.push({ label: 'Protocol', value: config.protocol ?? '' })
   }
 
-  details.push({ label: 'Context', value: config.context ?? '' })
-  details.push({ label: 'Namespace', value: config.namespace ?? '' })
+  if (config.workload_type !== 'ssh-port-forward') {
+    details.push({ label: 'Context', value: config.context ?? '' })
+    details.push({ label: 'Namespace', value: config.namespace ?? '' })
+  }
 
   const tagsLabel = Object.entries(config.tags ?? {})
     .map(([key, value]) => (value ? `${key}=${value}` : key))
