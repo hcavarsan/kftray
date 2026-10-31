@@ -1881,9 +1881,13 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc => {
             app.active_component = ActiveComponent::StoppedTable;
+            app.active_table = ActiveTable::Stopped;
             app.search_focused = false;
             app.search_query.clear();
             apply_search_query(app);
+            if app.table_state_stopped.selected().is_none() {
+                select_first_row(app);
+            }
         }
         KeyCode::Up => {
             app.active_component = ActiveComponent::Menu;
