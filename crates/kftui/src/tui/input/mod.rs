@@ -1291,103 +1291,111 @@ pub fn toggle_select_all(app: &mut App) {
 
 pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
-        if let Event::Key(key) = event::read()? {
-            log::debug!("Key pressed: {key:?}");
+        return handle_input_with_reader(app, mode, event::read).await;
+    }
+    Ok(app.should_quit)
+}
 
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                app.should_quit = true;
-                return Ok(true);
-            }
+pub(crate) async fn handle_input_with_reader(
+    app: &mut App, mode: DatabaseMode, mut read_event: impl FnMut() -> io::Result<Event>,
+) -> io::Result<bool> {
+    let input = read_event()?;
+    if let Event::Key(key) = input {
+        log::debug!("Key pressed: {key:?}");
 
-            match app.state {
-                AppState::ShowErrorPopup => {
-                    log::debug!("Handling ShowErrorPopup state");
-                    if key.code == KeyCode::Char('p') && !app.port_retries.is_empty() {
-                        start_on_free_ports(app, mode).await;
-                    } else {
-                        handle_error_popup_input(app, key.code)?;
-                    }
-                }
-                AppState::ShowConfirmationPopup => {
-                    log::debug!("Handling ShowConfirmationPopup state");
-                    handle_confirmation_popup_input(app, key.code).await?;
-                }
-                AppState::ImportFileExplorerOpen => {
-                    log::debug!("Handling ImportFileExplorerOpen state");
-                    handle_import_file_explorer_input(app, key.code, mode).await?;
-                }
-                AppState::ExportFileExplorerOpen => {
-                    log::debug!("Handling ExportFileExplorerOpen state");
-                    handle_export_file_explorer_input(app, key.code, mode).await?;
-                }
-                AppState::ShowInputPrompt => {
-                    log::debug!("Handling ShowInputPrompt state");
-                    handle_export_input_prompt(app, key.code, mode).await?;
-                }
-                AppState::ShowHelp => {
-                    log::debug!("Handling ShowHelp state");
-                    handle_help_input(app, key.code)?;
-                }
-                AppState::ShowAbout => {
-                    log::debug!("Handling ShowAbout state");
-                    handle_about_input(app, key.code)?;
-                }
-                AppState::ShowDeleteConfirmation => {
-                    log::debug!("Handling ShowDeleteConfirmation state");
-                    handle_delete_confirmation_input(app, key.code, mode).await?;
-                }
-                AppState::ShowContextSelection => {
-                    log::debug!("Handling ShowContextSelection state");
-                    handle_context_selection_input(app, key.code, mode).await?;
-                }
-                AppState::ShowSettings => {
-                    log::debug!("Handling ShowSettings state");
-                    handle_settings_input(app, key.code, mode).await?;
-                }
-                AppState::ShowHttpLogsConfig => {
-                    log::debug!("Handling ShowHttpLogsConfig state");
-                    handle_http_logs_config_input(app, key.code, mode).await?;
-                }
-                AppState::ShowHttpLogsViewer => {
-                    log::debug!("Handling ShowHttpLogsViewer state");
-                    handle_http_logs_viewer_input(app, key.code).await?;
-                }
-                AppState::ShowViewSettings => {
-                    log::debug!("Handling ShowViewSettings state");
-                    handle_view_settings_input(app, key.code, mode).await?;
-                }
-                AppState::ShowTagEditor => {
-                    log::debug!("Handling ShowTagEditor state");
-                    handle_tag_editor_input(app, key.code, mode).await?;
-                }
-                AppState::ShowTelemetryConsent => {
-                    log::debug!("Handling ShowTelemetryConsent state");
-                    handle_telemetry_consent_input(app, key.code, mode).await?;
-                }
-                AppState::ShowUpdateConfirmation => {
-                    log::debug!("Handling ShowUpdateConfirmation state");
-                    handle_update_confirmation_input(app, key.code, mode).await?;
-                }
-                AppState::ShowUpdateProgress => {
-                    log::debug!("Handling ShowUpdateProgress state");
-                }
-                AppState::ShowRestartNotification => {
-                    log::debug!("Handling ShowRestartNotification state");
-                    handle_restart_notification_input(app, key.code)?;
-                }
-                AppState::Normal => {
-                    log::debug!("Handling Normal state");
-                    if app.active_component == ActiveComponent::SearchBar {
-                        handle_search_input(app, key.code)?;
-                    } else {
-                        handle_normal_input(app, key.code, mode).await?;
-                    }
-                }
-            }
-        } else if let Event::Resize(_, height) = event::read()? {
-            log::debug!("Handling Resize event");
-            app.update_visible_rows(height);
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app.should_quit = true;
+            return Ok(true);
         }
+
+        match app.state {
+            AppState::ShowErrorPopup => {
+                log::debug!("Handling ShowErrorPopup state");
+                if key.code == KeyCode::Char('p') && !app.port_retries.is_empty() {
+                    start_on_free_ports(app, mode).await;
+                } else {
+                    handle_error_popup_input(app, key.code)?;
+                }
+            }
+            AppState::ShowConfirmationPopup => {
+                log::debug!("Handling ShowConfirmationPopup state");
+                handle_confirmation_popup_input(app, key.code).await?;
+            }
+            AppState::ImportFileExplorerOpen => {
+                log::debug!("Handling ImportFileExplorerOpen state");
+                handle_import_file_explorer_input(app, key.code, mode).await?;
+            }
+            AppState::ExportFileExplorerOpen => {
+                log::debug!("Handling ExportFileExplorerOpen state");
+                handle_export_file_explorer_input(app, key.code, mode).await?;
+            }
+            AppState::ShowInputPrompt => {
+                log::debug!("Handling ShowInputPrompt state");
+                handle_export_input_prompt(app, key.code, mode).await?;
+            }
+            AppState::ShowHelp => {
+                log::debug!("Handling ShowHelp state");
+                handle_help_input(app, key.code)?;
+            }
+            AppState::ShowAbout => {
+                log::debug!("Handling ShowAbout state");
+                handle_about_input(app, key.code)?;
+            }
+            AppState::ShowDeleteConfirmation => {
+                log::debug!("Handling ShowDeleteConfirmation state");
+                handle_delete_confirmation_input(app, key.code, mode).await?;
+            }
+            AppState::ShowContextSelection => {
+                log::debug!("Handling ShowContextSelection state");
+                handle_context_selection_input(app, key.code, mode).await?;
+            }
+            AppState::ShowSettings => {
+                log::debug!("Handling ShowSettings state");
+                handle_settings_input(app, key.code, mode).await?;
+            }
+            AppState::ShowHttpLogsConfig => {
+                log::debug!("Handling ShowHttpLogsConfig state");
+                handle_http_logs_config_input(app, key.code, mode).await?;
+            }
+            AppState::ShowHttpLogsViewer => {
+                log::debug!("Handling ShowHttpLogsViewer state");
+                handle_http_logs_viewer_input(app, key.code).await?;
+            }
+            AppState::ShowViewSettings => {
+                log::debug!("Handling ShowViewSettings state");
+                handle_view_settings_input(app, key.code, mode).await?;
+            }
+            AppState::ShowTagEditor => {
+                log::debug!("Handling ShowTagEditor state");
+                handle_tag_editor_input(app, key.code, mode).await?;
+            }
+            AppState::ShowTelemetryConsent => {
+                log::debug!("Handling ShowTelemetryConsent state");
+                handle_telemetry_consent_input(app, key.code, mode).await?;
+            }
+            AppState::ShowUpdateConfirmation => {
+                log::debug!("Handling ShowUpdateConfirmation state");
+                handle_update_confirmation_input(app, key.code, mode).await?;
+            }
+            AppState::ShowUpdateProgress => {
+                log::debug!("Handling ShowUpdateProgress state");
+            }
+            AppState::ShowRestartNotification => {
+                log::debug!("Handling ShowRestartNotification state");
+                handle_restart_notification_input(app, key.code)?;
+            }
+            AppState::Normal => {
+                log::debug!("Handling Normal state");
+                if app.active_component == ActiveComponent::SearchBar {
+                    handle_search_input(app, key.code)?;
+                } else {
+                    handle_normal_input(app, key.code, mode).await?;
+                }
+            }
+        }
+    } else if let Event::Resize(_, height) = input {
+        log::debug!("Handling Resize event");
+        app.update_visible_rows(height);
     }
     Ok(app.should_quit)
 }
