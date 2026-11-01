@@ -364,15 +364,15 @@ mod tests {
             spec: Some(ServiceSpec {
                 ports: Some(
                     [
-                        ("dns-udp", 5353, Some("UDP")),
-                        ("http", 8080, Some("TCP")),
-                        ("implicit", 9090, None),
+                        ("dns-udp", 53, 5353, Some("UDP")),
+                        ("http", 80, 8080, Some("TCP")),
+                        ("implicit", 9090, 9090, None),
                     ]
                     .into_iter()
-                    .map(|(name, port, protocol)| ServicePort {
+                    .map(|(name, port, target_port, protocol)| ServicePort {
                         name: Some(name.to_string()),
                         port,
-                        target_port: Some(IntOrString::Int(port)),
+                        target_port: Some(IntOrString::Int(target_port)),
                         protocol: protocol.map(str::to_string),
                         ..Default::default()
                     })
@@ -418,7 +418,7 @@ mod tests {
         assert_eq!(
             discover_protocols(None).await,
             vec![
-                (5353, 5353, "udp".to_string()),
+                (53, 53, "udp".to_string()),
                 (8080, 8080, "tcp".to_string()),
                 (9090, 9090, "tcp".to_string()),
             ]
@@ -433,7 +433,7 @@ mod tests {
             ))
             .await,
             vec![
-                (15353, 5353, "udp".to_string()),
+                (15353, 53, "udp".to_string()),
                 (18080, 8080, "tcp".to_string()),
                 (19090, 9090, "tcp".to_string()),
             ]
@@ -443,9 +443,9 @@ mod tests {
     #[tokio::test]
     async fn discovery_preserves_numeric_port_protocols() {
         assert_eq!(
-            discover_protocols(Some("dns-15353-5353,web-18080-8080,other-19090-9090")).await,
+            discover_protocols(Some("dns-15353-53,web-18080-8080,other-19090-9090")).await,
             vec![
-                (15353, 5353, "udp".to_string()),
+                (15353, 53, "udp".to_string()),
                 (18080, 8080, "tcp".to_string()),
                 (19090, 9090, "tcp".to_string()),
             ]

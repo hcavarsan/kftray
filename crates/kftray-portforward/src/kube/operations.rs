@@ -100,11 +100,10 @@ async fn list_pods_for_named_target_ports(
     let Some(spec) = service.spec.as_ref() else {
         return Ok(Vec::new());
     };
-    let has_named_target_port = spec
-        .ports
-        .iter()
-        .flatten()
-        .any(|port| matches!(port.target_port, Some(IntOrString::String(_))));
+    let has_named_target_port = spec.ports.iter().flatten().any(|port| {
+        port.protocol.as_deref() != Some("UDP")
+            && matches!(port.target_port, Some(IntOrString::String(_)))
+    });
     if !has_named_target_port {
         return Ok(Vec::new());
     }
@@ -127,6 +126,7 @@ pub fn extract_ports_from_service(
     if let Some(spec) = &service.spec {
         for port in spec.ports.as_ref().unwrap_or(&vec![]) {
             let port_number = match &port.target_port {
+                _ if port.protocol.as_deref() == Some("UDP") => port.port,
                 Some(IntOrString::Int(number)) => *number,
                 Some(IntOrString::String(name)) => match resolve_named_port(pods, name) {
                     Some(number) => number,
