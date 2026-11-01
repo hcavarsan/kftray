@@ -453,6 +453,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discovery_uses_target_ports_for_headless_udp() {
+        for target_port in [serde_json::json!(5353), serde_json::json!("dns")] {
+            for annotation in [None, Some("dns-15353-dns-udp"), Some("dns-15353-5353")] {
+                let (client, mut handle) = mock_client("team-a");
+                let mut annotations = serde_json::json!({"kftray.app/enabled": "true"});
+                if let Some(annotation) = annotation {
+                    annotations[CONFIGS_ANNOTATION] = serde_json::json!(annotation);
+                }
+                let service = serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "ServiceList",
+                    "metadata": {},
+                    "items": [{
+                        "metadata": {"name": "dns", "annotations": annotations},
+                        "spec": {
+                            "clusterIP": "None",
+                            "selector": {"app": "dns"},
+                            "ports": [{
+                                "name": "dns-udp",
+                                "port": 53,
+                                "targetPort": target_port,
+                                "protocol": "UDP"
+                            }]
+                        }
+                    }]
+                });
+                let named_target = target_port.is_string();
+                let server = tokio::spawn(async move {
+                    let (_, send) = handle.next_request().await.unwrap();
+                    send.send_response(
+                        Response::builder()
+                            .status(200)
+                            .body(Body::from(serde_json::to_vec(&service).unwrap()))
+                            .unwrap(),
+                    );
+                    if named_target {
+                        let (request, send) = handle.next_request().await.unwrap();
+                        assert_eq!(request.uri().path(), "/api/v1/namespaces/team-a/pods");
+                        let pods = serde_json::json!({
+                            "apiVersion": "v1",
+                            "kind": "PodList",
+                            "metadata": {},
+                            "items": [{
+                                "metadata": {"name": "dns-0"},
+                                "spec": {"containers": [{
+                                    "name": "dns",
+                                    "ports": [{
+                                        "name": "dns",
+                                        "containerPort": 5353,
+                                        "protocol": "UDP"
+                                    }]
+                                }]}
+                            }]
+                        });
+                        send.send_response(
+                            Response::builder()
+                                .status(200)
+                                .body(Body::from(serde_json::to_vec(&pods).unwrap()))
+                                .unwrap(),
+                        );
+                    }
+                });
+                let configs = retrieve_service_configs_direct("ctx", None, Some("team-a"), &client)
+                    .await
+                    .unwrap();
+                let destinations: Vec<_> = configs
+                    .iter()
+                    .map(|config| {
+                        (
+                            config.local_port,
+                            config.remote_port,
+                            config.protocol.as_str(),
+                        )
+                    })
+                    .collect();
+                let local_port = if annotation.is_some() { 15353 } else { 5353 };
+                assert_eq!(destinations, [(Some(local_port), Some(5353), "udp")]);
+                server.await.unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn a_set_namespace_is_imported_without_listing_namespaces() {
         let (client, mut handle) = mock_client("default");
         let server = tokio::spawn(async move { answer_services(&mut handle, "team-a").await });
