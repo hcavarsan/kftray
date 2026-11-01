@@ -11,6 +11,7 @@ use kftray_e2e::harness::build::{
 use kftray_e2e::harness::cluster::Cluster;
 use kftray_e2e::harness::coverage::Coverage;
 use kftray_e2e::harness::display::Display;
+use kftray_e2e::harness::gcp_bastion::GcpBastion;
 use kftray_e2e::harness::workload::Workload;
 use kftray_e2e::harness::{
     TestEnv,
@@ -50,6 +51,7 @@ struct Environment {
     env: TestEnv,
     display: Display,
     _cluster: Cluster,
+    _bastion: GcpBastion,
 }
 
 #[tokio::main]
@@ -124,7 +126,7 @@ async fn run(filter: Option<&str>, skip_build: bool, coverage: bool) -> Result<(
 async fn up(skip_build: bool) -> Result<()> {
     let environment = prepare(skip_build, None).await?;
     for (name, value) in environment.env.vars() {
-        println!("export {name}={}", value.display());
+        println!("export {name}='{}'", value.display());
     }
     if let Some(display) = &environment.display.name {
         println!("export DISPLAY={display}");
@@ -148,15 +150,17 @@ async fn prepare(skip_build: bool, coverage: Option<&Coverage>) -> Result<Enviro
     }
     let timeouts = Timeouts::scaled_from_env()?;
     let display = Display::ensure(timeouts.startup).await?;
-    let (binaries, cluster) = tokio::try_join!(
+    let (binaries, cluster, bastion) = tokio::try_join!(
         build_or_reuse(skip_build, coverage),
         Cluster::start(Workload::all(), &out),
+        GcpBastion::start(&out),
     )?;
-    let env = TestEnv::new(binaries, &cluster, artifacts)?;
+    let env = TestEnv::new(binaries, &cluster, &bastion, artifacts)?;
     Ok(Environment {
         env,
         display,
         _cluster: cluster,
+        _bastion: bastion,
     })
 }
 

@@ -13,6 +13,7 @@ use rstest::rstest;
 #[case::pod_http(fixtures::pod_http())]
 #[case::service_udp(fixtures::service_udp())]
 #[case::proxy_http(fixtures::proxy_http())]
+#[case::ssh_gcp_bastion_http(fixtures::ssh_gcp_bastion_http())]
 #[tokio::test]
 async fn starting_a_forward_serves_traffic(#[case] fixture: Fixture) -> Result<()> {
     let env = TestEnv::from_env()?;
@@ -34,6 +35,7 @@ async fn starting_a_forward_serves_traffic(#[case] fixture: Fixture) -> Result<(
 #[case::service_http(fixtures::service_http())]
 #[case::pod_http(fixtures::pod_http())]
 #[case::proxy_http(fixtures::proxy_http())]
+#[case::ssh_gcp_bastion_http(fixtures::ssh_gcp_bastion_http())]
 #[tokio::test]
 async fn stopping_a_forward_closes_the_port(#[case] fixture: Fixture) -> Result<()> {
     let env = TestEnv::from_env()?;

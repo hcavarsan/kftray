@@ -5,10 +5,12 @@ use std::time::Duration;
 use anyhow::{
     Context,
     Result,
+    anyhow,
 };
 
 use crate::harness::build::Binaries;
 use crate::harness::cluster::Cluster;
+use crate::harness::gcp_bastion::GcpBastion;
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 pub const CLUSTER_READY: Duration = Duration::from_secs(180);
@@ -17,6 +19,8 @@ const APP: &str = "KFTRAY_E2E_APP";
 const KFTUI: &str = "KFTRAY_E2E_KFTUI";
 const KUBECONFIG: &str = "KUBECONFIG";
 const ARTIFACTS: &str = "KFTRAY_E2E_ARTIFACTS";
+const GCP_ENDPOINTS: &str = "KFTRAY_E2E_GCP_ENDPOINTS";
+const SSH_KEY: &str = "KFTRAY_E2E_SSH_KEY";
 const TIMEOUT_SCALE: &str = "KFTRAY_E2E_TIMEOUT_SCALE";
 
 #[derive(Clone, Debug)]
@@ -25,6 +29,8 @@ pub struct TestEnv {
     pub kftui: PathBuf,
     pub kubeconfig: PathBuf,
     pub artifacts: PathBuf,
+    pub gcp_endpoints: String,
+    pub ssh_key: PathBuf,
     pub timeouts: Timeouts,
 }
 
@@ -56,7 +62,9 @@ impl Timeouts {
 }
 
 impl TestEnv {
-    pub fn new(binaries: Binaries, cluster: &Cluster, artifacts: PathBuf) -> Result<Self> {
+    pub fn new(
+        binaries: Binaries, cluster: &Cluster, bastion: &GcpBastion, artifacts: PathBuf,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&artifacts)
             .with_context(|| format!("create {}", artifacts.display()))?;
         Ok(Self {
@@ -64,6 +72,8 @@ impl TestEnv {
             kftui: binaries.kftui,
             kubeconfig: cluster.kubeconfig.clone(),
             artifacts,
+            gcp_endpoints: bastion.endpoints_json()?,
+            ssh_key: bastion.ssh_key().to_path_buf(),
             timeouts: Timeouts::scaled_from_env()?,
         })
     }
@@ -79,6 +89,11 @@ impl TestEnv {
             kftui: var(KFTUI)?,
             kubeconfig: var(KUBECONFIG)?,
             artifacts: var(ARTIFACTS)?,
+            gcp_endpoints: var(GCP_ENDPOINTS)?
+                .into_os_string()
+                .into_string()
+                .map_err(|_| anyhow!("{GCP_ENDPOINTS} is not valid UTF-8"))?,
+            ssh_key: var(SSH_KEY)?,
             timeouts: Timeouts::scaled_from_env()?,
         })
     }
@@ -89,6 +104,8 @@ impl TestEnv {
             (KFTUI, self.kftui.as_os_str()),
             (KUBECONFIG, self.kubeconfig.as_os_str()),
             (ARTIFACTS, self.artifacts.as_os_str()),
+            (GCP_ENDPOINTS, OsStr::new(&self.gcp_endpoints)),
+            (SSH_KEY, self.ssh_key.as_os_str()),
         ]
     }
 }

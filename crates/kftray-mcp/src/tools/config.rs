@@ -6,6 +6,11 @@
 use std::collections::BTreeMap;
 
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::ssh_provider::{
+    SshProvider,
+    SshProviderKind,
+    WORKLOAD_SSH_PORT_FORWARD,
+};
 use kftray_commons::utils::config_view::{
     Condition,
     ConfigView,
@@ -26,7 +31,7 @@ use crate::protocol::{
 use crate::tools::McpTool;
 
 const PROTOCOLS: &[&str] = &["tcp", "udp"];
-const WORKLOAD_TYPES: &[&str] = &["service", "pod", "proxy"];
+const WORKLOAD_TYPES: &[&str] = &["service", "pod", "proxy", WORKLOAD_SSH_PORT_FORWARD];
 
 fn check_choice(field: &str, value: Option<&str>, allowed: &[&str]) -> Result<(), CallToolResult> {
     match value {
@@ -47,7 +52,49 @@ fn is_blank(value: Option<&str>) -> bool {
 }
 
 fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
-    match config.workload_type.as_deref() {
+    let workload_type = config.workload_type.as_deref();
+    if workload_type == Some(WORKLOAD_SSH_PORT_FORWARD) {
+        let provider = config.ssh_provider.as_ref().ok_or_else(|| {
+            CallToolResult::error(
+                "ssh_provider is required when workload_type is 'ssh-port-forward'",
+            )
+        })?;
+        provider
+            .kind()
+            .and_then(SshProviderKind::validate)
+            .map_err(CallToolResult::error)?;
+        if is_blank(config.remote_address.as_deref()) {
+            return Err(CallToolResult::error(
+                "remote_address is required when workload_type is 'ssh-port-forward'",
+            ));
+        }
+        if config.remote_port.is_none_or(|port| port == 0) {
+            return Err(CallToolResult::error(
+                "remote_port must be greater than 0 when workload_type is 'ssh-port-forward'",
+            ));
+        }
+        if config.protocol != "tcp" {
+            return Err(CallToolResult::error(
+                "protocol must be 'tcp' when workload_type is 'ssh-port-forward'",
+            ));
+        }
+        return Ok(());
+    }
+    if config.ssh_provider.is_some() {
+        return Err(CallToolResult::error(
+            "ssh_provider is only valid when workload_type is 'ssh-port-forward'",
+        ));
+    }
+    // No context check: a saved config without one uses the kubeconfig's
+    // current context, and updating its alias must keep working.
+    if matches!(workload_type, Some("service" | "pod" | "proxy"))
+        && is_blank(Some(&config.namespace))
+    {
+        return Err(CallToolResult::error(
+            "namespace is required for Kubernetes workloads",
+        ));
+    }
+    match workload_type {
         Some("service") if is_blank(config.service.as_deref()) => Err(CallToolResult::error(
             "service is required when workload_type is 'service'",
         )),
@@ -59,6 +106,27 @@ fn check_workload_fields(config: &Config) -> Result<(), CallToolResult> {
         ),
         _ => Ok(()),
     }
+}
+
+/// One JSON schema per SSH provider, offered as `oneOf` for `ssh_provider`.
+pub(crate) fn ssh_provider_schemas() -> Vec<Value> {
+    vec![json!({
+        "type": "object",
+        "description": "GCP Compute Engine VM reached through IAP, login with OS Login",
+        "properties": {
+            "type": { "const": "gcp-bastion" },
+            "project": { "type": "string", "description": "GCP project id" },
+            "zone": { "type": "string", "description": "Zone of the VM, e.g. us-central1-b" },
+            "instance": { "type": "string", "description": "Name of the VM" },
+            "interface": {
+                "type": "string",
+                "default": "nic0",
+                "description": "Network interface IAP connects to"
+            }
+        },
+        "required": ["type", "project", "zone", "instance"],
+        "additionalProperties": false
+    })]
 }
 
 // ============================================================================
@@ -220,8 +288,8 @@ pub struct CreateConfigTool;
 
 #[derive(Debug, Deserialize)]
 struct CreateConfigArgs {
-    context: String,
-    namespace: String,
+    context: Option<String>,
+    namespace: Option<String>,
     service: Option<String>,
     target: Option<String>,
     local_port: Option<u16>,
@@ -234,6 +302,7 @@ struct CreateConfigArgs {
     local_address: Option<String>,
     domain_enabled: Option<bool>,
     tags: Option<BTreeMap<String, String>>,
+    ssh_provider: Option<SshProvider>,
 }
 
 #[derive(Debug, Serialize)]
@@ -252,11 +321,11 @@ impl McpTool for CreateConfigTool {
             json!({
                 "context": {
                     "type": "string",
-                    "description": "Kubernetes context to use"
+                    "description": "Kubernetes context to use (required for service, pod and proxy)"
                 },
                 "namespace": {
                     "type": "string",
-                    "description": "Kubernetes namespace"
+                    "description": "Kubernetes namespace (required for service, pod and proxy)"
                 },
                 "service": {
                     "type": "string",
@@ -294,7 +363,11 @@ impl McpTool for CreateConfigTool {
                 },
                 "remote_address": {
                     "type": "string",
-                    "description": "Remote address for proxy workload type"
+                    "description": "Remote address for proxy and ssh-port-forward workload types"
+                },
+                "ssh_provider": {
+                    "oneOf": ssh_provider_schemas(),
+                    "description": "Required for ssh-port-forward: how to reach the SSH bastion"
                 },
                 "local_address": {
                     "type": "string",
@@ -310,11 +383,7 @@ impl McpTool for CreateConfigTool {
                     "description": "Optional tags for grouping and filtering, e.g. {\"team\": \"payments\", \"pinned\": \"\"}. An empty value makes a key-only tag. Keys may only contain lowercase letters, digits, '.', '_', '-' and '/'."
                 }
             }),
-            Some(vec![
-                "context".to_string(),
-                "namespace".to_string(),
-                "remote_port".to_string(),
-            ]),
+            Some(vec!["remote_port".to_string()]),
         )
     }
 
@@ -325,9 +394,7 @@ impl McpTool for CreateConfigTool {
                 Err(e) => return CallToolResult::error(format!("Invalid arguments: {e}")),
             },
             None => {
-                return CallToolResult::error(
-                    "Missing required arguments: context, namespace, remote_port",
-                );
+                return CallToolResult::error("Missing required argument: remote_port");
             }
         };
 
@@ -337,17 +404,21 @@ impl McpTool for CreateConfigTool {
         {
             return error;
         }
+        if workload_type != WORKLOAD_SSH_PORT_FORWARD && is_blank(args.context.as_deref()) {
+            return CallToolResult::error("context is required for Kubernetes workloads");
+        }
 
         let config = Config {
             id: None,
             service: args.service,
-            namespace: args.namespace,
+            namespace: args.namespace.unwrap_or_default(),
             local_port: args.local_port,
             remote_port: Some(args.remote_port),
-            context: Some(args.context),
+            context: args.context,
             workload_type: Some(workload_type),
             protocol: args.protocol.unwrap_or_else(|| "tcp".to_string()),
             remote_address: args.remote_address,
+            ssh_provider: args.ssh_provider,
             local_address: args.local_address.or_else(|| Some("127.0.0.1".to_string())),
             auto_loopback_address: false,
             alias: args.alias,
@@ -412,6 +483,7 @@ struct UpdateConfigArgs {
     local_address: Option<String>,
     domain_enabled: Option<bool>,
     tags: Option<BTreeMap<String, String>>,
+    ssh_provider: Option<SshProvider>,
 }
 
 #[derive(Debug, Serialize)]
@@ -475,7 +547,11 @@ impl McpTool for UpdateConfigTool {
                 },
                 "remote_address": {
                     "type": "string",
-                    "description": "Remote address for proxy workload type"
+                    "description": "Remote address for proxy and ssh-port-forward workload types"
+                },
+                "ssh_provider": {
+                    "oneOf": ssh_provider_schemas(),
+                    "description": "How to reach the SSH bastion of an ssh-port-forward config"
                 },
                 "local_address": {
                     "type": "string",
@@ -545,6 +621,14 @@ impl McpTool for UpdateConfigTool {
         }
         if args.workload_type.is_some() {
             config.workload_type = args.workload_type;
+            // A provider only belongs to ssh configs, and a JSON null cannot
+            // clear it, so switching away from ssh drops it.
+            if config.workload_type.as_deref() != Some(WORKLOAD_SSH_PORT_FORWARD) {
+                config.ssh_provider = None;
+            }
+        }
+        if args.ssh_provider.is_some() {
+            config.ssh_provider = args.ssh_provider;
         }
         if args.kubeconfig.is_some() {
             config.kubeconfig = args.kubeconfig;
@@ -754,5 +838,101 @@ impl McpTool for ImportConfigsTool {
             }
             Err(e) => CallToolResult::error(format!("Failed to import configs: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kftray_commons::models::ssh_provider::GcpBastionProvider;
+
+    use super::*;
+
+    fn ssh_config(provider: Option<SshProvider>) -> Config {
+        Config {
+            workload_type: Some(WORKLOAD_SSH_PORT_FORWARD.to_string()),
+            protocol: "tcp".to_string(),
+            context: None,
+            namespace: String::new(),
+            service: None,
+            remote_address: Some("db.internal".to_string()),
+            remote_port: Some(5432),
+            ssh_provider: provider,
+            ..Config::default()
+        }
+    }
+
+    fn gcp_bastion() -> SshProvider {
+        SshProvider::Known(SshProviderKind::GcpBastion(GcpBastionProvider {
+            project: "my-project".to_string(),
+            zone: "us-central1-b".to_string(),
+            instance: "jumper".to_string(),
+            interface: "nic0".to_string(),
+        }))
+    }
+
+    #[test]
+    fn ssh_provider_schemas_should_cover_every_provider_type() {
+        let types: Vec<String> = ssh_provider_schemas()
+            .iter()
+            .filter_map(|schema| schema["properties"]["type"]["const"].as_str())
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(types, SshProviderKind::TYPE_NAMES);
+    }
+
+    #[test]
+    fn ssh_config_without_provider_should_be_rejected() {
+        assert!(check_workload_fields(&ssh_config(None)).is_err());
+    }
+
+    #[test]
+    fn ssh_config_with_provider_should_not_need_context_or_namespace() {
+        assert!(check_workload_fields(&ssh_config(Some(gcp_bastion()))).is_ok());
+    }
+
+    #[test]
+    fn ssh_config_with_remote_port_zero_should_be_rejected() {
+        let config = Config {
+            remote_port: Some(0),
+            ..ssh_config(Some(gcp_bastion()))
+        };
+        assert!(check_workload_fields(&config).is_err());
+    }
+
+    #[test]
+    fn saved_service_config_without_context_should_stay_updatable() {
+        let config = Config {
+            workload_type: Some("service".to_string()),
+            context: None,
+            namespace: "default".to_string(),
+            service: Some("api".to_string()),
+            ..Config::default()
+        };
+        assert!(check_workload_fields(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn creating_a_service_config_without_context_should_be_rejected() {
+        let result = CreateConfigTool
+            .execute(Some(json!({
+                "namespace": "default",
+                "service": "api",
+                "remote_port": 80
+            })))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn provider_on_a_service_config_should_be_rejected() {
+        let config = Config {
+            workload_type: Some("service".to_string()),
+            context: Some("kind".to_string()),
+            namespace: "default".to_string(),
+            service: Some("api".to_string()),
+            ssh_provider: Some(gcp_bastion()),
+            ..Config::default()
+        };
+        assert!(check_workload_fields(&config).is_err());
     }
 }

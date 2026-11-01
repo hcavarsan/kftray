@@ -1111,6 +1111,7 @@ mod tests {
             local_address: None,
             auto_loopback_address: false,
             remote_address: None,
+            ssh_provider: None,
             domain_enabled: None,
             http_logs_enabled: Some(false),
             http_logs_max_file_size: Some(10 * 1024 * 1024),

@@ -1,4 +1,29 @@
-export type WorkloadType = 'service' | 'pod' | 'proxy' | 'expose'
+export type WorkloadType =
+  | 'service'
+  | 'pod'
+  | 'proxy'
+  | 'expose'
+  | 'ssh-port-forward'
+
+export type SshProviderType = 'gcp-bastion'
+
+export interface GcpBastionProvider {
+  type: 'gcp-bastion'
+  project: string
+  zone: string
+  instance: string
+  interface?: string
+}
+
+export type SshProvider = GcpBastionProvider
+
+// Mirrors SshTestStep in crates/kftray-portforward/src/ssh_forward.
+export interface SshTestStep {
+  step: 'route' | 'transport' | 'handshake' | 'auth' | 'channel'
+  status: 'ok' | 'failed' | 'skipped'
+  message?: string | null
+  host_key?: { known: string; presented: string } | null
+}
 
 export type Protocol = 'tcp' | 'udp'
 
@@ -58,11 +83,19 @@ interface ExposeConfig extends ConfigBase {
   ingress_annotations?: string
 }
 
+interface SshPortForwardConfig extends ConfigBase {
+  workload_type: 'ssh-port-forward'
+  ssh_provider: SshProvider
+  remote_address: string
+  remote_port: number
+}
+
 export type StoredConfig =
   | ServiceConfig
   | PodConfig
   | ProxyConfig
   | ExposeConfig
+  | SshPortForwardConfig
 
 export interface ForwardState {
   is_running: boolean

@@ -34,6 +34,7 @@ mod tests {
             workload_type: Some("service".to_string()),
             protocol: "tcp".to_string(),
             remote_address: Some("remote-address".to_string()),
+            ssh_provider: None,
             local_address: Some("127.0.0.1".to_string()),
             auto_loopback_address: false,
             alias: Some("test-alias".to_string()),

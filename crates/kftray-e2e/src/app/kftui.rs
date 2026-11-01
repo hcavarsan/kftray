@@ -34,6 +34,7 @@ impl Kftui {
             .tempfile()
             .context("create the kftui config file")?;
         serde_json::to_writer(&mut file, configs).context("write the kftui config file")?;
+        profile.seed_ssh_key(&env.ssh_key)?;
         let child = Command::new(&env.kftui)
             .arg("--configs-path")
             .arg(file.path())

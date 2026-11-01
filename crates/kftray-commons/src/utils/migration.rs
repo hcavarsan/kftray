@@ -261,6 +261,14 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
 
     migrate_shortcuts_table(&mut conn).await?;
 
+    sqlx::query(crate::utils::ssh_host_keys::SSH_HOST_KEYS_DDL)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create ssh_host_keys table: {e}");
+            e.to_string()
+        })?;
+
     Ok(())
 }
 

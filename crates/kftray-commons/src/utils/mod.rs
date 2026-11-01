@@ -12,5 +12,6 @@ pub mod manifests;
 pub mod migration;
 pub(crate) mod pool_slot;
 pub mod settings;
+pub mod ssh_host_keys;
 pub mod timeout_manager;
 pub mod validate_configs;

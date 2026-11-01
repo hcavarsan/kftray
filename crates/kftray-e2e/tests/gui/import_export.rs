@@ -12,15 +12,22 @@ async fn importing_a_file_lists_every_config() -> Result<()> {
     let app = Desktop::launch_ready(&env).await?;
     let service = fixtures::service_http();
     let pod = fixtures::pod_http();
+    let ssh = fixtures::ssh_gcp_bastion_http();
     let dir = tempfile::tempdir()?;
     let file = dir.path().join("configs.json");
-    std::fs::write(&file, serde_json::to_vec(&[&service.config, &pod.config])?)?;
+    std::fs::write(
+        &file,
+        serde_json::to_vec(&[&service.config, &pod.config, &ssh.config])?,
+    )?;
     app.mock("plugin:dialog|open", json!(file)).await?;
 
     app.main().import_file().await?;
-    app.main().wait_rows(2).await?;
+    app.main().wait_rows(3).await?;
 
-    assert_eq!(app.main().aliases().await?, [pod.alias(), service.alias()]);
+    assert_eq!(
+        app.main().aliases().await?,
+        [ssh.alias(), pod.alias(), service.alias()]
+    );
     app.quit().await
 }
 
@@ -30,7 +37,9 @@ async fn exporting_matches_what_was_imported() -> Result<()> {
     let app = Desktop::launch_ready(&env).await?;
     let service = fixtures::service_http();
     let pod = fixtures::pod_http();
-    app.import_configs(&[&service.config, &pod.config]).await?;
+    let ssh = fixtures::ssh_gcp_bastion_http();
+    app.import_configs(&[&service.config, &pod.config, &ssh.config])
+        .await?;
     let dir = tempfile::tempdir()?;
     let file = dir.path().join("exported.json");
     app.mock("plugin:dialog|save", json!(file)).await?;
@@ -43,7 +52,8 @@ async fn exporting_matches_what_was_imported() -> Result<()> {
         exported,
         [
             service.config.prepare_for_export(),
-            pod.config.prepare_for_export()
+            pod.config.prepare_for_export(),
+            ssh.config.prepare_for_export()
         ]
     );
     app.quit().await

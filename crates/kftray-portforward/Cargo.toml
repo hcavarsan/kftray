@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
@@ -31,6 +32,7 @@ keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
+kftray-ssh = { workspace = true }
 kftray-telemetry = { workspace = true }
 kube = { workspace = true }
 kube-portforward = { workspace = true }
@@ -60,6 +62,7 @@ whoami = { workspace = true }
 [dev-dependencies]
 env_logger = { workspace = true }
 http = { workspace = true }
+kftray-ssh = { workspace = true, features = ["e2e", "testing"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tower-test = { workspace = true }
@@ -84,3 +87,4 @@ windows-native-keyring-store = { workspace = true }
 default = ["http-proxy", "socks5"]
 http-proxy = []
 socks5 = []
+e2e = ["kftray-ssh/e2e"]

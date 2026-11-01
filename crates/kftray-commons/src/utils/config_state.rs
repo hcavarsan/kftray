@@ -197,6 +197,21 @@ pub async fn set_retry_status(
     .await
 }
 
+pub async fn set_retry_status_with_mode(
+    config_id: i64, retry_count: Option<i32>, last_error: Option<&str>, mode: DatabaseMode,
+) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    set_retry_status_with_pool(
+        config_id,
+        Some(std::process::id()),
+        process_start_identity(std::process::id()),
+        retry_count,
+        last_error,
+        &context.pool,
+    )
+    .await
+}
+
 pub async fn clear_retry_status_with_pool(config_id: i64, pool: &SqlitePool) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
     sqlx::query(

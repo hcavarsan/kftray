@@ -38,6 +38,11 @@ component_management:
       paths:
         - "crates/kftray-portforward/**"
 
+    - component_id: kftray-ssh
+      name: kftray-ssh
+      paths:
+        - "crates/kftray-ssh/**"
+
     - component_id: kftray-server
       name: kftray-server
       paths:
