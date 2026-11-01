@@ -239,4 +239,85 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[cfg(unix)]
+    mod native_paths {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        use kftray_commons::utils::config::{
+            import_configs_with_mode,
+            read_configs_with_mode,
+        };
+
+        use super::*;
+        use crate::tui::input::file_explorer::handle_import;
+
+        const CONFIG: &str = r#"[{"alias":"native-path","namespace":"default","service":"api","local_port":18080,"remote_port":80,"protocol":"tcp","workload_type":"service","context":"test"}]"#;
+
+        #[tokio::test]
+        async fn import_non_utf8_filename_and_directory() {
+            let _db = kftray_commons::test_utils::test_db().await;
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().join(OsStr::from_bytes(b"directory-\xff"));
+            std::fs::create_dir(&directory).unwrap();
+            let paths = [
+                root.path().join(OsStr::from_bytes(b"config-\xff.json")),
+                directory.join("config.json"),
+            ];
+            let mut app = setup_file_explorer_app();
+
+            for (index, path) in paths.iter().enumerate() {
+                let json = CONFIG.replace("native-path", &format!("native-path-{index}"));
+                std::fs::write(path, json).unwrap();
+
+                handle_import(&mut app, path, DatabaseMode::Memory)
+                    .await
+                    .unwrap();
+
+                assert_eq!(app.state, AppState::ShowConfirmationPopup);
+                assert_eq!(
+                    app.import_export_message.as_deref(),
+                    Some("Import successful")
+                );
+                let aliases: Vec<_> = read_configs_with_mode(DatabaseMode::Memory)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|config| config.alias.unwrap())
+                    .collect();
+                assert_eq!(aliases, [format!("native-path-{index}")]);
+            }
+        }
+
+        #[tokio::test]
+        async fn export_into_non_utf8_directory() {
+            let _db = kftray_commons::test_utils::test_db().await;
+            import_configs_with_mode(CONFIG.to_string(), DatabaseMode::Memory)
+                .await
+                .unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().join(OsStr::from_bytes(b"directory-\xff"));
+            std::fs::create_dir(&directory).unwrap();
+            let mut app = setup_file_explorer_app();
+            app.state = AppState::ShowInputPrompt;
+            app.selected_file_path = Some(directory.clone());
+            app.input_buffer = "export.json".to_string();
+
+            handle_export_input_prompt(&mut app, KeyCode::Enter, DatabaseMode::Memory)
+                .await
+                .unwrap();
+
+            assert_eq!(app.state, AppState::ShowConfirmationPopup);
+            assert!(app.input_buffer.is_empty());
+            let exported: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(directory.join("export.json")).unwrap(),
+            )
+            .unwrap();
+            let expected: serde_json::Value = serde_json::from_str(CONFIG).unwrap();
+            for (key, value) in expected[0].as_object().unwrap() {
+                assert_eq!(&exported[0][key], value, "exported field {key}");
+            }
+        }
+    }
 }
