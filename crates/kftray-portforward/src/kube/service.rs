@@ -18,6 +18,7 @@ use crate::kube::client::error::{
     KubeResult,
 };
 use crate::kube::operations::{
+    DiscoveredPort,
     get_services_with_annotation,
     list_all_namespaces,
 };
@@ -146,13 +147,14 @@ fn services_error(namespace: &str, error: &KubeClientError) -> String {
 
 fn parse_configs(
     configs_str: &str, context: &str, namespace: &str, service_name: &str,
-    ports: &HashMap<String, i32>, kubeconfig: Option<String>,
+    ports: &HashMap<String, DiscoveredPort>, kubeconfig: Option<String>,
 ) -> Vec<Config> {
     configs_str
         .split(',')
         .filter_map(|config_str| {
             let config_str = config_str.trim();
-            let Some((alias, local_port, remote_port)) = parse_config_entry(config_str, ports)
+            let Some((alias, local_port, remote_port, protocol)) =
+                parse_config_entry(config_str, ports)
             else {
                 debug!("Invalid config format: {config_str}");
                 return None;
@@ -167,7 +169,7 @@ fn parse_configs(
                 alias: Some(alias.to_string()),
                 local_port: Some(local_port),
                 remote_port: Some(remote_port),
-                protocol: "tcp".to_string(),
+                protocol: protocol.to_string(),
                 workload_type: Some("service".to_string()),
                 target: None,
                 local_address: None,
@@ -192,36 +194,48 @@ fn parse_configs(
 }
 
 fn parse_config_entry<'a>(
-    entry: &'a str, ports: &HashMap<String, i32>,
-) -> Option<(&'a str, u16, u16)> {
+    entry: &'a str, ports: &'a HashMap<String, DiscoveredPort>,
+) -> Option<(&'a str, u16, u16, &'a str)> {
     entry.match_indices('-').rev().find_map(|(index, _)| {
         let (local_port, remote_port) = entry[index + 1..].split_once('-')?;
         let local_port = local_port.parse().ok()?;
-        let remote_port = remote_port.parse().ok().or_else(|| {
-            ports
-                .get(remote_port)
-                .and_then(|&port| u16::try_from(port).ok())
-        })?;
-        Some((&entry[..index], local_port, remote_port))
+        let (remote_port, protocol) = if let Ok(number) = remote_port.parse::<u16>() {
+            let mut matching_ports = ports
+                .values()
+                .filter(|port| port.number == i32::from(number));
+            let protocol = matching_ports
+                .next()
+                .map_or("tcp", |port| port.protocol.as_str());
+            let protocol = if matching_ports.all(|port| port.protocol == protocol) {
+                protocol
+            } else {
+                "tcp"
+            };
+            (number, protocol)
+        } else {
+            let port = ports.get(remote_port)?;
+            (u16::try_from(port.number).ok()?, port.protocol.as_str())
+        };
+        Some((&entry[..index], local_port, remote_port, protocol))
     })
 }
 
 fn create_default_configs(
-    context: &str, namespace: &str, service_name: &str, ports: &HashMap<String, i32>,
+    context: &str, namespace: &str, service_name: &str, ports: &HashMap<String, DiscoveredPort>,
     kubeconfig: Option<String>,
 ) -> Vec<Config> {
     ports
-        .iter()
-        .map(|(_port_name, &port)| Config {
+        .values()
+        .map(|port| Config {
             id: None,
             context: Some(context.to_string()),
             kubeconfig: kubeconfig.clone(),
             namespace: namespace.to_string(),
             service: Some(service_name.to_string()),
             alias: Some(service_name.to_string()),
-            local_port: Some(port as u16),
-            remote_port: Some(port as u16),
-            protocol: "tcp".to_string(),
+            local_port: Some(port.number as u16),
+            remote_port: Some(port.number as u16),
+            protocol: port.protocol.clone(),
             workload_type: Some("service".to_string()),
             target: None,
             local_address: None,
@@ -332,6 +346,112 @@ mod tests {
     const SERVICES_FORBIDDEN: &str = "services is forbidden: User \"dev\" cannot list resource \
                                       \"services\" in API group \"\" in the namespace \"team-a\"";
 
+    async fn discover_protocols(annotation: Option<&str>) -> Vec<(u16, u16, String)> {
+        let (client, mut handle) = mock_client("team-a");
+        let mut annotations = std::collections::BTreeMap::from([(
+            "kftray.app/enabled".to_string(),
+            "true".to_string(),
+        )]);
+        if let Some(annotation) = annotation {
+            annotations.insert(CONFIGS_ANNOTATION.to_string(), annotation.to_string());
+        }
+        let service = Service {
+            metadata: ObjectMeta {
+                name: Some("mixed".to_string()),
+                annotations: Some(annotations),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                ports: Some(
+                    [
+                        ("dns-udp", 5353, Some("UDP")),
+                        ("http", 8080, Some("TCP")),
+                        ("implicit", 9090, None),
+                    ]
+                    .into_iter()
+                    .map(|(name, port, protocol)| ServicePort {
+                        name: Some(name.to_string()),
+                        port,
+                        target_port: Some(IntOrString::Int(port)),
+                        protocol: protocol.map(str::to_string),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let server = tokio::spawn(async move {
+            let (_, send) = handle.next_request().await.unwrap();
+            let list = k8s_openapi::List::<Service> {
+                items: vec![service],
+                metadata: Default::default(),
+            };
+            send.send_response(
+                Response::builder()
+                    .status(200)
+                    .body(Body::from(serde_json::to_vec(&list).unwrap()))
+                    .unwrap(),
+            );
+        });
+        let configs = retrieve_service_configs_direct("ctx", None, Some("team-a"), &client)
+            .await
+            .unwrap();
+        server.await.unwrap();
+        let mut ports: Vec<_> = configs
+            .into_iter()
+            .map(|config| {
+                (
+                    config.local_port.unwrap(),
+                    config.remote_port.unwrap(),
+                    config.protocol,
+                )
+            })
+            .collect();
+        ports.sort();
+        ports
+    }
+
+    #[tokio::test]
+    async fn discovery_preserves_default_port_protocols() {
+        assert_eq!(
+            discover_protocols(None).await,
+            vec![
+                (5353, 5353, "udp".to_string()),
+                (8080, 8080, "tcp".to_string()),
+                (9090, 9090, "tcp".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_preserves_named_port_protocols() {
+        assert_eq!(
+            discover_protocols(Some(
+                "dns-15353-dns-udp,web-18080-http,other-19090-implicit"
+            ))
+            .await,
+            vec![
+                (15353, 5353, "udp".to_string()),
+                (18080, 8080, "tcp".to_string()),
+                (19090, 9090, "tcp".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_preserves_numeric_port_protocols() {
+        assert_eq!(
+            discover_protocols(Some("dns-15353-5353,web-18080-8080,other-19090-9090")).await,
+            vec![
+                (15353, 5353, "udp".to_string()),
+                (18080, 8080, "tcp".to_string()),
+                (19090, 9090, "tcp".to_string()),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn a_set_namespace_is_imported_without_listing_namespaces() {
         let (client, mut handle) = mock_client("default");
@@ -415,11 +535,71 @@ mod tests {
     }
 
     #[test]
+    fn named_ports_disambiguate_protocols_on_the_same_target_number() {
+        let ports = [("dns-tcp", "tcp"), ("dns-udp", "udp")]
+            .into_iter()
+            .map(|(name, protocol)| {
+                (
+                    name.to_string(),
+                    DiscoveredPort {
+                        number: 5353,
+                        protocol: protocol.to_string(),
+                    },
+                )
+            })
+            .collect();
+        let configs = parse_configs(
+            "tcp-15353-dns-tcp,udp-25353-dns-udp,numeric-35353-5353",
+            "ctx",
+            "team-a",
+            "dns",
+            &ports,
+            None,
+        );
+        let protocols: Vec<_> = configs
+            .iter()
+            .map(|config| {
+                (
+                    config.local_port,
+                    config.remote_port,
+                    config.protocol.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            protocols,
+            [
+                (Some(15353), Some(5353), "tcp"),
+                (Some(25353), Some(5353), "udp"),
+                (Some(35353), Some(5353), "tcp"),
+            ]
+        );
+    }
+
+    #[test]
     fn test_parse_configs() {
         let mut ports = HashMap::new();
-        ports.insert("http".to_string(), 8080);
-        ports.insert("https".to_string(), 8443);
-        ports.insert("grpc".to_string(), 9090);
+        ports.insert(
+            "http".to_string(),
+            DiscoveredPort {
+                number: 8080,
+                protocol: "tcp".to_string(),
+            },
+        );
+        ports.insert(
+            "https".to_string(),
+            DiscoveredPort {
+                number: 8443,
+                protocol: "tcp".to_string(),
+            },
+        );
+        ports.insert(
+            "grpc".to_string(),
+            DiscoveredPort {
+                number: 9090,
+                protocol: "tcp".to_string(),
+            },
+        );
 
         let configs_str = "web-3000-8080,api-3001-http,admin-3002-grpc";
         let configs = parse_configs(
@@ -458,7 +638,13 @@ mod tests {
     #[test]
     fn test_parse_configs_invalid_format() {
         let mut ports = HashMap::new();
-        ports.insert("http".to_string(), 8080);
+        ports.insert(
+            "http".to_string(),
+            DiscoveredPort {
+                number: 8080,
+                protocol: "tcp".to_string(),
+            },
+        );
 
         let configs_str = "invalid-format,web-3000-8080,missing-parts";
         let configs = parse_configs(
@@ -515,7 +701,13 @@ mod tests {
     #[test]
     fn test_parse_configs_hyphenated_port_name() {
         let mut ports = HashMap::new();
-        ports.insert("http-alt".to_string(), 8081);
+        ports.insert(
+            "http-alt".to_string(),
+            DiscoveredPort {
+                number: 8081,
+                protocol: "tcp".to_string(),
+            },
+        );
 
         let configs = parse_configs(
             "api-8080-http-alt,my-api-8082-http-alt",
@@ -554,8 +746,20 @@ mod tests {
     #[test]
     fn test_create_default_configs() {
         let mut ports = HashMap::new();
-        ports.insert("http".to_string(), 8080);
-        ports.insert("https".to_string(), 8443);
+        ports.insert(
+            "http".to_string(),
+            DiscoveredPort {
+                number: 8080,
+                protocol: "tcp".to_string(),
+            },
+        );
+        ports.insert(
+            "https".to_string(),
+            DiscoveredPort {
+                number: 8443,
+                protocol: "tcp".to_string(),
+            },
+        );
 
         let configs = create_default_configs(
             "test-context",

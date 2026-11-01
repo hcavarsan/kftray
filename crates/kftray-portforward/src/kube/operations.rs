@@ -28,7 +28,17 @@ use super::client::get_kubeconfig_paths_from_option;
 use crate::kube::models::KubeContextInfo;
 use crate::kube::target::service_label_selector;
 
-pub type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
+#[derive(Debug, PartialEq)]
+pub struct DiscoveredPort {
+    pub number: i32,
+    pub protocol: String,
+}
+
+pub type ServiceInfo = (
+    String,
+    HashMap<String, String>,
+    HashMap<String, DiscoveredPort>,
+);
 
 pub async fn list_all_namespaces(client: Client) -> KubeResult<Vec<String>> {
     let namespaces: Api<Namespace> = Api::all(client);
@@ -110,7 +120,9 @@ async fn list_pods_for_named_target_ports(
     Ok(pods.list(&lp).await?.items)
 }
 
-pub fn extract_ports_from_service(service: &Service, pods: &[Pod]) -> HashMap<String, i32> {
+pub fn extract_ports_from_service(
+    service: &Service, pods: &[Pod],
+) -> HashMap<String, DiscoveredPort> {
     let mut ports = HashMap::new();
     if let Some(spec) = &service.spec {
         for port in spec.ports.as_ref().unwrap_or(&vec![]) {
@@ -132,7 +144,14 @@ pub fn extract_ports_from_service(service: &Service, pods: &[Pod]) -> HashMap<St
             };
             ports.insert(
                 port.name.clone().unwrap_or_else(|| port_number.to_string()),
-                port_number,
+                DiscoveredPort {
+                    number: port_number,
+                    protocol: port
+                        .protocol
+                        .as_deref()
+                        .unwrap_or("TCP")
+                        .to_ascii_lowercase(),
+                },
             );
         }
     }
@@ -315,22 +334,22 @@ mod tests {
         let ports = extract_ports_from_service(&service, &pods);
 
         assert_eq!(ports.len(), 4);
-        assert_eq!(ports.get("http"), Some(&8080));
-        assert_eq!(ports.get("https"), Some(&8443));
-        assert_eq!(ports.get("named-port"), Some(&3000));
+        assert_eq!(ports.get("http").map(|port| port.number), Some(8080));
+        assert_eq!(ports.get("https").map(|port| port.number), Some(8443));
+        assert_eq!(ports.get("named-port").map(|port| port.number), Some(3000));
         assert_eq!(ports.get("unresolved"), None);
-        assert_eq!(ports.get("9090"), Some(&9090));
+        assert_eq!(ports.get("9090").map(|port| port.number), Some(9090));
         assert_eq!(ports.get("no-target"), None);
 
         let ports = extract_ports_from_service(&service, &[]);
         assert_eq!(ports.get("named-port"), None);
-        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("http").map(|port| port.number), Some(8080));
 
         let mut disagreeing = pods.clone();
         disagreeing.push(pod(vec![("app", Some(4000))]));
         let ports = extract_ports_from_service(&service, &disagreeing);
         assert_eq!(ports.get("named-port"), None);
-        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("http").map(|port| port.number), Some(8080));
 
         let mut missing = pods.clone();
         missing.push(pod(vec![("app", None)]));
@@ -366,7 +385,7 @@ mod tests {
 
         let ports = extract_ports_from_service(&service, &[]);
         assert_eq!(ports.len(), 1);
-        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("http").map(|port| port.number), Some(8080));
     }
 
     #[tokio::test]
@@ -475,7 +494,7 @@ mod tests {
         assert_eq!(services.len(), 1);
         let (name, _, ports) = &services[0];
         assert_eq!(name, "web");
-        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("http").map(|port| port.number), Some(8080));
         assert_eq!(ports.get("metrics"), None);
         server.await.unwrap();
     }
@@ -558,7 +577,10 @@ mod tests {
         let names: Vec<_> = services.iter().map(|(name, _, _)| name.as_str()).collect();
         assert_eq!(names, ["web", "api"]);
         assert!(services[0].2.is_empty());
-        assert_eq!(services[1].2.get("http"), Some(&9000));
+        assert_eq!(
+            services[1].2.get("http").map(|port| port.number),
+            Some(9000)
+        );
         server.await.unwrap();
     }
 
