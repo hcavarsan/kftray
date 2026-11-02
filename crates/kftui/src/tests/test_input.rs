@@ -1217,6 +1217,101 @@ mod tests {
         assert_eq!(app.state, AppState::Normal);
     }
 
+    fn http_request_log(trace_id: &str, path: &str) -> String {
+        format!(
+            "# Trace ID: {trace_id}\n# Request at: 2026-11-02 12:00:00\nGET {path} HTTP/1.1\nHost: localhost\n\n# <empty body>\n###\n"
+        )
+    }
+
+    fn http_response_log(trace_id: &str, status: &str, duration: u32, body: &str) -> String {
+        format!(
+            "# Trace ID: {trace_id}\n# Response at: 2026-11-02 12:00:01\n# Took: {duration} ms\nHTTP/1.1 {status}\nContent-Length: {}\n\n{body}\n###\n",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn http_log_viewer_matches_overlapping_responses_by_trace_id() {
+        for reverse_responses in [false, true] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            let mut app = App::new(test_logger_state());
+            app.http_logs_viewer_file_path = Some(file.path().to_path_buf());
+            let requests = [
+                http_request_log("slow", "/slow"),
+                http_request_log("fast", "/fast"),
+                http_request_log("pending", "/pending"),
+            ]
+            .concat();
+            std::fs::write(file.path(), &requests).unwrap();
+            app.update_http_logs_viewer();
+            assert!(
+                app.http_logs_requests
+                    .iter()
+                    .all(|entry| entry.status_code.is_none())
+            );
+
+            let mut responses = [
+                http_response_log("slow", "503 Service Unavailable", 3000, "slow-result"),
+                http_response_log("fast", "200 OK", 10, "fast-result"),
+            ];
+            if reverse_responses {
+                responses.reverse();
+            }
+            std::fs::write(file.path(), format!("{requests}{}", responses.concat())).unwrap();
+            app.update_http_logs_viewer();
+
+            let entries = &app.http_logs_requests;
+            assert_eq!(entries.len(), 3);
+            for (entry, (trace_id, path, status, duration, body)) in entries.iter().zip([
+                ("slow", "/slow", "503", "3000 ms", "slow-result"),
+                ("fast", "/fast", "200", "10 ms", "fast-result"),
+            ]) {
+                assert_eq!(entry.trace_id, trace_id);
+                assert_eq!(entry.path, path);
+                assert_eq!(entry.status_code.as_deref(), Some(status));
+                assert_eq!(entry.duration_ms.as_deref(), Some(duration));
+                assert_eq!(
+                    entry.response_timestamp.as_deref(),
+                    Some("2026-11-02 12:00:01")
+                );
+                assert_eq!(entry.response_headers, ["Content-Length: 11"]);
+                assert_eq!(entry.response_body, body);
+                assert_eq!(entry.request_headers, ["Host: localhost"]);
+                assert_eq!(entry.request_body, "<empty body>");
+            }
+            assert_eq!(entries[2].path, "/pending");
+            assert!(entries[2].status_code.is_none());
+            assert!(entries[2].response_timestamp.is_none());
+            assert!(entries[2].duration_ms.is_none());
+            assert!(entries[2].response_headers.is_empty());
+            assert!(entries[2].response_body.is_empty());
+        }
+    }
+
+    #[test]
+    fn http_log_viewer_does_not_attach_an_unknown_response_to_a_request() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut app = App::new(test_logger_state());
+        app.http_logs_viewer_file_path = Some(file.path().to_path_buf());
+        let content = [
+            http_response_log("rotated", "404 Not Found", 1, "old"),
+            http_request_log("pending", "/pending"),
+            http_response_log("unknown", "500 Internal Server Error", 2, "unrelated"),
+        ]
+        .concat();
+        std::fs::write(file.path(), content).unwrap();
+        app.update_http_logs_viewer();
+
+        assert_eq!(app.http_logs_requests.len(), 1);
+        let entry = &app.http_logs_requests[0];
+        assert_eq!(entry.path, "/pending");
+        assert!(entry.status_code.is_none());
+        assert!(entry.duration_ms.is_none());
+        assert!(entry.response_timestamp.is_none());
+        assert!(entry.response_headers.is_empty());
+        assert!(entry.response_body.is_empty());
+    }
+
     fn app_replaying(local_address: &str, local_port: u16) -> App {
         let mut app = App::new(test_logger_state());
         app.running_configs = vec![Config {
