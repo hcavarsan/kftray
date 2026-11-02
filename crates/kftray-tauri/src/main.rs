@@ -100,13 +100,12 @@ fn init_file_logger() -> anyhow::Result<()> {
         flexi_logger::Duplicate::None
     };
 
-    commands::logs::file_logger(&log_dir, &basename)?
-        .duplicate_to_stdout(console)
-        .error_channel(flexi_logger::ErrorChannel::File(error_log))
-        // Even the error file can fail (disk full, read-only dir); never abort
-        // the app over a logging problem.
-        .panic_if_error_channel_is_broken(false)
-        .start()?;
+    commands::logs::start_file_logger(
+        commands::logs::file_logger(&log_dir, &basename)?
+            .duplicate_to_stdout(console)
+            .error_channel(flexi_logger::ErrorChannel::File(error_log))
+            .panic_if_error_channel_is_broken(false),
+    )?;
 
     Ok(())
 }
