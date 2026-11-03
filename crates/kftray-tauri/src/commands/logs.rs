@@ -7,6 +7,7 @@ use std::path::{
     Path,
     PathBuf,
 };
+use std::sync::OnceLock;
 
 use jiff::Zoned;
 use log::info;
@@ -24,6 +25,8 @@ use super::settings::{
     run_diagnostics,
     truncate_for_display,
 };
+
+static CURRENT_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Serialize)]
 pub struct LogInfo {
@@ -146,6 +149,18 @@ pub fn file_logger(
         .format(flexi_logger::detailed_format))
 }
 
+pub fn start_file_logger(
+    logger: flexi_logger::Logger,
+) -> Result<flexi_logger::LoggerHandle, flexi_logger::FlexiLoggerError> {
+    let handle = logger.start()?;
+    let config = handle.flw_config()?;
+    let path = config
+        .directory()
+        .join(format!("{}_rCURRENT.log", config.basename()));
+    CURRENT_LOG_FILE.get_or_init(|| path);
+    Ok(handle)
+}
+
 fn is_kftray_log_file(filename: &str) -> bool {
     filename.starts_with("kftray_") && filename.ends_with(".log")
 }
@@ -178,21 +193,11 @@ fn get_log_file_path(filename: Option<&str>) -> Result<PathBuf, String> {
 
     match filename {
         Some(name) => Ok(log_dir.join(name)),
-        None => find_current_log_file(&log_dir)
-            .ok_or_else(|| format!("No log files found in {}", log_dir.display())),
+        None => CURRENT_LOG_FILE
+            .get()
+            .cloned()
+            .ok_or_else(|| "Current log file is unavailable".into()),
     }
-}
-
-fn find_current_log_file(log_dir: &Path) -> Option<PathBuf> {
-    let mut log_files: Vec<_> = fs::read_dir(log_dir)
-        .ok()?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_str().is_some_and(is_kftray_log_file))
-        .collect();
-
-    log_files.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
-
-    log_files.first().map(|entry| entry.path())
 }
 
 fn list_all_log_files(log_dir: &Path) -> Vec<(PathBuf, String)> {
@@ -297,9 +302,8 @@ pub async fn clear_logs(filename: Option<String>) -> Result<(), String> {
 pub async fn list_log_files() -> Result<Vec<LogFileInfo>, String> {
     let log_dir = log_dir()?;
 
-    let current_log = find_current_log_file(&log_dir);
-    let current_filename = current_log
-        .as_ref()
+    let current_filename = CURRENT_LOG_FILE
+        .get()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("");
@@ -341,12 +345,10 @@ pub async fn cleanup_old_logs() -> Result<u32, String> {
 async fn cleanup_logs_with_settings(settings: &LogSettings) -> Result<u32, String> {
     let log_dir = log_dir()?;
 
-    let current_log = find_current_log_file(&log_dir);
-    let current_filename = current_log
-        .as_ref()
+    let current_filename = CURRENT_LOG_FILE
+        .get()
         .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .map(|s| s.to_string());
+        .and_then(|n| n.to_str());
 
     let mut log_files = list_all_log_files(&log_dir);
 
@@ -356,7 +358,7 @@ async fn cleanup_logs_with_settings(settings: &LogSettings) -> Result<u32, Strin
     let mut deleted_count = 0u32;
 
     for (i, (path, filename)) in log_files.iter().enumerate() {
-        if Some(filename.as_str()) == current_filename.as_deref() {
+        if Some(filename.as_str()) == current_filename {
             continue;
         }
 
@@ -399,9 +401,8 @@ pub async fn delete_log_file(filename: String) -> Result<(), String> {
         return Err("Invalid log filename".into());
     }
 
-    let current_log = find_current_log_file(&log_dir);
-    let current_filename = current_log
-        .as_ref()
+    let current_filename = CURRENT_LOG_FILE
+        .get()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str());
 
@@ -707,20 +708,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lines_after_clearing_the_current_log_start_at_the_top() {
+    async fn current_log_survives_a_newer_session_and_clearing() {
         let dir = tempfile::tempdir().unwrap();
         let _config = kftray_commons::test_utils::EnvVarGuard::set(
             "KFTRAY_CONFIG",
             dir.path().to_str().unwrap(),
         );
-        let logger = file_logger(dir.path(), "kftray_2026-10-15_01-00-00")
-            .unwrap()
-            .start()
-            .unwrap();
+        let logger =
+            start_file_logger(file_logger(dir.path(), "kftray_2026-10-15_01-00-00").unwrap())
+                .unwrap();
         for i in 0..20 {
             info!("line before clear {i}");
         }
         logger.flush();
+
+        let active = get_log_info(None).await.unwrap().log_path;
+        let newer = "kftray_2026-10-15_01-00-02_rCURRENT.log";
+        fs::write(dir.path().join(newer), "newer startup log\n").unwrap();
+
+        assert_eq!(get_log_info(None).await.unwrap().log_path, active);
+        assert!(
+            get_log_contents(None, None)
+                .await
+                .unwrap()
+                .contains("line before clear 19")
+        );
+        let files = list_log_files().await.unwrap();
+        assert!(
+            files
+                .iter()
+                .find(|file| file.path == active)
+                .unwrap()
+                .is_current
+        );
+        assert!(
+            !files
+                .iter()
+                .find(|file| file.filename == newer)
+                .unwrap()
+                .is_current
+        );
+        assert_eq!(
+            delete_log_file(
+                Path::new(&active)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .into()
+            )
+            .await,
+            Err("Cannot delete the current log file".into())
+        );
+        assert_eq!(
+            cleanup_logs_with_settings(&LogSettings {
+                retention_count: 1,
+                retention_days: 0,
+            })
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(Path::new(&active).exists());
 
         clear_logs(None).await.unwrap();
         info!("first line after clear");
@@ -730,5 +779,19 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(entries[0].is_parsed, "unparsed: {:?}", entries[0].message);
         assert_eq!(entries[0].message, "first line after clear");
+        assert_eq!(
+            fs::read_to_string(dir.path().join(newer)).unwrap(),
+            "newer startup log\n"
+        );
+        delete_log_file(newer.into()).await.unwrap();
+        assert!(!dir.path().join(newer).exists());
+
+        logger.trigger_rotation().unwrap();
+        info!("first line after rotation");
+        logger.flush();
+        assert_eq!(get_log_info(None).await.unwrap().log_path, active);
+        let entries = get_log_contents_json(None, None).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "first line after rotation");
     }
 }
