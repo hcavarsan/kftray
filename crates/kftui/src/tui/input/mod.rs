@@ -820,22 +820,17 @@ impl App {
     }
 
     fn parse_http_logs(lines: &[String]) -> Vec<HttpLogEntry> {
-        let mut entries = Vec::new();
-        let mut current_entry: Option<HttpLogEntry> = None;
+        let mut entries: Vec<HttpLogEntry> = Vec::new();
+        let mut request_indices = HashMap::new();
         let mut i = 0;
 
         while i < lines.len() {
             let line = lines[i].trim();
 
-            if line.starts_with("# Trace ID: ")
+            if let Some(trace_id) = line.strip_prefix("# Trace ID: ")
                 && i + 1 < lines.len()
                 && lines[i + 1].trim().starts_with("# Request at: ")
             {
-                if let Some(entry) = current_entry.take() {
-                    entries.push(entry);
-                }
-
-                let trace_id = line.replace("# Trace ID: ", "");
                 let request_timestamp = lines[i + 1].trim().replace("# Request at: ", "");
 
                 if i + 2 < lines.len() {
@@ -869,8 +864,9 @@ impl App {
                         j += 1;
                     }
 
-                    current_entry = Some(HttpLogEntry {
-                        trace_id,
+                    request_indices.insert(trace_id, entries.len());
+                    entries.push(HttpLogEntry {
+                        trace_id: trace_id.to_string(),
                         request_timestamp,
                         response_timestamp: None,
                         method,
@@ -883,7 +879,11 @@ impl App {
                         response_body: String::new(),
                     });
                 }
-            } else if line.starts_with("# Response at: ") && current_entry.is_some() {
+            } else if line.starts_with("# Response at: ")
+                && i > 0
+                && let Some(trace_id) = lines[i - 1].trim().strip_prefix("# Trace ID: ")
+                && let Some(&entry_index) = request_indices.get(trace_id)
+            {
                 let response_timestamp = line.replace("# Response at: ", "");
                 if i + 1 < lines.len() && lines[i + 1].trim().starts_with("# Took: ") {
                     let duration = lines[i + 1].trim().replace("# Took: ", "");
@@ -917,22 +917,16 @@ impl App {
                             j += 1;
                         }
 
-                        if let Some(ref mut entry) = current_entry {
-                            entry.response_timestamp = Some(response_timestamp);
-                            entry.duration_ms = Some(duration);
-                            entry.status_code = Some(status_code);
-                            entry.response_headers = headers;
-                            entry.response_body = body;
-                        }
+                        let entry = &mut entries[entry_index];
+                        entry.response_timestamp = Some(response_timestamp);
+                        entry.duration_ms = Some(duration);
+                        entry.status_code = Some(status_code);
+                        entry.response_headers = headers;
+                        entry.response_body = body;
                     }
                 }
             }
             i += 1;
-        }
-
-        // Add the last entry if it exists
-        if let Some(entry) = current_entry {
-            entries.push(entry);
         }
 
         entries
