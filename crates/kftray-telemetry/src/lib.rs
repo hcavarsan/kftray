@@ -122,7 +122,8 @@ impl Operation {
 
 /// A step inside an [`Operation`], reported as a child span so a slow start
 /// or stop shows which step took the time. Names are fixed strings; a span
-/// never carries a description or data.
+/// never carries a description, and its data is limited to fixed names such
+/// as a provider type (see [`PhaseGuard::set_data`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     /// Picking and claiming a loopback address for the forward.
@@ -162,6 +163,12 @@ pub enum Phase {
     GitFetch,
     /// Parsing the configuration files and writing them to the database.
     GitImport,
+    /// Opening the byte stream to an SSH server (e.g. the IAP tunnel).
+    SshTransport,
+    /// SSH key exchange and host key check.
+    SshHandshake,
+    /// SSH user authentication, provider credentials included.
+    SshAuth,
 }
 
 impl Phase {
@@ -187,6 +194,9 @@ impl Phase {
             Self::SettingsLoad => "settings.load",
             Self::GitFetch => "git.fetch",
             Self::GitImport => "git.import",
+            Self::SshTransport => "ssh.transport",
+            Self::SshHandshake => "ssh.handshake",
+            Self::SshAuth => "ssh.auth",
         }
     }
 }
@@ -519,6 +529,14 @@ impl PhaseGuard {
     pub fn fail(&self) {
         if let Some(span) = &self.0 {
             span.set_status(SpanStatus::InternalError);
+        }
+    }
+
+    /// Attaches a fixed, non-identifying value (such as a provider type
+    /// name) to the span. Never pass user input, hosts or names.
+    pub fn set_data(&self, key: &str, value: &str) {
+        if let Some(span) = &self.0 {
+            span.set_data(key, value.into());
         }
     }
 }

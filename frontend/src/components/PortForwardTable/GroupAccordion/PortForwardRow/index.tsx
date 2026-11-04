@@ -99,6 +99,10 @@ function PortForwardRowComponent({
 
   const status = getStatusInfo(config, pendingAction, activePod)
   const configDetails = getConfigDetails(config, activePod)
+  const failingConnections =
+    config.workload_type === 'ssh-port-forward'
+      ? 'Connections through the SSH session fail'
+      : 'Connections to the pod fail'
 
   const inspectLogs = useMutation({
     mutationFn: (logFileName: string) =>
@@ -212,7 +216,7 @@ function PortForwardRowComponent({
                   <Box p={1} maxWidth='320px'>
                     <Text fontSize='xs' fontWeight='medium'>
                       {config.is_running
-                        ? 'Connections to the pod fail'
+                        ? failingConnections
                         : 'Stopped after an error'}
                     </Text>
                     <Text fontSize='xs' color='fg.muted' wordBreak='break-word'>

@@ -1831,7 +1831,7 @@ pub async fn reconcile_pending_cleanup(
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
                 return unresolved_cleanup(mode, exclude).await;
             };
-            match tokio::time::timeout(remaining, stop_config(id, None, mode)).await {
+            match tokio::time::timeout(remaining, stop_config(id, None, mode, None)).await {
                 Ok(Err(error)) => warn!("Cleanup for config {id} is still incomplete: {error}"),
                 Err(_) => {
                     warn!("Cleanup for config {id} did not finish within the shutdown budget");
@@ -2008,7 +2008,7 @@ pub async fn stop_all_port_forward_with_mode_excluding(
             let config = configs.get(&id).cloned();
             let suppress_missing = registry_only.contains(&id);
             async move {
-                match stop_config(id, config.as_ref(), mode).await {
+                match stop_config(id, config.as_ref(), mode, None).await {
                     Ok(response) => Some(response),
                     Err(error) => {
                         if suppress_missing && error == nothing_forwarding_error(id) {
@@ -2067,7 +2067,7 @@ pub async fn stop_all_port_forward_with_deadline(
             let config = configs.get(&id).cloned();
             let suppress_missing = registry_only.contains(&id);
             let handle = tokio::spawn(async move {
-                match stop_config(id, config.as_ref(), mode).await {
+                match stop_config(id, config.as_ref(), mode, None).await {
                     Ok(response) => Some(response),
                     Err(error) => {
                         if suppress_missing && error == nothing_forwarding_error(id) {
@@ -2183,7 +2183,7 @@ pub async fn stop_port_forward_with_mode(
     // row to go by, leaving the exposure the old row described running.
     restore_uncertain_targets(mode).await;
     let config = get_config_with_mode(id, mode).await;
-    let response = stop_config(id, config.as_ref().ok(), mode).await;
+    let response = stop_config(id, config.as_ref().ok(), mode, None).await;
     match (config, response) {
         // The cleanup error describes what is still running; the lookup error
         // only says the row is gone, which is not the actionable part.
@@ -2192,14 +2192,36 @@ pub async fn stop_port_forward_with_mode(
     }
 }
 
-async fn stop_config(
-    id: i64, config: Option<&Config>, mode: DatabaseMode,
-) -> Result<CustomResponse, String> {
-    if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
-        startup.cancel();
+/// Stops `id` only while its registered process still runs `task`, checked
+/// under the lifecycle locks start and stop take: a forward cleaning up
+/// after its own listener failed must not stop a replacement started since.
+pub(crate) async fn stop_failed_forward(
+    id: i64, task: tokio::task::Id, mode: DatabaseMode,
+) -> Result<(), String> {
+    restore_uncertain_targets(mode).await;
+    let config = get_config_with_mode(id, mode).await;
+    match stop_config(id, config.as_ref().ok(), mode, Some(task)).await {
+        Err(error) if error == superseded_error(id) => Ok(()),
+        result => result.map(drop),
     }
-    if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
-        manager.cancel();
+}
+
+fn superseded_error(id: i64) -> String {
+    format!("The process that failed for config {id} has already been replaced or stopped")
+}
+
+/// `owner`, when set, limits the stop to a registered process running that
+/// task, and leaves startups and recovery alone until that is confirmed.
+async fn stop_config(
+    id: i64, config: Option<&Config>, mode: DatabaseMode, owner: Option<tokio::task::Id>,
+) -> Result<CustomResponse, String> {
+    if owner.is_none() {
+        if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
+            startup.cancel();
+        }
+        if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
+            manager.cancel();
+        }
     }
     let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
     let (guard, was_starting) = match lock.try_lock() {
@@ -2216,6 +2238,17 @@ async fn stop_config(
                 return Err(error);
             }
         };
+    if let Some(owner) = owner
+        && CHILD_PROCESSES
+            .get(&id)
+            .and_then(|process| process.task_id())
+            != Some(owner)
+    {
+        drop(guard);
+        drop(lock);
+        crate::kube::proxy_recovery::remove_recovery_lock(id);
+        return Err(superseded_error(id));
+    }
     if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
         startup.cancel();
     }

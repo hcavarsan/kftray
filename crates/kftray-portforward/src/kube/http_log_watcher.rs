@@ -10,6 +10,8 @@ use anyhow::{
     anyhow,
 };
 use jiff::Timestamp;
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode;
 use tokio::sync::{
     RwLock,
     broadcast,
@@ -204,17 +206,18 @@ impl HttpLogStateWatcher {
         self.cancellation_token.cancel();
     }
 
-    pub async fn sync_from_external_state(&self, config_id: i64) -> Result<()> {
+    pub async fn sync_from_external_state_with_mode(
+        &self, config_id: i64, mode: DatabaseMode,
+    ) -> Result<()> {
         let current_enabled = self.get_http_logs(config_id).await;
 
-        let external_enabled =
-            match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                Ok(config) => config.enabled,
-                Err(e) => {
-                    error!("Failed to get HTTP logs for config {}: {:?}", config_id, e);
-                    false
-                }
-            };
+        let external_enabled = match get_http_logs_config_with_mode(config_id, mode).await {
+            Ok(config) => config.enabled,
+            Err(e) => {
+                error!("Failed to get HTTP logs for config {}: {:?}", config_id, e);
+                false
+            }
+        };
 
         if current_enabled != external_enabled {
             self.set_http_logs(config_id, external_enabled).await?;

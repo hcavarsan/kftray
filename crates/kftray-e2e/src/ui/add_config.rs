@@ -59,6 +59,39 @@ impl<'a> AddConfigPage<'a> {
             .await
     }
 
+    pub async fn ssh_provider(&self, label: &str) -> Result<()> {
+        self.choose(TestId::ConfigSshProvider, label).await
+    }
+
+    pub async fn gcp_project(&self, project: &str) -> Result<()> {
+        self.type_into(TestId::ConfigSshGcpBastionProject, project)
+            .await
+    }
+
+    pub async fn gcp_zone(&self, zone: &str) -> Result<()> {
+        self.type_into(TestId::ConfigSshGcpBastionZone, zone).await
+    }
+
+    pub async fn gcp_instance(&self, instance: &str) -> Result<()> {
+        self.type_into(TestId::ConfigSshGcpBastionInstance, instance)
+            .await
+    }
+
+    pub async fn ssh_remote_address(&self, address: &str) -> Result<()> {
+        self.type_into(TestId::ConfigSshRemoteAddress, address)
+            .await
+    }
+
+    pub async fn ssh_remote_port(&self, port: u16) -> Result<()> {
+        self.type_into(TestId::ConfigSshRemotePort, &port.to_string())
+            .await
+    }
+
+    pub async fn ssh_local_port(&self, port: u16) -> Result<()> {
+        self.type_into(TestId::ConfigSshLocalPort, &port.to_string())
+            .await
+    }
+
     pub async fn save(&self) -> Result<()> {
         self.desktop.click(&TestId::ConfigSave.by()).await?;
         let limit = self.desktop.timeouts().ui;

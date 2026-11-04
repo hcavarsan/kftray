@@ -132,21 +132,23 @@ pub(crate) fn log_dir() -> Result<PathBuf, String> {
 pub fn file_logger(
     log_dir: &Path, basename: &str,
 ) -> Result<flexi_logger::Logger, flexi_logger::FlexiLoggerError> {
-    Ok(flexi_logger::Logger::try_with_str("info, zbus=warn")?
-        .log_to_file(
-            flexi_logger::FileSpec::default()
-                .directory(log_dir)
-                .basename(basename),
-        )
-        // `clear_logs` truncates the current file through its own handle.
-        // Appending makes the next line land at the new end of the file.
-        .append()
-        .rotate(
-            flexi_logger::Criterion::Size(5_000_000),
-            flexi_logger::Naming::Numbers,
-            flexi_logger::Cleanup::KeepLogFiles(1),
-        )
-        .format(flexi_logger::detailed_format))
+    Ok(
+        flexi_logger::Logger::try_with_env_or_str("info, zbus=warn")?
+            .log_to_file(
+                flexi_logger::FileSpec::default()
+                    .directory(log_dir)
+                    .basename(basename),
+            )
+            // `clear_logs` truncates the current file through its own handle.
+            // Appending makes the next line land at the new end of the file.
+            .append()
+            .rotate(
+                flexi_logger::Criterion::Size(5_000_000),
+                flexi_logger::Naming::Numbers,
+                flexi_logger::Cleanup::KeepLogFiles(1),
+            )
+            .format(flexi_logger::detailed_format),
+    )
 }
 
 pub fn start_file_logger(

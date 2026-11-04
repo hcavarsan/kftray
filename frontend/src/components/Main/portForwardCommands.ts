@@ -4,6 +4,7 @@ import type { PortForwardResponse, StoredConfig } from '@/types'
 function usesTcpForward(config: StoredConfig) {
   switch (config.workload_type) {
     case 'expose':
+    case 'ssh-port-forward':
       return true
     case 'proxy':
       return false

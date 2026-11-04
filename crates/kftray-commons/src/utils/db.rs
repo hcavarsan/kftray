@@ -210,6 +210,14 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         e
     })?;
 
+    sqlx::query(crate::utils::ssh_host_keys::SSH_HOST_KEYS_DDL)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create ssh_host_keys table: {e}");
+            e
+        })?;
+
     info!("Database tables and triggers created successfully.");
     Ok(())
 }

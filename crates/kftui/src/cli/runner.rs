@@ -474,6 +474,20 @@ impl PortForwardRunner {
         let local_port = config.local_port.unwrap_or(0);
         let remote_port = config.remote_port.unwrap_or(0);
         let namespace = &config.namespace;
+        if config.workload_type.as_deref()
+            == Some(kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD)
+        {
+            let remote_address = config.remote_address.as_deref().unwrap_or("unknown");
+            let (provider, summary) = config
+                .ssh_provider
+                .as_ref()
+                .map(|provider| (provider.type_name(), provider.summary()))
+                .unwrap_or(("unknown", String::new()));
+            output::status!(
+                "  {alias} {local_port} -> {remote_address}:{remote_port} via {provider} {summary}"
+            );
+            return;
+        }
         let service_or_target = match config.workload_type.as_deref() {
             Some("proxy") => config.remote_address.as_deref().unwrap_or("unknown"),
             Some("pod") => config.target.as_deref().unwrap_or("unknown"),

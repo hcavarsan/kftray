@@ -529,16 +529,6 @@ fn attributable_lines(
         .collect()
 }
 
-/// Whether the configuration asks for a domain alias in the hosts file.
-fn names_domain_alias(config: &kftray_commons::models::config_model::Config) -> bool {
-    config.domain_enabled.unwrap_or_default()
-        && config.service.is_some()
-        && config
-            .alias
-            .as_deref()
-            .is_some_and(|alias| !alias.is_empty())
-}
-
 /// Every alias a configuration may have written, keyed by the id each was
 /// written under.
 ///
@@ -565,7 +555,7 @@ fn config_host_entries(
         return Vec::new();
     };
     let mut entries = Vec::new();
-    if names_domain_alias(config) {
+    if config.domain_alias_eligible() {
         entries.push((
             id.to_string(),
             HostEntry {
@@ -789,7 +779,7 @@ async fn alias_may_exist(
     let Some(config) = config else {
         return true;
     };
-    if names_domain_alias(config) {
+    if config.domain_alias_eligible() {
         return true;
     }
     let ids = [
@@ -812,7 +802,9 @@ async fn alias_may_exist(
         }
     }
     match crate::kube::stop::recorded_configs(id, mode).await {
-        Some(recorded) => recorded.iter().any(names_domain_alias),
+        Some(recorded) => recorded
+            .iter()
+            .any(kftray_commons::models::config_model::Config::domain_alias_eligible),
         None => true,
     }
 }

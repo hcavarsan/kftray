@@ -1,19 +1,27 @@
 import { Info } from 'lucide-react'
 
-import { Grid, Stack, Text } from '@chakra-ui/react'
+import { Badge, Flex, Grid, Stack, Text } from '@chakra-ui/react'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { selectStyles } from '@/components/ui/select-styles'
 import { Tooltip } from '@/components/ui/tooltip'
+import type { WorkloadType } from '@/types'
 
 import { Field, FieldCreatableSelect, FieldSelect, TextField } from './Field'
+import { SSH_PROVIDERS } from './ssh/providers'
 import type { ConfigDraft, StringOption } from './types'
 
-const workloadTypeOptions: StringOption[] = [
+interface WorkloadOption extends StringOption {
+  beta?: boolean
+  value: WorkloadType
+}
+
+const workloadTypeOptions: WorkloadOption[] = [
   { value: 'service', label: 'Service' },
   { value: 'pod', label: 'Pod' },
   { value: 'proxy', label: 'Proxy' },
   { value: 'expose', label: 'Expose' },
+  { value: 'ssh-port-forward', label: 'SSH port forward', beta: true },
 ]
 
 function ErrorText({ error, label }: { error: unknown; label: string }) {
@@ -48,6 +56,7 @@ export function CommonFields({
   onUpdate,
 }: CommonFieldsProps) {
   const workloadType = draft.workload_type
+  const isSsh = workloadType === 'ssh-port-forward'
 
   return (
     <>
@@ -99,32 +108,34 @@ export function CommonFields({
             </Checkbox>
           )}
         </Stack>
-        <Field
-          data-testid='config-context'
-          error={errors.context}
-          label='Context *'
-        >
-          <FieldSelect<StringOption>
-            isLoading={contextQuery.isLoading}
-            onBlur={() => onContextFocusChange(false)}
-            onChange={option => onUpdate({ context: option?.value ?? '' })}
-            onFocus={() => onContextFocusChange(true)}
-            options={(contextQuery.data ?? []).map(({ name }) => ({
-              label: name,
-              value: name,
-            }))}
-            styles={selectStyles<StringOption>()}
-            value={
-              draft.context
-                ? { label: draft.context, value: draft.context }
-                : null
-            }
-          />
-          <ErrorText
-            error={contextQuery.error}
-            label='Error fetching contexts'
-          />
-        </Field>
+        {!isSsh && (
+          <Field
+            data-testid='config-context'
+            error={errors.context}
+            label='Context *'
+          >
+            <FieldSelect<StringOption>
+              isLoading={contextQuery.isLoading}
+              onBlur={() => onContextFocusChange(false)}
+              onChange={option => onUpdate({ context: option?.value ?? '' })}
+              onFocus={() => onContextFocusChange(true)}
+              options={(contextQuery.data ?? []).map(({ name }) => ({
+                label: name,
+                value: name,
+              }))}
+              styles={selectStyles<StringOption>()}
+              value={
+                draft.context
+                  ? { label: draft.context, value: draft.context }
+                  : null
+              }
+            />
+            <ErrorText
+              error={contextQuery.error}
+              label='Error fetching contexts'
+            />
+          </Field>
+        )}
       </Grid>
       <Grid templateColumns='repeat(2, 1fr)' gap={3}>
         <Field
@@ -132,28 +143,38 @@ export function CommonFields({
           error={errors.workload_type}
           label='Workload Type'
         >
-          <FieldSelect<StringOption>
+          <FieldSelect<WorkloadOption>
+            formatOptionLabel={({ beta, label }) => (
+              <Flex align='center' gap={1.5}>
+                {label}
+                {beta && (
+                  <Badge size='xs' colorPalette='blue' variant='subtle'>
+                    Beta
+                  </Badge>
+                )}
+              </Flex>
+            )}
             onChange={option =>
               onUpdate({
                 exposure_type:
                   option?.value === 'expose'
                     ? (draft.exposure_type ?? 'cluster')
                     : draft.exposure_type,
-                protocol: option?.value === 'expose' ? 'tcp' : draft.protocol,
-                workload_type:
-                  option?.value === 'pod'
-                    ? 'pod'
-                    : option?.value === 'proxy'
-                      ? 'proxy'
-                      : option?.value === 'expose'
-                        ? 'expose'
-                        : option?.value === 'service'
-                          ? 'service'
-                          : undefined,
+                protocol:
+                  option?.value === 'expose' ||
+                  option?.value === 'ssh-port-forward'
+                    ? 'tcp'
+                    : draft.protocol,
+                ssh_provider:
+                  option?.value === 'ssh-port-forward'
+                    ? (draft.ssh_provider ??
+                      SSH_PROVIDERS['gcp-bastion'].empty())
+                    : undefined,
+                workload_type: option?.value,
               })
             }
             options={workloadTypeOptions}
-            styles={selectStyles<StringOption>()}
+            styles={selectStyles<WorkloadOption>()}
             value={
               workloadTypeOptions.find(
                 option => option.value === workloadType,
@@ -161,36 +182,38 @@ export function CommonFields({
             }
           />
         </Field>
-        <Field
-          data-testid='config-namespace'
-          error={errors.namespace}
-          label='Namespace *'
-        >
-          <FieldCreatableSelect<StringOption>
-            formatCreateLabel={value => `Use "${value}"`}
-            isLoading={namespaceQuery.isLoading}
-            noOptionsMessage={() =>
-              namespaceQuery.error
-                ? 'Type namespace name manually'
-                : 'No namespaces found'
-            }
-            onChange={option => onUpdate({ namespace: option?.value ?? '' })}
-            options={(namespaceQuery.data ?? []).map(({ name }) => ({
-              label: name,
-              value: name,
-            }))}
-            styles={selectStyles<StringOption>()}
-            value={
-              draft.namespace
-                ? { label: draft.namespace, value: draft.namespace }
-                : null
-            }
-          />
-          <ErrorText
-            error={namespaceQuery.error}
-            label='Error fetching namespaces'
-          />
-        </Field>
+        {!isSsh && (
+          <Field
+            data-testid='config-namespace'
+            error={errors.namespace}
+            label='Namespace *'
+          >
+            <FieldCreatableSelect<StringOption>
+              formatCreateLabel={value => `Use "${value}"`}
+              isLoading={namespaceQuery.isLoading}
+              noOptionsMessage={() =>
+                namespaceQuery.error
+                  ? 'Type namespace name manually'
+                  : 'No namespaces found'
+              }
+              onChange={option => onUpdate({ namespace: option?.value ?? '' })}
+              options={(namespaceQuery.data ?? []).map(({ name }) => ({
+                label: name,
+                value: name,
+              }))}
+              styles={selectStyles<StringOption>()}
+              value={
+                draft.namespace
+                  ? { label: draft.namespace, value: draft.namespace }
+                  : null
+              }
+            />
+            <ErrorText
+              error={namespaceQuery.error}
+              label='Error fetching namespaces'
+            />
+          </Field>
+        )}
       </Grid>
     </>
   )

@@ -3,6 +3,7 @@ pub mod cluster;
 pub mod coverage;
 pub mod display;
 pub mod env;
+pub mod gcp_bastion;
 pub mod nextest;
 pub mod wait;
 pub mod workload;

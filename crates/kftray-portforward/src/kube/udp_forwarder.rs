@@ -18,7 +18,6 @@ use tokio::io::{
     AsyncWrite,
     AsyncWriteExt,
 };
-use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -242,27 +241,51 @@ impl UdpForwarder {
         impl Future<Output = anyhow::Result<()>> + Send + 'static,
     )> {
         let local_udp_addr = format!("{local_address}:{local_port}");
+        let candidates: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host((local_address.as_str(), local_port))
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}")
+                })?
+                .collect();
 
-        let local_udp_socket = TokioUdpSocket::bind(&local_udp_addr).await.map_err(|e| {
-            match (e.kind(), local_address.parse::<std::net::IpAddr>()) {
-                (std::io::ErrorKind::AddrInUse, Ok(ip)) => crate::local_port::port_in_use(
+        let mut bound = None;
+        let mut last_error = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "could not resolve to any address",
+        );
+        for candidate in candidates {
+            match crate::privileged_bind::bind_udp_socket(candidate).await {
+                Ok(socket) => {
+                    bound = Some(socket);
+                    break;
+                }
+                Err(e) => last_error = e,
+            }
+        }
+        let local_udp_socket = bound.ok_or_else(|| match last_error.kind() {
+            std::io::ErrorKind::AddrInUse => match local_address.parse::<std::net::IpAddr>() {
+                Ok(ip) => crate::local_port::port_in_use(
                     ip,
                     local_port,
                     crate::kube::listener::Protocol::Udp,
                 ),
-                (std::io::ErrorKind::PermissionDenied, _) => crate::local_port::bind_denied(
-                    &local_address,
-                    local_port,
-                    crate::kube::listener::Protocol::Udp,
+                Err(_) => anyhow::anyhow!(
+                    "Failed to bind local UDP socket to {local_udp_addr}: {last_error}"
                 ),
-                (std::io::ErrorKind::AddrNotAvailable, _) => {
-                    crate::local_port::address_unavailable(
-                        &local_address,
-                        local_port,
-                        crate::kube::listener::Protocol::Udp,
-                    )
-                }
-                _ => anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}"),
+            },
+            std::io::ErrorKind::PermissionDenied => crate::local_port::bind_denied(
+                &local_address,
+                local_port,
+                crate::kube::listener::Protocol::Udp,
+            ),
+            std::io::ErrorKind::AddrNotAvailable => crate::local_port::address_unavailable(
+                &local_address,
+                local_port,
+                crate::kube::listener::Protocol::Udp,
+            ),
+            _ => {
+                anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {last_error}")
             }
         })?;
 
@@ -1517,6 +1540,15 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_port_the_os_denies_is_reported_as_denied_not_as_busy() {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let _no_helper = kftray_commons::test_utils::EnvVarGuard::set(
+            "SOCKET_PATH",
+            std::env::temp_dir()
+                .join("kftray-no-helper")
+                .join(kftray_helper::communication::SOCKET_FILENAME)
+                .to_str()
+                .unwrap(),
+        );
         // Only meaningful where an unprivileged process cannot bind port 80.
         let denied = std::net::UdpSocket::bind(("127.0.0.1", 80))
             .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
@@ -1541,6 +1573,20 @@ pub(crate) mod tests {
             kftray_telemetry::FailureKind::BindDenied,
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_hostname_local_address_should_still_bind() {
+        let (port, _forward) = UdpForwarder::bind_and_forward(
+            "localhost".to_owned(),
+            0,
+            Arc::new(NoCapacityUpstream::default()),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(port, 0);
     }
 
     #[tokio::test]

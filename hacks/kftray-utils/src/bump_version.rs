@@ -206,6 +206,14 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     println!("kftray-telemetry Cargo.toml updated");
 
     update_file_content(
+        "../../crates/kftray-ssh/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-ssh Cargo.toml updated");
+
+    update_file_content(
         "../../crates/kftray-tauri/tauri.conf.json",
         new_version,
         update_json_version,

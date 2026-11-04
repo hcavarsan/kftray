@@ -129,6 +129,14 @@ pub async fn install_helper() -> Result<bool, String> {
     info!("Installing helper sidecar");
     let client = HelperClient::new(APP_ID.to_string()).map_err(|e| e.to_string())?;
 
+    #[cfg(unix)]
+    if client.is_helper_outdated() {
+        info!("Installed helper cannot bind privileged ports, replacing it");
+        client
+            .ensure_helper_uninstalled()
+            .map_err(|e| e.to_string())?;
+    }
+
     client
         .ensure_helper_installed()
         .map_err(|e| e.to_string())?;

@@ -16,7 +16,13 @@ const activePodKey = (id: number) => ['active-pod', id]
 export function useActivePods(configs: Config[]) {
   const queryClient = useQueryClient()
   const runningIds = useMemo(
-    () => configs.filter(config => config.is_running).map(config => config.id),
+    () =>
+      configs
+        .filter(
+          config =>
+            config.is_running && config.workload_type !== 'ssh-port-forward',
+        )
+        .map(config => config.id),
     [configs],
   )
   const previousRunningIds = useRef<number[]>([])

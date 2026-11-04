@@ -37,6 +37,7 @@ pub enum RequestCommand {
     Address(AddressCommand),
     Service(ServiceCommand),
     Host(HostCommand),
+    Socket(SocketCommand),
     Ping,
 }
 
@@ -59,6 +60,21 @@ pub enum ServiceCommand {
     Status,
     Stop,
     Restart,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketCommand {
+    BindPrivileged {
+        address: String,
+        port: u16,
+        protocol: SocketProtocol,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SocketProtocol {
+    Tcp,
+    Udp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +123,7 @@ pub enum RequestResult {
     AllocationsSuccess(Vec<(String, String)>),
     HostEntriesSuccess(Vec<(String, HostEntry)>),
     Error(String),
+    BindError(i32),
 }
 
 impl HelperRequest {
@@ -161,6 +178,13 @@ impl HelperResponse {
         Self {
             request_id,
             result: RequestResult::Error(error.into()),
+        }
+    }
+
+    pub fn bind_error(request_id: String, errno: i32) -> Self {
+        Self {
+            request_id,
+            result: RequestResult::BindError(errno),
         }
     }
 }

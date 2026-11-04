@@ -1,10 +1,22 @@
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::ssh_provider::{
+    GcpBastionProvider,
+    SshProvider,
+    SshProviderKind,
+    WORKLOAD_SSH_PORT_FORWARD,
+};
 
 use crate::fixtures::{
     Expect,
     Fixture,
 };
 use crate::harness::free_port;
+use crate::harness::gcp_bastion::{
+    ECHO_HOST,
+    INSTANCE,
+    PROJECT,
+    ZONE,
+};
 use crate::harness::workload::{
     NAMESPACE,
     Workload,
@@ -71,6 +83,37 @@ pub fn proxy_http() -> Fixture {
     config.remote_address = Some(Workload::EchoHttp.service_host(NAMESPACE));
     Fixture {
         name: "proxy-http",
+        workload: Workload::EchoHttp,
+        config,
+        expect: Expect::Http { body: ECHO_BODY },
+    }
+}
+
+pub fn ssh_gcp_bastion_http() -> Fixture {
+    let config = Config {
+        alias: Some("ssh-gcp-bastion-http".to_owned()),
+        workload_type: Some(WORKLOAD_SSH_PORT_FORWARD.to_owned()),
+        protocol: "tcp".to_owned(),
+        ssh_provider: Some(SshProvider::Known(SshProviderKind::GcpBastion(
+            GcpBastionProvider {
+                project: PROJECT.to_owned(),
+                zone: ZONE.to_owned(),
+                instance: INSTANCE.to_owned(),
+                interface: "nic0".to_owned(),
+            },
+        ))),
+        remote_address: Some(ECHO_HOST.to_owned()),
+        remote_port: Some(Workload::EchoHttp.port()),
+        local_port: free_port().ok(),
+        namespace: String::new(),
+        context: None,
+        service: None,
+        target: None,
+        kubeconfig: None,
+        ..Config::default()
+    };
+    Fixture {
+        name: "ssh-gcp-bastion-http",
         workload: Workload::EchoHttp,
         config,
         expect: Expect::Http { body: ECHO_BODY },

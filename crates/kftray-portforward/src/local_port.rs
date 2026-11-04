@@ -9,6 +9,9 @@ use crate::kube::listener::Protocol;
 
 const FREE_PORT_SEARCH: u16 = 100;
 const FREE_PORT_OFFER: &str = ". Port ";
+const FIRST_UNPRIVILEGED_PORT: u16 = 1024;
+const HELPER_HINT: &str =
+    "; install or update the kftray helper in Settings to use ports below 1024";
 
 fn protocol_name(protocol: Protocol) -> &'static str {
     match protocol {
@@ -51,23 +54,46 @@ pub(crate) fn port_in_use(ip: IpAddr, port: u16, protocol: Protocol) -> anyhow::
 /// The error for a local port the operating system refuses to bind: a
 /// privileged port without the privilege, or a range Windows reserves. No
 /// other process holds it, so the message does not say so, but it still
-/// names a port that binds for the clients to offer.
+/// names a port that binds for the clients to offer. A privileged loopback
+/// port on Unix also points at the helper, which can bind it.
 pub(crate) fn bind_denied(address: &str, port: u16, protocol: Protocol) -> anyhow::Error {
     let name = protocol_name(protocol);
-    let offer = address
-        .parse::<IpAddr>()
-        .ok()
-        .and_then(|ip| next_free_port(ip, port, protocol));
+    let ip = address.parse::<IpAddr>().ok();
+    let hint = if ip.is_some_and(|ip| helper_may_bind(ip, port)) {
+        HELPER_HINT
+    } else {
+        ""
+    };
+    let offer = ip.and_then(|ip| next_free_port(ip, port, protocol));
     match offer {
         Some(free) => anyhow::anyhow!(
             "Local {name} port {port} on {address} cannot be bound: access denied or the port \
-             is reserved by the system{FREE_PORT_OFFER}{free} is free."
+             is reserved by the system{hint}{FREE_PORT_OFFER}{free} is free."
         ),
         None => anyhow::anyhow!(
             "Local {name} port {port} on {address} cannot be bound: access denied or the port \
-             is reserved by the system."
+             is reserved by the system{hint}."
         ),
     }
+}
+
+fn helper_may_bind(ip: IpAddr, port: u16) -> bool {
+    cfg!(unix) && port < FIRST_UNPRIVILEGED_PORT && ip.is_loopback()
+}
+
+pub(crate) fn bind_is_denied(ip: IpAddr, port: u16, protocol: Protocol) -> bool {
+    bind(ip, port, protocol).is_err_and(|error| error.kind() == ErrorKind::PermissionDenied)
+}
+
+#[cfg(unix)]
+fn helper_is_reachable() -> bool {
+    kftray_helper::communication::get_default_socket_path()
+        .is_ok_and(|path| kftray_helper::client::socket_comm::is_socket_available(&path))
+}
+
+#[cfg(not(unix))]
+fn helper_is_reachable() -> bool {
+    false
 }
 
 /// The error for a local address that is not configured on this machine,
@@ -82,7 +108,9 @@ pub(crate) fn address_unavailable(address: &str, port: u16, protocol: Protocol) 
 
 /// Fails before any cluster call when another process already holds the local
 /// port or the system refuses to bind it. Every other bind error is left to
-/// the real bind, which reports it.
+/// the real bind, which reports it. A privileged loopback port the system
+/// refuses is also left to the real bind while the helper answers, since the
+/// helper can bind it where this process cannot.
 pub(crate) fn ensure_free(address: &str, port: u16, protocol: Protocol) -> anyhow::Result<()> {
     if port == 0 {
         return Ok(());
@@ -92,7 +120,10 @@ pub(crate) fn ensure_free(address: &str, port: u16, protocol: Protocol) -> anyho
     };
     match bind(ip, port, protocol) {
         Err(error) if error.kind() == ErrorKind::AddrInUse => Err(port_in_use(ip, port, protocol)),
-        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+        Err(error)
+            if error.kind() == ErrorKind::PermissionDenied
+                && !(helper_may_bind(ip, port) && helper_is_reachable()) =>
+        {
             Err(bind_denied(address, port, protocol))
         }
         _ => Ok(()),
@@ -134,12 +165,36 @@ mod tests {
         TcpListener::bind((LOCALHOST, free)).unwrap();
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn helper_socket(
+        listening: bool,
+    ) -> (
+        tempfile::TempDir,
+        kftray_commons::test_utils::EnvVarGuard,
+        Option<std::os::unix::net::UnixListener>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir
+            .path()
+            .join(kftray_helper::communication::SOCKET_FILENAME);
+        let env =
+            kftray_commons::test_utils::EnvVarGuard::set("SOCKET_PATH", socket.to_str().unwrap());
+        let listener = listening.then(|| std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        (dir, env, listener)
+    }
+
+    fn is_denied(protocol: Protocol) -> bool {
+        bind(LOCALHOST, 80, protocol)
+            .is_err_and(|error| error.kind() == ErrorKind::PermissionDenied)
+    }
+
     #[test]
     fn a_denied_port_offers_a_free_port_without_blaming_another_process() {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let _helper = helper_socket(false);
+
         for protocol in [Protocol::Tcp, Protocol::Udp] {
-            let denied = bind(LOCALHOST, 80, protocol)
-                .is_err_and(|error| error.kind() == ErrorKind::PermissionDenied);
-            if !denied {
+            if !is_denied(protocol) {
                 continue;
             }
 
@@ -160,6 +215,40 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_denied_privileged_port_is_left_to_the_real_bind_while_the_helper_answers() {
+        let _helper = helper_socket(true);
+
+        for protocol in [Protocol::Tcp, Protocol::Udp] {
+            if is_denied(protocol) {
+                assert!(ensure_free("127.0.0.1", 80, protocol).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn a_denied_privileged_loopback_port_points_at_the_helper_on_unix_only() {
+        let privileged = bind_denied("127.0.0.1", 80, Protocol::Tcp).to_string();
+        let unprivileged = bind_denied("127.0.0.1", 8080, Protocol::Tcp).to_string();
+        let remote = bind_denied("10.0.0.1", 80, Protocol::Tcp).to_string();
+
+        assert_eq!(
+            privileged.contains("install or update the kftray helper in Settings"),
+            cfg!(unix),
+            "{privileged}"
+        );
+        assert!(!unprivileged.contains("kftray helper"), "{unprivileged}");
+        assert!(!remote.contains("kftray helper"), "{remote}");
+        let free = free_port_in_error(&privileged).expect(&privileged);
+        assert!(bind(LOCALHOST, free, Protocol::Tcp).is_ok(), "{privileged}");
+        assert_eq!(
+            kftray_telemetry::classify(&privileged),
+            kftray_telemetry::FailureKind::BindDenied,
+            "{privileged}"
+        );
     }
 
     #[test]

@@ -38,6 +38,15 @@ pub async fn start_port_forwarding_with_ssl(
         Some("expose") => {
             kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await
         }
+        Some(kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD) => {
+            if config.protocol != "tcp" {
+                return Err(format!(
+                    "Unsupported protocol for ssh-port-forward: {}",
+                    config.protocol
+                ));
+            }
+            kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await
+        }
         Some("service") | Some("pod") | None => {
             if config.workload_type.is_none() && config.service.is_none() {
                 return Err(

@@ -1,0 +1,18 @@
+[
+  {
+    "alias": "internal-app",
+    "workload_type": "ssh-port-forward",
+    "protocol": "tcp",
+    "ssh_provider": {
+      "type": "gcp-bastion",
+      "project": "my-gcp-project",
+      "zone": "us-central1-b",
+      "instance": "bastion"
+    },
+    "remote_address": "app.internal.example.com",
+    "remote_port": 80,
+    "local_port": 8080,
+    "auto_loopback_address": true,
+    "domain_enabled": true
+  }
+]

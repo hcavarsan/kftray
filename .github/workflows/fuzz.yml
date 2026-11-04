@@ -9,6 +9,7 @@ on:
       - "fuzz/**"
       - "crates/kftray-http-logs/**"
       - "crates/kftray-commons/**"
+      - "crates/kftray-ssh/**"
 
 permissions:
   contents: read
@@ -30,6 +31,7 @@ jobs:
         target:
           - fuzz_chunked_body
           - fuzz_config_import
+          - fuzz_iap_frame_decode
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

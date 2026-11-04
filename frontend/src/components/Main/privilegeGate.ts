@@ -8,9 +8,10 @@ export const PRIVILEGE_PROMPT_SETTING = 'privilege_prompt'
 
 /**
  * A start failure caused by a privileged local change being refused. The
- * alternatives are the exact messages `kube::start` and `network_utils`
- * produce for a hosts write the process may not make and for an elevation
- * prompt the user dismissed. The hosts branch carries the OS's own text
+ * alternatives are the exact messages `kube::start`, `network_utils` and
+ * `local_port` produce for a hosts write the process may not make, for an
+ * elevation prompt the user dismissed and for a port below 1024 only the
+ * helper can bind. The hosts branch carries the OS's own text
  * for `ErrorKind::PermissionDenied`: "Permission denied" on Unix, "Access
  * is denied" on Windows. A hosts write that failed for another reason (an
  * invalid alias, an I/O error) and a permission error from anywhere else
@@ -18,7 +19,7 @@ export const PRIVILEGE_PROMPT_SETTING = 'privilege_prompt'
  * elevation would not fix them.
  */
 export const PRIVILEGE_ERROR =
-  /Failed to (write to the hostfile for|add HTTPS hosts entries).*(Permission denied|Access is denied)|loopback address configuration cancelled|Address allocation cancelled by user|Network config failed: .*loopback address/
+  /Failed to (write to the hostfile for|add HTTPS hosts entries).*(Permission denied|Access is denied)|loopback address configuration cancelled|Address allocation cancelled by user|Network config failed: .*loopback address|install or update the kftray helper/
 
 export interface PrivilegeGateDeps {
   prompt: (needs: PrivilegeNeed[]) => Promise<PrivilegeDecision>

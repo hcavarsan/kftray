@@ -8,10 +8,17 @@
 //! prompts for this start, instead of discovering the problem from a failed
 //! start. Everything here is a read: nothing is created, nothing prompts.
 
+use std::net::{
+    IpAddr,
+    Ipv4Addr,
+};
+
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::hostsfile::hosts_file_writable;
 use serde::Serialize;
 
+use crate::kube::listener::Protocol;
+use crate::local_port;
 use crate::network_utils::{
     is_address_accessible,
     is_custom_loopback_address,
@@ -27,6 +34,7 @@ pub enum PrivilegedResource {
     HostsFile,
     /// A `127.x.y.z` alias on the loopback interface.
     LoopbackAddress,
+    PrivilegedPort,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -94,7 +102,7 @@ async fn needs_for(
         .clone()
         .or_else(|| config.service.clone())
         .unwrap_or_default();
-    if config.domain_enabled.unwrap_or_default() && config.service.is_some() && !hosts_writable {
+    if config.domain_alias_eligible() && !hosts_writable {
         needs.push((PrivilegedResource::HostsFile, label.clone()));
     }
     if config.auto_loopback_address {
@@ -107,7 +115,44 @@ async fn needs_for(
     {
         needs.push((PrivilegedResource::LoopbackAddress, address.to_string()));
     }
+    if let Some(detail) = privileged_port_detail(config) {
+        needs.push((PrivilegedResource::PrivilegedPort, detail));
+    }
     needs
+}
+
+fn privileged_port_detail(config: &Config) -> Option<String> {
+    if !cfg!(unix) {
+        return None;
+    }
+    let port = config.local_port.filter(|port| (1..1024).contains(port))?;
+    let (protocol, name) = if config.protocol.eq_ignore_ascii_case("udp") {
+        (Protocol::Udp, "udp")
+    } else {
+        (Protocol::Tcp, "tcp")
+    };
+    let address = if config.auto_loopback_address {
+        None
+    } else {
+        Some(
+            config
+                .local_address
+                .as_deref()
+                .filter(|address| !address.is_empty())
+                .unwrap_or("127.0.0.1"),
+        )
+    };
+    let ip = match address {
+        Some(address) => address.parse::<IpAddr>().ok()?,
+        None => IpAddr::V4(Ipv4Addr::LOCALHOST),
+    };
+    if !ip.is_loopback() || !local_port::bind_is_denied(ip, port, protocol) {
+        return None;
+    }
+    Some(match address {
+        Some(address) => format!("{address}:{port}/{name}"),
+        None => format!("port {port}/{name}"),
+    })
 }
 
 /// Linux and Windows route the whole `127/8` block to the loopback interface,
@@ -209,5 +254,66 @@ mod tests {
         cfg.domain_enabled = Some(true);
         cfg.auto_loopback_address = true;
         assert!(needs_for(&cfg, false, true).await.is_empty());
+    }
+
+    fn port_80_is_denied() -> bool {
+        std::net::TcpListener::bind(("127.0.0.1", 80))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+            && std::net::UdpSocket::bind(("127.0.0.1", 80))
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+    }
+
+    #[tokio::test]
+    async fn a_privileged_port_the_os_denies_needs_the_helper() {
+        if !port_80_is_denied() {
+            return;
+        }
+        let mut cfg = config();
+        cfg.local_port = Some(80);
+
+        assert_eq!(
+            needs_for(&cfg, true, false).await,
+            vec![(
+                PrivilegedResource::PrivilegedPort,
+                "127.0.0.1:80/tcp".to_string()
+            )]
+        );
+
+        cfg.protocol = "udp".to_string();
+        cfg.local_address = Some("127.0.0.1".to_string());
+        assert_eq!(
+            needs_for(&cfg, true, false).await,
+            vec![(
+                PrivilegedResource::PrivilegedPort,
+                "127.0.0.1:80/udp".to_string()
+            )]
+        );
+
+        cfg.auto_loopback_address = true;
+        assert_eq!(
+            needs_for(&cfg, true, false).await,
+            vec![(
+                PrivilegedResource::PrivilegedPort,
+                "port 80/udp".to_string()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_denied_privileged_port_of_a_local_forward_needs_the_helper() {
+        let mut cfg = config();
+        cfg.local_port = Some(8080);
+        assert!(needs_for(&cfg, true, false).await.is_empty());
+
+        cfg.local_port = Some(0);
+        assert!(needs_for(&cfg, true, false).await.is_empty());
+
+        cfg.local_port = Some(80);
+        cfg.workload_type = Some("expose".to_string());
+        assert!(needs_for(&cfg, true, false).await.is_empty());
+
+        cfg.workload_type = Some("service".to_string());
+        cfg.local_address = Some("10.0.0.1".to_string());
+        assert!(needs_for(&cfg, true, false).await.is_empty());
     }
 }

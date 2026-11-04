@@ -50,6 +50,23 @@ describe('gateStart', () => {
     ).resolves.toBe(true)
   })
 
+  it('prompts for a privileged port the helper would have to bind', async () => {
+    const portNeed: PrivilegeNeed = {
+      config_id: 1,
+      resource: 'privileged_port',
+      detail: '127.0.0.2:80/tcp',
+    }
+    vi.mocked(invoke).mockResolvedValue([portNeed])
+    const prompt = vi.fn<
+      (needs: PrivilegeNeed[]) => Promise<PrivilegeDecision>
+    >(async () => 'install')
+
+    await expect(
+      gateStart([makeConfig(1)], { prompt, isSuppressed: async () => false }),
+    ).resolves.toBe(true)
+    expect(prompt).toHaveBeenCalledWith([portNeed])
+  })
+
   it('skips the prompt once the user asked not to be asked', async () => {
     vi.mocked(invoke).mockResolvedValue([hostsNeed])
     const prompt = vi.fn()
@@ -93,6 +110,11 @@ describe('PRIVILEGE_ERROR', () => {
         'Address allocation cancelled by user: Failed to configure loopback address: User canceled',
       ),
     ).toBe(true)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Failed to start TCP port forwarding for service web: Local TCP port 80 on 127.0.0.2 cannot be bound: access denied or the port is reserved by the system; install or update the kftray helper in Settings to use ports below 1024. Port 8080 is free.',
+      ),
+    ).toBe(true)
   })
 
   it('leaves other permission, hosts and network failures alone', () => {
@@ -116,6 +138,11 @@ describe('PRIVILEGE_ERROR', () => {
     expect(
       PRIVILEGE_ERROR.test(
         'Failed to bind listener on loopback address 127.0.0.1:8080',
+      ),
+    ).toBe(false)
+    expect(
+      PRIVILEGE_ERROR.test(
+        'Local TCP port 80 on 10.0.0.1 cannot be bound: access denied or the port is reserved by the system. Port 8080 is free.',
       ),
     ).toBe(false)
   })

@@ -4,5 +4,6 @@ pub mod hostfile;
 pub mod http_logs_config_model;
 pub mod response;
 pub mod settings_model;
+pub mod ssh_provider;
 pub mod tunnel_protocol;
 pub mod window;
