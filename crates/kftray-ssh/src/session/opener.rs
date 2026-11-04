@@ -1,5 +1,8 @@
 use std::collections::VecDeque;
-use std::io;
+use std::io::{
+    self,
+    SeekFrom,
+};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{
@@ -27,12 +30,17 @@ use russh::{
     ChannelReadHalf,
     ChannelWriteHalf,
 };
+use tokio::fs::File;
 use tokio::io::{
     AsyncRead,
+    AsyncReadExt,
+    AsyncSeekExt,
     AsyncWrite,
+    AsyncWriteExt,
     ReadBuf,
 };
 use tokio::sync::{
+    Notify,
     OwnedSemaphorePermit,
     oneshot,
 };
@@ -199,22 +207,20 @@ struct Inbound {
 }
 
 impl Inbound {
-    fn push(&mut self, data: Bytes) -> bool {
-        let fits = data.len() <= CHANNEL_READ_BUFFER - self.buffered;
-        if fits {
-            if !data.is_empty() {
-                self.buffered += data.len();
-                self.chunks.push_back(data);
-            }
-        } else {
-            self.end = Some(End::Reset);
-        }
-        self.wake();
-        fits
+    fn room(&self) -> usize {
+        CHANNEL_READ_BUFFER - self.buffered
     }
 
-    fn finish(&mut self) {
-        self.end.get_or_insert(End::Eof);
+    fn push(&mut self, data: Bytes) {
+        if !data.is_empty() {
+            self.buffered += data.len();
+            self.chunks.push_back(data);
+        }
+        self.wake();
+    }
+
+    fn end(&mut self, end: End) {
+        self.end.get_or_insert(end);
         self.wake();
     }
 
@@ -225,31 +231,124 @@ impl Inbound {
     }
 }
 
-fn lock(inbound: &Mutex<Inbound>) -> MutexGuard<'_, Inbound> {
-    inbound.lock().unwrap_or_else(PoisonError::into_inner)
+#[derive(Default)]
+struct Shared {
+    inbound: Mutex<Inbound>,
+    room_freed: Notify,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, Inbound> {
+        self.inbound.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+struct Spill {
+    file: File,
+    read_at: u64,
+    written: u64,
+}
+
+impl Spill {
+    async fn create() -> io::Result<Self> {
+        let file = tokio::task::spawn_blocking(tempfile::tempfile)
+            .await
+            .map_err(io::Error::other)??;
+        Ok(Self {
+            file: File::from_std(file),
+            read_at: 0,
+            written: 0,
+        })
+    }
+
+    fn pending(&self) -> u64 {
+        self.written - self.read_at
+    }
+
+    async fn append(&mut self, data: &[u8]) -> io::Result<()> {
+        self.file.seek(SeekFrom::Start(self.written)).await?;
+        self.file.write_all(data).await?;
+        self.file.flush().await?;
+        self.written += data.len() as u64;
+        Ok(())
+    }
+
+    async fn take(&mut self, max: usize) -> io::Result<Bytes> {
+        let len = usize::try_from(self.pending()).map_or(max, |pending| pending.min(max));
+        let mut chunk = vec![0; len];
+        self.file.seek(SeekFrom::Start(self.read_at)).await?;
+        self.file.read_exact(&mut chunk).await?;
+        self.read_at += len as u64;
+        if self.read_at == self.written {
+            self.file.set_len(0).await?;
+            self.read_at = 0;
+            self.written = 0;
+        }
+        Ok(Bytes::from(chunk))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Upstream {
+    Open,
+    Eof,
+    Closed,
+}
+
+async fn spill(spill: &mut Option<Spill>, data: &[u8]) -> io::Result<()> {
+    if let Some(spill) = spill {
+        return spill.append(data).await;
+    }
+    spill.insert(Spill::create().await?).append(data).await
 }
 
 async fn pump(
-    mut read: ChannelReadHalf, write: ChannelWriteHalf<Msg>, inbound: Arc<Mutex<Inbound>>,
+    mut read: ChannelReadHalf, write: ChannelWriteHalf<Msg>, shared: Arc<Shared>,
     released: CancellationToken, _permit: Option<OwnedSemaphorePermit>,
 ) {
+    let mut overflow: Option<Spill> = None;
+    let mut upstream = Upstream::Open;
     loop {
-        let msg = tokio::select! {
-            msg = read.wait() => msg,
-            () = released.cancelled() => break,
-        };
-        match msg {
-            Some(ChannelMsg::Data { data }) => {
-                if !lock(&inbound).push(data) {
-                    break;
+        let spilled = overflow.as_ref().map_or(0, Spill::pending);
+        if spilled > 0 {
+            let room = shared.lock().room();
+            if room > 0
+                && let Some(spill) = overflow.as_mut()
+            {
+                match spill.take(room).await {
+                    Ok(chunk) => shared.lock().push(chunk),
+                    Err(e) => {
+                        log::warn!("Could not read back SSH channel data kept on disk: {e}");
+                        shared.lock().end(End::Reset);
+                        break;
+                    }
                 }
+                continue;
             }
-            Some(ChannelMsg::Eof) => lock(&inbound).finish(),
-            Some(ChannelMsg::Close) | None => {
-                lock(&inbound).finish();
+        } else if upstream != Upstream::Open {
+            shared.lock().end(End::Eof);
+            if upstream == Upstream::Closed {
                 return;
             }
-            Some(_) => {}
+        }
+        tokio::select! {
+            msg = read.wait(), if upstream != Upstream::Closed => match msg {
+                Some(ChannelMsg::Data { data }) => {
+                    let fits = spilled == 0 && data.len() <= shared.lock().room();
+                    if fits {
+                        shared.lock().push(data);
+                    } else if let Err(e) = spill(&mut overflow, &data).await {
+                        log::warn!("Could not keep SSH channel data on disk: {e}");
+                        shared.lock().end(End::Reset);
+                        break;
+                    }
+                }
+                Some(ChannelMsg::Eof) => upstream = Upstream::Eof,
+                Some(ChannelMsg::Close) | None => upstream = Upstream::Closed,
+                Some(_) => {}
+            },
+            () = shared.room_freed.notified(), if spilled > 0 => {}
+            () = released.cancelled() => break,
         }
     }
     drop(read);
@@ -257,7 +356,7 @@ async fn pump(
 }
 
 pub(crate) struct SshStream {
-    inbound: Arc<Mutex<Inbound>>,
+    shared: Arc<Shared>,
     outbound: Pin<Box<dyn AsyncWrite + Send>>,
     _released: DropGuard,
 }
@@ -265,18 +364,18 @@ pub(crate) struct SshStream {
 impl SshStream {
     fn start(channel: Channel<Msg>, permit: Option<OwnedSemaphorePermit>) -> Self {
         let (read, write) = channel.split();
-        let inbound = Arc::new(Mutex::new(Inbound::default()));
+        let shared = Arc::new(Shared::default());
         let released = CancellationToken::new();
         let outbound = Box::pin(write.make_writer());
         tokio::spawn(pump(
             read,
             write,
-            Arc::clone(&inbound),
+            Arc::clone(&shared),
             released.clone(),
             permit,
         ));
         Self {
-            inbound,
+            shared,
             outbound,
             _released: released.drop_guard(),
         }
@@ -287,7 +386,7 @@ impl AsyncRead for SshStream {
     fn poll_read(
         self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut inbound = lock(&self.inbound);
+        let mut inbound = self.shared.lock();
         if let Some(front) = inbound.chunks.front_mut() {
             let n = front.len().min(buf.remaining());
             buf.put_slice(&front.split_to(n));
@@ -295,13 +394,15 @@ impl AsyncRead for SshStream {
                 inbound.chunks.pop_front();
             }
             inbound.buffered -= n;
+            drop(inbound);
+            self.shared.room_freed.notify_one();
             return Poll::Ready(Ok(()));
         }
         match inbound.end {
             Some(End::Eof) => Poll::Ready(Ok(())),
             Some(End::Reset) => Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::ConnectionReset,
-                format!("the local reader fell more than {CHANNEL_READ_BUFFER} bytes behind"),
+                "the SSH channel data kept on disk could not be stored or read back",
             ))),
             None => {
                 inbound.waker = Some(cx.waker().clone());
@@ -315,7 +416,7 @@ impl AsyncWrite for SshStream {
     fn poll_write(
         mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if lock(&self.inbound).end == Some(End::Reset) {
+        if self.shared.lock().end == Some(End::Reset) {
             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
         self.outbound.as_mut().poll_write(cx, buf)
@@ -517,10 +618,24 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_reader_that_falls_too_far_behind_should_lose_only_its_own_channel() {
+    async fn a_reader_that_falls_far_behind_should_still_get_every_byte_in_order() {
         let fixture = Fixture::new().await;
         let lease = fixture.acquire("overflow").await.unwrap();
-        let (port, sent) = flood_source(2 * CHANNEL_READ_BUFFER + 4096).await;
+        let payload: Vec<u8> = (0..3 * CHANNEL_READ_BUFFER + 4096)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (sent_tx, sent) = oneshot::channel();
+        tokio::spawn({
+            let payload = payload.clone();
+            async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                socket.write_all(&payload).await.unwrap();
+                socket.shutdown().await.unwrap();
+                let _ = sent_tx.send(());
+            }
+        });
         let mut lagging = lease
             .opener("127.0.0.1".to_owned(), port)
             .open(peer())
@@ -533,16 +648,17 @@ mod tests {
             .await
             .expect("a channel with a lagging reader stalled the session");
         let mut received = Vec::new();
-        let err = timeout(WAIT, lagging.read_to_end(&mut received))
+        timeout(WAIT, lagging.read_to_end(&mut received))
             .await
             .unwrap()
-            .unwrap_err();
+            .unwrap();
 
-        assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
-        assert!(received.len() <= CHANNEL_READ_BUFFER);
-        assert!(lagging.write_all(b"late").await.is_err());
+        assert!(
+            received == payload,
+            "the lagging reader lost or reordered bytes"
+        );
         assert_eq!(*lease.state().borrow(), SessionState::Ready);
-        echo_roundtrip(&opener, b"after").await;
+        drop(lagging);
         all_permits_back(&lease).await;
     }
 

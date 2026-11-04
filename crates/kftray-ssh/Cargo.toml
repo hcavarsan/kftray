@@ -61,6 +61,7 @@ rustls-native-certs = { version = "0.8", optional = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true, optional = true }
@@ -73,7 +74,6 @@ wiremock = { version = "0.6.5", optional = true }
 [dev-dependencies]
 kftray-ssh = { path = ".", default-features = false, features = ["testing"] }
 proptest = "1.12"
-tempfile = { workspace = true }
 tokio = { workspace = true, features = [
   "macros",
   "rt-multi-thread",
