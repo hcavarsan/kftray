@@ -17,10 +17,15 @@ use std::{
         unix::net::UnixStream,
     },
     ptr,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 const FD_SIZE: usize = mem::size_of::<RawFd>();
 const CONTROL_WORDS: usize = 16;
+pub(crate) const FD_HANDOFF_HOLD: Duration = Duration::from_secs(5);
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RECV_FLAGS: libc::c_int = libc::MSG_CMSG_CLOEXEC;
@@ -69,12 +74,26 @@ pub(crate) fn send_with_fd(
 }
 
 pub(crate) fn send_with_fd_until_closed(
-    stream: &UnixStream, bytes: &[u8], fd: OwnedFd,
+    stream: &UnixStream, bytes: &[u8], fd: OwnedFd, hold: Duration,
 ) -> io::Result<()> {
     send_with_fd(stream, bytes, fd.as_fd())?;
-    let mut stream = stream;
+    let deadline = Instant::now() + hold;
+    let mut reader = stream;
     let mut scratch = [0u8; 64];
-    while matches!(stream.read(&mut scratch), Ok(read) if read > 0) {}
+    while let Some(remaining) = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+    {
+        if stream.set_read_timeout(Some(remaining)).is_err() {
+            break;
+        }
+        match reader.read(&mut scratch) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
     drop(fd);
     Ok(())
 }
@@ -149,7 +168,10 @@ mod tests {
         TcpListener,
         TcpStream,
     };
-    use std::time::Duration;
+    use std::time::{
+        Duration,
+        Instant,
+    };
 
     use super::*;
 
@@ -159,7 +181,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let sender = std::thread::spawn(move || {
-            send_with_fd_until_closed(&helper, b"{}", OwnedFd::from(listener))
+            send_with_fd_until_closed(&helper, b"{}", OwnedFd::from(listener), FD_HANDOFF_HOLD)
         });
 
         std::thread::sleep(Duration::from_millis(300));
@@ -175,5 +197,38 @@ mod tests {
         let mut received = [0u8; 4];
         accepted.read_exact(&mut received).unwrap();
         assert_eq!(&received, b"ping");
+    }
+
+    #[test]
+    fn a_client_trickling_bytes_cannot_hold_the_socket_past_the_deadline() {
+        let (helper, app) = UnixStream::pair().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let started = Instant::now();
+        let sender = std::thread::spawn(move || {
+            send_with_fd_until_closed(
+                &helper,
+                b"{}",
+                OwnedFd::from(listener),
+                Duration::from_millis(300),
+            )
+        });
+        let trickler = std::thread::spawn(move || {
+            let mut app = app;
+            for _ in 0..40 {
+                if app.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+
+        sender.join().unwrap().unwrap();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the helper held the socket for {:?}",
+            started.elapsed()
+        );
+        trickler.join().unwrap();
     }
 }

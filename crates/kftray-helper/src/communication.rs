@@ -742,7 +742,12 @@ async fn handle_connection(
     // above does.
     task::spawn_blocking(move || -> Result<(), HelperError> {
         let written = match bound_fd {
-            Some(fd) => fd_passing::send_with_fd_until_closed(&stream, &response_bytes, fd),
+            Some(fd) => fd_passing::send_with_fd_until_closed(
+                &stream,
+                &response_bytes,
+                fd,
+                fd_passing::FD_HANDOFF_HOLD,
+            ),
             None => stream.write_all(&response_bytes),
         };
         match written {
