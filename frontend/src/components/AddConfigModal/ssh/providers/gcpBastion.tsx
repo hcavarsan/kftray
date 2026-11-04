@@ -76,7 +76,6 @@ function GcpBastionForm({ provider, errors, onChange }: SshProviderFormProps) {
 
 export const gcpBastion: SshProviderUi = {
   label: 'GCP Bastion (IAP)',
-  badge: 'GCP Bastion',
   empty: (): GcpBastionProvider => ({
     type: 'gcp-bastion',
     project: '',

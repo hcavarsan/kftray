@@ -7,7 +7,7 @@ import {
   Users,
 } from 'lucide-react'
 
-import { Badge, Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
+import { Box, Flex, IconButton, Table, Text } from '@chakra-ui/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { open as openShell } from '@tauri-apps/plugin-shell'
 
@@ -19,7 +19,6 @@ import {
   formatConfigDetails,
   getConfigDetails,
   getStatusInfo,
-  sshProviderInfo,
 } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/statusInfo'
 import {
   allHttpLogsEnabledQueryKey,
@@ -210,17 +209,6 @@ function PortForwardRowComponent({
                 </Text>
               </Flex>
             </Tooltip>
-
-            {config.workload_type === 'ssh-port-forward' && (
-              <Badge
-                size='xs'
-                colorPalette='blue'
-                variant='subtle'
-                flexShrink={0}
-              >
-                {`SSH · ${sshProviderInfo(config.ssh_provider).badge}`}
-              </Badge>
-            )}
 
             {config.last_error && (
               <Tooltip

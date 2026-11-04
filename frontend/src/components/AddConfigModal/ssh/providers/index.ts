@@ -12,7 +12,6 @@ export interface SshProviderFormProps {
 
 export interface SshProviderUi {
   label: string
-  badge: string
   empty: () => SshProvider
   normalize: (provider: SshProvider) => SshProvider
   Form: FC<SshProviderFormProps>

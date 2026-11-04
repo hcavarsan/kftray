@@ -11,7 +11,6 @@ export function sshProviderInfo(provider: SshProvider) {
   const ui = sshProviderUi(provider.type)
 
   return {
-    badge: ui?.badge ?? provider.type,
     label: ui?.label ?? provider.type,
     summary: ui?.summary(provider) ?? '',
   }
