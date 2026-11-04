@@ -47,7 +47,7 @@ pub async fn handle_import(
     app: &mut App, selected_path: &Path, mode: DatabaseMode,
 ) -> Result<(), std::io::Error> {
     if selected_path.is_file() {
-        match import_configs_from_file(selected_path.to_str().unwrap(), mode).await {
+        match import_configs_from_file(selected_path, mode).await {
             Ok(_) => show_confirmation_popup(app, "Import successful".to_string()),
             Err(e) => show_error_popup(app, format!("Import failed: {e}")),
         }
@@ -62,7 +62,7 @@ pub async fn handle_export(
 ) -> Result<(), std::io::Error> {
     log::debug!("Starting export of configs to file: {export_path:?}");
 
-    match export_configs_to_file(export_path.to_str().unwrap(), mode).await {
+    match export_configs_to_file(export_path, mode).await {
         Ok(_) => {
             log::debug!("Export successful");
 

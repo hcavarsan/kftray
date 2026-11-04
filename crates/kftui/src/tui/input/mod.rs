@@ -820,22 +820,17 @@ impl App {
     }
 
     fn parse_http_logs(lines: &[String]) -> Vec<HttpLogEntry> {
-        let mut entries = Vec::new();
-        let mut current_entry: Option<HttpLogEntry> = None;
+        let mut entries: Vec<HttpLogEntry> = Vec::new();
+        let mut request_indices = HashMap::new();
         let mut i = 0;
 
         while i < lines.len() {
             let line = lines[i].trim();
 
-            if line.starts_with("# Trace ID: ")
+            if let Some(trace_id) = line.strip_prefix("# Trace ID: ")
                 && i + 1 < lines.len()
                 && lines[i + 1].trim().starts_with("# Request at: ")
             {
-                if let Some(entry) = current_entry.take() {
-                    entries.push(entry);
-                }
-
-                let trace_id = line.replace("# Trace ID: ", "");
                 let request_timestamp = lines[i + 1].trim().replace("# Request at: ", "");
 
                 if i + 2 < lines.len() {
@@ -869,8 +864,9 @@ impl App {
                         j += 1;
                     }
 
-                    current_entry = Some(HttpLogEntry {
-                        trace_id,
+                    request_indices.insert(trace_id, entries.len());
+                    entries.push(HttpLogEntry {
+                        trace_id: trace_id.to_string(),
                         request_timestamp,
                         response_timestamp: None,
                         method,
@@ -883,7 +879,11 @@ impl App {
                         response_body: String::new(),
                     });
                 }
-            } else if line.starts_with("# Response at: ") && current_entry.is_some() {
+            } else if line.starts_with("# Response at: ")
+                && i > 0
+                && let Some(trace_id) = lines[i - 1].trim().strip_prefix("# Trace ID: ")
+                && let Some(&entry_index) = request_indices.get(trace_id)
+            {
                 let response_timestamp = line.replace("# Response at: ", "");
                 if i + 1 < lines.len() && lines[i + 1].trim().starts_with("# Took: ") {
                     let duration = lines[i + 1].trim().replace("# Took: ", "");
@@ -917,22 +917,16 @@ impl App {
                             j += 1;
                         }
 
-                        if let Some(ref mut entry) = current_entry {
-                            entry.response_timestamp = Some(response_timestamp);
-                            entry.duration_ms = Some(duration);
-                            entry.status_code = Some(status_code);
-                            entry.response_headers = headers;
-                            entry.response_body = body;
-                        }
+                        let entry = &mut entries[entry_index];
+                        entry.response_timestamp = Some(response_timestamp);
+                        entry.duration_ms = Some(duration);
+                        entry.status_code = Some(status_code);
+                        entry.response_headers = headers;
+                        entry.response_body = body;
                     }
                 }
             }
             i += 1;
-        }
-
-        // Add the last entry if it exists
-        if let Some(entry) = current_entry {
-            entries.push(entry);
         }
 
         entries
@@ -1291,103 +1285,111 @@ pub fn toggle_select_all(app: &mut App) {
 
 pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
-        if let Event::Key(key) = event::read()? {
-            log::debug!("Key pressed: {key:?}");
+        return handle_input_with_reader(app, mode, event::read).await;
+    }
+    Ok(app.should_quit)
+}
 
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                app.should_quit = true;
-                return Ok(true);
-            }
+pub(crate) async fn handle_input_with_reader(
+    app: &mut App, mode: DatabaseMode, mut read_event: impl FnMut() -> io::Result<Event>,
+) -> io::Result<bool> {
+    let input = read_event()?;
+    if let Event::Key(key) = input {
+        log::debug!("Key pressed: {key:?}");
 
-            match app.state {
-                AppState::ShowErrorPopup => {
-                    log::debug!("Handling ShowErrorPopup state");
-                    if key.code == KeyCode::Char('p') && !app.port_retries.is_empty() {
-                        start_on_free_ports(app, mode).await;
-                    } else {
-                        handle_error_popup_input(app, key.code)?;
-                    }
-                }
-                AppState::ShowConfirmationPopup => {
-                    log::debug!("Handling ShowConfirmationPopup state");
-                    handle_confirmation_popup_input(app, key.code).await?;
-                }
-                AppState::ImportFileExplorerOpen => {
-                    log::debug!("Handling ImportFileExplorerOpen state");
-                    handle_import_file_explorer_input(app, key.code, mode).await?;
-                }
-                AppState::ExportFileExplorerOpen => {
-                    log::debug!("Handling ExportFileExplorerOpen state");
-                    handle_export_file_explorer_input(app, key.code, mode).await?;
-                }
-                AppState::ShowInputPrompt => {
-                    log::debug!("Handling ShowInputPrompt state");
-                    handle_export_input_prompt(app, key.code, mode).await?;
-                }
-                AppState::ShowHelp => {
-                    log::debug!("Handling ShowHelp state");
-                    handle_help_input(app, key.code)?;
-                }
-                AppState::ShowAbout => {
-                    log::debug!("Handling ShowAbout state");
-                    handle_about_input(app, key.code)?;
-                }
-                AppState::ShowDeleteConfirmation => {
-                    log::debug!("Handling ShowDeleteConfirmation state");
-                    handle_delete_confirmation_input(app, key.code, mode).await?;
-                }
-                AppState::ShowContextSelection => {
-                    log::debug!("Handling ShowContextSelection state");
-                    handle_context_selection_input(app, key.code, mode).await?;
-                }
-                AppState::ShowSettings => {
-                    log::debug!("Handling ShowSettings state");
-                    handle_settings_input(app, key.code, mode).await?;
-                }
-                AppState::ShowHttpLogsConfig => {
-                    log::debug!("Handling ShowHttpLogsConfig state");
-                    handle_http_logs_config_input(app, key.code, mode).await?;
-                }
-                AppState::ShowHttpLogsViewer => {
-                    log::debug!("Handling ShowHttpLogsViewer state");
-                    handle_http_logs_viewer_input(app, key.code).await?;
-                }
-                AppState::ShowViewSettings => {
-                    log::debug!("Handling ShowViewSettings state");
-                    handle_view_settings_input(app, key.code, mode).await?;
-                }
-                AppState::ShowTagEditor => {
-                    log::debug!("Handling ShowTagEditor state");
-                    handle_tag_editor_input(app, key.code, mode).await?;
-                }
-                AppState::ShowTelemetryConsent => {
-                    log::debug!("Handling ShowTelemetryConsent state");
-                    handle_telemetry_consent_input(app, key.code, mode).await?;
-                }
-                AppState::ShowUpdateConfirmation => {
-                    log::debug!("Handling ShowUpdateConfirmation state");
-                    handle_update_confirmation_input(app, key.code, mode).await?;
-                }
-                AppState::ShowUpdateProgress => {
-                    log::debug!("Handling ShowUpdateProgress state");
-                }
-                AppState::ShowRestartNotification => {
-                    log::debug!("Handling ShowRestartNotification state");
-                    handle_restart_notification_input(app, key.code)?;
-                }
-                AppState::Normal => {
-                    log::debug!("Handling Normal state");
-                    if app.active_component == ActiveComponent::SearchBar {
-                        handle_search_input(app, key.code)?;
-                    } else {
-                        handle_normal_input(app, key.code, mode).await?;
-                    }
-                }
-            }
-        } else if let Event::Resize(_, height) = event::read()? {
-            log::debug!("Handling Resize event");
-            app.update_visible_rows(height);
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app.should_quit = true;
+            return Ok(true);
         }
+
+        match app.state {
+            AppState::ShowErrorPopup => {
+                log::debug!("Handling ShowErrorPopup state");
+                if key.code == KeyCode::Char('p') && !app.port_retries.is_empty() {
+                    start_on_free_ports(app, mode).await;
+                } else {
+                    handle_error_popup_input(app, key.code)?;
+                }
+            }
+            AppState::ShowConfirmationPopup => {
+                log::debug!("Handling ShowConfirmationPopup state");
+                handle_confirmation_popup_input(app, key.code).await?;
+            }
+            AppState::ImportFileExplorerOpen => {
+                log::debug!("Handling ImportFileExplorerOpen state");
+                handle_import_file_explorer_input(app, key.code, mode).await?;
+            }
+            AppState::ExportFileExplorerOpen => {
+                log::debug!("Handling ExportFileExplorerOpen state");
+                handle_export_file_explorer_input(app, key.code, mode).await?;
+            }
+            AppState::ShowInputPrompt => {
+                log::debug!("Handling ShowInputPrompt state");
+                handle_export_input_prompt(app, key.code, mode).await?;
+            }
+            AppState::ShowHelp => {
+                log::debug!("Handling ShowHelp state");
+                handle_help_input(app, key.code)?;
+            }
+            AppState::ShowAbout => {
+                log::debug!("Handling ShowAbout state");
+                handle_about_input(app, key.code)?;
+            }
+            AppState::ShowDeleteConfirmation => {
+                log::debug!("Handling ShowDeleteConfirmation state");
+                handle_delete_confirmation_input(app, key.code, mode).await?;
+            }
+            AppState::ShowContextSelection => {
+                log::debug!("Handling ShowContextSelection state");
+                handle_context_selection_input(app, key.code, mode).await?;
+            }
+            AppState::ShowSettings => {
+                log::debug!("Handling ShowSettings state");
+                handle_settings_input(app, key.code, mode).await?;
+            }
+            AppState::ShowHttpLogsConfig => {
+                log::debug!("Handling ShowHttpLogsConfig state");
+                handle_http_logs_config_input(app, key.code, mode).await?;
+            }
+            AppState::ShowHttpLogsViewer => {
+                log::debug!("Handling ShowHttpLogsViewer state");
+                handle_http_logs_viewer_input(app, key.code).await?;
+            }
+            AppState::ShowViewSettings => {
+                log::debug!("Handling ShowViewSettings state");
+                handle_view_settings_input(app, key.code, mode).await?;
+            }
+            AppState::ShowTagEditor => {
+                log::debug!("Handling ShowTagEditor state");
+                handle_tag_editor_input(app, key.code, mode).await?;
+            }
+            AppState::ShowTelemetryConsent => {
+                log::debug!("Handling ShowTelemetryConsent state");
+                handle_telemetry_consent_input(app, key.code, mode).await?;
+            }
+            AppState::ShowUpdateConfirmation => {
+                log::debug!("Handling ShowUpdateConfirmation state");
+                handle_update_confirmation_input(app, key.code, mode).await?;
+            }
+            AppState::ShowUpdateProgress => {
+                log::debug!("Handling ShowUpdateProgress state");
+            }
+            AppState::ShowRestartNotification => {
+                log::debug!("Handling ShowRestartNotification state");
+                handle_restart_notification_input(app, key.code)?;
+            }
+            AppState::Normal => {
+                log::debug!("Handling Normal state");
+                if app.active_component == ActiveComponent::SearchBar {
+                    handle_search_input(app, key.code)?;
+                } else {
+                    handle_normal_input(app, key.code, mode).await?;
+                }
+            }
+        }
+    } else if let Event::Resize(_, height) = input {
+        log::debug!("Handling Resize event");
+        app.update_visible_rows(height);
     }
     Ok(app.should_quit)
 }
@@ -1881,9 +1883,13 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc => {
             app.active_component = ActiveComponent::StoppedTable;
+            app.active_table = ActiveTable::Stopped;
             app.search_focused = false;
             app.search_query.clear();
             apply_search_query(app);
+            if app.table_state_stopped.selected().is_none() {
+                select_first_row(app);
+            }
         }
         KeyCode::Up => {
             app.active_component = ActiveComponent::Menu;
