@@ -5,8 +5,13 @@ use std::io::{
 };
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 use std::sync::{
     Arc,
+    LazyLock,
     Mutex,
     MutexGuard,
     PoisonError,
@@ -64,6 +69,8 @@ use super::{
 use crate::consts::{
     CHANNEL_OPEN_TIMEOUT,
     CHANNEL_READ_BUFFER,
+    CHANNEL_SPILL_SEGMENT,
+    SPILL_DISK_BUDGET,
 };
 use crate::error::SshError;
 use crate::route::{
@@ -243,13 +250,42 @@ impl Shared {
     }
 }
 
-struct Spill {
+struct SpillBudget {
+    used: AtomicU64,
+    limit: u64,
+}
+
+impl SpillBudget {
+    const fn new(limit: u64) -> Self {
+        Self {
+            used: AtomicU64::new(0),
+            limit,
+        }
+    }
+
+    fn reserve(&self, len: u64) -> bool {
+        self.used
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
+                used.checked_add(len).filter(|total| *total <= self.limit)
+            })
+            .is_ok()
+    }
+
+    fn release(&self, len: u64) {
+        self.used.fetch_sub(len, Ordering::SeqCst);
+    }
+}
+
+static SPILL_BUDGET: LazyLock<Arc<SpillBudget>> =
+    LazyLock::new(|| Arc::new(SpillBudget::new(SPILL_DISK_BUDGET)));
+
+struct Segment {
     file: File,
     read_at: u64,
     written: u64,
 }
 
-impl Spill {
+impl Segment {
     async fn create() -> io::Result<Self> {
         let file = tokio::task::spawn_blocking(tempfile::tempfile)
             .await
@@ -260,31 +296,96 @@ impl Spill {
             written: 0,
         })
     }
+}
+
+struct Spill {
+    segments: VecDeque<Segment>,
+    pending: u64,
+    budget: Arc<SpillBudget>,
+    segment_size: u64,
+}
+
+impl Spill {
+    fn new(budget: Arc<SpillBudget>, segment_size: u64) -> Self {
+        Self {
+            segments: VecDeque::new(),
+            pending: 0,
+            budget,
+            segment_size,
+        }
+    }
 
     fn pending(&self) -> u64 {
-        self.written - self.read_at
+        self.pending
     }
 
     async fn append(&mut self, data: &[u8]) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(self.written)).await?;
-        self.file.write_all(data).await?;
-        self.file.flush().await?;
-        self.written += data.len() as u64;
+        let len = data.len() as u64;
+        if !self.budget.reserve(len) {
+            return Err(io::Error::new(
+                io::ErrorKind::StorageFull,
+                format!(
+                    "more than {} bytes of SSH channel data are already waiting on disk",
+                    self.budget.limit
+                ),
+            ));
+        }
+        match self.write(data).await {
+            Ok(()) => {
+                self.pending += len;
+                Ok(())
+            }
+            Err(e) => {
+                self.budget.release(len);
+                Err(e)
+            }
+        }
+    }
+
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        if self
+            .segments
+            .back()
+            .is_none_or(|tail| tail.written >= self.segment_size)
+        {
+            self.segments.push_back(Segment::create().await?);
+        }
+        let Some(tail) = self.segments.back_mut() else {
+            return Err(io::ErrorKind::NotFound.into());
+        };
+        tail.file.seek(SeekFrom::Start(tail.written)).await?;
+        tail.file.write_all(data).await?;
+        tail.file.flush().await?;
+        tail.written += data.len() as u64;
         Ok(())
     }
 
     async fn take(&mut self, max: usize) -> io::Result<Bytes> {
-        let len = usize::try_from(self.pending()).map_or(max, |pending| pending.min(max));
+        let Some(head) = self.segments.front_mut() else {
+            return Ok(Bytes::new());
+        };
+        let unread = head.written - head.read_at;
+        let len = usize::try_from(unread).map_or(max, |unread| unread.min(max));
         let mut chunk = vec![0; len];
-        self.file.seek(SeekFrom::Start(self.read_at)).await?;
-        self.file.read_exact(&mut chunk).await?;
-        self.read_at += len as u64;
-        if self.read_at == self.written {
-            self.file.set_len(0).await?;
-            self.read_at = 0;
-            self.written = 0;
+        head.file.seek(SeekFrom::Start(head.read_at)).await?;
+        head.file.read_exact(&mut chunk).await?;
+        head.read_at += len as u64;
+        self.pending -= len as u64;
+        let drained = head.read_at == head.written;
+        if drained
+            && (head.written >= self.segment_size || self.segments.len() > 1)
+            && let Some(done) = self.segments.pop_front()
+        {
+            self.budget.release(done.written);
         }
         Ok(Bytes::from(chunk))
+    }
+}
+
+impl Drop for Spill {
+    fn drop(&mut self) {
+        let on_disk = self.segments.iter().map(|segment| segment.written).sum();
+        self.budget.release(on_disk);
     }
 }
 
@@ -293,13 +394,6 @@ enum Upstream {
     Open,
     Eof,
     Closed,
-}
-
-async fn spill(spill: &mut Option<Spill>, data: &[u8]) -> io::Result<()> {
-    if let Some(spill) = spill {
-        return spill.append(data).await;
-    }
-    spill.insert(Spill::create().await?).append(data).await
 }
 
 async fn pump(
@@ -337,7 +431,13 @@ async fn pump(
                     let fits = spilled == 0 && data.len() <= shared.lock().room();
                     if fits {
                         shared.lock().push(data);
-                    } else if let Err(e) = spill(&mut overflow, &data).await {
+                    } else if let Err(e) = overflow
+                        .get_or_insert_with(|| {
+                            Spill::new(Arc::clone(&SPILL_BUDGET), CHANNEL_SPILL_SEGMENT)
+                        })
+                        .append(&data)
+                        .await
+                    {
                         log::warn!("Could not keep SSH channel data on disk: {e}");
                         shared.lock().end(End::Reset);
                         break;
@@ -402,7 +502,7 @@ impl AsyncRead for SshStream {
             Some(End::Eof) => Poll::Ready(Ok(())),
             Some(End::Reset) => Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::ConnectionReset,
-                "the SSH channel data kept on disk could not be stored or read back",
+                "the SSH channel data waiting for the local reader could not be kept on disk",
             ))),
             None => {
                 inbound.waker = Some(cx.waker().clone());
@@ -690,5 +790,43 @@ mod tests {
             fixture.mock.wait_channel_count(0).await,
             "the late channel stayed open on the sshd"
         );
+    }
+
+    fn budget(limit: u64) -> Arc<SpillBudget> {
+        Arc::new(SpillBudget::new(limit))
+    }
+
+    #[tokio::test]
+    async fn take_should_free_each_read_segment_while_more_data_still_waits() {
+        let budget = budget(1024);
+        let mut spill = Spill::new(Arc::clone(&budget), 4);
+        for part in [&b"abcd"[..], b"efgh", b"ij"] {
+            spill.append(part).await.unwrap();
+        }
+        assert_eq!(budget.used.load(Ordering::SeqCst), 10);
+
+        assert_eq!(&spill.take(6).await.unwrap()[..], b"abcd");
+        assert_eq!(budget.used.load(Ordering::SeqCst), 6);
+        assert_eq!(&spill.take(6).await.unwrap()[..], b"efgh");
+        assert_eq!(budget.used.load(Ordering::SeqCst), 2);
+
+        assert_eq!(spill.pending(), 2);
+        assert_eq!(&spill.take(6).await.unwrap()[..], b"ij");
+    }
+
+    #[tokio::test]
+    async fn append_should_refuse_data_beyond_the_disk_budget_and_give_it_back_when_dropped() {
+        let budget = budget(10);
+        let mut spill = Spill::new(Arc::clone(&budget), 4);
+        spill.append(b"12345678").await.unwrap();
+
+        let err = spill.append(b"9abc").await.unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+        assert_eq!(budget.used.load(Ordering::SeqCst), 8);
+        assert_eq!(&spill.take(8).await.unwrap()[..], b"12345678");
+        spill.append(b"9abc").await.unwrap();
+        drop(spill);
+        assert_eq!(budget.used.load(Ordering::SeqCst), 0);
     }
 }
