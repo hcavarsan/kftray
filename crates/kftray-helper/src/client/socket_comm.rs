@@ -1,7 +1,10 @@
 #[cfg(unix)]
 use std::io;
 #[cfg(unix)]
-use std::os::unix::net::UnixStream;
+use std::os::{
+    fd::OwnedFd,
+    unix::net::UnixStream,
+};
 use std::path::Path;
 use std::time::{
     Duration,
@@ -15,6 +18,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::windows::named_pipe::ClientOptions;
 
 use crate::error::HelperError;
+#[cfg(unix)]
+use crate::fd_passing::recv_with_fds;
 use crate::messages::{
     HelperRequest,
     HelperResponse,
@@ -139,6 +144,21 @@ fn is_directory_writable(path: &Path) -> bool {
 pub fn send_request(
     socket_path: &Path, app_id: &str, command: RequestCommand,
 ) -> Result<HelperResponse, HelperError> {
+    #[cfg(unix)]
+    {
+        send_request_with_fds(socket_path, app_id, command).map(|(response, _)| response)
+    }
+
+    #[cfg(windows)]
+    {
+        send_windows_request(socket_path, app_id, command)
+    }
+}
+
+#[cfg(unix)]
+pub fn send_request_with_fds(
+    socket_path: &Path, app_id: &str, command: RequestCommand,
+) -> Result<(HelperResponse, Vec<OwnedFd>), HelperError> {
     let request = HelperRequest::new(app_id.to_string(), command);
 
     debug!("Using socket path: {}", socket_path.display());
@@ -146,99 +166,106 @@ pub fn send_request(
     let request_bytes = serde_json::to_vec(&request)
         .map_err(|e| HelperError::Communication(format!("Failed to serialize request: {e}")))?;
 
-    #[cfg(unix)]
-    {
-        debug!("Connecting to Unix socket at {}", socket_path.display());
-        let mut stream = UnixStream::connect(socket_path).map_err(|e| {
-            HelperError::Communication(format!("Failed to connect to Unix socket: {e}"))
+    debug!("Connecting to Unix socket at {}", socket_path.display());
+    let mut stream = UnixStream::connect(socket_path).map_err(|e| {
+        HelperError::Communication(format!("Failed to connect to Unix socket: {e}"))
+    })?;
+
+    if let Err(e) = stream.set_nonblocking(false) {
+        debug!("Failed to set blocking mode: {e}");
+    }
+
+    if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
+        debug!("Failed to set read timeout: {e}");
+    }
+
+    if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(5))) {
+        debug!("Failed to set write timeout: {e}");
+    }
+
+    debug!("Sending request ({} bytes)", request_bytes.len());
+    match io::Write::write_all(&mut stream, &request_bytes) {
+        Ok(_) => debug!("Request sent successfully"),
+        Err(e) => {
+            return Err(HelperError::Communication(format!(
+                "Failed to write request: {e}"
+            )));
+        }
+    }
+
+    match io::Write::flush(&mut stream) {
+        Ok(_) => debug!("Socket flushed successfully"),
+        Err(e) => {
+            return Err(HelperError::Communication(format!(
+                "Failed to flush socket: {e}"
+            )));
+        }
+    }
+
+    std::thread::sleep(Duration::from_millis(200));
+
+    read_unix_response(stream)
+}
+
+#[cfg(windows)]
+fn send_windows_request(
+    socket_path: &Path, app_id: &str, command: RequestCommand,
+) -> Result<HelperResponse, HelperError> {
+    let request = HelperRequest::new(app_id.to_string(), command);
+
+    debug!("Using socket path: {}", socket_path.display());
+
+    let request_bytes = serde_json::to_vec(&request)
+        .map_err(|e| HelperError::Communication(format!("Failed to serialize request: {e}")))?;
+
+    debug!("Connecting to Windows pipe at {}", socket_path.display());
+    let pipe_name = socket_path.to_string_lossy();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            HelperError::Communication(format!("Failed to create tokio runtime: {}", e))
         })?;
 
-        if let Err(e) = stream.set_nonblocking(false) {
-            debug!("Failed to set blocking mode: {e}");
-        }
-
-        if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
-            debug!("Failed to set read timeout: {e}");
-        }
-
-        if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(5))) {
-            debug!("Failed to set write timeout: {e}");
-        }
+    rt.block_on(async {
+        let mut pipe = ClientOptions::new().open(pipe_name.as_ref()).map_err(|e| {
+            HelperError::Communication(format!("Failed to connect to Windows pipe: {}", e))
+        })?;
 
         debug!("Sending request ({} bytes)", request_bytes.len());
-        match io::Write::write_all(&mut stream, &request_bytes) {
+        match pipe.write_all(&request_bytes).await {
             Ok(_) => debug!("Request sent successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
-                    "Failed to write request: {e}"
+                    "Failed to write request: {}",
+                    e
                 )));
             }
         }
 
-        match io::Write::flush(&mut stream) {
-            Ok(_) => debug!("Socket flushed successfully"),
+        match pipe.flush().await {
+            Ok(_) => debug!("Pipe flushed successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
-                    "Failed to flush socket: {e}"
+                    "Failed to flush pipe: {}",
+                    e
                 )));
             }
         }
 
-        std::thread::sleep(Duration::from_millis(200));
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-        read_unix_response(stream)
-    }
-
-    #[cfg(windows)]
-    {
-        debug!("Connecting to Windows pipe at {}", socket_path.display());
-        let pipe_name = socket_path.to_string_lossy();
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                HelperError::Communication(format!("Failed to create tokio runtime: {}", e))
-            })?;
-
-        rt.block_on(async {
-            let mut pipe = ClientOptions::new().open(pipe_name.as_ref()).map_err(|e| {
-                HelperError::Communication(format!("Failed to connect to Windows pipe: {}", e))
-            })?;
-
-            debug!("Sending request ({} bytes)", request_bytes.len());
-            match pipe.write_all(&request_bytes).await {
-                Ok(_) => debug!("Request sent successfully"),
-                Err(e) => {
-                    return Err(HelperError::Communication(format!(
-                        "Failed to write request: {}",
-                        e
-                    )));
-                }
-            }
-
-            match pipe.flush().await {
-                Ok(_) => debug!("Pipe flushed successfully"),
-                Err(e) => {
-                    return Err(HelperError::Communication(format!(
-                        "Failed to flush pipe: {}",
-                        e
-                    )));
-                }
-            }
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
-            read_windows_response(&mut pipe).await
-        })
-    }
+        read_windows_response(&mut pipe).await
+    })
 }
 
 #[cfg(unix)]
-fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperError> {
+fn read_unix_response(stream: UnixStream) -> Result<(HelperResponse, Vec<OwnedFd>), HelperError> {
     let start_time = Instant::now();
     let timeout = Duration::from_secs(30);
     let mut buffer = Vec::new();
+    let mut fds = Vec::new();
     let mut tmp_buf = [0u8; 4096];
 
     debug!(
@@ -255,7 +282,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
             )));
         }
 
-        match io::Read::read(&mut stream, &mut tmp_buf) {
+        match recv_with_fds(&stream, &mut tmp_buf, &mut fds) {
             Ok(0) => {
                 debug!("End of stream reached (0 bytes read)");
                 if buffer.is_empty() {
@@ -280,7 +307,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 match parse_framed_response(&buffer) {
                     FramingOutcome::Complete(response) => {
                         debug!("Response appears complete");
-                        return Ok(response);
+                        return Ok((response, fds));
                     }
                     FramingOutcome::Invalid => {
                         debug!(
@@ -344,7 +371,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
     match parse_framed_response(&buffer) {
         FramingOutcome::Complete(response) => {
             debug!("Successfully parsed response: {:?}", response.result);
-            Ok(response)
+            Ok((response, fds))
         }
         _ => {
             debug!("Failed to parse response JSON");

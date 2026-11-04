@@ -39,6 +39,12 @@ impl HelperClient {
         socket_comm::is_socket_available(&self.socket_path)
     }
 
+    #[cfg(unix)]
+    pub fn is_helper_outdated(&self) -> bool {
+        self.is_helper_available()
+            && super::privileged_bind::is_outdated(&self.socket_path, &self.app_id)
+    }
+
     pub fn ensure_helper_installed(&self) -> Result<(), HelperError> {
         if self.is_helper_available() {
             info!("Helper already available at {}", self.socket_path.display());

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText, Network, ShieldCheck } from 'lucide-react'
+import { FileText, Lock, Network, ShieldCheck } from 'lucide-react'
 
 import { Box, Flex, Stack, Text } from '@chakra-ui/react'
 
@@ -28,6 +28,11 @@ const RESOURCES: Record<
     icon: Network,
     title: 'Loopback address',
     detail: 'A separate 127.0.0.x is added to the loopback interface.',
+  },
+  privileged_port: {
+    icon: Lock,
+    title: 'Privileged port',
+    detail: 'Ports below 1024 can only be opened by the helper.',
   },
 }
 

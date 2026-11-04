@@ -24,5 +24,8 @@ windows-service = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 
+[target."cfg(unix)".dependencies]
+socket2 = { workspace = true }
+
 [target."cfg(windows)".dependencies]
 windows = { workspace = true }

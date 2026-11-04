@@ -7,6 +7,7 @@ pub mod local_port;
 pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
+mod privileged_bind;
 pub mod privileges;
 pub mod ssh_forward;
 pub mod ssl;

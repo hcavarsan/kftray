@@ -1016,7 +1016,7 @@ impl PortForwarder {
             })?;
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
 
-        let listener = TcpListener::bind(addr)
+        let listener = crate::privileged_bind::bind_tcp_listener(addr)
             .await
             .map_err(|e| map_bind_error(e, &listener_config.local_address, ip, addr.port()))?;
         let port = listener.local_addr()?.port();

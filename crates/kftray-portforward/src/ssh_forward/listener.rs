@@ -39,7 +39,7 @@ pub(crate) async fn bind(address: &str, port: u16) -> anyhow::Result<(TcpListene
     let ip = address
         .parse::<std::net::IpAddr>()
         .map_err(|e| anyhow::anyhow!("Invalid IP address '{address}': {e}"))?;
-    let listener = TcpListener::bind(std::net::SocketAddr::new(ip, port))
+    let listener = crate::privileged_bind::bind_tcp_listener(std::net::SocketAddr::new(ip, port))
         .await
         .map_err(|e| map_bind_error(e, address, ip, port))?;
     let port = listener.local_addr()?.port();

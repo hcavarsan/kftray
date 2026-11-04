@@ -1,5 +1,8 @@
 /** Mirrors `PrivilegedResource` in `crates/kftray-portforward/src/privileges.rs`. */
-export type PrivilegedResource = 'hosts_file' | 'loopback_address'
+export type PrivilegedResource =
+  | 'hosts_file'
+  | 'loopback_address'
+  | 'privileged_port'
 
 /** Mirrors `PrivilegeNeed` in `crates/kftray-portforward/src/privileges.rs`. */
 export interface PrivilegeNeed {

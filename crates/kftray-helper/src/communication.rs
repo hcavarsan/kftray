@@ -1,7 +1,10 @@
 #[cfg(unix)]
-use std::os::unix::net::{
-    UnixListener,
-    UnixStream,
+use std::os::{
+    fd::AsFd,
+    unix::net::{
+        UnixListener,
+        UnixStream,
+    },
 };
 #[cfg(unix)]
 use std::{
@@ -54,6 +57,11 @@ use crate::{
         ServiceCommand,
     },
     network::NetworkConfigManager,
+};
+#[cfg(unix)]
+use crate::{
+    fd_passing,
+    socket_bind::handle_socket_command,
 };
 
 #[cfg(target_os = "linux")]
@@ -696,14 +704,19 @@ async fn handle_connection(
     debug!("Request validation passed");
 
     debug!("Processing request...");
-    let response = process_request(
-        request,
-        pool_manager,
-        network_manager,
-        hostfile_manager,
-        caller_pid,
-    )
-    .await?;
+    let (response, bound_fd) = if let RequestCommand::Socket(command) = &request.command {
+        handle_socket_command(command, request.request_id.clone())
+    } else {
+        let response = process_request(
+            request,
+            pool_manager,
+            network_manager,
+            hostfile_manager,
+            caller_pid,
+        )
+        .await?;
+        (response, None)
+    };
     debug!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
@@ -731,7 +744,12 @@ async fn handle_connection(
     // thread; run them on the blocking pool for the same reason the read
     // above does.
     task::spawn_blocking(move || -> Result<(), HelperError> {
-        match stream.write_all(&response_bytes) {
+        let written = match &bound_fd {
+            Some(fd) => fd_passing::send_with_fd(&stream, &response_bytes, fd.as_fd()),
+            None => stream.write_all(&response_bytes),
+        };
+        drop(bound_fd);
+        match written {
             Ok(_) => debug!("Response written successfully"),
             Err(e) => {
                 error!("Failed to write response: {e}");
@@ -1743,6 +1761,10 @@ async fn process_request(
                 }
             }
         }
+        RequestCommand::Socket(_) => Ok(HelperResponse::error(
+            request_id,
+            "Socket commands are not supported on this connection",
+        )),
         RequestCommand::Ping => {
             debug!("Processing Ping request");
             Ok(HelperResponse::string_success(request_id, "pong".into()))
