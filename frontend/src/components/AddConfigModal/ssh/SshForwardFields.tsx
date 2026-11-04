@@ -112,13 +112,13 @@ export function SshForwardFields({
   const forgetMutation = useMutation({
     mutationFn: (config: StoredConfig) =>
       invoke('forget_ssh_host_key_cmd', { config }),
-    onSuccess: (_, config) => testMutation.mutate(config),
     meta: { errorToast: { title: 'Failed to forget the host key' } },
   })
 
   // A result describes the form as it was tested.
   const update = (change: Partial<ConfigDraft>) => {
     testMutation.reset()
+    forgetMutation.reset()
     onUpdate(change)
   }
   const currentConfig = toConfig(trimConfigValues(draft), initialConfig)
@@ -239,7 +239,11 @@ export function SshForwardFields({
                     data-testid='config-ssh-forget-host-key'
                     loading={forgetMutation.isPending}
                     loadingText='Forgetting...'
-                    onClick={() => forgetMutation.mutate(currentConfig)}
+                    onClick={() =>
+                      forgetMutation.mutate(currentConfig, {
+                        onSuccess: () => testMutation.mutate(currentConfig),
+                      })
+                    }
                     size='2xs'
                     type='button'
                     variant='outline'
