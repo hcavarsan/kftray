@@ -663,6 +663,8 @@ fn address_owner_key(config: &Config) -> String {
     };
 
     let context = config.context.as_deref().unwrap_or_default();
+    let kubeconfig = config.kubeconfig.as_deref().unwrap_or_default();
+    let namespace = &config.namespace;
     fn non_empty(value: Option<&str>) -> Option<&str> {
         value.filter(|value| !value.is_empty())
     }
@@ -677,11 +679,12 @@ fn address_owner_key(config: &Config) -> String {
             }
             _ => None,
         },
-        Some("proxy") => destination.map(|destination| format!("proxy/{context}/{destination}")),
+        Some("proxy") => destination
+            .map(|destination| format!("proxy/{kubeconfig}/{context}/{namespace}/{destination}")),
         Some("pod") => non_empty(config.target.as_deref())
-            .map(|target| format!("pod/{context}/{}/{target}", config.namespace)),
+            .map(|target| format!("pod/{kubeconfig}/{context}/{namespace}/{target}")),
         _ => non_empty(config.service.as_deref())
-            .map(|service| format!("{context}/{}/{service}", config.namespace)),
+            .map(|service| format!("{context}/{namespace}/{service}")),
     };
     owner.unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()))
 }
@@ -1819,6 +1822,32 @@ mod tests {
             "ctx/dev/web"
         );
         assert_eq!(key(&ssh(9, "", 80)), "service-9");
+        let proxy = migrated(10, "proxy", "db", 5432);
+        assert_ne!(
+            key(&proxy),
+            key(&Config {
+                namespace: "staging".to_string(),
+                ..proxy.clone()
+            })
+        );
+        assert_ne!(
+            key(&proxy),
+            key(&Config {
+                kubeconfig: Some("/other/kubeconfig".to_string()),
+                ..proxy.clone()
+            })
+        );
+        let pod = Config {
+            target: Some("app=a".to_string()),
+            ..migrated(11, "pod", "", 80)
+        };
+        assert_ne!(
+            key(&pod),
+            key(&Config {
+                kubeconfig: Some("/other/kubeconfig".to_string()),
+                ..pod.clone()
+            })
+        );
     }
 
     #[cfg(target_os = "linux")]
