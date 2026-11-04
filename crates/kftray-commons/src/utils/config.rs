@@ -508,11 +508,15 @@ fn kubeconfig_or_default(config: &Config) -> &str {
 }
 
 fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
-    if existing.context != incoming.context
-        || existing.namespace != incoming.namespace
-        || existing.workload_type != incoming.workload_type
-        || existing.protocol != incoming.protocol
-        || kubeconfig_or_default(existing) != kubeconfig_or_default(incoming)
+    if existing.workload_type != incoming.workload_type || existing.protocol != incoming.protocol {
+        return false;
+    }
+
+    let is_ssh = existing.workload_type.as_deref() == Some(WORKLOAD_SSH_PORT_FORWARD);
+    if !is_ssh
+        && (existing.context != incoming.context
+            || existing.namespace != incoming.namespace
+            || kubeconfig_or_default(existing) != kubeconfig_or_default(incoming))
     {
         return false;
     }
@@ -2292,6 +2296,55 @@ mod tests {
         .unwrap()
         .remove(0);
         assert!(!configs_match_identity(&base, &other_instance));
+    }
+
+    #[test]
+    fn test_configs_match_identity_should_ignore_kubernetes_fields_for_ssh() {
+        let base = parse_import_configs(&ssh_import(json!({})))
+            .unwrap()
+            .remove(0);
+        let with_defaults = Config {
+            context: Some(Config::DEFAULT_CONTEXT.to_string()),
+            namespace: "default-namespace".to_string(),
+            kubeconfig: Some("default".to_string()),
+            service: Some("default-service".to_string()),
+            target: Some("default-target".to_string()),
+            ..base.clone()
+        };
+        assert!(configs_match_identity(&with_defaults, &base));
+        assert!(configs_match_identity(&base, &with_defaults));
+        let kube_service = Config {
+            workload_type: Some("service".to_string()),
+            ..with_defaults
+        };
+        assert!(!configs_match_identity(&kube_service, &base));
+    }
+
+    #[tokio::test]
+    async fn test_import_same_ssh_config_twice_should_keep_one_row() {
+        let pool = setup_test_db().await;
+        let json = ssh_import(json!({}));
+
+        import_configs_with_pool(json.clone(), &pool).await.unwrap();
+        import_configs_with_pool(json, &pool).await.unwrap();
+
+        assert_eq!(read_configs_with_pool(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_ssh_export_reimport_should_keep_same_row() {
+        let pool = setup_test_db().await;
+        import_configs_with_pool(ssh_import(json!({})), &pool)
+            .await
+            .unwrap();
+        let before = read_configs_with_pool(&pool).await.unwrap();
+
+        let exported = export_configs_with_pool(&pool).await.unwrap();
+        import_configs_with_pool(exported, &pool).await.unwrap();
+
+        let after = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, before[0].id);
     }
 
     #[tokio::test]
