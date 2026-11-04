@@ -182,7 +182,7 @@ tokio-tungstenite = "0.30.0"
 tokio-util = { version = "0.7.20", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 tui-logger = "0.18"
 uuid = { version = "1.29.0", features = ["v4"] }
