@@ -97,7 +97,8 @@ pub(crate) fn recv_with_fds(
             unsafe { ((*cmsg).cmsg_level, (*cmsg).cmsg_type, (*cmsg).cmsg_len) };
         if level == libc::SOL_SOCKET && kind == libc::SCM_RIGHTS {
             let header = unsafe { libc::CMSG_LEN(0) } as usize;
-            let count = (len as usize).saturating_sub(header) / FD_SIZE;
+            let len = usize::try_from(len as u64).unwrap_or(0);
+            let count = len.saturating_sub(header) / FD_SIZE;
             let data = unsafe { libc::CMSG_DATA(cmsg) };
             for index in 0..count {
                 let mut raw = [0u8; FD_SIZE];

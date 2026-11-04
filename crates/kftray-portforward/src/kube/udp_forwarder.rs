@@ -240,31 +240,54 @@ impl UdpForwarder {
         u16,
         impl Future<Output = anyhow::Result<()>> + Send + 'static,
     )> {
-        let ip = local_address
-            .parse::<std::net::IpAddr>()
-            .map_err(|e| anyhow::anyhow!("Invalid IP address '{local_address}': {e}"))?;
-        let local_udp_addr = std::net::SocketAddr::new(ip, local_port);
+        let local_udp_addr = format!("{local_address}:{local_port}");
+        let candidates: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host((local_address.as_str(), local_port))
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}")
+                })?
+                .collect();
 
-        let local_udp_socket = crate::privileged_bind::bind_udp_socket(local_udp_addr)
-            .await
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::AddrInUse => crate::local_port::port_in_use(
+        let mut bound = None;
+        let mut last_error = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "could not resolve to any address",
+        );
+        for candidate in candidates {
+            match crate::privileged_bind::bind_udp_socket(candidate).await {
+                Ok(socket) => {
+                    bound = Some(socket);
+                    break;
+                }
+                Err(e) => last_error = e,
+            }
+        }
+        let local_udp_socket = bound.ok_or_else(|| match last_error.kind() {
+            std::io::ErrorKind::AddrInUse => match local_address.parse::<std::net::IpAddr>() {
+                Ok(ip) => crate::local_port::port_in_use(
                     ip,
                     local_port,
                     crate::kube::listener::Protocol::Udp,
                 ),
-                std::io::ErrorKind::PermissionDenied => crate::local_port::bind_denied(
-                    &local_address,
-                    local_port,
-                    crate::kube::listener::Protocol::Udp,
+                Err(_) => anyhow::anyhow!(
+                    "Failed to bind local UDP socket to {local_udp_addr}: {last_error}"
                 ),
-                std::io::ErrorKind::AddrNotAvailable => crate::local_port::address_unavailable(
-                    &local_address,
-                    local_port,
-                    crate::kube::listener::Protocol::Udp,
-                ),
-                _ => anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {e}"),
-            })?;
+            },
+            std::io::ErrorKind::PermissionDenied => crate::local_port::bind_denied(
+                &local_address,
+                local_port,
+                crate::kube::listener::Protocol::Udp,
+            ),
+            std::io::ErrorKind::AddrNotAvailable => crate::local_port::address_unavailable(
+                &local_address,
+                local_port,
+                crate::kube::listener::Protocol::Udp,
+            ),
+            _ => {
+                anyhow::anyhow!("Failed to bind local UDP socket to {local_udp_addr}: {last_error}")
+            }
+        })?;
 
         let local_port = local_udp_socket.local_addr()?.port();
 
@@ -1550,6 +1573,20 @@ pub(crate) mod tests {
             kftray_telemetry::FailureKind::BindDenied,
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_hostname_local_address_should_still_bind() {
+        let (port, _forward) = UdpForwarder::bind_and_forward(
+            "localhost".to_owned(),
+            0,
+            Arc::new(NoCapacityUpstream::default()),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(port, 0);
     }
 
     #[tokio::test]
