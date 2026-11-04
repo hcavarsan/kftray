@@ -163,6 +163,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@codecov/bundler-plugin-core>zod': ^4.6.6
   '@codecov/vite-plugin>vite': ^8.0.3
   undici: ^8.12.3
 
@@ -2348,9 +2349,6 @@ packages:
     resolution: {integrity: sha512-9OpKOLeaoNFecEp7P6iYbzze/5CqWoH7N3SMs/6y1XF4nMvFMspEGZzJ6uFi9MmQwXhyzqYoSEKO3tvA3Z/o2w==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=23}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -2587,7 +2585,7 @@ snapshots:
       chalk: 4.1.2
       semver: 7.8.5
       unplugin: 1.16.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@codecov/vite-plugin@2.0.1(vite@8.3.5(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))':
     dependencies:
@@ -4524,7 +4522,5 @@ snapshots:
       string-width: 8.3.0
       y18n: 5.0.8
       yargs-parser: 22.0.0
-
-  zod@3.25.76: {}
 
   zod@4.6.7: {}
