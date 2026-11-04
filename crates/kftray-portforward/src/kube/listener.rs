@@ -733,11 +733,13 @@ impl PortForwarder {
         cancellation_token: CancellationToken, tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
         state_mode: Option<DatabaseMode>,
     ) -> anyhow::Result<()> {
+        let log_mode = state_mode.unwrap_or_default();
         let initial_logging_enabled =
-            match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                Ok(config) => config.enabled,
-                Err(_) => false,
-            };
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id, log_mode,
+            )
+            .await
+            .is_ok_and(|config| config.enabled);
 
         self.http_log_watcher
             .set_http_logs(config_id, initial_logging_enabled)
@@ -751,7 +753,7 @@ impl PortForwarder {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = http_log_watcher_clone
-                            .sync_from_external_state(config_id)
+                            .sync_from_external_state_with_mode(config_id, log_mode)
                             .await
                         {
                             debug!("Sync error for config {}: {}", config_id, e);
@@ -766,7 +768,7 @@ impl PortForwarder {
         });
         self.track_task(sync_task);
 
-        let tcp_forwarder = TcpForwarder::new(config_id, workload_type);
+        let tcp_forwarder = TcpForwarder::new(config_id, workload_type).with_mode(log_mode);
 
         let forwarder_clone = Arc::clone(&self);
         let cancel_token = cancellation_token.clone();

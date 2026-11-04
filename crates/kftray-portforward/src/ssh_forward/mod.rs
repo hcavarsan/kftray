@@ -32,7 +32,10 @@ use kftray_telemetry::{
     PhaseGuard,
 };
 use serde::Serialize;
-use tokio::sync::watch;
+use tokio::sync::{
+    oneshot,
+    watch,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     error,
@@ -265,6 +268,7 @@ pub(crate) async fn start_single_ssh_forward(
 
     let token = CancellationToken::new();
     let state = lease.state();
+    let (registered, registration) = oneshot::channel();
     let serve_opener: Arc<dyn StreamOpener> = opener;
     let task_token = token.clone();
     let handle = tokio::spawn(async move {
@@ -281,7 +285,16 @@ pub(crate) async fn start_single_ssh_forward(
         );
         // This task's id is what the registered process is recognized by.
         let owner = tokio::task::id();
-        run_until_listener_ends(serve, state, config_id, mode, task_token, owner).await
+        run_until_listener_ends(
+            serve,
+            state,
+            registration,
+            config_id,
+            mode,
+            task_token,
+            owner,
+        )
+        .await
     });
     let mut process = PortForwardProcess::with_token(handle, config_id.to_string(), token);
 
@@ -300,6 +313,7 @@ pub(crate) async fn start_single_ssh_forward(
     if let Err(reason) = register_started(&config, process, &mut local, ssl, mode).await {
         return Err(rollback_local_resources(&config, &local.address, reason, mode).await);
     }
+    let _ = registered.send(());
 
     info!("TCP port forwarding is set up on local port {actual_port} via {label}");
     Ok(CustomResponse {
@@ -332,14 +346,18 @@ pub(crate) async fn start_single_ssh_forward(
 /// the config is not left registered and shown as running.
 async fn run_until_listener_ends(
     serve: impl Future<Output = anyhow::Result<()>>, state: watch::Receiver<SessionState>,
-    config_id: i64, mode: DatabaseMode, token: CancellationToken, owner: tokio::task::Id,
+    registered: oneshot::Receiver<()>, config_id: i64, mode: DatabaseMode,
+    token: CancellationToken, owner: tokio::task::Id,
 ) -> anyhow::Result<()> {
     let served = async {
         let served = serve.await;
         token.cancel();
         served
     };
-    let (served, ()) = tokio::join!(served, watch_state(state, config_id, mode, token.clone()));
+    let (served, ()) = tokio::join!(
+        served,
+        watch_state(state, registered, config_id, mode, token.clone())
+    );
     if let Err(listener_error) = &served {
         error!("SSH listener of config {config_id} failed, stopping the forward: {listener_error}");
         // Detached: the stop aborts `owner`, the task this runs in.
@@ -359,28 +377,35 @@ async fn stop_after_listener_failure(config_id: i64, owner: tokio::task::Id, mod
 /// Mirrors the SSH session state into the forward's retry columns, so the
 /// UI shows a reconnecting or failed session.
 async fn watch_state(
-    mut state: watch::Receiver<SessionState>, config_id: i64, mode: DatabaseMode,
-    cancel: CancellationToken,
+    mut state: watch::Receiver<SessionState>, registered: oneshot::Receiver<()>, config_id: i64,
+    mode: DatabaseMode, cancel: CancellationToken,
 ) {
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        registered = registered => if registered.is_err() { return },
+    }
+    let mut first = true;
     loop {
-        tokio::select! {
-            _ = cancel.cancelled() => return,
-            changed = state.changed() => if changed.is_err() { return },
-        }
         let current = state.borrow_and_update().clone();
         let written = match &current {
             SessionState::Reconnecting { attempt } => {
                 let attempt = i32::try_from(*attempt).unwrap_or(i32::MAX);
                 set_retry_status_with_mode(config_id, Some(attempt), None, mode).await
             }
+            SessionState::Ready if first => Ok(()),
             SessionState::Ready => set_retry_status_with_mode(config_id, None, None, mode).await,
             SessionState::Failed(reason) => {
                 set_retry_status_with_mode(config_id, None, Some(reason), mode).await
             }
-            SessionState::Connecting => continue,
+            SessionState::Connecting => Ok(()),
         };
+        first = false;
         if let Err(error) = written {
             warn!("Failed to record the SSH session state of config {config_id}: {error}");
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            changed = state.changed() => if changed.is_err() { return },
         }
     }
 }

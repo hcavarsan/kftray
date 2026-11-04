@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 
 use kftray_commons::models::config_model::Config;
+use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use kftray_commons::models::ssh_provider::{
     GcpBastionProvider,
     SshProvider,
@@ -14,9 +16,16 @@ use kftray_commons::test_utils::{
     test_db,
 };
 use kftray_commons::utils::config::insert_config_with_mode;
-use kftray_commons::utils::config_state::get_configs_state_with_mode;
+use kftray_commons::utils::config_dir::get_log_folder_path;
+use kftray_commons::utils::config_state::{
+    get_configs_state_with_mode,
+    update_config_state_with_mode,
+};
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode;
+use kftray_http_logs::config::HTTP_LOG_EXTENSION;
 use kftray_ssh::KftrayKey;
+use kftray_ssh::SessionState;
 use kftray_ssh::testing::gcp::{
     FakeGcp,
     FakeGcpConfig,
@@ -267,12 +276,14 @@ async fn a_failed_listener_should_end_the_forward_task_while_the_session_lives()
     // The sender stands in for the live session the lease keeps open.
     let (_session, state) = tokio::sync::watch::channel(kftray_ssh::SessionState::Ready);
     let failing = async { Err(anyhow::anyhow!("accept failed")) };
+    let (_registered, registration) = tokio::sync::oneshot::channel();
 
     let ended = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         super::run_until_listener_ends(
             failing,
             state,
+            registration,
             1,
             MODE,
             tokio_util::sync::CancellationToken::new(),
@@ -356,4 +367,92 @@ async fn a_start_cancelled_during_the_destination_check_should_end_and_leave_not
         error.contains("cancelled") && CHILD_PROCESSES.is_empty() && !hosts.contains("ssh-held"),
         "{error}"
     );
+}
+
+async fn state_of(config: &Config) -> ConfigState {
+    get_configs_state_with_mode(MODE)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|state| state.config_id == config.id.unwrap())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_session_that_failed_before_the_forward_registered_should_show_on_its_state_row() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-failed", bastion.mock.echo_addr()).await;
+    let id = config.id.unwrap();
+    let (session, _) = tokio::sync::watch::channel(SessionState::Ready);
+    session.send_replace(SessionState::Failed("session lost".to_owned()));
+    let (registered, registration) = tokio::sync::oneshot::channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    let stopped = token.clone();
+    let task = tokio::spawn(super::run_until_listener_ends(
+        async move {
+            stopped.cancelled().await;
+            Ok(())
+        },
+        session.subscribe(),
+        registration,
+        id,
+        MODE,
+        token.clone(),
+        unrelated_task(),
+    ));
+
+    update_config_state_with_mode(&ConfigState::new(id, true), MODE)
+        .await
+        .unwrap();
+    registered.send(()).unwrap();
+    let recorded = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let state = state_of(&config).await;
+            if state.last_error.is_some() {
+                return state;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    token.cancel();
+    task.await.unwrap().unwrap();
+
+    let state = recorded.expect("the failed session never reached the state row");
+    assert_eq!(
+        (state.last_error.as_deref(), state.is_retrying),
+        (Some("session lost"), false)
+    );
+}
+
+#[tokio::test]
+async fn an_ssh_forward_should_log_http_when_its_own_database_enables_logging() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-logged", bastion.mock.echo_addr()).await;
+    let id = config.id.unwrap();
+    let port = start(&config).await.unwrap();
+    let log = get_log_folder_path()
+        .unwrap()
+        .join(format!("{id}_{port}.{HTTP_LOG_EXTENSION}"));
+    echo(port, b"ping").await;
+
+    update_http_logs_config_with_mode(
+        &HttpLogsConfig {
+            enabled: true,
+            ..HttpLogsConfig::new(id)
+        },
+        MODE,
+    )
+    .await
+    .unwrap();
+    let logged = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !log.exists() {
+            echo(port, b"GET / HTTP/1.1\r\nHost: ssh-logged\r\n\r\n").await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+
+    stop(&config).await;
+    assert!(logged.is_ok(), "no HTTP log was written for the forward");
 }

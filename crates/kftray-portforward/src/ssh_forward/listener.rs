@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use kftray_commons::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD;
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode;
 use kftray_ssh::StreamOpener;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -56,11 +57,9 @@ pub(crate) async fn serve(
     let mut tasks = JoinSet::new();
 
     let watcher = HttpLogStateWatcher::new();
-    let logging_enabled =
-        match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-            Ok(config) => config.enabled,
-            Err(_) => false,
-        };
+    let logging_enabled = get_http_logs_config_with_mode(config_id, mode)
+        .await
+        .is_ok_and(|config| config.enabled);
     watcher.set_http_logs(config_id, logging_enabled).await?;
     let sync_watcher = watcher.clone();
     let sync_cancel = cancel.clone();
@@ -69,7 +68,10 @@ pub(crate) async fn serve(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    if let Err(e) = sync_watcher.sync_from_external_state(config_id).await {
+                    if let Err(e) = sync_watcher
+                        .sync_from_external_state_with_mode(config_id, mode)
+                        .await
+                    {
                         debug!("Sync error for config {}: {}", config_id, e);
                     }
                 }
@@ -79,7 +81,8 @@ pub(crate) async fn serve(
     });
     let watcher = Arc::new(watcher);
 
-    let forwarder = TcpForwarder::new(config_id, WORKLOAD_SSH_PORT_FORWARD.to_owned());
+    let forwarder =
+        TcpForwarder::new(config_id, WORKLOAD_SSH_PORT_FORWARD.to_owned()).with_mode(mode);
     let connection_errors = Arc::new(ConnectionErrors::new(config_id, Some(mode)));
     let mut consecutive_accept_errors: u32 = 0;
 

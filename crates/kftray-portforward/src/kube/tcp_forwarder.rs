@@ -5,6 +5,9 @@ use std::sync::atomic::{
 };
 use std::time::Duration;
 
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode;
 use tokio::io::{
     AsyncReadExt,
     AsyncWriteExt,
@@ -254,11 +257,19 @@ impl UpgradeDetector {
     }
 }
 
+async fn enabled_http_logs_config(config_id: i64, mode: DatabaseMode) -> Option<HttpLogsConfig> {
+    get_http_logs_config_with_mode(config_id, mode)
+        .await
+        .ok()
+        .filter(|config| config.enabled)
+}
+
 #[derive(Clone)]
 pub struct TcpForwarder {
     config_id: i64,
     workload_type: String,
     logger: Option<Logger>,
+    mode: DatabaseMode,
 }
 
 impl TcpForwarder {
@@ -267,7 +278,13 @@ impl TcpForwarder {
             config_id,
             workload_type,
             logger: None,
+            mode: DatabaseMode::File,
         }
+    }
+
+    pub fn with_mode(mut self, mode: DatabaseMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     pub fn is_logging_enabled(&self) -> bool {
@@ -341,11 +358,7 @@ impl TcpForwarder {
             return Ok(());
         }
 
-        let http_logs_config =
-            kftray_commons::utils::http_logs_config::get_http_logs_config(self.config_id)
-                .await
-                .ok()
-                .filter(|config| config.enabled);
+        let http_logs_config = enabled_http_logs_config(self.config_id, self.mode).await;
 
         if let Some(http_logs_config) = http_logs_config {
             if self.logger.is_none() {
@@ -381,6 +394,7 @@ impl TcpForwarder {
             let _ = self.initialize_logger(local_port).await;
         }
         let config_id = self.config_id;
+        let mode = self.mode;
         let shared_logger: Arc<Mutex<Option<Arc<crate::Logger>>>> =
             Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
@@ -393,6 +407,7 @@ impl TcpForwarder {
         let client_to_upstream = Self::forward_client_to_upstream(
             Arc::clone(&shared_logger),
             config_id,
+            mode,
             &mut client_reader,
             &mut upstream_writer,
             Arc::clone(&request_id),
@@ -405,6 +420,7 @@ impl TcpForwarder {
         let upstream_to_client = Self::forward_upstream_to_client(
             Arc::clone(&shared_logger),
             config_id,
+            mode,
             &mut upstream_reader,
             &mut client_writer,
             Arc::clone(&request_id),
@@ -466,7 +482,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_client_to_upstream<'a>(
-        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64, mode: DatabaseMode,
         client_reader: &'a mut (impl AsyncReadExt + Unpin),
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -521,7 +537,7 @@ impl TcpForwarder {
                             };
 
                             let new_should_log = if needs_logger {
-                                let http_logs_config = kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await.ok().filter(|config| config.enabled);
+                                let http_logs_config = enabled_http_logs_config(config_id, mode).await;
 
                                 if let Some(http_logs_config) = http_logs_config {
                                     match kftray_http_logs::HttpLogger::for_config(&http_logs_config, local_port).await {
@@ -583,7 +599,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_upstream_to_client<'a>(
-        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64, mode: DatabaseMode,
         upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
         client_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -683,7 +699,7 @@ impl TcpForwarder {
                             };
 
                             let new_should_log = if needs_logger {
-                                let http_logs_config = kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await.ok().filter(|config| config.enabled);
+                                let http_logs_config = enabled_http_logs_config(config_id, mode).await;
 
                                 if let Some(http_logs_config) = http_logs_config {
                                     match kftray_http_logs::HttpLogger::for_config(&http_logs_config, local_port).await {
@@ -970,6 +986,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 request_id,
@@ -1191,6 +1208,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 request_id,
@@ -1266,6 +1284,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 request_id,
@@ -1323,6 +1342,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 request_id,
@@ -1378,6 +1398,7 @@ mod tests {
             TcpForwarder::forward_client_to_upstream(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut client_reader,
                 &mut upstream_writer,
                 request_id,
@@ -1458,6 +1479,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 request_id,
@@ -1581,6 +1603,7 @@ mod tests {
                 TcpForwarder::forward_client_to_upstream(
                     Arc::clone(&logger),
                     1,
+                    DatabaseMode::File,
                     &mut client_reader,
                     &mut upstream_writer,
                     Arc::clone(&request_id),
@@ -1592,6 +1615,7 @@ mod tests {
                 TcpForwarder::forward_upstream_to_client(
                     logger,
                     1,
+                    DatabaseMode::File,
                     &mut upstream_reader,
                     &mut client_writer,
                     request_id,
@@ -1747,6 +1771,7 @@ mod tests {
             TcpForwarder::forward_upstream_to_client(
                 logger,
                 1,
+                DatabaseMode::File,
                 &mut upstream_reader,
                 &mut client_writer,
                 forward_request_id,
@@ -1921,6 +1946,7 @@ mod tests {
                     TcpForwarder::forward_upstream_to_client(
                         logger,
                         1,
+                        DatabaseMode::File,
                         &mut reader,
                         &mut writer,
                         request_id,
@@ -1934,6 +1960,7 @@ mod tests {
                     TcpForwarder::forward_client_to_upstream(
                         logger,
                         1,
+                        DatabaseMode::File,
                         &mut reader,
                         &mut writer,
                         request_id,
@@ -2085,6 +2112,7 @@ mod tests {
         let result = TcpForwarder::forward_client_to_upstream(
             logger,
             forwarder.config_id,
+            forwarder.mode,
             &mut client_reader,
             &mut upstream_writer,
             request_id,
@@ -2133,6 +2161,7 @@ mod tests {
         let result = TcpForwarder::forward_upstream_to_client(
             logger,
             forwarder.config_id,
+            forwarder.mode,
             &mut upstream_reader,
             &mut client_writer,
             request_id,
