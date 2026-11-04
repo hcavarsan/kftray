@@ -11,6 +11,7 @@ import { invoke } from '@/lib/tauri'
 import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
 import type { Config, StoredConfig } from '@/types'
 
+import type { PrivilegeDecision } from './privilegeGate'
 import { useConfigTransfer } from './useConfigTransfer'
 import { usePortForwarding } from './usePortForwarding'
 
@@ -94,6 +95,11 @@ export function Main() {
   const { exportConfigs, importConfigs } = useConfigTransfer()
 
   const closeModal = () => setActiveModal(null)
+
+  const closePrivilegePrompt = (decision: PrivilegeDecision) => {
+    installMutation.reset()
+    resolvePrompt(decision)
+  }
 
   const openConfig = useCallback(
     async (id: number, isEdit: boolean) => {
@@ -278,11 +284,11 @@ export function Main() {
               installError={installMutation.error}
               onInstall={() =>
                 installMutation.mutate(undefined, {
-                  onSuccess: () => resolvePrompt('install'),
+                  onSuccess: () => closePrivilegePrompt('install'),
                 })
               }
-              onContinue={() => resolvePrompt('continue')}
-              onCancel={() => resolvePrompt('cancel')}
+              onContinue={() => closePrivilegePrompt('continue')}
+              onCancel={() => closePrivilegePrompt('cancel')}
               onSuppress={suppressPrompt}
             />
           )}

@@ -166,7 +166,10 @@ export function HelperModal({ onClose }: { onClose: () => void }) {
             {status && !status.running && (
               <Button
                 size='xs'
-                onClick={() => installMutation.mutate()}
+                onClick={() => {
+                  uninstallMutation.reset()
+                  installMutation.mutate()
+                }}
                 loading={installMutation.isPending}
                 loadingText='Installing...'
                 disabled={uninstallMutation.isPending}
@@ -191,11 +194,12 @@ export function HelperModal({ onClose }: { onClose: () => void }) {
           isPending={uninstallMutation.isPending}
           confirmLabel='Uninstall'
           pendingLabel='Uninstalling...'
-          onConfirm={() =>
+          onConfirm={() => {
+            installMutation.reset()
             uninstallMutation.mutate(undefined, {
               onSettled: () => setConfirmUninstall(false),
             })
-          }
+          }}
           onClose={() => setConfirmUninstall(false)}
         />
       )}
