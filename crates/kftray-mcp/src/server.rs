@@ -181,7 +181,10 @@ async fn handle_mcp_post(req: Request<Incoming>, state: Arc<ServerState>) -> Res
             if state.get_session(&id).await.is_some() {
                 id
             } else {
-                state.create_session().await
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::from("Session not found")))
+                    .unwrap();
             }
         }
         None => state.create_session().await,
@@ -532,11 +535,16 @@ mod tests {
 
     use super::*;
 
-    async fn post_mcp(addr: SocketAddr, body: &str) -> (u16, String) {
+    async fn request_mcp(
+        addr: SocketAddr, method: &str, body: &str, session_id: Option<&str>,
+    ) -> (u16, Option<String>, String) {
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let session_header = session_id
+            .map(|id| format!("Mcp-Session-Id: {id}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "{method} /mcp HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+             {session_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(request.as_bytes()).await.unwrap();
@@ -544,7 +552,83 @@ mod tests {
         stream.read_to_string(&mut raw).await.unwrap();
         let (head, body) = raw.split_once("\r\n\r\n").unwrap();
         let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
-        (status, body.to_string())
+        let session_id = head.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("mcp-session-id")
+                .then(|| value.trim().to_string())
+        });
+        (status, session_id, body.to_string())
+    }
+
+    #[tokio::test]
+    async fn ended_sessions_reject_posts_until_fresh_initialization() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve(listener));
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "session-test", "version": "1"}
+            }
+        })
+        .to_string();
+        let notification = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let list_tools = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+        let tool_call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_configs","arguments":{}}}"#;
+
+        let (status, session_id, body) = request_mcp(addr, "POST", &initialize, None).await;
+        assert_eq!(status, 200);
+        let session_id = session_id.unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(reply["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(
+            request_mcp(addr, "POST", notification, Some(&session_id))
+                .await
+                .0,
+            202
+        );
+        assert_eq!(
+            request_mcp(addr, "DELETE", "", Some(&session_id)).await.0,
+            200
+        );
+        assert_eq!(request_mcp(addr, "GET", "", Some(&session_id)).await.0, 404);
+
+        for id in [session_id.as_str(), "unknown-session"] {
+            for body in [tool_call, notification, initialize.as_str()] {
+                let (status, returned_session, _) = request_mcp(addr, "POST", body, Some(id)).await;
+                assert_eq!(status, 404, "session: {id}, body: {body}");
+                assert_eq!(returned_session, None);
+            }
+        }
+
+        let (status, fresh_session, body) = request_mcp(addr, "POST", &initialize, None).await;
+        assert_eq!(status, 200);
+        let fresh_session = fresh_session.unwrap();
+        assert_ne!(fresh_session, session_id);
+        let reply: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(reply["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(
+            request_mcp(addr, "POST", notification, Some(&fresh_session))
+                .await
+                .0,
+            202
+        );
+        let (status, returned_session, body) =
+            request_mcp(addr, "POST", list_tools, Some(&fresh_session)).await;
+        assert_eq!(status, 200);
+        assert_eq!(returned_session.as_deref(), Some(fresh_session.as_str()));
+        let reply: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            reply["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| { tool["name"] == "list_configs" })
+        );
+
+        server.abort();
     }
 
     #[tokio::test]
@@ -557,16 +641,28 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
             r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
         ] {
-            assert_eq!(post_mcp(addr, body).await, (202, String::new()), "{body}");
+            let (status, _, reply) = request_mcp(addr, "POST", body, None).await;
+            assert_eq!((status, reply), (202, String::new()), "{body}");
         }
 
-        let (status, reply) = post_mcp(addr, r#"{"jsonrpc":"2.0","method":"ping","id":7}"#).await;
+        let (status, _, reply) = request_mcp(
+            addr,
+            "POST",
+            r#"{"jsonrpc":"2.0","method":"ping","id":7}"#,
+            None,
+        )
+        .await;
         assert_eq!(status, 200);
         let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(reply["id"], 7);
 
-        let (status, reply) =
-            post_mcp(addr, r#"{"jsonrpc":"2.0","method":"ping","id":null}"#).await;
+        let (status, _, reply) = request_mcp(
+            addr,
+            "POST",
+            r#"{"jsonrpc":"2.0","method":"ping","id":null}"#,
+            None,
+        )
+        .await;
         assert_eq!(status, 200);
         let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
         assert_eq!(reply["error"]["code"], error_codes::INVALID_REQUEST);
