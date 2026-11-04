@@ -1,10 +1,7 @@
 #[cfg(unix)]
-use std::os::{
-    fd::AsFd,
-    unix::net::{
-        UnixListener,
-        UnixStream,
-    },
+use std::os::unix::net::{
+    UnixListener,
+    UnixStream,
 };
 #[cfg(unix)]
 use std::{
@@ -744,11 +741,10 @@ async fn handle_connection(
     // thread; run them on the blocking pool for the same reason the read
     // above does.
     task::spawn_blocking(move || -> Result<(), HelperError> {
-        let written = match &bound_fd {
-            Some(fd) => fd_passing::send_with_fd(&stream, &response_bytes, fd.as_fd()),
+        let written = match bound_fd {
+            Some(fd) => fd_passing::send_with_fd_until_closed(&stream, &response_bytes, fd),
             None => stream.write_all(&response_bytes),
         };
-        drop(bound_fd);
         match written {
             Ok(_) => debug!("Response written successfully"),
             Err(e) => {

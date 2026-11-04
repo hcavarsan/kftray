@@ -1,11 +1,13 @@
 use std::{
     io::{
         self,
+        Read,
         Write,
     },
     mem,
     os::{
         fd::{
+            AsFd,
             AsRawFd,
             BorrowedFd,
             FromRawFd,
@@ -64,6 +66,17 @@ pub(crate) fn send_with_fd(
 
     let mut stream = stream;
     stream.write_all(&bytes[sent..])
+}
+
+pub(crate) fn send_with_fd_until_closed(
+    stream: &UnixStream, bytes: &[u8], fd: OwnedFd,
+) -> io::Result<()> {
+    send_with_fd(stream, bytes, fd.as_fd())?;
+    let mut stream = stream;
+    let mut scratch = [0u8; 64];
+    while matches!(stream.read(&mut scratch), Ok(read) if read > 0) {}
+    drop(fd);
+    Ok(())
 }
 
 pub(crate) fn recv_with_fds(
@@ -127,5 +140,40 @@ fn set_cloexec(fd: &OwnedFd) {
         if flags >= 0 {
             libc::fcntl(raw, libc::F_SETFD, flags | libc::FD_CLOEXEC);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{
+        TcpListener,
+        TcpStream,
+    };
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn a_listener_received_after_a_delay_still_accepts_connections() {
+        let (helper, app) = UnixStream::pair().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sender = std::thread::spawn(move || {
+            send_with_fd_until_closed(&helper, b"{}", OwnedFd::from(listener))
+        });
+
+        std::thread::sleep(Duration::from_millis(300));
+        let mut fds = Vec::new();
+        recv_with_fds(&app, &mut [0u8; 16], &mut fds).unwrap();
+        drop(app);
+        sender.join().unwrap().unwrap();
+
+        let listener = TcpListener::from(fds.remove(0));
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(b"ping").unwrap();
+        let (mut accepted, _) = listener.accept().unwrap();
+        let mut received = [0u8; 4];
+        accepted.read_exact(&mut received).unwrap();
+        assert_eq!(&received, b"ping");
     }
 }
