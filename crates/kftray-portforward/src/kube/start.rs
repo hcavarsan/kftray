@@ -655,6 +655,37 @@ enum Allocation {
     Static,
 }
 
+fn address_owner_key(config: &Config) -> String {
+    use kftray_commons::models::ssh_provider::{
+        SshProvider,
+        SshProviderKind,
+        WORKLOAD_SSH_PORT_FORWARD,
+    };
+
+    let context = config.context.as_deref().unwrap_or_default();
+    fn non_empty(value: Option<&str>) -> Option<&str> {
+        value.filter(|value| !value.is_empty())
+    }
+    let destination = non_empty(config.remote_address.as_deref());
+    let owner = match config.workload_type.as_deref() {
+        Some(WORKLOAD_SSH_PORT_FORWARD) => match (&config.ssh_provider, destination) {
+            (Some(SshProvider::Known(SshProviderKind::GcpBastion(bastion))), Some(destination)) => {
+                Some(format!(
+                    "ssh/gcp-bastion/{}/{}/{}/{destination}",
+                    bastion.project, bastion.zone, bastion.instance
+                ))
+            }
+            _ => None,
+        },
+        Some("proxy") => destination.map(|destination| format!("proxy/{context}/{destination}")),
+        Some("pod") => non_empty(config.target.as_deref())
+            .map(|target| format!("pod/{context}/{}/{target}", config.namespace)),
+        _ => non_empty(config.service.as_deref())
+            .map(|service| format!("{context}/{}/{service}", config.namespace)),
+    };
+    owner.unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()))
+}
+
 async fn allocate_local_address_for_config(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<(String, Allocation), String> {
@@ -680,18 +711,7 @@ async fn allocate_local_address_for_config(
         return Ok((address, Allocation::Static));
     }
 
-    let service_name = match config
-        .service
-        .as_deref()
-        .filter(|service| !service.is_empty())
-    {
-        Some(service) => format!(
-            "{}/{}/{service}",
-            config.context.as_deref().unwrap_or_default(),
-            config.namespace
-        ),
-        None => format!("service-{}", config.id.unwrap_or_default()),
-    };
+    let service_name = address_owner_key(config);
 
     let service = service_name.clone();
     let allocation = tokio::task::spawn_blocking(move || try_allocate_address(&service))
@@ -1737,6 +1757,68 @@ mod tests {
             }
         });
         (dir, socket_path, helper)
+    }
+
+    #[test]
+    fn configs_get_one_loopback_owner_per_real_destination() {
+        use kftray_commons::models::ssh_provider::{
+            GcpBastionProvider,
+            SshProvider,
+            SshProviderKind,
+        };
+
+        let migrated = |id: i64, workload: &str, remote: &str, port: u16| Config {
+            id: Some(id),
+            workload_type: Some(workload.to_string()),
+            remote_address: Some(remote.to_string()),
+            local_port: Some(port),
+            ..Config::default()
+        };
+        let ssh = |id: i64, remote: &str, port: u16| Config {
+            ssh_provider: Some(SshProvider::Known(SshProviderKind::GcpBastion(
+                GcpBastionProvider {
+                    project: "p".to_string(),
+                    zone: "z".to_string(),
+                    instance: "jumper".to_string(),
+                    interface: "nic0".to_string(),
+                },
+            ))),
+            ..migrated(id, "ssh-port-forward", remote, port)
+        };
+
+        let key = address_owner_key;
+        assert_ne!(
+            key(&ssh(1, "proxy.internal", 80)),
+            key(&ssh(2, "monitor.internal", 80))
+        );
+        assert_eq!(
+            key(&ssh(1, "proxy.internal", 80)),
+            key(&ssh(3, "proxy.internal", 443))
+        );
+        assert_ne!(
+            key(&migrated(4, "proxy", "proxy.internal", 80)),
+            key(&migrated(5, "proxy", "monitor.internal", 80))
+        );
+        assert_ne!(
+            key(&Config {
+                target: Some("app=a".to_string()),
+                ..migrated(6, "pod", "", 80)
+            }),
+            key(&Config {
+                target: Some("app=b".to_string()),
+                ..migrated(7, "pod", "", 80)
+            })
+        );
+        assert_eq!(
+            key(&Config {
+                service: Some("web".to_string()),
+                namespace: "dev".to_string(),
+                context: Some("ctx".to_string()),
+                ..migrated(8, "service", "", 80)
+            }),
+            "ctx/dev/web"
+        );
+        assert_eq!(key(&ssh(9, "", 80)), "service-9");
     }
 
     #[cfg(target_os = "linux")]
