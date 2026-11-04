@@ -3,6 +3,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{
     AtomicU64,
+    AtomicUsize,
     Ordering,
 };
 use std::sync::{
@@ -45,8 +46,8 @@ use tokio::net::{
     TcpStream,
 };
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 const SESSION_WAIT: Duration = Duration::from_secs(10);
 
@@ -81,13 +82,16 @@ pub struct MockSshd {
     shared: Arc<Shared>,
     addr: SocketAddr,
     echo_addr: SocketAddr,
-    tasks: [JoinHandle<()>; 2],
 }
 
 pub(super) struct Shared {
     forwarding: bool,
     hold_channel_opens: bool,
     held_opens: watch::Sender<usize>,
+    release_opens: watch::Sender<bool>,
+    channels: watch::Sender<usize>,
+    accepted: AtomicUsize,
+    tasks: CancellationToken,
     authorized: Mutex<Vec<PublicKey>>,
     user_cas: Mutex<Vec<PublicKey>>,
     host: Mutex<Host>,
@@ -130,6 +134,10 @@ impl MockSshd {
             forwarding: options.forwarding,
             hold_channel_opens: options.hold_channel_opens,
             held_opens: watch::channel(0).0,
+            release_opens: watch::channel(false).0,
+            channels: watch::channel(0).0,
+            accepted: AtomicUsize::new(0),
+            tasks: CancellationToken::new(),
             authorized: Mutex::new(options.authorized),
             user_cas: Mutex::new(options.user_ca.into_iter().collect()),
             host: Mutex::new(random_host()),
@@ -137,15 +145,12 @@ impl MockSshd {
             live: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
         });
-        let tasks = [
-            tokio::spawn(accept_loop(listener, Arc::clone(&shared))),
-            tokio::spawn(echo_loop(echo)),
-        ];
+        spawn_until(&shared.tasks, accept_loop(listener, Arc::clone(&shared)));
+        spawn_until(&shared.tasks, echo_loop(echo, shared.tasks.clone()));
         Ok(Self {
             shared,
             addr,
             echo_addr,
-            tasks,
         })
     }
 
@@ -194,6 +199,21 @@ impl MockSshd {
             .is_ok_and(|reached| reached.is_ok())
     }
 
+    pub fn release_held_opens(&self) {
+        self.shared.release_opens.send_replace(true);
+    }
+
+    pub fn accepted_channels(&self) -> usize {
+        self.shared.accepted.load(Ordering::Relaxed)
+    }
+
+    pub async fn wait_channel_count(&self, count: usize) -> bool {
+        let mut channels = self.shared.channels.subscribe();
+        timeout(SESSION_WAIT, channels.wait_for(|live| *live == count))
+            .await
+            .is_ok_and(|reached| reached.is_ok())
+    }
+
     /// Disconnects every open session; the sshd keeps accepting new ones.
     pub async fn drop_sessions(&self) {
         let handles: Vec<server::Handle> = lock(&self.shared.live).values().cloned().collect();
@@ -224,9 +244,7 @@ impl MockSshd {
 
 impl Drop for MockSshd {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        self.shared.tasks.cancel();
     }
 }
 
@@ -239,11 +257,10 @@ impl Shared {
         let shared = Arc::clone(self);
         let config = Arc::clone(&lock(&self.host).config);
         self.sessions.send_modify(|open| *open += 1);
-        tokio::spawn(async move {
+        spawn_until(&self.tasks, async move {
             let _counted = Counted(Arc::clone(&shared));
             let handler = MockHandler {
                 shared: Arc::clone(&shared),
-                held: Vec::new(),
             };
             let Ok(session) = server::run_stream(config, stream, handler).await else {
                 return;
@@ -274,19 +291,45 @@ async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     }
 }
 
-async fn echo_loop(listener: TcpListener) {
+async fn echo_loop(listener: TcpListener, tasks: CancellationToken) {
     while let Ok((socket, _)) = listener.accept().await {
-        tokio::spawn(async move {
+        spawn_until(&tasks, async move {
             let (mut reader, mut writer) = socket.into_split();
             let _ = copy(&mut reader, &mut writer).await;
         });
     }
 }
 
+struct Live(Arc<Shared>);
+
+impl Live {
+    fn new(shared: &Arc<Shared>) -> Self {
+        shared.accepted.fetch_add(1, Ordering::Relaxed);
+        shared.channels.send_modify(|live| *live += 1);
+        Self(Arc::clone(shared))
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        self.0
+            .channels
+            .send_modify(|live| *live = live.saturating_sub(1));
+    }
+}
+
+fn spawn_until(tasks: &CancellationToken, task: impl Future<Output = ()> + Send + 'static) {
+    let cancelled = tasks.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            () = cancelled.cancelled() => {}
+            () = task => {}
+        }
+    });
+}
+
 struct MockHandler {
     shared: Arc<Shared>,
-    /// Opens never answered; dropped with the session.
-    held: Vec<(Channel<Msg>, ChannelOpenHandle)>,
 }
 
 impl Handler for MockHandler {
@@ -332,15 +375,18 @@ impl Handler for MockHandler {
                 .await;
             return Ok(());
         }
-        if self.shared.hold_channel_opens {
-            self.held.push((channel, reply));
+        let hold = self.shared.hold_channel_opens;
+        if hold {
             self.shared.held_opens.send_modify(|held| *held += 1);
-            return Ok(());
         }
 
         // Off the session loop, so a slow connect never stalls other channels.
+        let shared = Arc::clone(&self.shared);
         let host = host_to_connect.to_owned();
-        tokio::spawn(async move {
+        spawn_until(&self.shared.tasks, async move {
+            if hold {
+                let _ = shared.release_opens.subscribe().wait_for(|go| *go).await;
+            }
             let target = match u16::try_from(port_to_connect) {
                 Ok(port) => TcpStream::connect((host.as_str(), port)).await.ok(),
                 Err(_) => None,
@@ -349,9 +395,45 @@ impl Handler for MockHandler {
                 reply.reject(ChannelOpenFailure::ConnectFailed).await;
                 return;
             };
+            let _live = Live::new(&shared);
             reply.accept().await;
             let _ = copy_bidirectional(&mut channel.into_stream(), &mut target).await;
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    };
+    use tokio::time::timeout;
+
+    use crate::route::StreamOpener;
+    use crate::test_support::{
+        Fixture,
+        peer,
+    };
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_the_mock_should_end_its_sessions_and_forwarded_channels() {
+        let fixture = Fixture::new().await;
+        let lease = fixture.acquire("dropped").await.unwrap();
+        let mut stream = fixture.echo_opener(&lease).open(peer()).await.unwrap();
+        stream.write_all(b"ping").await.unwrap();
+        stream.read_exact(&mut [0; 4]).await.unwrap();
+        assert_eq!(fixture.mock.session_count(), 1);
+        assert_eq!(fixture.mock.accepted_channels(), 1);
+
+        drop(fixture.mock);
+
+        let read = timeout(Duration::from_secs(10), stream.read(&mut [0; 1]))
+            .await
+            .expect("the session outlived the mock");
+        assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
     }
 }

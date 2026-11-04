@@ -32,7 +32,7 @@ pub async fn bastion_route(
     ctx: &Arc<GcpContext>, target: &GcpInstance,
 ) -> Result<SshRoute, SshError> {
     let email = ctx.email().await?;
-    let (instance, flags) = ctx.inspect(target).await?;
+    let (instance, flags) = ctx.inspect(target, &email).await?;
     let GcpInstance {
         project,
         zone,

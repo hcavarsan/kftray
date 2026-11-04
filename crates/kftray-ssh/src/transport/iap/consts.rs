@@ -34,6 +34,6 @@ pub const RECONNECT_MAX_SLEEP: Duration = Duration::from_secs(20);
 pub const RECONNECT_BUDGET: Duration = Duration::from_secs(15 * 60);
 /// How long the actor waits for its Close frame to leave before dropping the socket.
 pub const CLOSE_GRACE: Duration = Duration::from_secs(2);
-/// Header block limit of the HTTP proxy's answer to CONNECT.
+/// Header block limit of the answer to the proxy CONNECT and to the WebSocket upgrade.
 pub const PROXY_HEADER_LIMIT: usize = 8 * 1024;
 pub const USER_AGENT: &str = concat!("kftray/", env!("CARGO_PKG_VERSION"));

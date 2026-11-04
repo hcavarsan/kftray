@@ -21,11 +21,11 @@ expect_used = "deny"
 default = ["provider-gcp"]
 iap = [
   "dep:base64",
-  "dep:bytes",
   "dep:futures",
   "dep:percent-encoding",
   "dep:rand",
   "dep:rustls-native-certs",
+  "dep:tokio-rustls",
   "dep:tokio-tungstenite",
 ]
 provider-gcp = [
@@ -40,7 +40,7 @@ e2e = ["provider-gcp"]
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true, optional = true }
-bytes = { workspace = true, optional = true }
+bytes = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true, optional = true }
 google-cloud-auth = { version = "1.18", default-features = false, optional = true }
@@ -63,6 +63,7 @@ serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, features = [
   "rustls-tls-native-roots",
 ], optional = true }
@@ -78,3 +79,6 @@ tokio = { workspace = true, features = [
   "rt-multi-thread",
   "test-util",
 ] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

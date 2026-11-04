@@ -1,7 +1,10 @@
 //! Fake IAP tunnel service: a WebSocket server on 127.0.0.1 that speaks the
 //! relay protocol and bridges each session to one upstream TCP address.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    VecDeque,
+};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{
@@ -15,6 +18,10 @@ use std::sync::{
     PoisonError,
 };
 
+use bytes::{
+    Buf,
+    Bytes,
+};
 use futures::{
     SinkExt,
     StreamExt,
@@ -74,6 +81,8 @@ use crate::transport::iap::frame::{
     Frame,
 };
 
+const RESUMABLE_CLOSE: u16 = 4004;
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -126,7 +135,7 @@ struct Shared {
     uris: Mutex<Vec<String>>,
     acks: Mutex<Vec<u64>>,
     reject: Mutex<Option<u16>>,
-    pending_close: Mutex<Option<u16>>,
+    pending_close: Mutex<VecDeque<u16>>,
     wake: Notify,
     drop_tx: watch::Sender<u64>,
     sids: Mutex<HashMap<String, Arc<Sid>>>,
@@ -182,11 +191,17 @@ impl FakeIap {
             .send_modify(|generation| *generation += 1);
     }
 
-    /// Closes one WebSocket with `code`, once: the live connection if there
-    /// is one, otherwise the next one right after its handshake (before any frame).
+    /// Closes one WebSocket with `code`: the live connection if there is one, otherwise the
+    /// next one right after its handshake (before any frame). Calls queue up, one code per
+    /// WebSocket. Only 4004 leaves the session resumable; any other code ends it, like IAP
+    /// forgetting the SID and closing the connection to the destination.
     pub fn close_next_with(&self, code: u16) {
-        *lock(&self.shared.pending_close) = Some(code);
+        lock(&self.shared.pending_close).push_back(code);
         self.shared.wake.notify_one();
+    }
+
+    pub fn session_count(&self) -> usize {
+        lock(&self.shared.sids).len()
     }
 
     /// Answers every following handshake with this HTTP status.
@@ -322,6 +337,13 @@ fn binary(frame: Vec<u8>) -> Message {
     Message::Binary(frame.into())
 }
 
+async fn end_session(shared: &Shared, id: &str) {
+    let sid = lock(&shared.sids).remove(id);
+    if let Some(sid) = sid {
+        let _ = sid.write.lock().await.shutdown().await;
+    }
+}
+
 #[allow(clippy::result_large_err)] // callback signature is dictated by tungstenite
 async fn serve(stream: TcpStream, shared: Arc<Shared>) {
     let mut dropped = shared.drop_tx.subscribe();
@@ -340,9 +362,14 @@ async fn serve(stream: TcpStream, shared: Arc<Shared>) {
     let Some(opening) = lock(&slot).take() else {
         return;
     };
-    let pending = lock(&shared.pending_close).take();
+    let pending = lock(&shared.pending_close).pop_front();
     if let Some(code) = pending {
         let _ = ws.send(close(code)).await;
+        if code != RESUMABLE_CLOSE
+            && let Opening::Reconnect { sid, .. } = &opening
+        {
+            end_session(&shared, sid).await;
+        }
         return;
     }
 
@@ -392,6 +419,7 @@ async fn serve(stream: TcpStream, shared: Arc<Shared>) {
         return;
     }
     let mut buf = vec![0u8; MAX_DATA_FRAME];
+    let mut writing = Bytes::new();
     loop {
         // Bytes read from upstream but not yet sent on this connection (also the replay).
         let chunk = {
@@ -415,32 +443,38 @@ async fn serve(stream: TcpStream, shared: Arc<Shared>) {
             biased;
             _ = dropped.changed() => return,
             _ = shared.wake.notified() => {
-                let code = lock(&shared.pending_close).take();
+                let code = lock(&shared.pending_close).pop_front();
                 if let Some(code) = code {
                     let _ = ws.send(close(code)).await;
+                    if code != RESUMABLE_CLOSE {
+                        drop(upstream_write);
+                        end_session(&shared, &sid_id).await;
+                    }
                     return;
                 }
             }
-            message = ws.next() => match message {
-                Some(Ok(Message::Binary(payload))) => match frame::decode(&payload) {
-                    Ok((Frame::Data(data), _)) => {
-                        if upstream_write.write_all(data).await.is_err() {
-                            return;
-                        }
-                        let ack = {
-                            let mut state = lock(&sid.state);
-                            state.up_total += data.len() as u64;
-                            (state.up_total - state.up_acked > ACK_THRESHOLD).then(|| {
-                                state.up_acked = state.up_total;
-                                state.up_total
-                            })
-                        };
-                        if let Some(total) = ack
-                            && ws.send(binary(frame::encode_ack(total))).await.is_err()
-                        {
-                            return;
-                        }
+            written = upstream_write.write(&writing), if !writing.is_empty() => match written {
+                Ok(n) if n > 0 => {
+                    writing.advance(n);
+                    let ack = {
+                        let mut state = lock(&sid.state);
+                        state.up_total += n as u64;
+                        (state.up_total - state.up_acked > ACK_THRESHOLD).then(|| {
+                            state.up_acked = state.up_total;
+                            state.up_total
+                        })
+                    };
+                    if let Some(total) = ack
+                        && ws.send(binary(frame::encode_ack(total))).await.is_err()
+                    {
+                        return;
                     }
+                }
+                _ => return,
+            },
+            message = ws.next(), if writing.is_empty() => match message {
+                Some(Ok(Message::Binary(payload))) => match frame::decode(&payload) {
+                    Ok((Frame::Data(data), _)) => writing = payload.slice_ref(data),
                     Ok((Frame::Ack(acked), _)) => {
                         lock(&shared.acks).push(acked);
                         lock(&sid.state).acknowledge(acked);

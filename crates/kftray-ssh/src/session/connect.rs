@@ -1,7 +1,13 @@
+use std::io;
+use std::pin::Pin;
 use std::sync::{
     Arc,
     Mutex,
     PoisonError,
+};
+use std::task::{
+    Context,
+    Poll,
 };
 
 use russh::client::{
@@ -9,8 +15,17 @@ use russh::client::{
     Handle,
 };
 use russh::keys::PrivateKeyWithHashAlg;
+use tokio::io::{
+    AsyncRead,
+    AsyncWrite,
+    ReadBuf,
+};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
+use tokio_util::sync::{
+    CancellationToken,
+    WaitForCancellationFutureOwned,
+};
 
 use super::Stage;
 use super::handler::ClientHandler;
@@ -24,6 +39,7 @@ use crate::error::SshError;
 use crate::host_keys::HostKeyStore;
 use crate::key::KftrayKey;
 use crate::route::{
+    BoxStream,
     Credentials,
     SshRoute,
 };
@@ -38,6 +54,65 @@ pub(super) fn protocol_error(route: &str, reason: impl std::fmt::Display) -> Ssh
     }
 }
 
+struct Cancellable {
+    inner: BoxStream,
+    on_read: Pin<Box<WaitForCancellationFutureOwned>>,
+    on_write: Pin<Box<WaitForCancellationFutureOwned>>,
+}
+
+impl Cancellable {
+    fn new(inner: BoxStream, cancel: &CancellationToken) -> Self {
+        Self {
+            inner,
+            on_read: Box::pin(cancel.clone().cancelled_owned()),
+            on_write: Box::pin(cancel.clone().cancelled_owned()),
+        }
+    }
+}
+
+fn cancelled() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "the connection was cancelled",
+    )
+}
+
+impl AsyncRead for Cancellable {
+    fn poll_read(
+        mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.on_read.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Cancellable {
+    fn poll_write(
+        mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if self.on_write.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.on_write.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.on_write.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 /// transport -> SSH handshake (host key check included) -> authentication.
 pub(crate) async fn establish(
     route: &SshRoute, key: &KftrayKey, store: &Arc<dyn HostKeyStore>,
@@ -47,6 +122,9 @@ pub(crate) async fn establish(
 
     on_stage(Stage::Transport);
     let stream = route.transport.connect().await?;
+    let cancel = CancellationToken::new();
+    let released = cancel.clone().drop_guard();
+    let stream = Cancellable::new(stream, &cancel);
 
     on_stage(Stage::Handshake);
     let verdict = Arc::new(Mutex::new(None));
@@ -131,6 +209,7 @@ pub(crate) async fn establish(
         }
     }
 
+    released.disarm();
     log::info!("[ssh {label}] connected as {user}");
     Ok((handle, closed_rx))
 }
@@ -138,6 +217,7 @@ pub(crate) async fn establish(
 #[cfg(test)]
 mod tests {
     use std::time::{
+        Duration,
         SystemTime,
         UNIX_EPOCH,
     };
@@ -150,6 +230,11 @@ mod tests {
     use russh::keys::{
         Algorithm,
         PrivateKey,
+    };
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+        DuplexStream,
     };
 
     use super::*;
@@ -346,5 +431,50 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    #[tokio::test]
+    async fn establish_should_release_the_transport_when_the_sshd_stalls_after_its_identification()
+    {
+        struct Stalled(Mutex<Option<DuplexStream>>);
+
+        #[async_trait]
+        impl crate::route::Transport for Stalled {
+            async fn connect(&self) -> Result<crate::BoxStream, SshError> {
+                let (client, mut server) = tokio::io::duplex(4096);
+                server.write_all(b"SSH-2.0-stalled\r\n").await.unwrap();
+                *self.0.lock().unwrap() = Some(server);
+                Ok(Box::new(client))
+            }
+        }
+        let fixture = Fixture::new().await;
+        let transport = Arc::new(Stalled(Mutex::new(None)));
+        let mut stalled = route(&fixture.mock, "stalled");
+        stalled.transport = transport.clone();
+        stalled.key = RouteKey::new("test:stalled");
+
+        tokio::time::pause();
+        let err = fixture
+            .runtime
+            .acquire(stalled, &mut |_| {})
+            .await
+            .err()
+            .unwrap();
+
+        assert!(
+            matches!(
+                err,
+                SshError::Timeout {
+                    stage: Stage::Handshake,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let mut server = transport.0.lock().unwrap().take().unwrap();
+        timeout(Duration::from_secs(5), server.read_to_end(&mut Vec::new()))
+            .await
+            .expect("the client end of the transport is still open")
+            .unwrap();
     }
 }

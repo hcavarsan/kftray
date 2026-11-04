@@ -89,7 +89,7 @@ impl OsLoginAuth {
     async fn login(&self, key: &KftrayKey) -> Result<Credentials, GcpError> {
         // Re-validated on every (re)connection: the VM may have been stopped
         // or switched to another login mode since the route was built.
-        let (instance, flags) = self.ctx.inspect(&self.target).await?;
+        let (instance, flags) = self.ctx.inspect(&self.target, &self.email).await?;
         let public = key.public_openssh();
         if flags.certificates {
             self.certificate(&instance, &public).await

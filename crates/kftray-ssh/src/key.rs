@@ -134,11 +134,6 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
         .create(dir)
 }
 
-#[cfg(not(unix))]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dir)
-}
-
 #[cfg(unix)]
 fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -149,13 +144,167 @@ fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
         .open(path)
 }
 
-// The user's config directory is already private on Windows.
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    owner_only::create_dir(dir)
+}
+
+#[cfg(windows)]
 fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
+    owner_only::create_file(path)
+}
+
+#[cfg(windows)]
+mod owner_only {
+    use std::ffi::c_void;
+    use std::fs;
+    use std::io::{
+        Error,
+        ErrorKind,
+        Result,
+    };
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    use std::path::Path;
+
+    use windows::Win32::Foundation::{
+        CloseHandle,
+        HANDLE,
+        HLOCAL,
+        LocalFree,
+    };
+    use windows::Win32::Security::Authorization::{
+        ConvertSidToStringSidW,
+        ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::{
+        GetTokenInformation,
+        PSECURITY_DESCRIPTOR,
+        SECURITY_ATTRIBUTES,
+        TOKEN_QUERY,
+        TOKEN_USER,
+        TokenUser,
+    };
+    use windows::Win32::Storage::FileSystem::{
+        CREATE_NEW,
+        CreateDirectoryW,
+        CreateFileW,
+        FILE_ATTRIBUTE_NORMAL,
+        FILE_GENERIC_WRITE,
+        FILE_SHARE_NONE,
+    };
+    use windows::Win32::System::Threading::{
+        GetCurrentProcess,
+        OpenProcessToken,
+    };
+    use windows::core::{
+        PCWSTR,
+        PWSTR,
+    };
+
+    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        value.encode_wide().chain(Some(0)).collect()
+    }
+
+    pub(super) fn current_user_sid() -> Result<String> {
+        unsafe {
+            let mut token = HANDLE::default();
+            OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
+            let sid = token_user_sid(token);
+            let _ = CloseHandle(token);
+            sid
+        }
+    }
+
+    unsafe fn token_user_sid(token: HANDLE) -> Result<String> {
+        unsafe {
+            let mut len = 0u32;
+            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+            let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+            GetTokenInformation(
+                token,
+                TokenUser,
+                Some(buf.as_mut_ptr().cast::<c_void>()),
+                len,
+                &mut len,
+            )?;
+            let user = &*buf.as_ptr().cast::<TOKEN_USER>();
+            let mut text = PWSTR::null();
+            ConvertSidToStringSidW(user.User.Sid, &mut text)?;
+            let sid = text.to_string();
+            let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+            sid.map_err(|e| Error::new(ErrorKind::InvalidData, e))
+        }
+    }
+
+    struct Descriptor(PSECURITY_DESCRIPTOR);
+
+    impl Descriptor {
+        fn owner_only() -> Result<Self> {
+            let sddl = wide(format!("D:P(A;OICI;FA;;;{})", current_user_sid()?).as_ref());
+            let mut descriptor = PSECURITY_DESCRIPTOR::default();
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    PCWSTR(sddl.as_ptr()),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    None,
+                )?;
+            }
+            Ok(Self(descriptor))
+        }
+
+        fn attributes(&self) -> SECURITY_ATTRIBUTES {
+            SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: self.0.0,
+                bInheritHandle: false.into(),
+            }
+        }
+    }
+
+    impl Drop for Descriptor {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = LocalFree(Some(HLOCAL(self.0.0)));
+            }
+        }
+    }
+
+    pub(super) fn create_dir(dir: &Path) -> Result<()> {
+        if dir.is_dir() {
+            return Ok(());
+        }
+        if let Some(parent) = dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let descriptor = Descriptor::owner_only()?;
+        let attributes = descriptor.attributes();
+        let name = wide(dir.as_os_str());
+        match unsafe { CreateDirectoryW(PCWSTR(name.as_ptr()), Some(&attributes)) } {
+            Err(e) if Error::from(e.clone()).kind() == ErrorKind::AlreadyExists => Ok(()),
+            result => result.map_err(Error::from),
+        }
+    }
+
+    pub(super) fn create_file(path: &Path) -> Result<fs::File> {
+        let descriptor = Descriptor::owner_only()?;
+        let attributes = descriptor.attributes();
+        let name = wide(path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(name.as_ptr()),
+                FILE_GENERIC_WRITE.0,
+                FILE_SHARE_NONE,
+                Some(&attributes),
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        }?;
+        Ok(unsafe { fs::File::from_raw_handle(handle.0) })
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +360,73 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn load_or_create_should_restrict_the_key_and_its_dir_to_the_current_user() {
+        use std::os::windows::ffi::OsStrExt;
+
+        use windows::Win32::Foundation::{
+            HLOCAL,
+            LocalFree,
+        };
+        use windows::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW,
+            GetNamedSecurityInfoW,
+            SDDL_REVISION_1,
+            SE_FILE_OBJECT,
+        };
+        use windows::Win32::Security::{
+            DACL_SECURITY_INFORMATION,
+            PSECURITY_DESCRIPTOR,
+        };
+        use windows::core::{
+            PCWSTR,
+            PWSTR,
+        };
+
+        fn dacl(path: &Path) -> String {
+            let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            unsafe {
+                let mut descriptor = PSECURITY_DESCRIPTOR::default();
+                let status = GetNamedSecurityInfoW(
+                    PCWSTR(name.as_ptr()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    None,
+                    None,
+                    &mut descriptor,
+                );
+                assert!(status.is_ok(), "{status:?}");
+                let mut text = PWSTR::null();
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    descriptor,
+                    SDDL_REVISION_1,
+                    DACL_SECURITY_INFORMATION,
+                    &mut text,
+                    None,
+                )
+                .unwrap();
+                let sddl = text.to_string().unwrap();
+                let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+                let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+                sddl
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        KftrayKey::load_or_create(dir.path()).unwrap();
+        let key = dir.path().join(KEY_RELATIVE_PATH);
+        let sid = owner_only::current_user_sid().unwrap();
+        for path in [key.parent().unwrap(), key.as_path()] {
+            let sddl = dacl(path);
+            assert!(sddl.starts_with("D:P"), "{sddl}");
+            assert_eq!(sddl.matches('(').count(), 1, "{sddl}");
+            assert!(sddl.contains(&format!(";FA;;;{sid})")), "{sddl}");
+        }
     }
 
     #[test]

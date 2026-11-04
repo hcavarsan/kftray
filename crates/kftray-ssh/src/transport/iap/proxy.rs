@@ -6,15 +6,17 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use tokio::io::{
     AsyncRead,
-    AsyncReadExt,
     AsyncWrite,
     AsyncWriteExt,
 };
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::http::Uri;
 
-use super::connect::percent_decode;
-use super::consts::PROXY_HEADER_LIMIT;
+use super::connect::{
+    percent_decode,
+    read_head,
+    status_of,
+};
 use super::error::IapError;
 
 pub(crate) struct Proxy {
@@ -131,26 +133,10 @@ where
     request.push_str("\r\n");
     stream.write_all(request.as_bytes()).await.map_err(io)?;
 
-    // One byte at a time: the proxy sends nothing after the headers until we
-    // do, but this way no TLS byte can ever be swallowed.
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        if head.len() >= PROXY_HEADER_LIMIT {
-            return Err(IapError::Io(format!(
-                "proxy {} sent oversized headers",
-                proxy.name()
-            )));
-        }
-        head.push(stream.read_u8().await.map_err(io)?);
-    }
-    let status = head
-        .split(|b| *b == b'\r')
-        .next()
-        .and_then(|line| std::str::from_utf8(line).ok())
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|status| status.parse::<u16>().ok())
+    let head = read_head(stream).await.map_err(io)?;
+    let status = status_of(&head)
         .ok_or_else(|| IapError::Io(format!("malformed answer from proxy {}", proxy.name())))?;
-    if status != 200 {
+    if !(200..300).contains(&status) {
         return Err(IapError::ProxyConnect {
             proxy: proxy.name(),
             status,
@@ -161,6 +147,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncReadExt;
+
     use super::*;
 
     #[test]
@@ -236,6 +224,16 @@ mod tests {
             request,
             "CONNECT tunnel.cloudproxy.app:443 HTTP/1.1\r\nHost: tunnel.cloudproxy.app:443\r\nProxy-Authorization: Basic dTpw\r\n\r\n"
         );
+    }
+
+    #[tokio::test]
+    async fn handshake_should_accept_any_2xx_when_proxy_opens_the_tunnel() {
+        for answer in [
+            "HTTP/1.1 204 No Content\r\n\r\n",
+            "HTTP/1.0 202 Accepted\r\nProxy-Agent: x\r\n\r\n",
+        ] {
+            run_handshake(answer).await.0.unwrap();
+        }
     }
 
     #[tokio::test]

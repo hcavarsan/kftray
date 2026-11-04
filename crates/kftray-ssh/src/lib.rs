@@ -107,11 +107,13 @@ impl SshRuntime {
         &self, route: SshRoute, host: &str, port: u16, on_stage: &mut (dyn FnMut(Stage) + Send),
     ) -> Result<(), SshError> {
         let (handle, _closed) = establish(&route, &self.key, &self.host_keys, on_stage).await?;
+        let handle = Arc::new(handle);
 
         on_stage(Stage::Channel);
         let deadline = Instant::now() + CHANNEL_OPEN_TIMEOUT;
         let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        let opened = open_direct_tcpip(&handle, &route.label, host, port, peer, deadline).await;
+        let opened =
+            open_direct_tcpip(&handle, &route.label, host, port, peer, deadline, None).await;
         let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
         opened.map(drop)
     }

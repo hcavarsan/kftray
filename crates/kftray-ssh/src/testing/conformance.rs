@@ -18,6 +18,7 @@ use tokio::io::{
     AsyncWriteExt,
 };
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use super::{
@@ -25,7 +26,6 @@ use super::{
     MockSshd,
     MockSshdOptions,
 };
-use crate::SshRuntime;
 use crate::error::{
     ProviderError,
     SshError,
@@ -41,6 +41,10 @@ use crate::route::{
 use crate::session::{
     SessionState,
     Stage,
+};
+use crate::{
+    SshLease,
+    SshRuntime,
 };
 
 /// Bound for every wait on the session; a provider's transport may need a
@@ -89,6 +93,8 @@ pub async fn route_conformance(build: impl AsyncFn(&MockSshd) -> SshRoute) {
     let opener = lease.opener(echo.ip().to_string(), echo.port());
     assert_echo(&opener).await;
 
+    assert_concurrent_channels(&lease, echo).await;
+
     // First use stores the key, unless the provider vouches for the keys.
     let stored = ok(store.get(&alias).await, "read the host key store");
     match (vouched, stored) {
@@ -136,21 +142,17 @@ pub async fn route_conformance(build: impl AsyncFn(&MockSshd) -> SshRoute) {
     assert_eq!(*second.state().borrow(), SessionState::Ready);
     assert_echo(&second.opener(echo.ip().to_string(), echo.port())).await;
 
-    // A changed host key is refused.
-    if !vouched {
-        mock.rotate_host_key();
-        let fresh = ok(
-            SshRuntime::new(&dir.path, store.clone()),
-            "create a second runtime",
-        );
-        let outcome = fresh
-            .acquire(control.wrap(build(&mock).await), &mut |_| {})
-            .await;
-        match outcome {
-            Err(SshError::HostKeyMismatch { .. }) => {}
-            Err(e) => panic!("expected HostKeyMismatch, got: {e}"),
-            Ok(_) => panic!("a rotated host key was accepted"),
-        }
+    // A changed host key is refused, also when the provider vouches for the old one.
+    let stale = control.wrap(build(&mock).await);
+    mock.rotate_host_key();
+    let fresh = ok(
+        SshRuntime::new(&dir.path, store.clone()),
+        "create a second runtime",
+    );
+    match fresh.acquire(stale, &mut |_| {}).await {
+        Err(SshError::HostKeyMismatch { .. }) => {}
+        Err(e) => panic!("expected HostKeyMismatch, got: {e}"),
+        Ok(_) => panic!("a rotated host key was accepted"),
     }
 
     // The last lease closes the session.
@@ -254,6 +256,54 @@ async fn assert_echo(opener: &dyn StreamOpener) {
         "read from the channel",
     );
     assert_eq!(back, payload);
+}
+
+async fn assert_concurrent_channels(lease: &SshLease, echo: SocketAddr) {
+    let (host, port) = (echo.ip().to_string(), echo.port());
+    let lagging_payload = vec![0xA5; 4096];
+    let mut lagging = ok(
+        lease.opener(host.clone(), port).open(peer()).await,
+        "open a channel",
+    );
+    ok(
+        lagging.write_all(&lagging_payload).await,
+        "write to the first channel",
+    );
+
+    let mut tasks = JoinSet::new();
+    for id in 0..16u8 {
+        let opener = lease.opener(host.clone(), port);
+        tasks.spawn(async move {
+            let mut stream = ok(opener.open(peer()).await, "open a concurrent channel");
+            let payload = vec![id; 2048];
+            ok(
+                stream.write_all(&payload).await,
+                "write to a concurrent channel",
+            );
+            let mut back = vec![0; payload.len()];
+            ok(
+                ok(
+                    timeout(WAIT, stream.read_exact(&mut back)).await,
+                    "concurrent echo timed out",
+                ),
+                "read from a concurrent channel",
+            );
+            assert_eq!(back, payload, "channel {id} got another channel's bytes");
+        });
+    }
+    while let Some(done) = tasks.join_next().await {
+        ok(done, "a concurrent channel failed");
+    }
+
+    let mut back = vec![0; lagging_payload.len()];
+    ok(
+        ok(
+            timeout(WAIT, lagging.read_exact(&mut back)).await,
+            "echo of the unread channel timed out",
+        ),
+        "read from the first channel",
+    );
+    assert_eq!(back, lagging_payload);
 }
 
 /// Waits for a state that satisfies `wanted`, and returns it.

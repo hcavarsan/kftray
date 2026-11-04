@@ -15,6 +15,7 @@ pub const AUTH_TIMEOUT: Duration = Duration::from_secs(20);
 pub const CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 /// OpenSSH `MaxSessions` style cap on concurrent channels per session.
 pub const MAX_CHANNELS_PER_SESSION: usize = 256;
+pub const CHANNEL_READ_BUFFER: usize = 2 * 1024 * 1024;
 /// First wait before re-establishing a dropped session.
 pub const RECONNECT_BACKOFF_MIN: Duration = Duration::from_secs(1);
 /// Upper bound of the doubling reconnect wait.

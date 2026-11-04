@@ -418,7 +418,7 @@ impl Actor {
         let name = self.dialer.name();
         let code = frame.as_ref().map_or(1005, |f| u16::from(f.code));
         match code {
-            1000 | 4010 => {
+            1000 | 4009 | 4010 => {
                 debug!("[iap {name}] closed by IAP ({code})");
                 Step::Stop
             }

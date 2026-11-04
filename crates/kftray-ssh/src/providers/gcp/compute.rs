@@ -85,7 +85,13 @@ impl OsLoginFlags {
     }
 }
 
-fn check(name: &str, instance: &Instance, flags: &OsLoginFlags) -> Result<(), GcpError> {
+fn is_service_account(email: &str) -> bool {
+    email.ends_with(".gserviceaccount.com")
+}
+
+fn check(
+    name: &str, instance: &Instance, flags: &OsLoginFlags, email: &str,
+) -> Result<(), GcpError> {
     if instance.status != "RUNNING" {
         return Err(GcpError::InstanceNotRunning {
             instance: name.into(),
@@ -95,7 +101,7 @@ fn check(name: &str, instance: &Instance, flags: &OsLoginFlags) -> Result<(), Gc
     if !flags.oslogin {
         return Err(GcpError::OsLoginRequired);
     }
-    if flags.two_factor || flags.security_key {
+    if (flags.two_factor || flags.security_key) && !is_service_account(email) {
         return Err(GcpError::OsLoginInteractive);
     }
     Ok(())
@@ -142,14 +148,14 @@ impl GcpContext {
     /// Fails fast when the VM cannot be logged in to, so a bad target is
     /// reported before any tunnel is opened.
     pub(super) async fn inspect(
-        &self, target: &GcpInstance,
+        &self, target: &GcpInstance, email: &str,
     ) -> Result<(Instance, OsLoginFlags), GcpError> {
         let (instance, project) = tokio::try_join!(
             self.get_instance(target),
             self.get_project_metadata(&target.project)
         )?;
         let flags = OsLoginFlags::resolve(&instance, &project);
-        check(&target.instance, &instance, &flags)?;
+        check(&target.instance, &instance, &flags, email)?;
         Ok((instance, flags))
     }
 
@@ -243,6 +249,9 @@ mod tests {
         vm_json,
     };
 
+    const USER: &str = "dev@example.com";
+    const SERVICE_ACCOUNT: &str = "ci@proj.iam.gserviceaccount.com";
+
     #[tokio::test]
     async fn inspect_should_fail_with_not_running_when_the_vm_is_terminated() {
         let server = MockServer::start().await;
@@ -253,7 +262,11 @@ mod tests {
         )
         .await;
 
-        let error = context(&server).inspect(&target()).await.err().unwrap();
+        let error = context(&server)
+            .inspect(&target(), USER)
+            .await
+            .err()
+            .unwrap();
 
         assert!(matches!(
             &error,
@@ -276,7 +289,7 @@ mod tests {
         )
         .await;
 
-        let (_, flags) = context(&server).inspect(&target()).await.unwrap();
+        let (_, flags) = context(&server).inspect(&target(), USER).await.unwrap();
 
         assert!(flags.oslogin);
         assert!(!flags.two_factor);
@@ -292,7 +305,11 @@ mod tests {
         )
         .await;
 
-        let error = context(&server).inspect(&target()).await.err().unwrap();
+        let error = context(&server)
+            .inspect(&target(), USER)
+            .await
+            .err()
+            .unwrap();
 
         assert!(matches!(error, GcpError::OsLoginInteractive));
     }
@@ -307,9 +324,60 @@ mod tests {
         )
         .await;
 
-        let error = context(&server).inspect(&target()).await.err().unwrap();
+        let error = context(&server)
+            .inspect(&target(), USER)
+            .await
+            .err()
+            .unwrap();
 
         assert!(matches!(error, GcpError::OsLoginRequired));
+    }
+
+    #[tokio::test]
+    async fn inspect_should_allow_a_service_account_when_the_vm_enforces_2fa_or_security_keys() {
+        let server = MockServer::start().await;
+        mount_vm(
+            &server,
+            vm_json(
+                "RUNNING",
+                &[
+                    ("enable-oslogin", "TRUE"),
+                    ("enable-oslogin-2fa", "TRUE"),
+                    ("enable-oslogin-sk", "TRUE"),
+                ],
+            ),
+            project_json(&[]),
+        )
+        .await;
+
+        let (_, flags) = context(&server)
+            .inspect(&target(), SERVICE_ACCOUNT)
+            .await
+            .unwrap();
+
+        assert!(flags.two_factor && flags.security_key);
+    }
+
+    #[tokio::test]
+    async fn inspect_should_reject_a_user_when_the_vm_enforces_only_security_keys() {
+        let server = MockServer::start().await;
+        mount_vm(
+            &server,
+            vm_json(
+                "RUNNING",
+                &[("enable-oslogin", "TRUE"), ("enable-oslogin-sk", "TRUE")],
+            ),
+            project_json(&[]),
+        )
+        .await;
+
+        let error = context(&server)
+            .inspect(&target(), USER)
+            .await
+            .err()
+            .unwrap();
+
+        assert!(matches!(error, GcpError::OsLoginInteractive));
     }
 
     #[tokio::test]

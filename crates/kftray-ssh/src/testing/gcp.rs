@@ -127,6 +127,20 @@ impl FakeGcp {
         &self.iap
     }
 
+    pub async fn set_project_metadata(&self, key: &str, value: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/compute/v1/projects/{}",
+                self.target.project
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "commonInstanceMetadata": {"items": [{"key": key, "value": value}]},
+            })))
+            .with_priority(1)
+            .mount(&self.server)
+            .await;
+    }
+
     /// Every request the REST fakes received, oldest first.
     pub async fn received_requests(&self) -> Vec<Request> {
         self.server.received_requests().await.unwrap_or_default()
@@ -273,5 +287,70 @@ async fn mount_oslogin(server: &MockServer, config: &FakeGcpConfig) {
             })
             .mount(server)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::gcp::{
+        GcpError,
+        bastion_route,
+    };
+
+    const USER: &str = "dev@example.com";
+    const SERVICE_ACCOUNT: &str = "ci@kftray-test.iam.gserviceaccount.com";
+    const SECOND_FACTORS: [&str; 2] = ["enable-oslogin-2fa", "enable-oslogin-sk"];
+
+    async fn fake(email: &str, second_factor: &str) -> FakeGcp {
+        let fake = FakeGcp::start(FakeGcpConfig {
+            project: "kftray-test".into(),
+            zone: "us-central1-b".into(),
+            instance: "jumper".into(),
+            instance_id: "1234567890".into(),
+            email: email.into(),
+            posix_user: "dev".into(),
+            authorized_key: String::new(),
+            ssh_upstream: SocketAddr::from(([127, 0, 0, 1], 1)),
+            token: "test-token".into(),
+            oslogin_certificates: false,
+            guest_host_key: None,
+            user_ca: None,
+        })
+        .await
+        .unwrap();
+        fake.set_project_metadata(second_factor, "TRUE").await;
+        fake
+    }
+
+    #[tokio::test]
+    async fn bastion_route_should_allow_a_service_account_when_the_project_enforces_a_second_factor()
+     {
+        for second_factor in SECOND_FACTORS {
+            let fake = fake(SERVICE_ACCOUNT, second_factor).await;
+
+            let route = bastion_route(&fake.context().unwrap(), &fake.target()).await;
+
+            assert!(route.is_ok(), "{second_factor}: {:?}", route.err());
+        }
+    }
+
+    #[tokio::test]
+    async fn bastion_route_should_reject_a_user_when_the_project_enforces_a_second_factor() {
+        for second_factor in SECOND_FACTORS {
+            let fake = fake(USER, second_factor).await;
+
+            let error = bastion_route(&fake.context().unwrap(), &fake.target())
+                .await
+                .err()
+                .unwrap();
+
+            assert_eq!(
+                error.to_string(),
+                GcpError::OsLoginInteractive.to_string(),
+                "{second_factor}"
+            );
+            assert!(!error.is_retryable());
+        }
     }
 }

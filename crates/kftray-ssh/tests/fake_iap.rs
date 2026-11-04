@@ -2,10 +2,13 @@
 #![cfg(feature = "iap")]
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{
     AtomicUsize,
     Ordering,
+};
+use std::sync::{
+    Arc,
+    Mutex,
 };
 use std::time::Duration;
 
@@ -306,6 +309,7 @@ async fn tunnel_should_resume_without_loss_when_iap_closes_with_4004() {
         reconnect.ends_with("&ack=32768&newWebsocket=True&zone=z"),
         "{reconnect}"
     );
+    assert_eq!(fake.session_count(), 1, "4004 keeps the session resumable");
     assert_eq!(
         tokens.calls.load(Ordering::SeqCst),
         2,
@@ -338,6 +342,136 @@ async fn tunnel_should_end_without_reconnecting_when_iap_closes_with_4010() {
 
     assert!(rest.is_empty());
     assert_eq!(fake.connect_count(), 1);
+}
+
+async fn gated_upstream() -> (SocketAddr, oneshot::Sender<()>, Arc<Mutex<Vec<u8>>>) {
+    let (listener, addr) = listen().await;
+    let (open_tx, open_rx) = oneshot::channel();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let sink = received.clone();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _ = open_rx.await;
+        let mut buf = vec![0u8; 64 * 1024];
+        while let Ok(n) = stream.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            sink.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    (addr, open_tx, received)
+}
+
+async fn write_until_stalled(stream: &mut BoxStream) -> Vec<u8> {
+    let mut sent = Vec::new();
+    let mut seed = 1;
+    loop {
+        let chunk = pattern(16 * 1024, seed);
+        let mut offset = 0;
+        while offset < chunk.len() {
+            let attempt =
+                tokio::time::timeout(Duration::from_millis(500), stream.write(&chunk[offset..]))
+                    .await;
+            let Ok(written) = attempt else {
+                return sent;
+            };
+            let written = written.unwrap();
+            sent.extend_from_slice(&chunk[offset..offset + written]);
+            offset += written;
+        }
+        seed += 1;
+        assert!(seed < 16 * 1024, "the tunnel never pushed back");
+    }
+}
+
+#[tokio::test]
+async fn tunnel_should_end_when_iap_closes_with_4010_and_upstream_is_stalled() {
+    let (addr, _gate, _received) = gated_upstream().await;
+    let fake = FakeIap::start(addr, TOKEN).await.unwrap();
+    let mut stream = open(&fake).await;
+    write_until_stalled(&mut stream).await;
+
+    fake.close_next_with(4010);
+    let mut rest = Vec::new();
+    within(stream.read_to_end(&mut rest)).await.unwrap();
+
+    assert!(rest.is_empty());
+    assert_eq!(fake.connect_count(), 1);
+}
+
+#[tokio::test]
+async fn tunnel_should_resume_without_loss_when_connections_drop_and_upstream_is_stalled() {
+    let (addr, gate, received) = gated_upstream().await;
+    let fake = FakeIap::start(addr, TOKEN).await.unwrap();
+    let mut stream = open(&fake).await;
+    let sent = write_until_stalled(&mut stream).await;
+
+    fake.drop_connections();
+    within(async {
+        while fake.connect_count() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    gate.send(()).unwrap();
+    within(async {
+        while received.lock().unwrap().len() < sent.len() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+
+    assert!(*received.lock().unwrap() == sent);
+}
+
+#[tokio::test]
+async fn fake_should_forget_the_session_and_close_upstream_when_closing_with_4010() {
+    let (listener, addr) = listen().await;
+    let (eof_tx, eof_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut sink = Vec::new();
+        stream.read_to_end(&mut sink).await.unwrap();
+        let _ = eof_tx.send(());
+    });
+    let fake = FakeIap::start(addr, TOKEN).await.unwrap();
+    let mut stream = open(&fake).await;
+    assert_eq!(fake.session_count(), 1);
+
+    fake.close_next_with(4010);
+    let mut rest = Vec::new();
+    within(stream.read_to_end(&mut rest)).await.unwrap();
+
+    within(eof_rx).await.unwrap();
+    assert_eq!(fake.session_count(), 0);
+}
+
+async fn reconnect_answered_with(code: u16) {
+    let fake = FakeIap::start(echo_upstream().await, TOKEN).await.unwrap();
+    let mut stream = open(&fake).await;
+
+    fake.close_next_with(4004);
+    fake.close_next_with(code);
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))
+        .await
+        .expect("a reconnect answered with a session-lost code must end the tunnel")
+        .unwrap();
+
+    assert!(rest.is_empty());
+    assert_eq!(fake.connect_count(), 2, "{code} must not be retried");
+    assert_eq!(fake.session_count(), 0);
+}
+
+#[tokio::test]
+async fn tunnel_should_end_without_retrying_when_reconnect_is_answered_with_4001() {
+    reconnect_answered_with(4001).await;
+}
+
+#[tokio::test]
+async fn tunnel_should_end_without_retrying_when_reconnect_is_answered_with_4074() {
+    reconnect_answered_with(4074).await;
 }
 
 #[tokio::test]

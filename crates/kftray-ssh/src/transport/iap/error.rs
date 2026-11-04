@@ -20,6 +20,8 @@ pub enum IapError {
     InstanceLookup,
     #[error("IAP closed the tunnel: {code} {reason}")]
     Closed { code: u16, reason: String },
+    #[error("IAP lost the tunnel session ({code}) and cannot resume it; open a new connection.")]
+    SessionLost { code: u16 },
     #[error("IAP rejected the tunnel: HTTP {status}")]
     Http { status: u16 },
     #[error("The proxy {proxy} refused the connection to IAP: {status}")]
@@ -38,7 +40,8 @@ impl IapError {
         match code {
             4033 => Self::PermissionDenied,
             4003 => Self::BackendUnreachable,
-            4047 => Self::InstanceLookup,
+            4047 | 4051 => Self::InstanceLookup,
+            4001 | 4002 | 4074 => Self::SessionLost { code },
             _ => Self::Closed {
                 code,
                 reason: reason.to_owned(),
@@ -46,13 +49,17 @@ impl IapError {
         }
     }
 
+    pub(crate) fn from_status(status: u16) -> Self {
+        match status {
+            401 | 403 => Self::PermissionDenied,
+            status => Self::Http { status },
+        }
+    }
+
     /// Maps a WebSocket client error; HTTP statuses of a refused handshake keep their meaning.
     pub(crate) fn from_ws(error: WsError) -> Self {
         match error {
-            WsError::Http(response) => match response.status().as_u16() {
-                401 | 403 => Self::PermissionDenied,
-                status => Self::Http { status },
-            },
+            WsError::Http(response) => Self::from_status(response.status().as_u16()),
             other => Self::Io(other.to_string()),
         }
     }
@@ -65,7 +72,7 @@ impl ProviderError for IapError {
 
     fn is_retryable(&self) -> bool {
         match self {
-            Self::PermissionDenied | Self::BackendUnreachable => false,
+            Self::PermissionDenied | Self::BackendUnreachable | Self::SessionLost { .. } => false,
             Self::Http { status } => *status >= 500 || *status == 429,
             Self::InstanceLookup
             | Self::Closed { .. }
@@ -105,6 +112,25 @@ mod tests {
             IapError::from_close(4999, "x"),
             IapError::Closed { code: 4999, .. }
         ));
+        assert!(matches!(
+            IapError::from_close(4051, ""),
+            IapError::InstanceLookup
+        ));
+    }
+
+    #[test]
+    fn from_close_should_not_be_retryable_when_the_session_cannot_resume() {
+        for code in [4001, 4002, 4074] {
+            let error = IapError::from_close(code, "");
+            assert!(
+                matches!(error, IapError::SessionLost { code: c } if c == code),
+                "{code}"
+            );
+            assert!(!error.is_retryable(), "{code}");
+        }
+        for code in [4000, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 4013, 1006] {
+            assert!(IapError::from_close(code, "").is_retryable(), "{code}");
+        }
     }
 
     #[test]
