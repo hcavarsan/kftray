@@ -9,6 +9,7 @@ allowBuilds:
   oxc-resolver: true
 
 overrides:
+  '@codecov/bundler-plugin-core>zod': ^4.6.6
   '@codecov/vite-plugin>vite': ^8.0.3
   undici: ^8.12.3
 
