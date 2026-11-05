@@ -13,6 +13,7 @@ import { open as openShell } from '@tauri-apps/plugin-shell'
 
 import { HttpLogsConfigModal } from '@/components/HttpLogsConfigModal'
 import { ActionsMenu } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ActionsMenu'
+import { buildLocalUrl } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/buildLocalUrl'
 import { ConfigDetailsTooltip } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/ConfigDetailsTooltip'
 import { DeleteConfigDialog } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/DeleteConfigDialog'
 import {
@@ -42,26 +43,6 @@ import type {
 import '../../styles.css'
 
 const HTTP_URL_PATTERN = /^https?:\/\//i
-
-function buildLocalUrl(config: Config): string {
-  if (config.workload_type === 'expose') {
-    if (config.exposure_type === 'public') {
-      const protocol = config.cert_manager_enabled ? 'https' : 'http'
-
-      return `${protocol}://${config.alias}`
-    }
-
-    const host = config.local_address || '127.0.0.1'
-
-    return `http://${host}:${config.local_port}`
-  }
-
-  const baseUrl = config.domain_enabled
-    ? config.alias
-    : config.local_address || 'localhost'
-
-  return `http://${baseUrl}:${config.local_port}`
-}
 
 interface PortForwardRowProps {
   config: Config
