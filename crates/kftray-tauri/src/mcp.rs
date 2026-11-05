@@ -87,7 +87,8 @@ pub async fn switch_to(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = listener.local_addr()?;
 
-    stop().await?;
+    let mut state = MCP_SERVER.write().await;
+    stop_server(&mut state);
 
     info!("Starting MCP server on http://{}", addr);
 
@@ -97,7 +98,7 @@ pub async fn switch_to(
         }
     });
 
-    *MCP_SERVER.write().await = Some(McpServerState {
+    *state = Some(McpServerState {
         handle,
         port: addr.port(),
     });
@@ -109,13 +110,17 @@ pub async fn switch_to(
 pub async fn stop() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut state = MCP_SERVER.write().await;
 
+    stop_server(&mut state);
+
+    Ok(())
+}
+
+fn stop_server(state: &mut Option<McpServerState>) {
     if let Some(server) = state.take() {
         info!("Stopping MCP server on port {}", server.port);
         server.handle.abort();
         info!("MCP server stopped");
     }
-
-    Ok(())
 }
 
 /// Initialize the MCP server based on saved settings
@@ -145,6 +150,52 @@ pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stop_closes_every_listener_after_overlapping_port_changes() {
+        use std::future::{
+            Future,
+            poll_fn,
+        };
+        use std::task::Poll;
+        use std::time::Duration;
+
+        let _mcp = TEST_LOCK.lock().await;
+        let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addresses = [first.local_addr().unwrap(), second.local_addr().unwrap()];
+        let state = MCP_SERVER.write().await;
+        let mut first = std::pin::pin!(switch_to(first));
+        let mut second = std::pin::pin!(switch_to(second));
+
+        poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            assert!(second.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(state);
+
+        let (first, second) = tokio::join!(first, second);
+        first.unwrap();
+        second.unwrap();
+        assert!(is_running().await);
+        stop().await.unwrap();
+        assert!(!is_running().await);
+
+        for address in addresses {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if TcpListener::bind(address).await.is_ok() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("MCP listener {address} remains open after stop"));
+        }
+    }
 
     #[tokio::test]
     async fn start_fails_when_the_port_is_already_taken() {
