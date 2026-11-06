@@ -1256,22 +1256,43 @@ fn spawn_udp_forward_owner(
 pub(crate) async fn is_http_request(client_conn: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 64];
 
-    if client_conn.peek(&mut peek_buf).await.is_ok() {
-        let mut headers = [httparse::EMPTY_HEADER; 4];
-        let mut req = Request::new(&mut headers);
-
-        matches!(
-            req.parse(&peek_buf),
-            Ok(httparse::Status::Complete(_)) | Ok(httparse::Status::Partial)
-        )
-    } else {
-        false
+    let Ok(Ok(n)) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client_conn.peek(&mut peek_buf),
+    )
+    .await
+    else {
+        return false;
+    };
+    if n == 0 {
+        return false;
     }
+    let mut headers = [httparse::EMPTY_HEADER; 4];
+    let mut req = Request::new(&mut headers);
+    matches!(
+        req.parse(&peek_buf[..n]),
+        Ok(httparse::Status::Complete(_)) | Ok(httparse::Status::Partial)
+    )
 }
 
 pub(crate) async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Result<()> {
     let mut buffer = [0u8; 1024];
-    let n = stream.read(&mut buffer).await?;
+    let n = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut n = 0;
+        loop {
+            anyhow::ensure!(n < buffer.len(), "HTTP redirect headers exceed 1024 bytes");
+            let received = stream.read(&mut buffer[n..]).await?;
+            anyhow::ensure!(received > 0, "HTTP redirect headers are incomplete");
+            n += received;
+            if let Some(end) = buffer[..n]
+                .windows(4)
+                .position(|bytes| bytes == b"\r\n\r\n")
+            {
+                return Ok::<_, anyhow::Error>(end + 4);
+            }
+        }
+    })
+    .await??;
 
     let request = std::str::from_utf8(&buffer[..n])?;
     let mut lines = request.lines();
@@ -1342,6 +1363,68 @@ mod tests {
     use tower_test::mock;
 
     use super::*;
+
+    #[tokio::test]
+    async fn http_detection_accepts_fragmented_requests_and_rejects_tls_and_eof() {
+        for (prefix, expected) in [
+            (&b"G"[..], true),
+            (&b"GET /"[..], true),
+            (&b"\x16\x03\x01\x00\x10"[..], false),
+            (&b""[..], false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            client.write_all(prefix).await.unwrap();
+            if prefix.is_empty() {
+                client.shutdown().await.unwrap();
+            }
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), is_http_request(&server))
+                    .await
+                    .unwrap(),
+                expected,
+                "prefix {prefix:?}",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_redirect_waits_for_fragmented_path_and_host() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            client.write_all(b"GET /it").await.unwrap();
+            let redirect = tokio::spawn(handle_http_redirect(server, 8443));
+            let mut byte = [0];
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), client.read(&mut byte))
+                    .await
+                    .is_err(),
+                "redirect sent before the path finished",
+            );
+            client.write_all(b"ems?q=one HTTP/1.1\r\nHo").await.unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), client.read(&mut byte))
+                    .await
+                    .is_err(),
+                "redirect sent before the Host header finished",
+            );
+            client.write_all(b"st: [::1]:8080\r\n\r\n").await.unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).await.unwrap();
+            redirect.await.unwrap().unwrap();
+            assert_eq!(
+                response,
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: https://[::1]:8443/items?q=one\r\nContent-Length: 0\r\n\r\n",
+            );
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn http_redirect_preserves_the_host_and_uses_the_forward_port() {
