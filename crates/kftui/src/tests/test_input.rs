@@ -1493,6 +1493,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_keeps_webdav_methods_headers_and_body() {
+        let replayed = replay_to_one_request(
+            logged_request("PROPFIND", &["Depth: 1"], "<propfind/>"),
+            |head, body| {
+                assert!(head.starts_with("propfind /api http/1.1\r\n"));
+                assert!(head.contains("\r\ndepth: 1\r\n"));
+                assert_eq!(body, b"<propfind/>");
+                b"HTTP/1.1 207 Multi-Status\r\nContent-Length: 7\r\n\r\nwebdav!".to_vec()
+            },
+        )
+        .await;
+        assert_eq!(replayed.status_code.as_deref(), Some("207"));
+        assert_eq!(replayed.response_body, "webdav!");
+    }
+
+    #[tokio::test]
     async fn replay_of_a_request_that_accepted_gzip_shows_a_readable_body() {
         use std::io::Write;
 
