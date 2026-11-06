@@ -46,13 +46,8 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn detect_chunked_encoding(response_data: &[u8]) -> bool {
-        if let Some(headers_end) = find_headers_end(response_data) {
-            let header_section = &response_data[..headers_end];
-            return std::str::from_utf8(header_section)
-                .map(|h| h.to_lowercase().contains("transfer-encoding: chunked"))
-                .unwrap_or(false);
-        }
-        false
+        find_headers_end(response_data)
+            .is_some_and(|end| has_chunked_transfer_encoding(&response_data[..end]))
     }
 
     pub fn check_content_length_match(response_data: &[u8]) -> bool {
@@ -308,6 +303,19 @@ impl HttpResponseAnalyzer {
     }
 }
 
+pub(crate) fn has_chunked_transfer_encoding(headers: &[u8]) -> bool {
+    headers
+        .split(|&byte| byte == b'\n')
+        .filter_map(|line| {
+            let colon = line.iter().position(|&byte| byte == b':')?;
+            Some((&line[..colon], &line[colon + 1..]))
+        })
+        .filter(|(name, _)| name.eq_ignore_ascii_case(b"transfer-encoding"))
+        .flat_map(|(_, value)| value.split(|&byte| byte == b','))
+        .last()
+        .is_some_and(|value| value.trim_ascii().eq_ignore_ascii_case(b"chunked"))
+}
+
 fn find_headers_end(data: &[u8]) -> Option<usize> {
     data.windows(4).position(|w| w == b"\r\n\r\n")
 }
@@ -332,19 +340,30 @@ mod tests {
 
     #[test]
     fn test_detect_chunked_encoding() {
-        let chunked_response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";
-        let non_chunked_response = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\ndata";
-        let no_headers_response = b"some invalid data";
+        let responses: [&[u8]; 4] = [
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding:chunked\r\n\r\ndata",
+            b"HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf\xe9.csv\"\r\nTransfer-Encoding: chunked\r\n\r\ndata",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, CHUNKED\r\n\r\ndata",
+        ];
+        assert_eq!(
+            responses.map(HttpResponseAnalyzer::detect_chunked_encoding),
+            [true; 4]
+        );
 
-        assert!(HttpResponseAnalyzer::detect_chunked_encoding(
-            chunked_response
-        ));
-        assert!(!HttpResponseAnalyzer::detect_chunked_encoding(
-            non_chunked_response
-        ));
-        assert!(!HttpResponseAnalyzer::detect_chunked_encoding(
-            no_headers_response
-        ));
+        for response in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\ndata"[..],
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\ndata",
+            b"HTTP/1.1 200 OK\r\nX-Transfer-Encoding: chunked\r\n\r\ndata",
+            b"HTTP/1.1 200 OK\r\n\r\ntransfer-encoding: chunked",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n",
+            b"some invalid data",
+        ] {
+            assert!(
+                !HttpResponseAnalyzer::detect_chunked_encoding(response),
+                "{response:?}"
+            );
+        }
     }
 
     #[test]
