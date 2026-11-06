@@ -38,6 +38,83 @@ async fn run_command_exits_with_the_code_of_the_command() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn command_sessions_monitor_the_selected_database_until_cleanup() {
+    let _db = test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    kftray_commons::utils::db::init().await.unwrap();
+    kftray_commons::utils::migration::migrate_configs(None)
+        .await
+        .unwrap();
+    for mode in [DatabaseMode::File, DatabaseMode::Memory] {
+        for enabled in [false, true] {
+            let other_mode = match mode {
+                DatabaseMode::File => DatabaseMode::Memory,
+                DatabaseMode::Memory => DatabaseMode::File,
+            };
+            kftray_commons::utils::settings::set_network_monitor_with_mode(enabled, mode)
+                .await
+                .unwrap();
+            kftray_commons::utils::settings::set_network_monitor_with_mode(!enabled, other_mode)
+                .await
+                .unwrap();
+            let handshake = tempfile::tempdir().unwrap();
+            let started = handshake.path().join("started");
+            let finish = handshake.path().join("finish");
+            let command = vec![
+                "sh".into(),
+                "-c".into(),
+                "touch \"$1\"; while test ! -f \"$2\"; do sleep 0.01; done; exit 7".into(),
+                "kftui-monitor-test".into(),
+                started.to_str().unwrap().into(),
+                finish.to_str().unwrap().into(),
+            ];
+            let observe = async {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !started.exists() {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let running = kftray_network_monitor::is_running().await;
+                std::fs::write(&finish, b"done").unwrap();
+                running
+            };
+            let (result, running) = tokio::join!(
+                PortForwardRunner::run_command(&command, Vec::new(), None, mode),
+                observe,
+            );
+            assert_eq!(result.unwrap(), 7);
+            assert_eq!(running, enabled, "{mode:?}");
+            assert!(!kftray_network_monitor::is_running().await);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_cleanup_does_not_stop_a_preexisting_monitor() {
+    let _db = test_db().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    kftray_commons::utils::settings::set_network_monitor_with_mode(true, DatabaseMode::Memory)
+        .await
+        .unwrap();
+    kftray_network_monitor::start_with_mode(DatabaseMode::Memory)
+        .await
+        .unwrap();
+    let command = vec!["sh".into(), "-c".into(), "exit 3".into()];
+    let result =
+        PortForwardRunner::run_command(&command, Vec::new(), None, DatabaseMode::Memory).await;
+    let running = kftray_network_monitor::is_running().await;
+    kftray_network_monitor::stop().await.unwrap();
+    assert_eq!(result.unwrap(), 3);
+    assert!(running);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn a_command_does_not_run_when_no_forward_starts() {
     kftray_portforward::ssl::ensure_crypto_provider_installed();
     let _db = test_db().await;
