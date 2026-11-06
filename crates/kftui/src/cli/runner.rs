@@ -286,6 +286,7 @@ impl PortForwardRunner {
         // As with --non-interactive, the first signal asks for the teardown
         // and only the next one aborts it. A signal during the command
         // counts as the first.
+        kftray_portforward::kube::close_startup_gate();
         output::status!("\nStopping port forwards");
         let stopped = Self::stop_unless_interrupted(
             Self::stop_all_started(configs, discovery, mode, &mut network_monitor_started),
@@ -571,6 +572,7 @@ impl PortForwardRunner {
                                     "Error: no shutdown signal handler could be installed; \
                                      stopping port forwards and exiting"
                                 );
+                                kftray_portforward::kube::close_startup_gate();
                                 Self::stop_all_started(configs, discovery, mode, network_monitor_started).await?;
                                 return Err(
                                     "no shutdown signal handler could be installed".into()
@@ -588,6 +590,7 @@ impl PortForwardRunner {
                     }
                 } => {}
             }
+            kftray_portforward::kube::close_startup_gate();
             output::status!("\nStopping port forwards");
 
             Self::stop_unless_interrupted(
@@ -616,9 +619,11 @@ impl PortForwardRunner {
                     "Error: no shutdown signal handler could be installed; stopping port \
                      forwards and exiting"
                 );
+                kftray_portforward::kube::close_startup_gate();
                 Self::stop_all_started(configs, discovery, mode, network_monitor_started).await?;
                 return Err("no shutdown signal handler could be installed".into());
             }
+            kftray_portforward::kube::close_startup_gate();
             output::status!("\nStopping port forwards");
 
             Self::stop_unless_interrupted(
