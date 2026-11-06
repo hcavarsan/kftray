@@ -211,10 +211,11 @@ impl PlatformManager for MacOSPlatform {
 
     async fn unregister_shortcut(&mut self, shortcut_id: i64) -> ShortcutResult<()> {
         let mut shortcuts = self.shortcuts.lock().await;
-        if let Some(hotkey) = shortcuts.remove(&shortcut_id) {
+        if let Some(&hotkey) = shortcuts.get(&shortcut_id) {
             self.manager.unregister(hotkey).map_err(|e| {
                 crate::models::ShortcutError::PlatformError(format!("Unregister failed: {}", e))
             })?;
+            shortcuts.remove(&shortcut_id);
             info!("macOS shortcut unregistered: {}", shortcut_id);
         } else {
             warn!("macOS shortcut not found: {}", shortcut_id);
