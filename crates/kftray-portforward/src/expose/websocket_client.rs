@@ -96,14 +96,38 @@ fn add_stream(
 struct ExposeHttpLogs {
     config_id: i64,
     mode: DatabaseMode,
-    logger: Mutex<Option<HttpLogger>>,
+    logger: Mutex<Option<Arc<HttpLogger>>>,
     settings: RwLock<Option<HttpLogsConfig>>,
 }
 
 impl ExposeHttpLogs {
     async fn sync(&self) {
         match get_http_logs_config_with_mode(self.config_id, self.mode).await {
-            Ok(settings) => *self.settings.write().await = Some(settings),
+            Ok(settings) => {
+                let policy_changed = self.settings.read().await.as_ref().is_some_and(|old| {
+                    old.max_file_size != settings.max_file_size
+                        || old.retention_days != settings.retention_days
+                        || old.auto_cleanup != settings.auto_cleanup
+                });
+                if policy_changed {
+                    let logger = self.logger.lock().await.clone();
+                    if let Some(logger) = logger
+                        && let Err(error) = logger
+                            .update_rotation_policy(
+                                settings.max_file_size,
+                                settings.retention_days,
+                                settings.auto_cleanup,
+                            )
+                            .await
+                    {
+                        warn!(
+                            "HTTP log policy update failed for config {}: {}",
+                            self.config_id, error
+                        );
+                    }
+                }
+                *self.settings.write().await = Some(settings);
+            }
             Err(error) => debug!(
                 "HTTP log settings read failed for config {}: {}",
                 self.config_id, error
@@ -150,7 +174,7 @@ impl WebSocketTunnelClient {
         self
     }
 
-    async fn http_logger(&self) -> Option<HttpLogger> {
+    async fn http_logger(&self) -> Option<Arc<HttpLogger>> {
         if self.carries_tcp {
             return None;
         }
@@ -163,7 +187,7 @@ impl WebSocketTunnelClient {
         let mut logger = logs.logger.lock().await;
         if logger.is_none() {
             match HttpLogger::for_config(config, self.local_service_port).await {
-                Ok(created) => *logger = Some(created),
+                Ok(created) => *logger = Some(Arc::new(created)),
                 Err(error) => warn!(
                     "HTTP log creation failed for config {}: {}",
                     logs.config_id, error
@@ -2179,5 +2203,149 @@ mod tests {
             client.abort();
             let _ = client.await;
         }
+    }
+
+    #[tokio::test]
+    async fn expose_logging_applies_saved_rotation_and_cleanup_settings() {
+        use tokio::io::AsyncReadExt;
+
+        use super::{
+            DatabaseMode,
+            TunnelMessage,
+        };
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        let mode = DatabaseMode::Memory;
+        let config_id = create_logged_config(mode).await;
+        let mut settings =
+            kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(config_id);
+        settings.enabled = true;
+        settings.auto_cleanup = false;
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(&settings, mode)
+            .await
+            .unwrap();
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            for size in [2048, 0, 0] {
+                let (mut socket, _) = app.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(socket.read_u8().await.unwrap());
+                }
+                socket.read_exact(&mut vec![0; size]).await.unwrap();
+                socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        }));
+        let client = WebSocketTunnelClient::new(9999, "127.0.0.1".into(), port)
+            .with_http_logs(config_id, mode);
+        let logs = client.http_logs.as_ref().unwrap();
+        logs.sync().await;
+        let http =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build_http::<http_body_util::Full<bytes::Bytes>>();
+        let path = dir
+            .path()
+            .join("http_logs")
+            .join(format!("{config_id}_{port}.http"));
+        for (index, name) in ["before", "after", "last"].into_iter().enumerate() {
+            let stale = dir
+                .path()
+                .join("http_logs")
+                .join(format!("{config_id}_{port}_20000101_00000{index}.http"));
+            if index > 0 {
+                tokio::fs::write(&stale, "expired rotation").await.unwrap();
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&stale)
+                    .unwrap();
+                file.set_times(
+                    std::fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::now() - Duration::from_secs(2 * 86400),
+                    ),
+                )
+                .unwrap();
+                settings.max_file_size = if index == 1 { 1024 } else { 256 };
+                settings.retention_days = if index == 1 { 1 } else { 0 };
+                settings.auto_cleanup = index == 1;
+                kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+                    &settings, mode,
+                )
+                .await
+                .unwrap();
+                logs.sync().await;
+            }
+            let body = if index == 0 {
+                vec![b'x'; 2048]
+            } else {
+                Vec::new()
+            };
+            let (reply, _) = client
+                .forward_to_local_service(
+                    &http,
+                    name.into(),
+                    "POST".into(),
+                    format!("/{name}"),
+                    vec![("content-length".into(), body.len().to_string())],
+                    body,
+                    false,
+                )
+                .await;
+            assert!(matches!(
+                reply,
+                TunnelMessage::HttpResponse { status: 204, .. }
+            ));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut files = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
+                    let mut found = false;
+                    while let Some(file) = files.next_entry().await.unwrap() {
+                        let contents = tokio::fs::read_to_string(file.path())
+                            .await
+                            .unwrap_or_default();
+                        found |= contents.contains(&format!("POST /{name} HTTP/1.1"));
+                    }
+                    if found {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("missing log entry for {name}"));
+            if index == 1 {
+                assert!(
+                    !stale.exists(),
+                    "the new retention policy did not remove an expired log"
+                );
+                let mut rotated = Vec::new();
+                let mut files = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
+                while let Some(file) = files.next_entry().await.unwrap() {
+                    if file.path() != path {
+                        rotated.push(tokio::fs::read_to_string(file.path()).await.unwrap());
+                    }
+                }
+                assert!(
+                    rotated
+                        .iter()
+                        .any(|contents| contents.contains("POST /before HTTP/1.1")),
+                    "the new file limit did not rotate the existing log"
+                );
+            } else if index == 2 {
+                assert!(
+                    stale.exists(),
+                    "disabled automatic cleanup removed an expired log"
+                );
+            }
+        }
+        server.await.unwrap();
     }
 }
