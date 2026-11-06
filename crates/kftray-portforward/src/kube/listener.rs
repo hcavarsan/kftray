@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use bytes::BufMut;
 use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::utils::config_state::set_connection_error_with_mode;
@@ -1276,19 +1277,23 @@ pub(crate) async fn is_http_request(client_conn: &TcpStream) -> bool {
 }
 
 pub(crate) async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Result<()> {
-    let mut buffer = [0u8; 1024];
+    const MAX_HEADERS: usize = 64 * 1024;
+    let mut buffer = Vec::with_capacity(1024);
     let n = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let mut n = 0;
         loop {
-            anyhow::ensure!(n < buffer.len(), "HTTP redirect headers exceed 1024 bytes");
-            let received = stream.read(&mut buffer[n..]).await?;
+            let remaining = MAX_HEADERS - buffer.len();
+            anyhow::ensure!(remaining > 0, "HTTP redirect headers exceed 65536 bytes");
+            if buffer.len() == buffer.capacity() {
+                buffer.reserve(buffer.len().min(remaining));
+            }
+            let scan_from = buffer.len().saturating_sub(3);
+            let received = stream.read_buf(&mut (&mut buffer).limit(remaining)).await?;
             anyhow::ensure!(received > 0, "HTTP redirect headers are incomplete");
-            n += received;
-            if let Some(end) = buffer[..n]
+            if let Some(end) = buffer[scan_from..]
                 .windows(4)
                 .position(|bytes| bytes == b"\r\n\r\n")
             {
-                return Ok::<_, anyhow::Error>(end + 4);
+                return Ok::<_, anyhow::Error>(scan_from + end + 4);
             }
         }
     })
@@ -1363,6 +1368,34 @@ mod tests {
     use tower_test::mock;
 
     use super::*;
+
+    #[tokio::test]
+    async fn http_redirect_preserves_hosts_with_large_cookie_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let redirect = tokio::spawn(handle_http_redirect(server, 8443));
+        let cookie = "x".repeat(4096);
+        client
+            .write_all(
+                format!("GET /large HTTP/1.1\r\nCookie: {cookie}\r\nHost: app.local:8080\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_string(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        redirect.await.unwrap().unwrap();
+        assert!(
+            response.contains("Location: https://app.local:8443/large\r\n"),
+            "{response}"
+        );
+    }
 
     #[tokio::test]
     async fn http_detection_accepts_fragmented_requests_and_rejects_tls_and_eof() {
