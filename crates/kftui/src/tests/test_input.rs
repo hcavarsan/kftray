@@ -1493,6 +1493,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_keeps_repeated_header_values_in_order() {
+        replay_to_one_request(
+            logged_request(
+                "GET",
+                &["X-Item: first", "x-item: second", "X-ITEM: third"],
+                "",
+            ),
+            |head, _| {
+                let values: Vec<_> = head
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("x-item: "))
+                    .collect();
+                assert_eq!(values, ["first", "second", "third"]);
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec()
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn replay_keeps_webdav_methods_headers_and_body() {
         let replayed = replay_to_one_request(
             logged_request("PROPFIND", &["Depth: 1"], "<propfind/>"),
