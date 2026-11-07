@@ -166,16 +166,8 @@ impl HttpLogEntry {
     pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
         let url = self.request_url(base_url);
 
-        let method = match self.method.to_uppercase().as_str() {
-            "GET" => reqwest::Method::GET,
-            "POST" => reqwest::Method::POST,
-            "PUT" => reqwest::Method::PUT,
-            "DELETE" => reqwest::Method::DELETE,
-            "PATCH" => reqwest::Method::PATCH,
-            "HEAD" => reqwest::Method::HEAD,
-            "OPTIONS" => reqwest::Method::OPTIONS,
-            _ => return Err(format!("Unsupported HTTP method: {}", self.method)),
-        };
+        let method = reqwest::Method::from_bytes(self.method.to_uppercase().as_bytes())
+            .map_err(|_| format!("Invalid HTTP method: {}", self.method))?;
 
         let client = reqwest::Client::builder()
             .default_headers(reqwest::header::HeaderMap::new())
