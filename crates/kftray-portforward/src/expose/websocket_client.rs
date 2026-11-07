@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -23,6 +24,7 @@ use hyper_util::rt::{
     TokioExecutor,
     TokioIo,
 };
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use kftray_commons::models::tunnel_protocol::{
     HALF_CLOSE_HEADER,
     STREAM_WINDOW,
@@ -30,6 +32,9 @@ use kftray_commons::models::tunnel_protocol::{
     TUNNEL_MODE_HEADER,
     TunnelMessage,
 };
+use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode;
+use kftray_http_logs::HttpLogger;
 use log::{
     debug,
     error,
@@ -44,6 +49,8 @@ use tokio::io::{
 };
 use tokio::net::TcpStream;
 use tokio::sync::{
+    Mutex,
+    RwLock,
     Semaphore,
     mpsc,
     oneshot,
@@ -86,11 +93,56 @@ fn add_stream(
     (data_rx, credit)
 }
 
+struct ExposeHttpLogs {
+    config_id: i64,
+    mode: DatabaseMode,
+    logger: Mutex<Option<Arc<HttpLogger>>>,
+    settings: RwLock<Option<HttpLogsConfig>>,
+}
+
+impl ExposeHttpLogs {
+    async fn sync(&self) {
+        match get_http_logs_config_with_mode(self.config_id, self.mode).await {
+            Ok(settings) => {
+                let policy_changed = self.settings.read().await.as_ref().is_some_and(|old| {
+                    old.max_file_size != settings.max_file_size
+                        || old.retention_days != settings.retention_days
+                        || old.auto_cleanup != settings.auto_cleanup
+                });
+                if policy_changed {
+                    let logger = self.logger.lock().await.clone();
+                    if let Some(logger) = logger
+                        && let Err(error) = logger
+                            .update_rotation_policy(
+                                settings.max_file_size,
+                                settings.retention_days,
+                                settings.auto_cleanup,
+                            )
+                            .await
+                    {
+                        warn!(
+                            "HTTP log policy update failed for config {}: {}",
+                            self.config_id, error
+                        );
+                    }
+                }
+                *self.settings.write().await = Some(settings);
+            }
+            Err(error) => debug!(
+                "HTTP log settings read failed for config {}: {}",
+                self.config_id, error
+            ),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
     local_service_address: String,
     local_service_port: u16,
     carries_tcp: bool,
+    http_logs: Option<Arc<ExposeHttpLogs>>,
 }
 
 impl WebSocketTunnelClient {
@@ -102,6 +154,7 @@ impl WebSocketTunnelClient {
             local_service_address,
             local_service_port,
             carries_tcp: false,
+            http_logs: None,
         }
     }
 
@@ -111,7 +164,58 @@ impl WebSocketTunnelClient {
         self
     }
 
+    pub fn with_http_logs(mut self, config_id: i64, mode: DatabaseMode) -> Self {
+        self.http_logs = Some(Arc::new(ExposeHttpLogs {
+            config_id,
+            mode,
+            logger: Mutex::new(None),
+            settings: RwLock::new(None),
+        }));
+        self
+    }
+
+    async fn http_logger(&self) -> Option<Arc<HttpLogger>> {
+        if self.carries_tcp {
+            return None;
+        }
+        let logs = self.http_logs.as_ref()?;
+        let settings = logs.settings.read().await;
+        let config = settings.as_ref()?;
+        if !config.enabled {
+            return None;
+        }
+        let mut logger = logs.logger.lock().await;
+        if logger.is_none() {
+            match HttpLogger::for_config(config, self.local_service_port).await {
+                Ok(created) => *logger = Some(Arc::new(created)),
+                Err(error) => warn!(
+                    "HTTP log creation failed for config {}: {}",
+                    logs.config_id, error
+                ),
+            }
+        }
+        logger.clone()
+    }
+
     pub async fn start(&self, ready: oneshot::Sender<Result<(), String>>) -> Result<(), String> {
+        let _log_sync = if let Some(logs) = &self.http_logs
+            && !self.carries_tcp
+        {
+            logs.sync().await;
+            let logs = logs.clone();
+            Some(tokio_util::task::AbortOnDropHandle::new(tokio::spawn(
+                async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                    interval.tick().await;
+                    loop {
+                        interval.tick().await;
+                        logs.sync().await;
+                    }
+                },
+            )))
+        } else {
+            None
+        };
         self.reconnect_loop(ready, 100).await
     }
 
@@ -237,11 +341,7 @@ impl WebSocketTunnelClient {
         http_connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
         let http_client = LegacyClient::builder(TokioExecutor::new()).build(http_connector);
 
-        let target = Arc::new(Self::new(
-            self.websocket_port,
-            self.local_service_address.clone(),
-            self.local_service_port,
-        ));
+        let target = Arc::new(self.clone());
         let mut requests = JoinSet::new();
         let mut streams = StreamRoutes::new();
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<TunnelMessage>();
@@ -461,6 +561,16 @@ impl WebSocketTunnelClient {
             }
         }
 
+        let request_log = match (self.http_logger().await, req_builder.headers_ref()) {
+            (Some(logger), Some(headers)) => {
+                let message =
+                    logged_http_message(format_args!("{method} {path} HTTP/1.1"), headers, &body);
+                let id = logger.log_request(message).await;
+                Some((logger, id))
+            }
+            _ => None,
+        };
+
         let request = match req_builder.body(Full::new(Bytes::from(body))) {
             Ok(req) => req,
             Err(e) => {
@@ -518,9 +628,18 @@ impl WebSocketTunnelClient {
                     };
                 }
 
-                let reply = match response.into_body().collect().await {
+                let (parts, response_body) = response.into_parts();
+                let reply = match response_body.collect().await {
                     Ok(collected) => {
                         let body_bytes = collected.to_bytes();
+                        if let Some((logger, id)) = request_log {
+                            let message = logged_http_message(
+                                format_args!("HTTP/1.1 {}", parts.status),
+                                &parts.headers,
+                                &body_bytes,
+                            );
+                            logger.log_response(message, id).await;
+                        }
                         debug!("Forwarded request successfully, status: {}", status);
                         TunnelMessage::HttpResponse {
                             id: request_id,
@@ -560,6 +679,26 @@ impl WebSocketTunnelClient {
             }
         }
     }
+}
+
+fn logged_http_message(
+    start_line: std::fmt::Arguments<'_>, headers: &hyper::HeaderMap, body: &[u8],
+) -> Bytes {
+    let mut buffer = Vec::with_capacity(body.len() + 512);
+    write!(buffer, "{start_line}\r\n").unwrap();
+    for (name, value) in headers {
+        if name != hyper::header::TRANSFER_ENCODING {
+            write!(
+                buffer,
+                "{name}: {}\r\n",
+                String::from_utf8_lossy(value.as_bytes())
+            )
+            .unwrap();
+        }
+    }
+    buffer.extend_from_slice(b"\r\n");
+    buffer.extend_from_slice(body);
+    Bytes::from(buffer)
 }
 
 async fn pipe_stream<T: AsyncRead + AsyncWrite>(
@@ -1124,6 +1263,16 @@ mod tests {
 
         use super::TunnelMessage;
 
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        let mode = super::DatabaseMode::Memory;
+        let config_id = create_logged_config(mode).await;
+        set_logging(config_id, mode, true).await;
+
         let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let app_port = app.local_addr().unwrap().port();
         let app_task = tokio::spawn(async move {
@@ -1150,7 +1299,8 @@ mod tests {
             ws_listener.local_addr().unwrap().port(),
             "127.0.0.1".to_owned(),
             app_port,
-        );
+        )
+        .with_http_logs(config_id, mode);
         let (ready_tx, ready_rx) = oneshot::channel();
         let _task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             client.start(ready_tx).await
@@ -1234,6 +1384,15 @@ mod tests {
             ),
             "{replies:?}"
         );
+        let path = dir
+            .path()
+            .join("http_logs")
+            .join(format!("{config_id}_{app_port}.http"));
+        let contents = wait_for_log(&path, "GET /socket HTTP/1.1").await;
+        assert_eq!(contents.matches("# Request at:").count(), 1, "{contents}");
+        assert!(!contents.contains("# Response at:"), "{contents}");
+        assert!(!contents.contains("ping"), "{contents}");
+        assert!(!contents.contains("pong"), "{contents}");
     }
 
     type Relay = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
@@ -1733,5 +1892,460 @@ mod tests {
         })
         .await
         .expect("8 MiB each way through the tunnel did not finish in 60 s");
+    }
+    async fn wait_for_log(path: &std::path::Path, expected: &str) -> String {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let contents = tokio::fs::read_to_string(path).await.unwrap_or_default();
+                if contents.contains(expected) {
+                    return contents;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the completed HTTP exchange did not reach the log")
+    }
+
+    async fn create_logged_config(mode: super::DatabaseMode) -> i64 {
+        kftray_commons::utils::config::insert_config_with_mode(
+            kftray_commons::models::config_model::Config {
+                alias: Some("logged-expose".into()),
+                workload_type: Some("expose".into()),
+                protocol: "tcp".into(),
+                local_port: Some(8080),
+                ..Default::default()
+            },
+            mode,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn set_logging(config_id: i64, mode: super::DatabaseMode, enabled: bool) {
+        let mut config =
+            kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(config_id);
+        config.enabled = enabled;
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(&config, mode)
+            .await
+            .unwrap();
+    }
+
+    async fn wait_for_log_setting(logs: &super::ExposeHttpLogs, enabled: bool) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if logs
+                    .settings
+                    .read()
+                    .await
+                    .as_ref()
+                    .is_some_and(|config| config.enabled == enabled)
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the logging setting did not refresh");
+    }
+
+    #[tokio::test]
+    async fn expose_http_logs_follow_toggles_and_pair_concurrent_responses() {
+        use tokio::io::AsyncReadExt;
+
+        use super::{
+            DatabaseMode,
+            TunnelMessage,
+        };
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+
+        for mode in [DatabaseMode::File, DatabaseMode::Memory] {
+            let config_id = create_logged_config(mode).await;
+            set_logging(config_id, mode, false).await;
+            let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let app_port = app.local_addr().unwrap().port();
+            let (started, slow_started) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+                let mut started = Some(started);
+                let mut released = Some(released);
+                let mut replies = tokio::task::JoinSet::new();
+                for _ in 0..6 {
+                    let (mut socket, _) = app.accept().await.unwrap();
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(socket.read_u8().await.unwrap());
+                    }
+                    if head.starts_with(b"POST /slow?q=one ") {
+                        let mut body = [0; 6];
+                        socket.read_exact(&mut body).await.unwrap();
+                        assert_eq!(&body, b"sample");
+                        started.take().unwrap().send(()).unwrap();
+                        let released = released.take().unwrap();
+                        replies.spawn(async move {
+                            released.await.unwrap();
+                            socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 5\r\nConnection: close\r\n\r\nlater").await.unwrap();
+                        });
+                    } else {
+                        replies.spawn(async move {
+                            socket.write_all(b"HTTP/1.1 201 Created\r\nTransfer-Encoding: chunked\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n").await.unwrap();
+                        });
+                    }
+                }
+                while let Some(reply) = replies.join_next().await {
+                    reply.unwrap();
+                }
+            }));
+            let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = WebSocketTunnelClient::new(
+                ws_listener.local_addr().unwrap().port(),
+                "127.0.0.1".into(),
+                app_port,
+            )
+            .with_http_logs(config_id, mode);
+            let log_state = client.http_logs.as_ref().unwrap().clone();
+            let (ready_tx, ready_rx) = oneshot::channel();
+            let _client = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+                client.start(ready_tx).await
+            }));
+            let (socket, _) = ws_listener.accept().await.unwrap();
+            let mut relay = tokio_tungstenite::accept_async(socket).await.unwrap();
+            ready_rx.await.unwrap().unwrap();
+            let request = |id: &str| TunnelMessage::HttpRequest {
+                id: id.into(),
+                method: "GET".into(),
+                path: format!("/{id}"),
+                headers: Vec::new(),
+                body: Vec::new(),
+                upgrade: false,
+                flow_control: false,
+            };
+            send(&mut relay, request("hidden-before")).await;
+            assert!(matches!(
+                recv(&mut relay).await,
+                TunnelMessage::HttpResponse { status: 201, .. }
+            ));
+            set_logging(config_id, mode, true).await;
+            wait_for_log_setting(&log_state, true).await;
+            send(
+                &mut relay,
+                TunnelMessage::HttpRequest {
+                    id: "slow".into(),
+                    method: "POST".into(),
+                    path: "/slow?q=one".into(),
+                    headers: vec![
+                        ("content-length".into(), "6".into()),
+                        ("x-repeat".into(), "first".into()),
+                        ("x-repeat".into(), "second".into()),
+                    ],
+                    body: b"sample".to_vec(),
+                    upgrade: false,
+                    flow_control: false,
+                },
+            )
+            .await;
+            tokio::time::timeout(Duration::from_secs(5), slow_started)
+                .await
+                .unwrap()
+                .unwrap();
+            send(&mut relay, request("fast")).await;
+            assert!(
+                matches!(recv(&mut relay).await, TunnelMessage::HttpResponse { id, status: 201, body, .. } if id == "fast" && body == b"hello")
+            );
+            set_logging(config_id, mode, false).await;
+            wait_for_log_setting(&log_state, false).await;
+            send(&mut relay, request("hidden-between")).await;
+            assert!(matches!(
+                recv(&mut relay).await,
+                TunnelMessage::HttpResponse { status: 201, .. }
+            ));
+            set_logging(config_id, mode, true).await;
+            wait_for_log_setting(&log_state, true).await;
+            send(&mut relay, request("resumed")).await;
+            assert!(
+                matches!(recv(&mut relay).await, TunnelMessage::HttpResponse { id, status: 201, .. } if id == "resumed")
+            );
+            set_logging(config_id, mode, false).await;
+            wait_for_log_setting(&log_state, false).await;
+            release.send(()).unwrap();
+            assert!(
+                matches!(recv(&mut relay).await, TunnelMessage::HttpResponse { id, status: 503, body, .. } if id == "slow" && body == b"later")
+            );
+            send(&mut relay, request("hidden-after")).await;
+            assert!(matches!(
+                recv(&mut relay).await,
+                TunnelMessage::HttpResponse { status: 201, .. }
+            ));
+            server.await.unwrap();
+            let path = dir
+                .path()
+                .join("http_logs")
+                .join(format!("{config_id}_{app_port}.http"));
+            let contents = wait_for_log(&path, "later").await;
+            assert_eq!(contents.matches("# Request at:").count(), 3, "{contents}");
+            assert_eq!(contents.matches("# Response at:").count(), 3, "{contents}");
+            assert!(contents.contains("POST /slow?q=one HTTP/1.1"), "{contents}");
+            assert!(contents.contains("sample"), "{contents}");
+            for header in [
+                "x-repeat: first",
+                "x-repeat: second",
+                "set-cookie: a=1",
+                "set-cookie: b=2",
+            ] {
+                assert!(contents.contains(header), "{contents}");
+            }
+            assert!(!contents.contains("hidden-"), "{contents}");
+            assert!(!contents.contains("chunked"), "{contents}");
+            let entries: Vec<_> = contents.split("# Trace ID: ").skip(1).collect();
+            let mut request_ids = Vec::new();
+            for (path, status) in [
+                ("POST /slow?q=one", "503 Service Unavailable"),
+                ("GET /fast", "201 Created"),
+                ("GET /resumed", "201 Created"),
+            ] {
+                let entry = entries.iter().find(|entry| entry.contains(path)).unwrap();
+                let id = entry.lines().next().unwrap();
+                let response = entries
+                    .iter()
+                    .find(|entry| entry.starts_with(id) && entry.contains("# Response at:"))
+                    .unwrap();
+                assert!(response.contains(status), "{contents}");
+                request_ids.push(id);
+            }
+            assert_ne!(request_ids[0], request_ids[1]);
+        }
+    }
+
+    #[tokio::test]
+    async fn expose_requests_continue_when_the_settings_pool_is_busy() {
+        use tokio::io::AsyncReadExt;
+
+        use super::{
+            DatabaseMode,
+            TunnelMessage,
+        };
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        let mode = DatabaseMode::Memory;
+        let config_id = create_logged_config(mode).await;
+        for enabled in [false, true] {
+            set_logging(config_id, mode, enabled).await;
+            let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let app_port = app.local_addr().unwrap().port();
+            let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+                let (mut socket, _) = app.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(socket.read_u8().await.unwrap());
+                }
+                socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = WebSocketTunnelClient::new(
+                listener.local_addr().unwrap().port(),
+                "127.0.0.1".into(),
+                app_port,
+            )
+            .with_http_logs(config_id, mode);
+            let (ready_tx, ready_rx) = oneshot::channel();
+            let client = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+                client.start(ready_tx).await
+            }));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut relay = tokio_tungstenite::accept_async(socket).await.unwrap();
+            ready_rx.await.unwrap().unwrap();
+            let context = kftray_commons::utils::db_mode::DatabaseManager::get_context(mode)
+                .await
+                .unwrap();
+            let mut held = Vec::new();
+            for _ in 0..context.pool.options().get_max_connections() {
+                held.push(context.pool.acquire().await.unwrap());
+            }
+            send(
+                &mut relay,
+                TunnelMessage::HttpRequest {
+                    id: "unblocked".into(),
+                    method: "GET".into(),
+                    path: "/unblocked".into(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    upgrade: false,
+                    flow_control: false,
+                },
+            )
+            .await;
+            let reply = tokio::time::timeout(Duration::from_secs(1), recv(&mut relay)).await;
+            drop(held);
+            assert!(matches!(
+                reply.unwrap(),
+                TunnelMessage::HttpResponse { status: 204, .. }
+            ));
+            server.await.unwrap();
+            client.abort();
+            let _ = client.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn expose_logging_applies_saved_rotation_and_cleanup_settings() {
+        use tokio::io::AsyncReadExt;
+
+        use super::{
+            DatabaseMode,
+            TunnelMessage,
+        };
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _env = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        let mode = DatabaseMode::Memory;
+        let config_id = create_logged_config(mode).await;
+        let mut settings =
+            kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(config_id);
+        settings.enabled = true;
+        settings.auto_cleanup = false;
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(&settings, mode)
+            .await
+            .unwrap();
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            for size in [2048, 0, 0] {
+                let (mut socket, _) = app.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(socket.read_u8().await.unwrap());
+                }
+                socket.read_exact(&mut vec![0; size]).await.unwrap();
+                socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        }));
+        let client = WebSocketTunnelClient::new(9999, "127.0.0.1".into(), port)
+            .with_http_logs(config_id, mode);
+        let logs = client.http_logs.as_ref().unwrap();
+        logs.sync().await;
+        let http =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build_http::<http_body_util::Full<bytes::Bytes>>();
+        let path = dir
+            .path()
+            .join("http_logs")
+            .join(format!("{config_id}_{port}.http"));
+        for (index, name) in ["before", "after", "last"].into_iter().enumerate() {
+            let stale = dir
+                .path()
+                .join("http_logs")
+                .join(format!("{config_id}_{port}_20000101_00000{index}.http"));
+            if index > 0 {
+                tokio::fs::write(&stale, "expired rotation").await.unwrap();
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&stale)
+                    .unwrap();
+                file.set_times(
+                    std::fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::now() - Duration::from_secs(2 * 86400),
+                    ),
+                )
+                .unwrap();
+                settings.max_file_size = if index == 1 { 1024 } else { 256 };
+                settings.retention_days = if index == 1 { 1 } else { 0 };
+                settings.auto_cleanup = index == 1;
+                kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+                    &settings, mode,
+                )
+                .await
+                .unwrap();
+                logs.sync().await;
+            }
+            let body = if index == 0 {
+                vec![b'x'; 2048]
+            } else {
+                Vec::new()
+            };
+            let (reply, _) = client
+                .forward_to_local_service(
+                    &http,
+                    name.into(),
+                    "POST".into(),
+                    format!("/{name}"),
+                    vec![("content-length".into(), body.len().to_string())],
+                    body,
+                    false,
+                )
+                .await;
+            assert!(matches!(
+                reply,
+                TunnelMessage::HttpResponse { status: 204, .. }
+            ));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut files = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
+                    let mut found = false;
+                    while let Some(file) = files.next_entry().await.unwrap() {
+                        let contents = tokio::fs::read_to_string(file.path())
+                            .await
+                            .unwrap_or_default();
+                        found |= contents.contains(&format!("POST /{name} HTTP/1.1"));
+                    }
+                    if found {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("missing log entry for {name}"));
+            if index == 1 {
+                assert!(
+                    !stale.exists(),
+                    "the new retention policy did not remove an expired log"
+                );
+                let mut rotated = Vec::new();
+                let mut files = tokio::fs::read_dir(path.parent().unwrap()).await.unwrap();
+                while let Some(file) = files.next_entry().await.unwrap() {
+                    if file.path() != path {
+                        rotated.push(tokio::fs::read_to_string(file.path()).await.unwrap());
+                    }
+                }
+                assert!(
+                    rotated
+                        .iter()
+                        .any(|contents| contents.contains("POST /before HTTP/1.1")),
+                    "the new file limit did not rotate the existing log"
+                );
+            } else if index == 2 {
+                assert!(
+                    stale.exists(),
+                    "disabled automatic cleanup removed an expired log"
+                );
+            }
+        }
+        server.await.unwrap();
     }
 }

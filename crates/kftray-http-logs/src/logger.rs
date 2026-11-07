@@ -69,9 +69,19 @@ const TRACE_EXPIRY_SECS: i64 = 1800;
 type TraceMap = Arc<DashMap<String, TraceInfo>>;
 type Rotation<'a> = (&'a LogConfig, &'a Path);
 
+#[derive(Debug)]
+enum WriterCommand {
+    Message(LogMessage),
+    UpdatePolicy {
+        max_log_size: u64,
+        retention_days: u64,
+        auto_cleanup: bool,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct HttpLogger {
-    log_sender: Sender<LogMessage>,
+    log_sender: Sender<WriterCommand>,
     trace_map: TraceMap,
     shutdown: Arc<tokio::sync::watch::Sender<()>>,
     #[allow(dead_code)]
@@ -84,7 +94,7 @@ pub struct HttpLogger {
 
 impl HttpLogger {
     pub async fn new(log_config: LogConfig, log_file_path: PathBuf) -> Result<Self> {
-        let (log_sender, mut log_receiver) = mpsc::channel::<LogMessage>(CHANNEL_CAPACITY);
+        let (log_sender, mut log_receiver) = mpsc::channel::<WriterCommand>(CHANNEL_CAPACITY);
 
         let log_file = Arc::new(RwLock::new(BufWriter::with_capacity(
             LOG_WRITE_BUFFER_CAPACITY,
@@ -108,9 +118,8 @@ impl HttpLogger {
 
         let writer_task = tokio::spawn({
             let log_file = log_file.clone();
-            let log_config = log_config.clone();
+            let mut log_config = log_config.clone();
             async move {
-                let rotation = (&log_config, log_file_path.as_path());
                 let mut flush_interval =
                     tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
                 let mut message_batch = Vec::with_capacity(BATCH_SIZE_THRESHOLD * 2);
@@ -118,7 +127,14 @@ impl HttpLogger {
 
                 loop {
                     tokio::select! {
-                        Some(log_message) = log_receiver.recv() => {
+                        Some(command) = log_receiver.recv() => {
+                            let log_message = match command {
+                                WriterCommand::Message(message) => message,
+                                WriterCommand::UpdatePolicy { max_log_size, retention_days, auto_cleanup } => {
+                                    Self::apply_rotation_policy(&mut log_config, &log_file_path, max_log_size, retention_days, auto_cleanup).await;
+                                    continue;
+                                }
+                            };
                             if log_message.is_flush_trigger() {
                                 if let Ok(mut file) = log_file.try_write() {
                                     let _ = file.flush().await;
@@ -138,7 +154,7 @@ impl HttpLogger {
                                 debug!("Writing log batch of {} messages (contains response: {})",
                                       batch_size, is_response);
 
-                                match Self::write_log_batch(&log_file, &message_batch, rotation).await { Err(e) => {
+                                match Self::write_log_batch(&log_file, &message_batch, (&log_config, log_file_path.as_path())).await { Err(e) => {
                                     error!("Failed to write log batch: {:?}", e);
                                 } _ => {
                                     debug!("Successfully wrote log batch");
@@ -160,7 +176,7 @@ impl HttpLogger {
                                       message_batch.len(),
                                       now.signed_duration_since(last_flush).num_milliseconds());
 
-                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, rotation).await {
+                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, (&log_config, log_file_path.as_path())).await {
                                     error!("Failed to write log batch: {:?}", e);
                                 }
                                 message_batch.clear();
@@ -179,21 +195,25 @@ impl HttpLogger {
                             debug!("Shutting down log writer - processing final messages");
 
                             log_receiver.close();
-                            while let Ok(log_message) = log_receiver.try_recv() {
-                                if !log_message.is_flush_trigger() {
-                                    message_batch.push(log_message);
+                            while let Ok(command) = log_receiver.try_recv() {
+                                match command {
+                                    WriterCommand::Message(message) if !message.is_flush_trigger() => message_batch.push(message),
+                                    WriterCommand::UpdatePolicy { max_log_size, retention_days, auto_cleanup } => {
+                                        Self::apply_rotation_policy(&mut log_config, &log_file_path, max_log_size, retention_days, auto_cleanup).await;
+                                    }
+                                    _ => {}
                                 }
                             }
 
                             if !message_batch.is_empty() {
                                 debug!("Writing final batch of {} messages during shutdown", message_batch.len());
 
-                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, rotation).await {
+                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch, (&log_config, log_file_path.as_path())).await {
                                     error!("Failed to write final log batch: {:?}", e);
 
                                     for (i, msg) in message_batch.iter().enumerate() {
                                         debug!("Attempting to write individual message {} during shutdown", i+1);
-                                        if let Err(e) = Self::write_single_log(&log_file, msg, rotation).await {
+                                        if let Err(e) = Self::write_single_log(&log_file, msg, (&log_config, log_file_path.as_path())).await {
                                             error!("Failed to write message {}: {:?}", i+1, e);
                                         }
                                     }
@@ -334,7 +354,11 @@ impl HttpLogger {
             }
         };
 
-        match self.log_sender.send(log_entry).await {
+        match self
+            .log_sender
+            .send(WriterCommand::Message(log_entry))
+            .await
+        {
             Ok(_) => debug!("Successfully sent request log message to channel"),
             Err(e) => error!("Failed to send log message: {:?}", e),
         }
@@ -368,7 +392,11 @@ impl HttpLogger {
             };
 
         let message_size = log_entry.size();
-        match self.log_sender.send(log_entry).await {
+        match self
+            .log_sender
+            .send(WriterCommand::Message(log_entry))
+            .await
+        {
             Ok(_) => debug!(
                 "Successfully sent response log message to channel (size: {}B)",
                 message_size
@@ -393,7 +421,7 @@ impl HttpLogger {
     ) -> Result<()> {
         let message = LogMessage::new_preformatted_response(trace_id, timestamp, took_ms, buffer);
 
-        if let Err(e) = self.log_sender.send(message).await {
+        if let Err(e) = self.log_sender.send(WriterCommand::Message(message)).await {
             error!("Failed to send preformatted response log message: {:?}", e);
             return Err(anyhow::anyhow!("Failed to send log message"));
         }
@@ -404,9 +432,32 @@ impl HttpLogger {
     pub async fn flush(&self) -> Result<()> {
         let trigger = LogMessage::TriggerFlush;
         self.log_sender
-            .send(trigger)
+            .send(WriterCommand::Message(trigger))
             .await
             .map_err(|_| anyhow::anyhow!("Failed to send flush trigger"))
+    }
+
+    pub async fn update_rotation_policy(
+        &self, max_log_size: u64, retention_days: u64, auto_cleanup: bool,
+    ) -> Result<()> {
+        self.log_sender
+            .send(WriterCommand::UpdatePolicy {
+                max_log_size,
+                retention_days,
+                auto_cleanup,
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to update HTTP log policy: {error}"))
+    }
+
+    async fn apply_rotation_policy(
+        config: &mut LogConfig, path: &Path, max_log_size: u64, retention_days: u64,
+        auto_cleanup: bool,
+    ) {
+        config.set_rotation_policy(max_log_size, retention_days, auto_cleanup);
+        if auto_cleanup && let Err(error) = config.remove_expired_rotated_logs(path).await {
+            error!("Failed to remove expired HTTP log files: {:?}", error);
+        }
     }
 
     async fn rotate_if_full(
