@@ -115,30 +115,27 @@ create_dns_query() {
 }
 
 send_dns_query() {
-	local query
-	query=$(create_dns_query)
-	local length=${#query}
-	printf '\x00\x00\x00%b' "\\x$(printf '%02x' "$length")"
-	printf '%s' "$query"
+	printf '\x00\x00\x00\x1c'
+	create_dns_query
 }
 
 check_dns_response() {
 	local response_size
 	local response
 
-	response_size=$(dd bs=1 count=4 2>/dev/null | xxd -p)
-	[ -z "$response_size" ] && return 1
+	response_size=$(dd bs=1 count=4 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+	[ "${#response_size}" -eq 8 ] || return 1
 
 	response_size=$((16#$response_size))
-	[ "$response_size" -eq 0 ] && return 1
+	[ "$response_size" -ge 12 ] || return 1
 
-	response=$(dd bs=1 count="$response_size" 2>/dev/null | xxd -p)
-	[ -z "$response" ] && return 1
+	response=$(dd bs=1 count="$response_size" 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+	[ "${#response}" -eq "$((response_size * 2))" ] || return 1
+	[ "${response:0:4}" = "1234" ] || return 1
 
-	if echo "$response" | grep -q "^....8[0-5]"; then
-		return 0
-	fi
-	return 1
+	local flags=$((16#${response:4:4}))
+	local answers=$((16#${response:12:4}))
+	(( (flags & 0x8000) != 0 && (flags & 0x000f) == 0 && answers > 0 ))
 }
 
 run_tcp_tests() {
