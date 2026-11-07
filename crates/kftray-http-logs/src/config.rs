@@ -68,6 +68,14 @@ impl LogConfig {
         self.auto_cleanup
     }
 
+    pub(crate) fn set_rotation_policy(
+        &mut self, max_log_size: u64, retention_days: u64, auto_cleanup: bool,
+    ) {
+        self.max_log_size = max_log_size;
+        self.retention_days = retention_days;
+        self.auto_cleanup = auto_cleanup;
+    }
+
     pub async fn create_log_file_path(&self, config_id: i64, local_port: u16) -> Result<PathBuf> {
         self.ensure_log_directory().await?;
 
