@@ -191,14 +191,18 @@ impl ShortcutManager {
 
         let rebind =
             existing.shortcut_key != shortcut.shortcut_key || existing.enabled != shortcut.enabled;
+        let was_registered = self.registered_shortcuts.contains_key(&shortcut_id);
 
         if rebind {
-            let was_registered = self.registered_shortcuts.contains_key(&shortcut_id);
             if was_registered {
                 self.platform_manager
                     .unregister_shortcut(shortcut_id)
                     .await?;
                 self.registered_shortcuts.remove(&shortcut_id);
+                self.action_registry
+                    .lock()
+                    .await
+                    .unregister_shortcut_definition(shortcut_id);
             }
 
             if shortcut.enabled
@@ -216,7 +220,37 @@ impl ShortcutManager {
             }
         }
 
-        self.storage.update_shortcut(&shortcut).await?;
+        if let Err(e) = self.storage.update_shortcut(&shortcut).await {
+            if rebind {
+                if self.registered_shortcuts.contains_key(&shortcut_id) {
+                    if let Err(cleanup_err) =
+                        self.platform_manager.unregister_shortcut(shortcut_id).await
+                    {
+                        error!(
+                            "Failed to unregister shortcut ID {} after a failed storage update: {}",
+                            shortcut_id, cleanup_err
+                        );
+                        // Keep tracking the binding that the platform could not remove.
+                        return Err(e);
+                    }
+                    self.registered_shortcuts.remove(&shortcut_id);
+                    self.action_registry
+                        .lock()
+                        .await
+                        .unregister_shortcut_definition(shortcut_id);
+                }
+
+                if was_registered
+                    && let Err(restore_err) = self.register_platform_shortcut(&existing).await
+                {
+                    error!(
+                        "Failed to restore shortcut ID {} after a failed storage update: {}",
+                        shortcut_id, restore_err
+                    );
+                }
+            }
+            return Err(e);
+        }
 
         if !rebind && self.registered_shortcuts.contains_key(&shortcut_id) {
             self.registered_shortcuts
@@ -619,6 +653,49 @@ mod tests {
 
     struct RejectKey(&'static str);
 
+    #[derive(Default)]
+    struct PlatformRecording {
+        calls: Vec<(i64, Option<String>)>,
+        registered: HashMap<i64, ShortcutDefinition>,
+        fail_at: Option<usize>,
+    }
+
+    struct RecordingPlatform(Arc<Mutex<PlatformRecording>>);
+
+    #[async_trait]
+    impl PlatformManager for RecordingPlatform {
+        async fn register_shortcut(&mut self, shortcut: &ShortcutDefinition) -> ShortcutResult<()> {
+            let id = shortcut.id.unwrap();
+            let mut recording = self.0.lock().await;
+            recording
+                .calls
+                .push((id, Some(shortcut.shortcut_key.clone())));
+            if recording.fail_at == Some(recording.calls.len()) {
+                return Err(ShortcutError::PlatformError("Registration failed".into()));
+            }
+            recording.registered.insert(id, shortcut.clone());
+            Ok(())
+        }
+
+        async fn unregister_shortcut(&mut self, id: i64) -> ShortcutResult<()> {
+            let mut recording = self.0.lock().await;
+            recording.calls.push((id, None));
+            if recording.fail_at == Some(recording.calls.len()) {
+                return Err(ShortcutError::PlatformError("Unregistration failed".into()));
+            }
+            recording.registered.remove(&id);
+            Ok(())
+        }
+
+        async fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn platform_name(&self) -> &str {
+            "recording"
+        }
+    }
+
     #[async_trait]
     impl PlatformManager for RejectKey {
         async fn register_shortcut(&mut self, shortcut: &ShortcutDefinition) -> ShortcutResult<()> {
@@ -659,6 +736,168 @@ mod tests {
         assert_eq!(manager.registered_shortcuts.get(&id), Some(&old));
         press(&manager, id).await;
         assert_eq!(executed.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_storage_update_keeps_old_shortcut() {
+        for scenario in [
+            "key",
+            "disable",
+            "enable",
+            "metadata",
+            "unregister",
+            "restore",
+        ] {
+            let executed = Executed::default();
+            let mut manager = test_manager(&executed).await;
+            let recording = Arc::new(Mutex::new(PlatformRecording::default()));
+            manager.platform_manager = Box::new(RecordingPlatform(recording.clone()));
+
+            let mut shortcut =
+                ShortcutDefinition::new("s".into(), "Ctrl+Shift+F1".into(), "start".into());
+            shortcut.action_data = Some(r#"{"config_ids":[1]}"#.into());
+            shortcut.config_id = Some(1);
+            shortcut.enabled = scenario != "enable";
+            let id = manager.create_shortcut(shortcut).await.unwrap();
+            let old = manager.get_shortcut(id).await.unwrap().unwrap();
+            let other_id = manager
+                .create_shortcut(ShortcutDefinition::new(
+                    "t".into(),
+                    "Ctrl+Shift+F2".into(),
+                    "start".into(),
+                ))
+                .await
+                .unwrap();
+            let other = manager.get_shortcut(other_id).await.unwrap().unwrap();
+
+            let mut edited = old.clone();
+            edited.name = other.name.clone();
+            edited.action_type = "stop".into();
+            edited.action_data = Some(r#"{"config_ids":[2]}"#.into());
+            edited.config_id = Some(2);
+            if scenario != "metadata" {
+                edited.shortcut_key = other.shortcut_key.clone();
+            }
+            edited.enabled = scenario != "disable";
+            {
+                let mut recording = recording.lock().await;
+                recording.calls.clear();
+                recording.fail_at = match scenario {
+                    "unregister" => Some(3),
+                    "restore" => Some(4),
+                    _ => None,
+                };
+            }
+
+            assert!(matches!(
+                manager.update_shortcut(edited.clone()).await,
+                Err(ShortcutError::Database(_))
+            ));
+            assert_eq!(manager.get_shortcut(id).await.unwrap(), Some(old.clone()));
+            assert_eq!(
+                manager.get_shortcut(other_id).await.unwrap(),
+                Some(other.clone())
+            );
+            assert_eq!(manager.registered_shortcuts.get(&other_id), Some(&other));
+
+            let expected = match scenario {
+                "enable" | "restore" => None,
+                "unregister" => Some(&edited),
+                _ => Some(&old),
+            };
+            assert_eq!(
+                manager.registered_shortcuts.get(&id),
+                expected,
+                "{scenario}"
+            );
+            if let Some(expected) = expected {
+                press(&manager, id).await;
+                assert_eq!(
+                    *executed.lock().await,
+                    vec![(
+                        expected.action_type.clone(),
+                        expected.action_data.clone(),
+                        expected.config_id,
+                    )],
+                    "{scenario}"
+                );
+            } else {
+                assert!(
+                    manager
+                        .action_registry
+                        .lock()
+                        .await
+                        .execute_by_id(id, &ActionContext::new(id))
+                        .await
+                        .is_err()
+                );
+            }
+
+            let recording = recording.lock().await;
+            assert_eq!(recording.registered.get(&id), expected, "{scenario}");
+            assert_eq!(recording.registered.get(&other_id), Some(&other));
+            let unregister = (id, None);
+            let register_old = (id, Some(old.shortcut_key.clone()));
+            let register_new = (id, Some(edited.shortcut_key.clone()));
+            let calls = match scenario {
+                "metadata" => vec![],
+                "disable" => vec![unregister, register_old],
+                "enable" => vec![register_new, unregister],
+                "unregister" => vec![unregister.clone(), register_new, unregister],
+                _ => vec![unregister.clone(), register_new, unregister, register_old],
+            };
+            assert_eq!(recording.calls, calls, "{scenario}");
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_rebind_updates_platform_storage_and_action() {
+        let executed = Executed::default();
+        let mut manager = test_manager(&executed).await;
+        let recording = Arc::new(Mutex::new(PlatformRecording::default()));
+        manager.platform_manager = Box::new(RecordingPlatform(recording.clone()));
+        let id = manager
+            .create_shortcut(ShortcutDefinition::new(
+                "s".into(),
+                "Ctrl+Shift+F1".into(),
+                "start".into(),
+            ))
+            .await
+            .unwrap();
+        let mut shortcut = manager.get_shortcut(id).await.unwrap().unwrap();
+        shortcut.shortcut_key = "Ctrl+Shift+F2".into();
+        shortcut.action_type = "stop".into();
+        shortcut.action_data = Some(r#"{"config_ids":[2]}"#.into());
+        shortcut.config_id = Some(2);
+
+        for enabled in [true, false, true] {
+            shortcut.enabled = enabled;
+            manager.update_shortcut(shortcut.clone()).await.unwrap();
+            assert_eq!(
+                manager.get_shortcut(id).await.unwrap(),
+                Some(shortcut.clone())
+            );
+            let expected = enabled.then_some(&shortcut);
+            assert_eq!(manager.registered_shortcuts.get(&id), expected);
+            assert_eq!(recording.lock().await.registered.get(&id), expected);
+            if enabled {
+                press(&manager, id).await;
+                assert_eq!(
+                    executed.lock().await.last(),
+                    Some(&("stop".to_string(), shortcut.action_data.clone(), Some(2),))
+                );
+            } else {
+                assert!(
+                    manager
+                        .action_registry
+                        .lock()
+                        .await
+                        .execute_by_id(id, &ActionContext::new(id))
+                        .await
+                        .is_err()
+                );
+            }
+        }
     }
 
     #[tokio::test]

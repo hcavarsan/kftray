@@ -668,25 +668,27 @@ impl PlatformManager for LinuxPlatform {
 
     async fn unregister_shortcut(&mut self, shortcut_id: i64) -> ShortcutResult<()> {
         let mut shortcuts = self.shortcuts.lock().await;
-        let shortcut_key = shortcuts.remove(&shortcut_id);
 
         match &mut self.implementation {
             LinuxImpl::GlobalHotKey(manager, hotkeys) => {
                 let mut registered_hotkeys = hotkeys.lock().await;
-                if let Some(hotkey) = registered_hotkeys.remove(&shortcut_id) {
+                if let Some(&hotkey) = registered_hotkeys.get(&shortcut_id) {
                     manager.unregister(hotkey).map_err(|e| {
                         crate::models::ShortcutError::PlatformError(format!(
                             "Unregister failed: {}",
                             e
                         ))
                     })?;
+                    registered_hotkeys.remove(&shortcut_id);
+                    shortcuts.remove(&shortcut_id);
                     info!("Linux (X11) shortcut unregistered: {}", shortcut_id);
                 } else {
+                    shortcuts.remove(&shortcut_id);
                     warn!("Linux (X11) shortcut not found: {}", shortcut_id);
                 }
             }
             _ => {
-                if let Some(key) = shortcut_key {
+                if let Some(key) = shortcuts.remove(&shortcut_id) {
                     info!("Linux shortcut unregistered: {} ({})", shortcut_id, key);
                 } else {
                     warn!("Linux shortcut not found: {}", shortcut_id);
