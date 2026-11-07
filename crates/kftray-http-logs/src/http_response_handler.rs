@@ -21,6 +21,7 @@ use crate::HttpLogger;
 use crate::http_response_analyzer::{
     HttpResponseAnalyzer,
     ResponseAnalyzerConfig,
+    has_chunked_transfer_encoding,
 };
 
 pub const DEFAULT_MIN_LOG_SYNC_MS: u64 = 50;
@@ -139,7 +140,7 @@ impl HttpResponseHandler {
 
                 if let Some(headers_end) = find_headers_end(&state.complete_response) {
                     let headers_data = &state.complete_response[..headers_end];
-                    state.is_chunked = Self::is_chunked_transfer(headers_data);
+                    state.is_chunked = has_chunked_transfer_encoding(headers_data);
                 }
             }
         } else {
@@ -166,7 +167,7 @@ impl HttpResponseHandler {
             && let Some(headers_end) = find_headers_end(&context.complete_response)
         {
             let headers_data = &context.complete_response[..headers_end];
-            context.is_chunked = Self::is_chunked_transfer(headers_data);
+            context.is_chunked = has_chunked_transfer_encoding(headers_data);
         }
 
         if context.is_chunked && !context.found_end_marker {
@@ -621,22 +622,6 @@ impl HttpResponseHandler {
 
         Ok(())
     }
-
-    fn is_chunked_transfer(headers_data: &[u8]) -> bool {
-        if let Ok(headers_str) = std::str::from_utf8(headers_data) {
-            let h_lower = headers_str.to_lowercase();
-            if h_lower.contains("transfer-encoding: chunked") {
-                trace!("Detected chunked transfer encoding in response - will wait for all chunks");
-                return true;
-            }
-
-            if h_lower.contains("upgrade: websocket") && h_lower.contains("connection: upgrade") {
-                debug!("Initial detection of WebSocket upgrade response");
-                return false;
-            }
-        }
-        false
-    }
 }
 
 pub use DEFAULT_MIN_LOG_SYNC_MS as MIN_LOG_SYNC_MS;
@@ -851,20 +836,6 @@ mod tests {
             let logs = self.logs.lock().await;
             logs.last().cloned()
         }
-    }
-
-    #[tokio::test]
-    async fn test_chunked_transfer_detection() {
-        let chunked_headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";
-        assert!(HttpResponseHandler::is_chunked_transfer(chunked_headers));
-
-        let regular_headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nContent";
-        assert!(!HttpResponseHandler::is_chunked_transfer(regular_headers));
-
-        let non_chunked_transfer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\ndata";
-        assert!(!HttpResponseHandler::is_chunked_transfer(
-            non_chunked_transfer
-        ));
     }
 
     #[tokio::test]

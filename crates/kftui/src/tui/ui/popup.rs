@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use ratatui::layout::Flex;
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::text::{
@@ -847,35 +848,50 @@ fn create_close_button() -> Paragraph<'static> {
 pub fn render_delete_confirmation_popup(
     f: &mut Frame, message: &Option<String>, area: Rect, selected_button: DeleteButton,
 ) {
-    let message_text = message.as_deref().unwrap_or("");
-    let message_paragraph = Text::raw(message_text);
-    render_popup(
-        f,
-        area,
-        "Delete Confirmation",
-        RED,
-        message_paragraph,
-        Alignment::Center,
+    let screen = f.area();
+    let width = area.width.max(32).min(screen.width);
+    let height = area.height.max(8).min(screen.height);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+    let block = create_common_popup_style("Delete Confirmation", RED);
+    let inner = block.inner(area);
+    let compact = inner.width < 24;
+    let rows = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(if compact { 1 } else { 3 }),
+    ])
+    .split(inner);
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+    f.render_widget(
+        Paragraph::new(message.as_deref().unwrap_or(""))
+            .style(Style::default().fg(TEXT).bg(BASE))
+            .alignment(Alignment::Center)
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        rows[0],
     );
 
-    let confirm_button = create_button("<Confirm>", selected_button == DeleteButton::Confirm);
-    let close_button = create_button("<Close>", selected_button == DeleteButton::Close);
-
-    let confirm_button_area = Rect::new(
-        area.x + (area.width / 2) - 15,
-        area.y + area.height - 4,
-        10,
-        3,
-    );
-    let close_button_area = Rect::new(
-        area.x + (area.width / 2) + 5,
-        area.y + area.height - 4,
-        10,
-        3,
-    );
-
-    f.render_widget(confirm_button, confirm_button_area);
-    f.render_widget(close_button, close_button_area);
+    let buttons = Layout::horizontal([
+        Constraint::Length(if compact { 9 } else { 11 }),
+        Constraint::Length(1),
+        Constraint::Length(if compact { 7 } else { 9 }),
+    ])
+    .flex(Flex::Center)
+    .split(rows[1]);
+    for (label, button, button_area) in [
+        ("<Confirm>", DeleteButton::Confirm, buttons[0]),
+        ("<Close>", DeleteButton::Close, buttons[2]),
+    ] {
+        let mut widget = create_button(label, selected_button == button);
+        if compact {
+            widget = widget.block(Block::default().style(Style::default().bg(BASE)));
+        }
+        f.render_widget(widget, button_area);
+    }
 }
 
 pub fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
@@ -1831,9 +1847,7 @@ fn render_response_side(
         )));
     }
 
-    if let Some(replay_error) = &app.http_logs_replay_result
-        && (replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to"))
-    {
+    if let Some(replay_error) = &app.http_logs_replay_result {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "━".repeat(30),

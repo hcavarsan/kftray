@@ -272,7 +272,7 @@ impl PlatformManager for WindowsPlatform {
 
     async fn unregister_shortcut(&mut self, shortcut_id: i64) -> ShortcutResult<()> {
         let mut shortcuts = self.shortcuts.lock().await;
-        if let Some(hotkey) = shortcuts.remove(&shortcut_id) {
+        if let Some(&hotkey) = shortcuts.get(&shortcut_id) {
             // Send unregister command through channel
             let (response_tx, response_rx) = oneshot::channel();
             self.command_sender
@@ -297,6 +297,7 @@ impl PlatformManager for WindowsPlatform {
                 crate::models::ShortcutError::PlatformError(format!("Unregister failed: {}", e))
             })?;
 
+            shortcuts.remove(&shortcut_id);
             info!("Windows shortcut unregistered: {}", shortcut_id);
         } else {
             warn!("Windows shortcut not found: {}", shortcut_id);
