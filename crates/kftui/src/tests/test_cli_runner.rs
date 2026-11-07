@@ -21,6 +21,10 @@ use crate::logging::{
 #[tokio::test]
 async fn run_command_exits_with_the_code_of_the_command() {
     let _db = test_db().await;
+    let _lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+        .lock()
+        .await;
+    let _reopen = kftray_portforward::kube::ReopenStartupGate;
     let cases: [(&[&str], i32); 4] = [
         (&["sh", "-c", "exit 0"], 0),
         (&["sh", "-c", "exit 3"], 3),
@@ -34,6 +38,178 @@ async fn run_command_exits_with_the_code_of_the_command() {
             .unwrap();
         assert_eq!(code, expected, "exit code of {command:?}");
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_sessions_monitor_the_selected_database_until_cleanup() {
+    let _db = test_db().await;
+    let _lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+        .lock()
+        .await;
+    let _reopen = kftray_portforward::kube::ReopenStartupGate;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    kftray_commons::utils::db::init().await.unwrap();
+    kftray_commons::utils::migration::migrate_configs(None)
+        .await
+        .unwrap();
+    for mode in [DatabaseMode::File, DatabaseMode::Memory] {
+        for enabled in [false, true] {
+            let other_mode = match mode {
+                DatabaseMode::File => DatabaseMode::Memory,
+                DatabaseMode::Memory => DatabaseMode::File,
+            };
+            kftray_commons::utils::settings::set_network_monitor_with_mode(enabled, mode)
+                .await
+                .unwrap();
+            kftray_commons::utils::settings::set_network_monitor_with_mode(!enabled, other_mode)
+                .await
+                .unwrap();
+            let handshake = tempfile::tempdir().unwrap();
+            let started = handshake.path().join("started");
+            let finish = handshake.path().join("finish");
+            let command = vec![
+                "sh".into(),
+                "-c".into(),
+                "touch \"$1\"; while test ! -f \"$2\"; do sleep 0.01; done; exit 7".into(),
+                "kftui-monitor-test".into(),
+                started.to_str().unwrap().into(),
+                finish.to_str().unwrap().into(),
+            ];
+            let observe = async {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !started.exists() {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let running = kftray_network_monitor::is_running().await;
+                std::fs::write(&finish, b"done").unwrap();
+                running
+            };
+            let (result, running) = tokio::join!(
+                PortForwardRunner::run_command(&command, Vec::new(), None, mode),
+                observe,
+            );
+            assert_eq!(result.unwrap(), 7);
+            assert_eq!(running, enabled, "{mode:?}");
+            assert!(!kftray_network_monitor::is_running().await);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_cleanup_does_not_stop_a_preexisting_monitor() {
+    let _db = test_db().await;
+    let _lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+        .lock()
+        .await;
+    let _reopen = kftray_portforward::kube::ReopenStartupGate;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    kftray_commons::utils::settings::set_network_monitor_with_mode(true, DatabaseMode::Memory)
+        .await
+        .unwrap();
+    kftray_network_monitor::start_with_mode(DatabaseMode::Memory)
+        .await
+        .unwrap();
+    let command = vec!["sh".into(), "-c".into(), "exit 3".into()];
+    let result =
+        PortForwardRunner::run_command(&command, Vec::new(), None, DatabaseMode::Memory).await;
+    let running = kftray_network_monitor::is_running().await;
+    kftray_network_monitor::stop().await.unwrap();
+    assert_eq!(result.unwrap(), 3);
+    assert!(running);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_shutdown_refuses_a_late_monitor_relay_restart() {
+    use std::sync::{
+        Arc,
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+    };
+
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    };
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let _db = test_db().await;
+    let _lock = kftray_portforward::port_forward::PROCESS_TEST_MUTEX
+        .lock()
+        .await;
+    let _reopen = kftray_portforward::kube::ReopenStartupGate;
+    let dir = tempfile::tempdir().unwrap();
+    let _env = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+    let command = vec!["sh".into(), "-c".into(), "exit 0".into()];
+    PortForwardRunner::run_command(&command, Vec::new(), None, DatabaseMode::Memory)
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let _server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            observed.fetch_add(1, Ordering::SeqCst);
+            socket
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        }
+    }));
+    let kubeconfig = dir.path().join("kubeconfig");
+    std::fs::write(&kubeconfig, format!("apiVersion: v1\nkind: Config\ncurrent-context: dev\nclusters:\n- name: local\n  cluster:\n    server: http://{address}\ncontexts:\n- name: dev\n  context:\n    cluster: local\n    user: dev\nusers:\n- name: dev\n  user:\n    token: local\n")).unwrap();
+    let config = kftray_commons::models::config_model::Config {
+        context: Some("dev".into()),
+        namespace: "default".into(),
+        kubeconfig: Some(kubeconfig.to_str().unwrap().into()),
+        local_address: Some("127.0.0.1".into()),
+        workload_type: Some("proxy".into()),
+        protocol: "tcp".into(),
+        local_port: Some(0),
+        remote_port: Some(80),
+        remote_address: Some("127.0.0.1".into()),
+        ..Default::default()
+    };
+    let id = kftray_commons::utils::config::insert_config_with_mode(
+        config.clone(),
+        DatabaseMode::Memory,
+    )
+    .await
+    .unwrap();
+    let mut config = config;
+    config.id = Some(id);
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        kftray_portforward::kube::deploy_and_forward_pod_with_mode(
+            vec![config],
+            DatabaseMode::Memory,
+            false,
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "a restart contacted the cluster after command shutdown"
+    );
 }
 
 #[cfg(unix)]
