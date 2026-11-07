@@ -1268,51 +1268,54 @@ mod tests {
 
     #[tokio::test]
     async fn chunked_response_on_an_idle_keep_alive_connection_is_logged() {
-        let (_temp_dir, log_path, http_logger) = temp_http_logger("idle-chunked.log").await;
-        let req_id = http_logger
-            .log_request(bytes::Bytes::from_static(
-                b"GET /idle HTTP/1.1\r\nHost: example.test\r\n\r\n",
-            ))
-            .await;
-        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
-        let request_id = Arc::new(Mutex::new(Some(req_id)));
-        let tunnel = Arc::new(AtomicBool::new(false));
-        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
-        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
-        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
-        let forward = tokio::spawn(async move {
-            TcpForwarder::forward_upstream_to_client(
-                logger,
-                1,
-                DatabaseMode::File,
-                &mut upstream_reader,
-                &mut client_writer,
-                request_id,
-                CancellationToken::new(),
-                subscriber,
-                8080,
-                tunnel,
-            )
-            .await
-            .unwrap();
-        });
-
-        pass_through(
-            &mut upstream_writer,
-            &mut client_reader,
+        let responses: [&[u8]; 4] = [
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
-        )
-        .await;
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding:chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf\xe9.csv\"\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        ];
+        for response in responses {
+            let (_temp_dir, log_path, http_logger) = temp_http_logger("idle-chunked.log").await;
+            let req_id = http_logger
+                .log_request(bytes::Bytes::from_static(
+                    b"GET /idle HTTP/1.1\r\nHost: example.test\r\n\r\n",
+                ))
+                .await;
+            let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+            let request_id = Arc::new(Mutex::new(Some(req_id)));
+            let tunnel = Arc::new(AtomicBool::new(false));
+            let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+            let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+            let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+            let forward = tokio::spawn(async move {
+                TcpForwarder::forward_upstream_to_client(
+                    logger,
+                    1,
+                    DatabaseMode::File,
+                    &mut upstream_reader,
+                    &mut client_writer,
+                    request_id,
+                    CancellationToken::new(),
+                    subscriber,
+                    8080,
+                    tunnel,
+                )
+                .await
+                .unwrap();
+            });
 
-        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
-        assert!(
-            contents.contains("hello"),
-            "logged response must carry its body: {contents}"
-        );
+            pass_through(&mut upstream_writer, &mut client_reader, response).await;
 
-        upstream_writer.shutdown().await.unwrap();
-        forward.await.unwrap();
-        http_logger.shutdown().await;
+            let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+            assert!(
+                contents.contains("hello"),
+                "logged response must carry its body: {contents}"
+            );
+
+            upstream_writer.shutdown().await.unwrap();
+            forward.await.unwrap();
+            http_logger.shutdown().await;
+        }
     }
 
     #[tokio::test]
