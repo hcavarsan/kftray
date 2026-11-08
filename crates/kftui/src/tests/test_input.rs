@@ -1382,6 +1382,36 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn replay_reaches_an_ipv6_forward() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("[::1]:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let (headers, _) = read_request(&mut socket).await;
+            assert!(headers.starts_with("get /who http/1.1\r\n"));
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nipv6")
+                .await
+                .unwrap();
+        });
+        let mut app = app_replaying("::1", port);
+        handle_http_logs_viewer_input(&mut app, KeyCode::Char('r'))
+            .await
+            .unwrap();
+        finish_replay(&mut app).await;
+        assert_eq!(
+            app.http_logs_selected_entry.unwrap().response_body,
+            "ipv6",
+            "{:?}",
+            app.http_logs_replay_result
+        );
+        server.await.unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
     async fn finish_replay(app: &mut App) {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             while app.http_logs_replay.is_some() {
