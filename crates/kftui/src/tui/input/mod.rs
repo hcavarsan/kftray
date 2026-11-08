@@ -198,7 +198,7 @@ impl HttpLogEntry {
                 reqwest::header::HeaderName::from_bytes(name.as_bytes()),
                 reqwest::header::HeaderValue::from_str(value),
             ) {
-                headers.insert(header_name, header_value);
+                headers.append(header_name, header_value);
                 added_headers += 1;
             }
         }
