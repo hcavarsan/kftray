@@ -1,17 +1,17 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 
 import { Footer } from '@/components/Footer'
 import { useHelperMutations } from '@/components/HelperModal/useHelper'
 import { PortForwardTable } from '@/components/PortForwardTable'
 import { visibleSelection } from '@/components/PortForwardTable/viewUtils'
-import { invoke } from '@/lib/tauri'
 import { type Consent, performanceQuery, telemetryQuery } from '@/lib/telemetry'
-import type { Config, StoredConfig } from '@/types'
+import type { Config } from '@/types'
 
 import type { PrivilegeDecision } from './privilegeGate'
+import { useActiveModal } from './useActiveModal'
 import { useConfigTransfer } from './useConfigTransfer'
 import { usePortForwarding } from './usePortForwarding'
 
@@ -57,19 +57,6 @@ const PrivilegeDialog = lazy(() =>
   })),
 )
 
-type ActiveModal =
-  | { type: 'config'; initialConfig: StoredConfig | null; isEdit: boolean }
-  | {
-      type:
-        | 'autoImport'
-        | 'gitSync'
-        | 'helper'
-        | 'serverResources'
-        | 'settings'
-        | 'shortcuts'
-    }
-  | null
-
 export function Main() {
   const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [visibleConfigs, setVisibleConfigs] = useState<Config[]>([])
@@ -77,8 +64,7 @@ export function Main() {
     () => visibleSelection(visibleConfigs, selectedConfigs),
     [visibleConfigs, selectedConfigs],
   )
-  const [activeModal, setActiveModal] = useState<ActiveModal>(null)
-  const queryClient = useQueryClient()
+  const { activeModal, modalKey, setActiveModal, openConfig } = useActiveModal()
   const telemetry = useQuery(telemetryQuery)
   const performance = useQuery(performanceQuery)
   const unansweredConsents: Consent[] =
@@ -100,31 +86,6 @@ export function Main() {
     installMutation.reset()
     resolvePrompt(decision)
   }
-
-  const openConfig = useCallback(
-    async (id: number, isEdit: boolean) => {
-      const config = await queryClient
-        .fetchQuery({
-          queryKey: ['config', id],
-          queryFn: () => invoke<StoredConfig>('get_config_cmd', { id }),
-          staleTime: 0,
-          meta: { errorToast: { title: 'Failed to load configuration' } },
-        })
-        .catch(() => null)
-
-      if (!config) {
-        return
-      }
-      setActiveModal({
-        type: 'config',
-        isEdit,
-        initialConfig: isEdit
-          ? config
-          : { ...config, id: 0, alias: `${config.alias ?? ''}-copy` },
-      })
-    },
-    [queryClient],
-  )
 
   const editConfig = useCallback(
     (id: number) => openConfig(id, true),
@@ -250,6 +211,7 @@ export function Main() {
         <Suspense fallback={null}>
           {activeModal?.type === 'config' && (
             <AddConfigModal
+              key={modalKey}
               initialConfig={activeModal.initialConfig}
               isEdit={activeModal.isEdit}
               onClose={closeModal}
