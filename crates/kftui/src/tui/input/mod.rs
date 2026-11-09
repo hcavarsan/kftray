@@ -3044,7 +3044,11 @@ fn http_logs_forward_base_url(app: &App) -> String {
         .and_then(|c| c.local_address.as_deref())
         .unwrap_or("127.0.0.1");
     let local_port = forward.and_then(|c| c.local_port).unwrap_or(8080);
-    format!("http://{local_address}:{local_port}")
+    if local_address.contains(':') && !local_address.starts_with('[') {
+        format!("http://[{local_address}]:{local_port}")
+    } else {
+        format!("http://{local_address}:{local_port}")
+    }
 }
 
 fn copy_to_terminal_clipboard(text: &str) -> io::Result<()> {
