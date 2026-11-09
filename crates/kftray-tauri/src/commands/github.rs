@@ -133,7 +133,9 @@ async fn import_config_content(config_content: &str, flush: bool) -> Result<(), 
     }
 
     let ids = saved_config_ids().await?;
-    flush_and_import(&ids, config_content).await
+    let result = flush_and_import(&ids, config_content).await;
+    crate::shortcuts::reload_registered_shortcuts().await;
+    result
 }
 
 async fn saved_config_ids() -> Result<Vec<i64>, String> {
@@ -455,6 +457,89 @@ mod tests {
             .map(|config| config.alias)
             .collect();
         assert_eq!(aliases, vec![Some("api".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn a_flush_sync_keeps_shortcut_targets_when_configs_reorder_or_disappear() {
+        let _file_db = use_file_db().await;
+        let pool = kftray_commons::utils::db::get_db_pool().await.unwrap();
+        let api = kftray_commons::utils::config::insert_config(service_config("api"))
+            .await
+            .unwrap();
+        let web = kftray_commons::utils::config::insert_config(service_config("web"))
+            .await
+            .unwrap();
+        let worker = kftray_commons::utils::config::insert_config(service_config("worker"))
+            .await
+            .unwrap();
+        for (name, targets) in [("shared", vec![api, web, worker]), ("removed", vec![web])] {
+            sqlx::query(
+                "INSERT INTO shortcuts (name, shortcut_key, action_type, action_data)
+                 VALUES (?1, 'Ctrl+Shift+F1', 'toggle_port_forward', ?2)",
+            )
+            .bind(name)
+            .bind(serde_json::json!({"config_ids": targets}).to_string())
+            .execute(pool.as_ref())
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO shortcuts (name, shortcut_key, action_type)
+             VALUES ('window', 'Ctrl+Shift+F2', 'toggle_window')",
+        )
+        .execute(pool.as_ref())
+        .await
+        .unwrap();
+
+        let replacement = serde_json::to_string(&[
+            service_config("worker"),
+            service_config("database"),
+            service_config("api"),
+        ])
+        .unwrap();
+        import_config_content(&replacement, true).await.unwrap();
+
+        let saved = kftray_commons::utils::config::get_configs().await.unwrap();
+        for (id, service) in [(api, "api"), (worker, "worker")] {
+            assert_eq!(
+                saved
+                    .iter()
+                    .find(|config| config.id == Some(id))
+                    .unwrap()
+                    .service
+                    .as_deref(),
+                Some(service)
+            );
+        }
+        assert!(saved.iter().all(|config| config.id != Some(web)));
+        let targets: String =
+            sqlx::query_scalar("SELECT action_data FROM shortcuts WHERE name = 'shared'")
+                .fetch_one(pool.as_ref())
+                .await
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&targets).unwrap(),
+            serde_json::json!({"config_ids": [api, worker]})
+        );
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM shortcuts
+             WHERE name IN ('shared', 'removed', 'window') ORDER BY name",
+        )
+        .fetch_all(pool.as_ref())
+        .await
+        .unwrap();
+        assert_eq!(names, ["shared", "window"]);
+
+        let replacement = serde_json::to_string(&[service_config("unrelated")]).unwrap();
+        import_config_content(&replacement, true).await.unwrap();
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM shortcuts
+             WHERE name IN ('shared', 'removed', 'window') ORDER BY name",
+        )
+        .fetch_all(pool.as_ref())
+        .await
+        .unwrap();
+        assert_eq!(names, ["window"]);
     }
 
     #[tokio::test]

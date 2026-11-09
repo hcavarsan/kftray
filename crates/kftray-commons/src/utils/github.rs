@@ -265,18 +265,32 @@ impl GitHubRepository {
         let configs = crate::utils::config::parse_import_configs(config_content)
             .map_err(|e| format!("Failed to import configs: {e}"))?;
 
-        if flush_existing && mode == DatabaseMode::File {
-            info!("Flushing existing configurations before import");
-            clear_existing_configs_with_mode(mode).await?;
-        }
-
         let context = DatabaseManager::get_context(mode).await?;
+        let replaced_ids: Vec<i64> = if flush_existing && mode == DatabaseMode::File {
+            crate::utils::config::read_configs_with_pool(&context.pool)
+                .await?
+                .into_iter()
+                .filter_map(|config| config.id)
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         info!("Importing configurations using incremental merge");
 
-        crate::utils::config::upsert_configs_with_pool_and_mode(configs, &context.pool, mode)
-            .await
-            .map_err(|e| format!("Failed to import configs: {e}"))?;
+        let imported_ids =
+            crate::utils::config::upsert_configs_with_pool_and_mode(configs, &context.pool, mode)
+                .await
+                .map_err(|e| format!("Failed to import configs: {e}"))?;
+        let removed_ids = replaced_ids
+            .into_iter()
+            .filter(|id| !imported_ids.contains(id))
+            .collect::<Vec<_>>();
+        if !removed_ids.is_empty() {
+            crate::utils::config::delete_configs_with_pool(removed_ids, &context.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
 
         info!("Configuration import completed successfully");
         Ok(())
