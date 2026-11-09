@@ -543,6 +543,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_flush_sync_keeps_an_imported_forward_with_ambiguous_saved_ports() {
+        let _file_db = use_file_db().await;
+        let mut old_ids = Vec::new();
+        for local_port in [18080, 18081] {
+            let mut config = service_config("api");
+            config.local_port = Some(local_port);
+            config.remote_port = Some(80);
+            old_ids.push(
+                kftray_commons::utils::config::insert_config(config)
+                    .await
+                    .unwrap(),
+            );
+        }
+        let mut incoming = service_config("api");
+        incoming.remote_port = Some(80);
+        let replacement = serde_json::to_string(&[incoming]).unwrap();
+
+        import_config_content(&replacement, true).await.unwrap();
+
+        let saved = kftray_commons::utils::config::get_configs().await.unwrap();
+        assert_eq!(
+            saved
+                .iter()
+                .map(|config| config.service.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("api")]
+        );
+        assert!(!old_ids.contains(&saved[0].id.unwrap()));
+        assert!(saved[0].local_port.is_some_and(|port| port != 0));
+        assert_eq!(saved[0].remote_port, Some(80));
+    }
+
+    #[tokio::test]
     async fn a_flush_sync_keeps_a_config_saved_and_started_after_it_read_the_saved_ids() {
         let _file_db = use_file_db().await;
         kftray_commons::utils::config::insert_config(service_config("api"))
