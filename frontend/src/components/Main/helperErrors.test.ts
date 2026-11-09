@@ -34,6 +34,13 @@ vi.mock('react', async importOriginal => ({
   ...(await importOriginal<typeof React>()),
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(calculate: () => T) => calculate(),
+  useRef: <T>(initial: T) => {
+    const index = hooks.cursor++
+    if (!(index in hooks.states)) {
+      hooks.states[index] = { current: initial }
+    }
+    return hooks.states[index]
+  },
   useState: <T>(initial: T) => {
     const index = hooks.cursor++
 
