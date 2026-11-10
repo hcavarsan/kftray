@@ -265,18 +265,17 @@ impl GitHubRepository {
         let configs = crate::utils::config::parse_import_configs(config_content)
             .map_err(|e| format!("Failed to import configs: {e}"))?;
 
-        if flush_existing && mode == DatabaseMode::File {
-            info!("Flushing existing configurations before import");
-            clear_existing_configs_with_mode(mode).await?;
-        }
-
         let context = DatabaseManager::get_context(mode).await?;
 
         info!("Importing configurations using incremental merge");
 
-        crate::utils::config::upsert_configs_with_pool_and_mode(configs, &context.pool, mode)
-            .await
-            .map_err(|e| format!("Failed to import configs: {e}"))?;
+        let result = if flush_existing && mode == DatabaseMode::File {
+            crate::utils::config::replace_configs_with_pool(configs, &context.pool).await
+        } else {
+            crate::utils::config::upsert_configs_with_pool_and_mode(configs, &context.pool, mode)
+                .await
+        };
+        result.map_err(|e| format!("Failed to import configs: {e}"))?;
 
         info!("Configuration import completed successfully");
         Ok(())

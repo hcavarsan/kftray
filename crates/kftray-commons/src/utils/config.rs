@@ -616,7 +616,7 @@ fn find_identity_match(configs: &[Config], incoming: &Config) -> IdentityMatch {
 }
 
 fn assign_identity_matches(
-    saved: &[Config], incoming: Vec<Config>,
+    saved: &[Config], incoming: Vec<Config>, skip_ambiguous: bool,
 ) -> Vec<(Config, Option<&Config>)> {
     let matches: Vec<_> = incoming
         .iter()
@@ -637,7 +637,7 @@ fn assign_identity_matches(
         .zip(matches)
         .enumerate()
         .filter_map(|(position, (config, m))| match m {
-            IdentityMatch::SavedMoreThanOnce => {
+            IdentityMatch::SavedMoreThanOnce if skip_ambiguous => {
                 info!("Several saved configs match an imported config, skipping it");
                 None
             }
@@ -702,7 +702,7 @@ pub(crate) async fn import_configs_with_pool(
 
     let existing_configs = read_configs_with_pool(pool).await?;
 
-    for (config, existing) in assign_identity_matches(&existing_configs, configs) {
+    for (config, existing) in assign_identity_matches(&existing_configs, configs, true) {
         merge_config_with_existing(config, existing, pool)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
@@ -795,7 +795,7 @@ pub(crate) async fn import_configs_with_pool_and_mode(
 
     let existing_configs = read_configs_with_pool(pool).await?;
 
-    for (config, existing) in assign_identity_matches(&existing_configs, configs) {
+    for (config, existing) in assign_identity_matches(&existing_configs, configs, true) {
         merge_config_with_existing_and_mode(config, existing, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
@@ -849,9 +849,21 @@ pub async fn upsert_configs_with_mode(
 pub async fn upsert_configs_with_pool_and_mode(
     configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<Vec<i64>, String> {
+    save_imported_configs(configs, pool, mode, false).await
+}
+
+pub(crate) async fn replace_configs_with_pool(
+    configs: Vec<Config>, pool: &SqlitePool,
+) -> Result<Vec<i64>, String> {
+    save_imported_configs(configs, pool, DatabaseMode::File, true).await
+}
+
+async fn save_imported_configs(
+    configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode, replace: bool,
+) -> Result<Vec<i64>, String> {
     let existing_configs = read_configs_with_pool(pool).await?;
     let configs = dedup_configs(configs);
-    let matches = assign_identity_matches(&existing_configs, configs);
+    let matches = assign_identity_matches(&existing_configs, configs, !replace);
 
     let mut ids = Vec::with_capacity(matches.len());
     for (config, existing) in matches {
@@ -863,6 +875,19 @@ pub async fn upsert_configs_with_pool_and_mode(
 
     if let Err(e) = migrate_configs(Some(pool)).await {
         return Err(format!("Error migrating configs: {e}"));
+    }
+
+    if replace {
+        let removed_ids = existing_configs
+            .into_iter()
+            .filter_map(|config| config.id)
+            .filter(|id| !ids.contains(id))
+            .collect::<Vec<_>>();
+        if !removed_ids.is_empty() {
+            delete_configs_with_pool(removed_ids, pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(ids)
