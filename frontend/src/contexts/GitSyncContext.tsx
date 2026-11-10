@@ -25,7 +25,7 @@ interface SyncStatus {
   isSyncing: boolean
 }
 
-interface GitSyncContextValue {
+export interface GitSyncContextValue {
   credentials: GitConfig | null
   isLoadingCredentials: boolean
   isSaving: boolean
@@ -72,16 +72,13 @@ export function GitSyncProvider({ children }: { children: ReactNode }) {
     mutationKey: syncMutationKey,
     scope: syncScope,
     mutationFn: async (creds: GitConfig) => {
-      await gitService.importConfigs(creds)
       await gitService.saveCredentials(creds)
 
       return creds
     },
     onSuccess: creds => {
       queryClient.setQueryData(credentialsQueryKey, creds)
-      queryClient.invalidateQueries({ queryKey: configsQuery.queryKey })
-      queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey })
-      setLastSyncTime(Date.now())
+      syncAsync(creds).catch(() => undefined)
     },
     meta: { errorToast: { title: 'Error saving settings', duration: 1000 } },
   })

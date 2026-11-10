@@ -107,8 +107,7 @@ function GitSyncForm({ onClose }: GitSyncModalProps) {
       onSuccess: () => {
         toaster.success({
           title: 'Success',
-          description:
-            'Configurations imported and credentials saved successfully',
+          description: 'Git sync settings saved',
           duration: 2000,
         })
 
