@@ -196,6 +196,101 @@ async fn a_started_ssh_forward_should_carry_bytes_to_the_destination() {
 }
 
 #[tokio::test]
+async fn an_ssh_forward_with_a_valid_certificate_should_encrypt_and_redirect_http() {
+    let bastion = bastion().await;
+    let _ssl_lock = crate::ssl::cert_store::SSL_TEST_MUTEX.lock().await;
+    let _test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
+    let config = ssh_config("ssh-tls", bastion.mock.echo_addr()).await;
+    kftray_commons::utils::settings::set_ssl_enabled_with_mode(true, MODE)
+        .await
+        .unwrap();
+    let now = time::OffsetDateTime::now_utc();
+    let pair = crate::ssl::cert_store::self_signed_pair(
+        vec![
+            "ssh-tls".to_owned(),
+            "localhost".to_owned(),
+            "127.0.0.1".to_owned(),
+            "::1".to_owned(),
+        ],
+        now - time::Duration::minutes(1),
+        now + time::Duration::days(1),
+    );
+    let store = crate::ssl::cert_store::CertificateStore::new().unwrap();
+    store.store("global-ssl-cert", &pair).await.unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(pair.certificate[0].clone()).unwrap();
+    let client = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(client));
+    let port = start(&config).await.unwrap();
+    let received = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut stream = connector
+            .connect("ssh-tls".try_into().unwrap(), stream)
+            .await
+            .unwrap();
+        stream.write_all(b"encrypted ping").await.unwrap();
+        let mut bytes = [0; 14];
+        stream.read_exact(&mut bytes).await.unwrap();
+        bytes
+    })
+    .await;
+    let redirect = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: ssh-tls\r\n\r\n")
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        stream.read_to_end(&mut bytes).await.unwrap();
+        String::from_utf8(bytes).unwrap()
+    })
+    .await;
+    stop(&config).await;
+    store.remove("global-ssl-cert").await.unwrap();
+    assert_eq!(&received.unwrap(), b"encrypted ping");
+    assert!(
+        redirect
+            .unwrap()
+            .contains(&format!("Location: https://ssh-tls:{port}/"))
+    );
+}
+
+#[tokio::test]
+async fn missing_tls_certificate_should_reject_ssh_start_and_release_local_resources() {
+    let bastion = bastion().await;
+    let config = ssh_config("ssh-tls-missing", bastion.mock.echo_addr()).await;
+    let port = config.local_port.unwrap();
+    for ssl_override in [false, true] {
+        kftray_commons::utils::settings::set_ssl_enabled_with_mode(!ssl_override, MODE)
+            .await
+            .unwrap();
+        let result =
+            start_port_forward_with_mode(vec![config.clone()], "tcp", MODE, ssl_override).await;
+        if result.is_ok() {
+            stop(&config).await;
+        }
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("Global SSL certificate does not exist"),
+            "{error}"
+        );
+        assert!(!is_running(&config).await);
+        assert!(!CHILD_PROCESSES.contains_key(&config.id.unwrap()));
+        assert!(
+            !std::fs::read_to_string(&bastion.hosts)
+                .unwrap()
+                .contains("ssh-tls-missing")
+        );
+        assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
+        let _released = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn a_started_ssh_forward_should_write_its_domain_alias() {
     let bastion = bastion().await;
     let config = ssh_config("ssh-echo", bastion.mock.echo_addr()).await;
