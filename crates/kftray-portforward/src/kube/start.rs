@@ -1201,12 +1201,13 @@ pub(super) async fn start_config_cancellable(
                 Err(e) => {
                     phase.fail();
                     drop(phase);
-                    warn!("Failed to create TLS acceptor: {}", e);
-                    None
+                    let reason = format!("Failed to create TLS acceptor: {e}");
+                    return Err(rollback_startup(&port_forward, config, reason, mode).await);
                 }
             }
         } else {
-            None
+            let reason = "Failed to load SSL settings".to_owned();
+            return Err(rollback_startup(&port_forward, config, reason, mode).await);
         }
     } else {
         None
@@ -2221,6 +2222,84 @@ mod tests {
     #[test]
     fn finish_start_batch_stays_ok_for_an_empty_batch() {
         assert!(finish_start_batch(Vec::new()).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_tls_certificate_should_reject_tcp_start_and_release_local_resources() {
+        use kftray_commons::test_utils::{
+            EnvVarGuard,
+            HostsFileGuard,
+            test_db,
+        };
+
+        let _db = test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _config_dir = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        let hosts = dir.path().join("hosts");
+        std::fs::write(&hosts, "127.0.0.1 localhost\n").unwrap();
+        let _hosts = HostsFileGuard::point_at(&hosts);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let config = insert_fixture(Config {
+            local_port: Some(port),
+            kubeconfig: Some(
+                dir.path()
+                    .join("missing-kubeconfig")
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            ),
+            ..setup_config_with_domain()
+        })
+        .await;
+        for ssl_override in [false, true] {
+            kftray_commons::utils::settings::set_ssl_enabled_with_mode(
+                !ssl_override,
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
+            let error = start_config_cancellable(
+                config.clone(),
+                "tcp",
+                DatabaseMode::Memory,
+                ssl_override,
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error.contains("Global SSL certificate does not exist"),
+                "{error}"
+            );
+            assert!(!CHILD_PROCESSES.contains_key(&config.id.unwrap()));
+            let states = kftray_commons::utils::config_state::get_configs_state_with_mode(
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
+            assert!(
+                !states
+                    .iter()
+                    .any(|state| state.config_id == config.id.unwrap() && state.is_running)
+            );
+            assert!(
+                !std::fs::read_to_string(&hosts)
+                    .unwrap()
+                    .contains("test-alias")
+            );
+            assert!(
+                tokio::net::TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .is_err()
+            );
+            let _released = tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .unwrap();
+        }
     }
 
     #[tokio::test]
