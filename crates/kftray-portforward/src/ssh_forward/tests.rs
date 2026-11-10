@@ -73,7 +73,10 @@ async fn bastion() -> Bastion {
 }
 
 async fn bastion_with(options: MockSshdOptions) -> Bastion {
-    let db = test_db().await;
+    bastion_with_db(options, test_db().await).await
+}
+
+async fn bastion_with_db(options: MockSshdOptions, db: TestDb) -> Bastion {
     let lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
     let dir = tempfile::tempdir().unwrap();
     // The runtime loads this key lazily from KFTRAY_CONFIG; made first so
@@ -197,8 +200,9 @@ async fn a_started_ssh_forward_should_carry_bytes_to_the_destination() {
 
 #[tokio::test]
 async fn an_ssh_forward_with_a_valid_certificate_should_encrypt_and_redirect_http() {
-    let bastion = bastion().await;
+    let db = test_db().await;
     let _ssl_lock = crate::ssl::cert_store::SSL_TEST_MUTEX.lock().await;
+    let bastion = bastion_with_db(MockSshdOptions::default(), db).await;
     let _test_mode = EnvVarGuard::set("KFTRAY_TEST_MODE", "1");
     let config = ssh_config("ssh-tls", bastion.mock.echo_addr()).await;
     kftray_commons::utils::settings::set_ssl_enabled_with_mode(true, MODE)
