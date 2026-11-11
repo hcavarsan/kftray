@@ -257,6 +257,45 @@ mod tests {
         occupied.shutdown();
     }
 
+    async fn occupied_reverse_port_returns_bind_error(http_occupied: bool) {
+        let occupied = proxy::test_utils::setup_test_tcp_echo_server().await;
+        let port = occupied.addr().port();
+        let config = ProxyConfig::builder()
+            .target_host("127.0.0.1".to_string())
+            .target_port(9)
+            .proxy_port(0)
+            .proxy_type(ProxyType::ReverseHttp)
+            .http_port(Some(if http_occupied { port } else { 0 }))
+            .websocket_port(Some(if http_occupied { 0 } else { port }))
+            .build()
+            .unwrap();
+
+        let result =
+            tokio::time::timeout(tokio::time::Duration::from_secs(2), run_server(config)).await;
+        occupied.shutdown();
+
+        let error = result
+            .expect("reverse relay kept running after a listener bind failure")
+            .expect_err("reverse relay discarded a listener bind failure");
+        let listener = if http_occupied { "HTTP" } else { "WebSocket" };
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("Failed to bind {listener} server")),
+            "unexpected listener error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn occupied_reverse_http_port_returns_bind_error_without_shutdown_signal() {
+        occupied_reverse_port_returns_bind_error(true).await;
+    }
+
+    #[tokio::test]
+    async fn occupied_reverse_websocket_port_returns_bind_error_without_shutdown_signal() {
+        occupied_reverse_port_returns_bind_error(false).await;
+    }
+
     #[test]
     fn test_load_config_valid_tcp() {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
