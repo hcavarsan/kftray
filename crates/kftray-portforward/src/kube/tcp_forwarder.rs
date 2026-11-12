@@ -624,6 +624,7 @@ impl TcpForwarder {
                 current_response_logged: false,
                 first_chunk_time: None,
                 force_log_time: None,
+                past_header_bound: false,
             })
         } else {
             None
@@ -734,6 +735,7 @@ impl TcpForwarder {
                                         current_response_logged: false,
                                         first_chunk_time: None,
                                         force_log_time: None,
+                                        past_header_bound: false,
                                     });
                                     debug!("Enabled HTTP logging for upstream-to-client");
                                 } else {
@@ -788,10 +790,18 @@ impl TcpForwarder {
             state.reset_for_new_response(current_req_id);
         }
 
+        if state.past_header_bound {
+            return false;
+        }
         let scanned_len = state.buffer.len();
         state.buffer.extend_from_slice(buffer);
         let dropped = state.drop_interim_responses();
         let scanned_len = scanned_len.saturating_sub(dropped);
+
+        if state.buffer.len() > BUFFER_SIZE && !state.buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            state.past_header_bound = true;
+            return false;
+        }
 
         if dropped > 0 {
             state.first_chunk_time = None;
@@ -901,6 +911,7 @@ struct ResponseState {
     current_response_logged: bool,
     first_chunk_time: Option<tokio::time::Instant>,
     force_log_time: Option<tokio::time::Instant>,
+    past_header_bound: bool,
 }
 
 impl ResponseState {
@@ -913,6 +924,7 @@ impl ResponseState {
         self.current_response_id = request_id;
         self.first_chunk_time = Some(tokio::time::Instant::now());
         self.force_log_time = None;
+        self.past_header_bound = false;
     }
 
     fn pending_log_deadline(&self) -> Option<tokio::time::Instant> {
@@ -930,6 +942,7 @@ impl ResponseState {
         self.total_chunks_received = 0;
         self.first_chunk_time = None;
         self.force_log_time = None;
+        self.past_header_bound = false;
     }
 
     fn drop_interim_responses(&mut self) -> usize {
@@ -1082,6 +1095,7 @@ mod tests {
             current_response_logged: false,
             first_chunk_time: None,
             force_log_time: None,
+            past_header_bound: false,
         };
         let logger = Arc::new(Mutex::new(None));
         let request_id = Arc::new(Mutex::new(Some("chunked-request".to_string())));
@@ -1155,6 +1169,7 @@ mod tests {
             current_response_logged: false,
             first_chunk_time: None,
             force_log_time: None,
+            past_header_bound: false,
         };
         let logger = Arc::new(Mutex::new(None));
         let request_id = Arc::new(Mutex::new(Some("upload".to_string())));
@@ -1178,6 +1193,35 @@ mod tests {
         assert!(
             !TcpForwarder::should_log_response_static(&mut state),
             "final response logged before its last chunk"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_without_http_headers_stops_buffering_past_the_header_bound() {
+        let mut state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+            past_header_bound: false,
+        };
+        let logger = Arc::new(Mutex::new(None));
+        let request_id = Arc::new(Mutex::new(Some("grpc-stream".to_string())));
+        let read = vec![0xABu8; BUFFER_SIZE];
+
+        for _ in 0..16 {
+            TcpForwarder::handle_response_logging_static(&read, &mut state, &logger, &request_id)
+                .await;
+        }
+
+        assert!(
+            state.buffer.len() <= 2 * BUFFER_SIZE,
+            "buffered {} bytes of a stream with no HTTP headers",
+            state.buffer.len()
         );
     }
 
