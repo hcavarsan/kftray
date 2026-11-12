@@ -1517,6 +1517,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn export_keeps_proxy_hosts_targets_and_aliases_named_like_defaults() {
+        let pool = setup_test_db().await;
+        let base = Config {
+            namespace: "default".to_string(),
+            context: Some("dev".to_string()),
+            protocol: "tcp".to_string(),
+            remote_port: Some(80),
+            ..Config::default()
+        };
+        let saved = [
+            Config {
+                workload_type: Some("proxy".to_string()),
+                local_port: Some(18081),
+                remote_address: Some("default-target".to_string()),
+                alias: Some("proxy-control".to_string()),
+                ..base.clone()
+            },
+            Config {
+                workload_type: Some("service".to_string()),
+                local_port: Some(18080),
+                service: Some("web".to_string()),
+                alias: Some("default-alias".to_string()),
+                domain_enabled: Some(true),
+                ..base.clone()
+            },
+            Config {
+                workload_type: Some("pod".to_string()),
+                local_port: Some(18082),
+                target: Some("default-target".to_string()),
+                alias: Some("pod-control".to_string()),
+                ..base.clone()
+            },
+        ];
+        for config in saved {
+            insert_config_with_pool(config, &pool).await.unwrap();
+        }
+
+        let exported = export_configs_with_pool(&pool).await.unwrap();
+        let imported = parse_import_configs(&exported).unwrap();
+
+        let kept: Vec<_> = imported
+            .iter()
+            .map(|c| {
+                (
+                    c.remote_address.as_deref(),
+                    c.target.as_deref(),
+                    c.alias.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (Some("default-target"), None, Some("proxy-control")),
+                (None, None, Some("default-alias")),
+                (None, Some("default-target"), Some("pod-control")),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn pod_forward_keeps_its_domain_alias_after_export_and_import() {
         let pool = setup_test_db().await;
         let saved = Config {
