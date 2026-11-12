@@ -313,7 +313,6 @@ fn is_editor_available(editor: &str) -> bool {
 }
 
 fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
-    use std::ffi::OsStr;
     use std::process::{
         Command,
         Stdio,
@@ -331,13 +330,12 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
     }
 
     // Handle editors with arguments
-    let editor_parts: Vec<&str> = editor.split_whitespace().collect();
-    if editor_parts.len() > 1 {
-        let app = editor_parts[0];
-        let args: Vec<&OsStr> = editor_parts[1..].iter().map(OsStr::new).collect();
-
+    let editor_parts = split_editor_command(editor);
+    if let [app, args @ ..] = editor_parts.as_slice()
+        && !args.is_empty()
+    {
         let mut command = Command::new(app);
-        command.args(&args).arg(file_path);
+        command.args(args).arg(file_path);
 
         // Use Stdio::null() to prevent the editor from blocking on input
         command.stdin(Stdio::null());
@@ -386,7 +384,8 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
     let editor_clone = editor.to_string();
 
     // Start the editor in a background thread
-    let handle = with_in_background(file_path, editor);
+    let app = editor_parts.first().map_or(editor, String::as_str);
+    let handle = with_in_background(file_path, app);
 
     // Set a timeout for the operation
     let timeout = Duration::from_secs(5);
@@ -431,6 +430,38 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
             }
         }
     }
+}
+
+fn split_editor_command(editor: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_part = false;
+    let mut quote = None;
+
+    for c in editor.chars() {
+        match quote {
+            Some(open) if c == open => quote = None,
+            Some(_) => current.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_part = true;
+            }
+            None if c.is_whitespace() => {
+                if in_part {
+                    parts.push(std::mem::take(&mut current));
+                    in_part = false;
+                }
+            }
+            None => {
+                current.push(c);
+                in_part = true;
+            }
+        }
+    }
+    if in_part {
+        parts.push(current);
+    }
+    parts
 }
 
 fn run_command(cmd: &str, args: &[&str]) -> Result<(), String> {
@@ -1131,5 +1162,67 @@ mod tests {
         assert_eq!(db_config.max_file_size, 15 * 1024 * 1024);
         assert_eq!(db_config.retention_days, 10);
         assert!(db_config.auto_cleanup);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn open_log_file_runs_a_quoted_editor_path_from_editor_and_visual() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use kftray_commons::test_utils::EnvVarGuard;
+
+        let work = tempfile::tempdir().unwrap();
+        let config_dir = work.path().join("config");
+        let tools = work.path().join("editor tools");
+        let bin = work.path().join("bin");
+        let trace = work.path().join("trace");
+        std::fs::create_dir_all(config_dir.join("http_logs")).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            config_dir.join("http_logs/probe.http"),
+            "GET / HTTP/1.1\n\n",
+        )
+        .unwrap();
+        let editor = tools.join("editor");
+        std::fs::write(
+            &editor,
+            "#!/bin/sh\nprintf 'chosen %s\\n' \"$*\" >> \"$KFTRAY_EDITOR_TRACE\"\n",
+        )
+        .unwrap();
+        let fallback = bin.join("xdg-open");
+        std::fs::write(
+            &fallback,
+            "#!/bin/sh\n[ \"$1\" = --version ] || printf 'fallback\\n' >> \"$KFTRAY_EDITOR_TRACE\"\n",
+        )
+        .unwrap();
+        for script in [&editor, &fallback] {
+            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let log_file = config_dir
+            .join("http_logs/probe.http")
+            .canonicalize()
+            .unwrap();
+        let quoted = format!("\"{}\"", editor.display());
+
+        let _config = EnvVarGuard::set("KFTRAY_CONFIG", config_dir.to_str().unwrap());
+        let _trace = EnvVarGuard::set("KFTRAY_EDITOR_TRACE", trace.to_str().unwrap());
+        let _path = EnvVarGuard::set("PATH", bin.to_str().unwrap());
+        let _editor = EnvVarGuard::set("EDITOR", &format!("{quoted} --wait"));
+        let _visual = EnvVarGuard::remove("VISUAL");
+        open_log_file("probe.http".to_string()).await.unwrap();
+        let from_editor = std::fs::read_to_string(&trace).unwrap();
+        std::fs::remove_file(&trace).unwrap();
+
+        let _no_editor = EnvVarGuard::remove("EDITOR");
+        let _quoted_visual = EnvVarGuard::set("VISUAL", &quoted);
+        open_log_file("probe.http".to_string()).await.unwrap();
+        let from_visual = std::fs::read_to_string(&trace).unwrap();
+
+        assert_eq!(
+            from_editor,
+            format!("chosen --wait {}\n", log_file.display())
+        );
+        assert_eq!(from_visual, format!("chosen {}\n", log_file.display()));
     }
 }
