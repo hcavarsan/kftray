@@ -882,6 +882,13 @@ async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
             "new udp service",
             with(serde_json::json!({"service": "dns", "protocol": "udp"})),
         ),
+        (
+            "new proxy",
+            with(serde_json::json!({
+                "workload_type": "proxy",
+                "remote_address": "db.internal",
+            })),
+        ),
     ];
 
     for (case, args) in cases {
