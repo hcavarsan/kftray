@@ -20,7 +20,7 @@ env:
 jobs:
   desktop-macos:
     name: Desktop (macOS)
-    runs-on: macos-15-intel
+    runs-on: macos-26-intel
     timeout-minutes: 75
     env:
       KFTRAY_E2E_TIMEOUT_SCALE: "2"
