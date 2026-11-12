@@ -442,7 +442,7 @@ fn split_editor_command(editor: &str) -> Vec<String> {
         match quote {
             Some(open) if c == open => quote = None,
             Some(_) => current.push(c),
-            None if c == '"' || c == '\'' => {
+            None if !in_part && (c == '"' || c == '\'') => {
                 quote = Some(c);
                 in_part = true;
             }
@@ -1204,6 +1204,10 @@ mod tests {
             .canonicalize()
             .unwrap();
         let quoted = format!("\"{}\"", editor.display());
+        let apostrophe_dir = work.path().join("o'connor");
+        std::fs::create_dir_all(&apostrophe_dir).unwrap();
+        let apostrophe_editor = apostrophe_dir.join("editor");
+        std::os::unix::fs::symlink(&editor, &apostrophe_editor).unwrap();
 
         let _config = EnvVarGuard::set("KFTRAY_CONFIG", config_dir.to_str().unwrap());
         let _trace = EnvVarGuard::set("KFTRAY_EDITOR_TRACE", trace.to_str().unwrap());
@@ -1218,11 +1222,18 @@ mod tests {
         let _quoted_visual = EnvVarGuard::set("VISUAL", &quoted);
         open_log_file("probe.http".to_string()).await.unwrap();
         let from_visual = std::fs::read_to_string(&trace).unwrap();
+        std::fs::remove_file(&trace).unwrap();
+
+        let _apostrophe =
+            EnvVarGuard::set("EDITOR", &format!("{} --wait", apostrophe_editor.display()));
+        open_log_file("probe.http".to_string()).await.unwrap();
+        let from_apostrophe_path = std::fs::read_to_string(&trace).unwrap();
 
         assert_eq!(
             from_editor,
             format!("chosen --wait {}\n", log_file.display())
         );
         assert_eq!(from_visual, format!("chosen {}\n", log_file.display()));
+        assert_eq!(from_apostrophe_path, from_editor);
     }
 }
