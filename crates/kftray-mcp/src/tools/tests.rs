@@ -986,19 +986,24 @@ async fn list_ports_of_web(respond: fn(&str) -> KubeApiReply) -> (CallToolResult
     (result, seen)
 }
 
+fn web_pod(name: &str, ready: &str, metrics_port: i32) -> serde_json::Value {
+    serde_json::json!({
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {"containers": [{
+            "name": "app",
+            "ports": [
+                {"name": "http", "containerPort": 8080},
+                {"name": "metrics", "containerPort": metrics_port}
+            ]
+        }]},
+        "status": {"conditions": [{"type": "Ready", "status": ready}]}
+    })
+}
+
 fn web_pod_list() -> serde_json::Value {
     serde_json::json!({
         "apiVersion": "v1", "kind": "PodList", "metadata": {},
-        "items": [{
-            "metadata": {"name": "web-1", "namespace": "default"},
-            "spec": {"containers": [{
-                "name": "app",
-                "ports": [
-                    {"name": "http", "containerPort": 8080},
-                    {"name": "metrics", "containerPort": 9100}
-                ]
-            }]}
-        }]
+        "items": [web_pod("web-old", "False", 9000), web_pod("web-new", "True", 9100)]
     })
 }
 
@@ -1015,7 +1020,8 @@ async fn list_ports_returns_the_pod_ports_a_service_forward_connects_to() {
                         "selector": {"app": "web"},
                         "ports": [
                             {"name": "http", "port": 80, "targetPort": 8080, "protocol": "TCP"},
-                            {"name": "metrics", "port": 9090, "targetPort": "metrics", "protocol": "TCP"}
+                            {"name": "metrics", "port": 9090, "targetPort": "metrics", "protocol": "TCP"},
+                            {"name": "dns", "port": 53, "targetPort": 5353, "protocol": "UDP"}
                         ]
                     }
                 }),
@@ -1033,7 +1039,8 @@ async fn list_ports_returns_the_pod_ports_a_service_forward_connects_to() {
         result_json(&result)["ports"],
         serde_json::json!([
             {"name": "http", "port": 8080, "protocol": "TCP"},
-            {"name": "metrics", "port": 9100, "protocol": "TCP"}
+            {"name": "metrics", "port": 9100, "protocol": "TCP"},
+            {"name": "dns", "port": 53, "protocol": "UDP"}
         ])
     );
 }

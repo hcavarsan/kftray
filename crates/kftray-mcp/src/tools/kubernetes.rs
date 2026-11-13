@@ -372,6 +372,19 @@ fn protocol_or_tcp(protocol: Option<&String>) -> String {
     protocol.cloned().unwrap_or_else(|| "TCP".to_string())
 }
 
+fn pod_is_ready(pod: &k8s_openapi::api::core::v1::Pod) -> bool {
+    pod.metadata.deletion_timestamp.is_none()
+        && pod
+            .status
+            .as_ref()
+            .and_then(|status| status.conditions.as_ref())
+            .is_some_and(|conditions| {
+                conditions
+                    .iter()
+                    .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+            })
+}
+
 async fn list_forwardable_ports(
     client: kube::Client, namespace: &str, service_name: &str,
 ) -> Result<Vec<PortInfo>, String> {
@@ -406,6 +419,7 @@ async fn list_forwardable_ports(
 
             for sp in spec.ports.unwrap_or_default() {
                 let port = match &sp.target_port {
+                    _ if sp.protocol.as_deref() == Some("UDP") => Some(sp.port),
                     Some(IntOrString::Int(port)) => Some(*port),
                     None => Some(sp.port),
                     Some(IntOrString::String(port_name)) => {
@@ -417,7 +431,9 @@ async fn list_forwardable_ports(
                                 .list(&ListParams::default().labels(selector))
                                 .await
                                 .map_err(|e| format!("Failed to list pods: {e}"))?;
-                            selected_pods = Some(pods.items);
+                            let mut pods = pods.items;
+                            pods.sort_by_key(|pod| !pod_is_ready(pod));
+                            selected_pods = Some(pods);
                         }
                         selected_pods
                             .iter()
@@ -492,7 +508,7 @@ impl McpTool for ListPortsTool {
     fn definition(&self) -> Tool {
         Tool::with_schema(
             "list_ports",
-            "List the ports kftray forwards to for a Kubernetes service: the target port of each service port, with a named target port resolved to the container port of a selected pod. Pass `port` as remote_port. If the service does not exist, lists the container ports of pods matching the label selector.",
+            "List the ports kftray forwards to for a Kubernetes service: the target port of each TCP service port, with a named target port resolved to the container port of a ready pod, and the service port of each UDP one, which the relay dials on the service. Pass `port` as remote_port. If the service does not exist, lists the container ports of pods matching the label selector.",
             json!({
                 "context": {
                     "type": "string",
