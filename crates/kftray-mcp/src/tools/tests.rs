@@ -783,7 +783,22 @@ async fn delete_config_reports_an_error_for_an_unknown_id() {
     assert_eq!(list_services(serde_json::json!([])).await, ["billing"]);
 }
 
-async fn serve_forbidding_kube_api() -> (
+type KubeApiReply = (&'static str, serde_json::Value);
+
+fn kube_status(status: &'static str, code: u16, reason: &str) -> KubeApiReply {
+    (
+        status,
+        serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "reason": reason, "code": code,
+            "message": reason.to_lowercase()
+        }),
+    )
+}
+
+async fn serve_kube_api(
+    respond: fn(&str) -> KubeApiReply,
+) -> (
     std::net::SocketAddr,
     std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
 ) {
@@ -807,14 +822,7 @@ async fn serve_forbidding_kube_api() -> (
                 let (status, body) = if line.contains("/version") {
                     ("200 OK", serde_json::json!({"major": "1", "minor": "30"}))
                 } else {
-                    (
-                        "403 Forbidden",
-                        serde_json::json!({
-                            "kind": "Status", "apiVersion": "v1", "metadata": {},
-                            "status": "Failure", "reason": "Forbidden", "code": 403,
-                            "message": "forbidden"
-                        }),
-                    )
+                    respond(&line)
                 };
                 seen.lock().await.push(line);
                 let body = body.to_string();
@@ -829,12 +837,14 @@ async fn serve_forbidding_kube_api() -> (
     (addr, requests)
 }
 
-#[tokio::test]
-async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
-    kftray_portforward::ssl::ensure_crypto_provider_installed();
-    let _db = temp_config_db().await;
-    let (api, requests) = serve_forbidding_kube_api().await;
-    let dir = tempfile::tempdir().unwrap();
+async fn serve_forbidding_kube_api() -> (
+    std::net::SocketAddr,
+    std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+) {
+    serve_kube_api(|_| kube_status("403 Forbidden", 403, "Forbidden")).await
+}
+
+fn write_kubeconfig(dir: &tempfile::TempDir, api: std::net::SocketAddr) -> String {
     let kubeconfig = dir.path().join("kubeconfig");
     std::fs::write(
         &kubeconfig,
@@ -843,7 +853,17 @@ async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
         ),
     )
     .unwrap();
-    let kubeconfig = kubeconfig.to_str().unwrap();
+    kubeconfig.to_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn start_port_forward_deploys_a_relay_for_udp_and_proxy_configs() {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let _db = temp_config_db().await;
+    let (api, requests) = serve_forbidding_kube_api().await;
+    let dir = tempfile::tempdir().unwrap();
+    let kubeconfig = write_kubeconfig(&dir, api);
+    let kubeconfig = kubeconfig.as_str();
     let base = serde_json::json!({
         "context": "dev",
         "namespace": "team-a",
@@ -944,5 +964,159 @@ async fn start_port_forward_on_a_busy_port_tells_the_agent_how_to_retry() {
     assert!(
         new.contains("call start_port_forward again with local_port "),
         "{new}"
+    );
+}
+
+async fn list_ports_of_web(respond: fn(&str) -> KubeApiReply) -> (CallToolResult, Vec<String>) {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    let (api, requests) = serve_kube_api(respond).await;
+    let dir = tempfile::tempdir().unwrap();
+    let kubeconfig = write_kubeconfig(&dir, api);
+    let result = execute_tool(
+        "list_ports",
+        Some(serde_json::json!({
+            "context": "dev",
+            "namespace": "default",
+            "service": "web",
+            "kubeconfig": kubeconfig,
+        })),
+    )
+    .await;
+    let seen = requests.lock().await.clone();
+    (result, seen)
+}
+
+fn web_pod(name: &str, ready: &str, metrics_port: i32) -> serde_json::Value {
+    serde_json::json!({
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {"containers": [{
+            "name": "app",
+            "ports": [
+                {"name": "http", "containerPort": 8080},
+                {"name": "metrics", "containerPort": metrics_port}
+            ]
+        }]},
+        "status": {"conditions": [{"type": "Ready", "status": ready}]}
+    })
+}
+
+fn web_pod_list() -> serde_json::Value {
+    serde_json::json!({
+        "apiVersion": "v1", "kind": "PodList", "metadata": {},
+        "items": [web_pod("web-old", "False", 9000), web_pod("web-new", "True", 9100)]
+    })
+}
+
+#[tokio::test]
+async fn list_ports_returns_the_pod_ports_a_service_forward_connects_to() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/services/web") {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "apiVersion": "v1", "kind": "Service",
+                    "metadata": {"name": "web", "namespace": "default"},
+                    "spec": {
+                        "selector": {"app": "web"},
+                        "ports": [
+                            {"name": "http", "port": 80, "targetPort": 8080, "protocol": "TCP"},
+                            {"name": "metrics", "port": 9090, "targetPort": "metrics", "protocol": "TCP"},
+                            {"name": "dns", "port": 53, "targetPort": 5353, "protocol": "UDP"}
+                        ]
+                    }
+                }),
+            )
+        } else if line.contains("/pods") && line.contains("labelSelector=app%3Dweb") {
+            ("200 OK", web_pod_list())
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+
+    assert_eq!(result.is_error, None, "{} {seen:?}", result_text(&result));
+    assert_eq!(
+        result_json(&result)["ports"],
+        serde_json::json!([
+            {"name": "http", "port": 8080, "protocol": "TCP"},
+            {"name": "metrics", "port": 9100, "protocol": "TCP"},
+            {"name": "dns", "port": 53, "protocol": "UDP"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn list_ports_returns_the_target_port_of_a_headless_udp_service() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/services/web") {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "apiVersion": "v1", "kind": "Service",
+                    "metadata": {"name": "web", "namespace": "default"},
+                    "spec": {
+                        "clusterIP": "None",
+                        "selector": {"app": "web"},
+                        "ports": [
+                            {"name": "dns", "port": 53, "targetPort": 5353, "protocol": "UDP"}
+                        ]
+                    }
+                }),
+            )
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+
+    assert_eq!(result.is_error, None, "{} {seen:?}", result_text(&result));
+    assert_eq!(
+        result_json(&result)["ports"],
+        serde_json::json!([{"name": "dns", "port": 5353, "protocol": "UDP"}])
+    );
+}
+
+#[tokio::test]
+async fn list_ports_reports_a_forbidden_service_instead_of_an_empty_list() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/services/web") {
+            kube_status("403 Forbidden", 403, "Forbidden")
+        } else {
+            ("200 OK", web_pod_list())
+        }
+    })
+    .await;
+
+    assert_eq!(result.is_error, Some(true), "{}", result_text(&result));
+    assert!(
+        result_text(&result).contains("forbidden"),
+        "{}",
+        result_text(&result)
+    );
+    assert!(
+        !seen.iter().any(|line| line.contains("/pods")),
+        "a forbidden service must not fall back to the label selector: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_ports_reports_a_missing_service_with_no_matching_pods() {
+    let (result, _) = list_ports_of_web(|line| {
+        if line.contains("/pods") {
+            (
+                "200 OK",
+                serde_json::json!({"apiVersion": "v1", "kind": "PodList", "metadata": {}, "items": []}),
+            )
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+
+    assert_eq!(result.is_error, Some(true), "{}", result_text(&result));
+    assert!(
+        result_text(&result).contains("no ports found for label 'web'"),
+        "{}",
+        result_text(&result)
     );
 }
