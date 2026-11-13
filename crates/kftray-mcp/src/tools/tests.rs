@@ -1046,6 +1046,37 @@ async fn list_ports_returns_the_pod_ports_a_service_forward_connects_to() {
 }
 
 #[tokio::test]
+async fn list_ports_returns_the_target_port_of_a_headless_udp_service() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/services/web") {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "apiVersion": "v1", "kind": "Service",
+                    "metadata": {"name": "web", "namespace": "default"},
+                    "spec": {
+                        "clusterIP": "None",
+                        "selector": {"app": "web"},
+                        "ports": [
+                            {"name": "dns", "port": 53, "targetPort": 5353, "protocol": "UDP"}
+                        ]
+                    }
+                }),
+            )
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+
+    assert_eq!(result.is_error, None, "{} {seen:?}", result_text(&result));
+    assert_eq!(
+        result_json(&result)["ports"],
+        serde_json::json!([{"name": "dns", "port": 5353, "protocol": "UDP"}])
+    );
+}
+
+#[tokio::test]
 async fn list_ports_reports_a_forbidden_service_instead_of_an_empty_list() {
     let (result, seen) = list_ports_of_web(|line| {
         if line.contains("/services/web") {

@@ -416,10 +416,11 @@ async fn list_forwardable_ports(
                 });
             let mut selected_pods: Option<Vec<Pod>> = None;
             let mut ports = Vec::new();
+            let headless = spec.cluster_ip.as_deref() == Some("None");
 
             for sp in spec.ports.unwrap_or_default() {
                 let port = match &sp.target_port {
-                    _ if sp.protocol.as_deref() == Some("UDP") => Some(sp.port),
+                    _ if sp.protocol.as_deref() == Some("UDP") && !headless => Some(sp.port),
                     Some(IntOrString::Int(port)) => Some(*port),
                     None => Some(sp.port),
                     Some(IntOrString::String(port_name)) => {
@@ -508,7 +509,7 @@ impl McpTool for ListPortsTool {
     fn definition(&self) -> Tool {
         Tool::with_schema(
             "list_ports",
-            "List the ports kftray forwards to for a Kubernetes service: the target port of each TCP service port, with a named target port resolved to the container port of a ready pod, and the service port of each UDP one, which the relay dials on the service. Pass `port` as remote_port. If the service does not exist, lists the container ports of pods matching the label selector.",
+            "List the ports kftray forwards to for a Kubernetes service: the target port of each TCP service port, with a named target port resolved to the container port of a ready pod, and the service port of each UDP one, which the relay dials on the service. A headless service resolves to its pods, so its UDP ports list the target port too. Pass `port` as remote_port. If the service does not exist, lists the container ports of pods matching the label selector.",
             json!({
                 "context": {
                     "type": "string",
