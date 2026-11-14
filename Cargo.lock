@@ -3212,9 +3212,9 @@ dependencies = [
 
 [[package]]
 name = "global-hotkey"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adda8c76a5139df3bae0eb0413c2cd746f66594e0bb66231a4daa0be3172da70"
+checksum = "96daa86bdc1413406daee362a835e52c430c2193e5a5c328d1e522be140d1764"
 dependencies = [
  "crossbeam-channel",
  "keyboard-types 0.8.3",
@@ -4612,7 +4612,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "evdev",
- "global-hotkey 0.9.0",
+ "global-hotkey 0.10.0",
  "log",
  "mio",
  "serde",
