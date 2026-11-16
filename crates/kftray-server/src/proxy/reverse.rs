@@ -1,12 +1,7 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
-use log::{
-    error,
-    info,
-    warn,
-};
+use log::info;
 use tokio::sync::Notify;
 
 use crate::proxy::{
@@ -44,51 +39,21 @@ impl ProxyHandler for ReverseProxy {
         );
 
         let tunnel_server = Arc::new(WebSocketTunnelServer::new(ws_port));
-        let tunnel_clone = tunnel_server.clone();
+        let http_proxy = ReverseHttpProxy::new(tunnel_server.clone(), http_port);
 
-        let shutdown_clone = shutdown.clone();
-        let mut ws_handle = tokio::spawn(async move {
-            if let Err(e) = tunnel_clone.start(shutdown_clone).await {
-                error!("WebSocket server error: {}", e);
+        tokio::select! {
+            result = async {
+                tokio::try_join!(
+                    tunnel_server.start(shutdown.clone()),
+                    http_proxy.start(shutdown.clone()),
+                )
+            } => {
+                result?;
             }
-        });
-
-        let http_proxy = ReverseHttpProxy::new(tunnel_server, http_port);
-        let shutdown_http = shutdown.clone();
-        let mut http_handle = tokio::spawn(async move {
-            if let Err(e) = http_proxy.start(shutdown_http).await {
-                error!("HTTP proxy error: {}", e);
+            _ = shutdown.notified() => {
+                info!("Reverse proxy shutting down");
             }
-        });
-
-        shutdown.notified().await;
-        info!("Reverse proxy shutting down");
-
-        shutdown.notify_waiters();
-
-        let ws_shutdown = async {
-            tokio::select! {
-                _ = &mut ws_handle => {
-                    info!("WebSocket task completed gracefully");
-                }
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                    warn!("WebSocket task did not shut down within 5s, aborting");
-                    ws_handle.abort();
-                }
-            }
-        };
-        let http_shutdown = async {
-            tokio::select! {
-                _ = &mut http_handle => {
-                    info!("HTTP proxy task completed gracefully");
-                }
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                    warn!("HTTP proxy task did not shut down within 5s, aborting");
-                    http_handle.abort();
-                }
-            }
-        };
-        tokio::join!(ws_shutdown, http_shutdown);
+        }
 
         Ok(())
     }
@@ -99,72 +64,76 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use tokio::net::TcpListener;
     use tokio::sync::Notify;
 
-    #[tokio::test]
-    async fn graceful_shutdown_should_complete_before_abort() {
-        let shutdown = Arc::new(Notify::new());
-        let shutdown_clone = shutdown.clone();
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    use super::*;
+    use crate::proxy::config::ProxyType;
+    use crate::proxy::test_utils::wait_for_port;
 
-        let mut handle = tokio::spawn(async move {
-            let _ = started_tx.send(());
-            shutdown_clone.notified().await;
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        });
-
-        started_rx.await.unwrap();
-        shutdown.notify_waiters();
-
-        let start = std::time::Instant::now();
-        let completed_gracefully;
-        tokio::select! {
-            result = &mut handle => {
-                completed_gracefully = true;
-                assert!(result.is_ok(), "task should complete successfully");
-            }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                handle.abort();
-                completed_gracefully = false;
-            }
-        }
-
-        assert!(completed_gracefully, "task should complete before timeout");
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "graceful shutdown should be fast"
-        );
+    fn reverse_config(http_port: u16, websocket_port: u16) -> ProxyConfig {
+        ProxyConfig::builder()
+            .target_host("127.0.0.1".to_string())
+            .target_port(9)
+            .proxy_port(0)
+            .proxy_type(ProxyType::ReverseHttp)
+            .http_port(Some(http_port))
+            .websocket_port(Some(websocket_port))
+            .build()
+            .unwrap()
     }
 
     #[tokio::test]
-    async fn graceful_shutdown_should_abort_after_timeout_for_stuck_task() {
+    async fn listener_failure_releases_the_other_listener() {
+        let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = reservation.local_addr().unwrap();
+        drop(reservation);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            ReverseProxy::new().start(
+                reverse_config(addr.port(), addr.port()),
+                Arc::new(Notify::new()),
+            ),
+        )
+        .await
+        .expect("reverse relay kept running after a listener bind failure");
+
+        assert!(result.is_err(), "listeners cannot share a port");
+        let _listener = TcpListener::bind(addr)
+            .await
+            .expect("reverse relay left its other listener open");
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_releases_both_listeners() {
+        let http_reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_addr = http_reservation.local_addr().unwrap();
+        let ws_addr = ws_reservation.local_addr().unwrap();
+        let config = reverse_config(http_addr.port(), ws_addr.port());
+        drop((http_reservation, ws_reservation));
         let shutdown = Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
+        let handle =
+            tokio::spawn(async move { ReverseProxy::new().start(config, shutdown_clone).await });
 
-        let mut handle = tokio::spawn(async move {
-            // Observes shutdown but then gets stuck (simulates a hung task)
-            shutdown_clone.notified().await;
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        });
-
-        shutdown.notify_waiters();
-
-        let start = std::time::Instant::now();
-        let was_aborted;
-        tokio::select! {
-            _ = &mut handle => {
-                was_aborted = false;
-            }
-            _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                handle.abort();
-                was_aborted = true;
-            }
-        }
-
-        assert!(was_aborted, "stuck task should require abort after timeout");
         assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "abort should happen shortly after timeout"
+            wait_for_port(http_addr).await,
+            "HTTP listener did not start"
         );
+        assert!(
+            wait_for_port(ws_addr).await,
+            "WebSocket listener did not start"
+        );
+        shutdown.notify_waiters();
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("reverse relay did not shut down")
+            .unwrap()
+            .unwrap();
+
+        let _http_listener = TcpListener::bind(http_addr).await.unwrap();
+        let _ws_listener = TcpListener::bind(ws_addr).await.unwrap();
     }
 }
