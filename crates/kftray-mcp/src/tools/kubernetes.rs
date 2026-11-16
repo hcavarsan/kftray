@@ -365,8 +365,138 @@ struct ListPortsArgs {
 struct PortInfo {
     name: Option<String>,
     port: i32,
-    target_port: String,
     protocol: String,
+}
+
+fn protocol_or_tcp(protocol: Option<&String>) -> String {
+    protocol.cloned().unwrap_or_else(|| "TCP".to_string())
+}
+
+fn pod_is_ready(pod: &k8s_openapi::api::core::v1::Pod) -> bool {
+    pod.metadata.deletion_timestamp.is_none()
+        && pod
+            .status
+            .as_ref()
+            .and_then(|status| status.conditions.as_ref())
+            .is_some_and(|conditions| {
+                conditions
+                    .iter()
+                    .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+            })
+}
+
+async fn list_forwardable_ports(
+    client: kube::Client, namespace: &str, service_name: &str,
+) -> Result<Vec<PortInfo>, String> {
+    use k8s_openapi::api::core::v1::{
+        Pod,
+        Service,
+    };
+    use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+    use kube::{
+        Api,
+        api::ListParams,
+    };
+
+    let service_api: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let pod_api: Api<Pod> = Api::namespaced(client, namespace);
+
+    match service_api.get(service_name).await {
+        Ok(service) => {
+            let spec = service.spec.unwrap_or_default();
+            let selector = spec
+                .selector
+                .filter(|selector| !selector.is_empty())
+                .map(|selector| {
+                    selector
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                });
+            let mut selected_pods: Option<Vec<Pod>> = None;
+            let mut ports = Vec::new();
+            let headless = spec.cluster_ip.as_deref() == Some("None");
+
+            for sp in spec.ports.unwrap_or_default() {
+                let port = match &sp.target_port {
+                    _ if sp.protocol.as_deref() == Some("UDP") && !headless => Some(sp.port),
+                    Some(IntOrString::Int(port)) => Some(*port),
+                    None => Some(sp.port),
+                    Some(IntOrString::String(port_name)) => {
+                        let Some(selector) = &selector else {
+                            continue;
+                        };
+                        if selected_pods.is_none() {
+                            let pods = pod_api
+                                .list(&ListParams::default().labels(selector))
+                                .await
+                                .map_err(|e| format!("Failed to list pods: {e}"))?;
+                            let mut pods = pods.items;
+                            pods.sort_by_key(|pod| !pod_is_ready(pod));
+                            selected_pods = Some(pods);
+                        }
+                        selected_pods
+                            .iter()
+                            .flatten()
+                            .filter_map(|pod| pod.spec.as_ref())
+                            .flat_map(|spec| spec.containers.iter())
+                            .filter_map(|container| container.ports.as_ref())
+                            .flatten()
+                            .find(|cp| cp.name.as_deref() == Some(port_name.as_str()))
+                            .map(|cp| cp.container_port)
+                    }
+                };
+                if let Some(port) = port {
+                    ports.push(PortInfo {
+                        name: sp.name.clone(),
+                        port,
+                        protocol: protocol_or_tcp(sp.protocol.as_ref()),
+                    });
+                }
+            }
+
+            if ports.is_empty() {
+                Err(format!(
+                    "No ports found for service '{service_name}' in namespace '{namespace}'"
+                ))
+            } else {
+                Ok(ports)
+            }
+        }
+        Err(kube::Error::Api(status)) if status.code == 404 => {
+            let pods = pod_api
+                .list(&ListParams::default().labels(service_name))
+                .await
+                .map_err(|e| {
+                    format!("Service '{service_name}' not found and failed to list pods: {e}")
+                })?;
+
+            let mut ports: Vec<PortInfo> = pods
+                .iter()
+                .filter_map(|pod| pod.spec.as_ref())
+                .flat_map(|spec| spec.containers.iter())
+                .filter_map(|container| container.ports.as_ref())
+                .flatten()
+                .map(|cp| PortInfo {
+                    name: cp.name.clone(),
+                    port: cp.container_port,
+                    protocol: protocol_or_tcp(cp.protocol.as_ref()),
+                })
+                .collect();
+            ports.sort_by_key(|a| a.port);
+            ports.dedup_by(|a, b| a.port == b.port && a.name == b.name);
+
+            if ports.is_empty() {
+                Err(format!(
+                    "Service '{service_name}' not found and no ports found for label '{service_name}' in namespace '{namespace}'"
+                ))
+            } else {
+                Ok(ports)
+            }
+        }
+        Err(e) => Err(format!("Failed to get service '{service_name}': {e}")),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -379,7 +509,7 @@ impl McpTool for ListPortsTool {
     fn definition(&self) -> Tool {
         Tool::with_schema(
             "list_ports",
-            "List all ports exposed by a Kubernetes service. If the service is not found, attempts to list ports from pods matching the label selector.",
+            "List the ports kftray forwards to for a Kubernetes service: the target port of each TCP service port, with a named target port resolved to the container port of a ready pod, and the service port of each UDP one, which the relay dials on the service. A headless service resolves to its pods, so its UDP ports list the target port too. Pass `port` as remote_port. If the service does not exist, lists the container ports of pods matching the label selector.",
             json!({
                 "context": {
                     "type": "string",
@@ -419,13 +549,6 @@ impl McpTool for ListPortsTool {
             }
         };
 
-        use k8s_openapi::api::core::v1::Service;
-        use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-        use kube::{
-            Api,
-            api::ListParams,
-        };
-
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
             &args.context,
@@ -433,92 +556,15 @@ impl McpTool for ListPortsTool {
         .await
         {
             Ok(connection) => {
-                let client = connection.client;
-                let api: Api<Service> = Api::namespaced(client.clone(), &args.namespace);
-
-                match api.get(&args.service).await {
-                    Ok(service) => {
-                        let ports: Vec<PortInfo> = service
-                            .spec
-                            .as_ref()
-                            .and_then(|spec| spec.ports.as_ref())
-                            .map(|ports| {
-                                ports
-                                    .iter()
-                                    .map(|p| {
-                                        let target_port = match &p.target_port {
-                                            Some(IntOrString::Int(port)) => port.to_string(),
-                                            Some(IntOrString::String(name)) => name.clone(),
-                                            None => p.port.to_string(),
-                                        };
-                                        PortInfo {
-                                            name: p.name.clone(),
-                                            port: p.port,
-                                            target_port,
-                                            protocol: p
-                                                .protocol
-                                                .clone()
-                                                .unwrap_or_else(|| "TCP".to_string()),
-                                        }
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                        let response = PortsResponse { ports };
-                        CallToolResult::json(&response).unwrap_or_else(|e| {
+                match list_forwardable_ports(connection.client, &args.namespace, &args.service)
+                    .await
+                {
+                    Ok(ports) => {
+                        CallToolResult::json(&PortsResponse { ports }).unwrap_or_else(|e| {
                             CallToolResult::error(format!("Failed to serialize response: {e}"))
                         })
                     }
-                    Err(_) => {
-                        // Service not found, try to find pods with matching labels
-                        use k8s_openapi::api::core::v1::Pod;
-
-                        let pod_api: Api<Pod> = Api::namespaced(client, &args.namespace);
-                        match pod_api
-                            .list(&ListParams::default().labels(&args.service))
-                            .await
-                        {
-                            Ok(pod_list) => {
-                                let mut ports: Vec<PortInfo> = Vec::new();
-
-                                for pod in pod_list.iter() {
-                                    if let Some(spec) = &pod.spec {
-                                        for container in &spec.containers {
-                                            if let Some(container_ports) = &container.ports {
-                                                for cp in container_ports {
-                                                    ports.push(PortInfo {
-                                                        name: cp.name.clone(),
-                                                        port: cp.container_port,
-                                                        target_port: cp.container_port.to_string(),
-                                                        protocol: cp
-                                                            .protocol
-                                                            .clone()
-                                                            .unwrap_or_else(|| "TCP".to_string()),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Deduplicate ports
-                                ports.sort_by_key(|a| a.port);
-                                ports.dedup_by(|a, b| a.port == b.port && a.name == b.name);
-
-                                let response = PortsResponse { ports };
-                                CallToolResult::json(&response).unwrap_or_else(|e| {
-                                    CallToolResult::error(format!(
-                                        "Failed to serialize response: {e}"
-                                    ))
-                                })
-                            }
-                            Err(e) => CallToolResult::error(format!(
-                                "Service '{}' not found and failed to list pods: {e}",
-                                args.service
-                            )),
-                        }
-                    }
+                    Err(e) => CallToolResult::error(e),
                 }
             }
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
