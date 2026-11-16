@@ -1,9 +1,9 @@
 import { invoke } from '@/lib/tauri'
 import type { Config, StoredConfig } from '@/types'
 
-// Matches the busy-port start error built in
+// Matches the free-port offer in the bind errors built in
 // crates/kftray-portforward/src/local_port.rs.
-const FREE_PORT = /is already in use\. Port (\d+) is free\./
+const FREE_PORT = /\. Port (\d+) is free\./
 
 export function freePortFromError(message: string): number | undefined {
   const match = FREE_PORT.exec(message)
