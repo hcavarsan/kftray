@@ -16,6 +16,19 @@ describe('freePortFromError', () => {
     ).toBe(8081)
   })
 
+  it('reads the free port the backend offers for a port the system refuses', () => {
+    expect(
+      freePortFromError(
+        'Failed to start TCP port forwarding for service web: Local TCP port 80 on 0.0.0.0 cannot be bound: access denied or the port is reserved by the system. Port 41234 is free.',
+      ),
+    ).toBe(41234)
+    expect(
+      freePortFromError(
+        'Local TCP port 80 on 127.0.0.1 cannot be bound: access denied or the port is reserved by the system; install or update the kftray helper in Settings to use ports below 1024. Port 41234 is free.',
+      ),
+    ).toBe(41234)
+  })
+
   it('finds no port in other start errors', () => {
     expect(
       freePortFromError('Local TCP port 8080 on 127.0.0.1 is already in use.'),
