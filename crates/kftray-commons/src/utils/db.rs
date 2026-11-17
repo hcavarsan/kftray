@@ -629,7 +629,11 @@ mod tests {
         let lookalike = base.path().join("aAb");
         fs::create_dir_all(&lookalike).unwrap();
         File::create(lookalike.join("configs.db")).unwrap();
-        for name in ["a%41b", "what?"] {
+        let mut names = vec!["a%41b"];
+        if cfg!(unix) {
+            names.push("what?");
+        }
+        for name in names {
             clear_db_pool();
             let config_dir = base.path().join(name);
             fs::create_dir_all(&config_dir).unwrap();
