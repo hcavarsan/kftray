@@ -151,6 +151,9 @@ fn create_http_tunnel_with_connector(
     use base64::Engine;
     use hyper_util::client::legacy::connect::proxy::Tunnel;
     let tunnel = Tunnel::new(proxy_url.clone(), connector);
+    if proxy_url.scheme_str() != Some("http") {
+        return tunnel;
+    }
     let Some((user, pass)) = proxy_credentials(proxy_url) else {
         return tunnel;
     };
@@ -240,16 +243,32 @@ mod tests {
         }
     }
 
-    async fn first_bytes_seen_by_proxy(entry: Entry, scheme: &str) -> Vec<u8> {
+    async fn read_connect_request(stream: &mut tokio::net::TcpStream) -> String {
+        use tokio::io::AsyncReadExt;
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            if stream.read(&mut byte).await.unwrap() == 0 {
+                break;
+            }
+            request.push(byte[0]);
+        }
+        String::from_utf8_lossy(&request).into_owned()
+    }
+
+    async fn first_bytes_seen_by_proxy(entry: Entry, scheme: &'static str) -> Vec<u8> {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let accept = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 1024];
-            let n = stream.read(&mut buf).await.unwrap();
-            buf.truncate(n);
-            buf
+            if scheme == "socks5" {
+                let mut greeting = vec![0u8; 3];
+                stream.read_exact(&mut greeting).await.unwrap();
+                greeting
+            } else {
+                read_connect_request(&mut stream).await.into_bytes()
+            }
         });
         let proxy: Uri = format!("{scheme}://{addr}").parse().unwrap();
         let client = connect_through(entry, &proxy).await.unwrap();
@@ -299,33 +318,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_proxy_url_credentials_reach_connect() {
-        use tokio::io::{
-            AsyncReadExt,
-            AsyncWriteExt,
-        };
+    async fn http_proxy_url_credentials_reach_connect_only_over_http() {
+        use tokio::io::AsyncWriteExt;
         use tower::Service;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let n = stream.read(&mut buf).await.unwrap();
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
-            String::from_utf8_lossy(&buf[..n]).to_string()
-        });
-        let proxy: Uri = format!("http://user:p%40ss@127.0.0.1:{port}")
-            .parse()
-            .unwrap();
-        let mut tunnel = create_http_tunnel(&proxy);
-        let _ = tunnel
-            .call("https://kube.invalid:6443".parse().unwrap())
-            .await;
-        let request = server.await.unwrap();
-        assert!(
-            request.contains("Proxy-Authorization: Basic dXNlcjpwQHNz\r\n"),
-            "{request}"
-        );
+        for (scheme, expected_auth) in [
+            ("http", Some("Proxy-Authorization: Basic dXNlcjpwQHNz\r\n")),
+            ("https", None),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_connect_request(&mut stream).await;
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                request
+            });
+            let proxy: Uri = format!("{scheme}://user:p%40ss@127.0.0.1:{port}")
+                .parse()
+                .unwrap();
+            let mut tunnel = create_http_tunnel(&proxy);
+            let _ = tunnel
+                .call("https://kube.invalid:6443".parse().unwrap())
+                .await;
+            let request = server.await.unwrap();
+            match expected_auth {
+                Some(header) => assert!(request.contains(header), "{scheme}: {request}"),
+                None => assert!(
+                    !request.contains("Proxy-Authorization"),
+                    "{scheme}: {request}"
+                ),
+            }
+        }
     }
 
     #[tokio::test]
@@ -342,9 +365,9 @@ mod tests {
             let mut greeting = [0u8; 3];
             stream.read_exact(&mut greeting).await.unwrap();
             stream.write_all(&[5, 2]).await.unwrap();
-            let mut auth = vec![0u8; 64];
-            let n = stream.read(&mut auth).await.unwrap();
-            (greeting, auth[..n].to_vec())
+            let mut auth = vec![0u8; 11];
+            stream.read_exact(&mut auth).await.unwrap();
+            (greeting, auth)
         });
         let proxy: Uri = format!("socks5://user:pass@127.0.0.1:{port}")
             .parse()
@@ -355,7 +378,10 @@ mod tests {
                 .call("https://kube.invalid:6443".parse().unwrap())
                 .await;
         });
-        let (greeting, auth) = server.await.unwrap();
+        let (greeting, auth) = tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
         call.abort();
         assert_eq!(greeting, [5, 1, 2]);
         assert_eq!(auth, b"\x01\x04user\x04pass");
