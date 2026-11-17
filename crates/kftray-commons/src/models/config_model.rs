@@ -227,23 +227,22 @@ impl Config {
     pub fn prepare_for_export(mut self) -> Self {
         self.id = None;
 
-        if Self::is_placeholder(&self.protocol) {
+        if self.protocol == "protocol" {
             self.protocol = String::new();
         }
 
-        if self.target.as_deref().is_some_and(Self::is_placeholder) {
+        if self.target.as_deref() == Some("") {
             self.target = None;
         }
 
-        if self
-            .remote_address
-            .as_deref()
-            .is_some_and(Self::is_placeholder)
-        {
+        if matches!(
+            self.remote_address.as_deref(),
+            Some("" | Self::DEFAULT_REMOTE_ADDRESS)
+        ) {
             self.remote_address = None;
         }
 
-        if self.alias.as_deref().is_some_and(Self::is_placeholder) {
+        if self.alias.as_deref() == Some("") {
             self.alias = None;
         }
 
@@ -315,19 +314,6 @@ impl Config {
         }
 
         self
-    }
-
-    fn is_placeholder(s: &str) -> bool {
-        matches!(
-            s,
-            "default-target"
-                | Self::DEFAULT_REMOTE_ADDRESS
-                | "default-alias"
-                | "default-workload"
-                | Self::DEFAULT_CONTEXT
-                | "protocol"
-                | ""
-        )
     }
 }
 
