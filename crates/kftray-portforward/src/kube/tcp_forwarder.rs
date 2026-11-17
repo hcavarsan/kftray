@@ -835,12 +835,13 @@ impl TcpForwarder {
             }
         }
 
-        Self::log_response_if_ready(state, logger).await;
-
-        if state.buffer.len() > MAX_LOGGED_RESPONSE_SIZE
-            || (state.current_response_logged && !state.buffer.is_empty())
-        {
+        if state.buffer.len() > MAX_LOGGED_RESPONSE_SIZE {
             Self::skip_rest_of_response(state, logger).await;
+        } else {
+            Self::log_response_if_ready(state, logger).await;
+            if state.current_response_logged && !state.buffer.is_empty() {
+                Self::skip_rest_of_response(state, logger).await;
+            }
         }
 
         // The caller switches to raw forwarding only after the handshake is
@@ -873,7 +874,13 @@ impl TcpForwarder {
                 log.log_response(logged.into(), response_id).await;
             }
         }
-        state.skipped_body = Some(skipped);
+        let response_ended = matches!(skipped.body, RequestBody::Headers | RequestBody::Length(0))
+            || (state.is_chunked && state.found_end_marker);
+        if response_ended {
+            state.reset_for_next_response();
+        } else {
+            state.skipped_body = Some(skipped);
+        }
     }
 
     async fn log_response_if_ready(
@@ -1603,6 +1610,40 @@ mod tests {
 
         let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
         assert_eq!(contents.matches("# Response at").count(), 1);
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn download_ending_past_the_limit_logs_a_bounded_response() {
+        let (_temp_dir, log_path, http_logger, logger, request_id, mut state) =
+            logged_response_state("download-edge.log").await;
+        let head_without_length = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ";
+        let body_len = MAX_LOGGED_RESPONSE_SIZE - head_without_length.len();
+        let head = format!("{head_without_length}{body_len}\r\n\r\n");
+        TcpForwarder::handle_response_logging_static(
+            head.as_bytes(),
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        let body = vec![b'z'; body_len];
+        for read in body.chunks(BUFFER_SIZE) {
+            TcpForwarder::handle_response_logging_static(read, &mut state, &logger, &request_id)
+                .await;
+        }
+        assert!(
+            state.skipped_body.is_none() && state.buffer.is_empty(),
+            "download must end at its content length"
+        );
+
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        assert_eq!(contents.matches("# Response at").count(), 1);
+        let logged_body = contents.matches('z').count();
+        assert!(
+            logged_body <= MAX_LOGGED_RESPONSE_SIZE - head.len(),
+            "logged {logged_body} body bytes"
+        );
         http_logger.shutdown().await;
     }
 
