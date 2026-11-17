@@ -656,12 +656,16 @@ mod tests {
             .spawn()
             .unwrap();
         let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
-        let addr: SocketAddr = loop {
-            let line = lines.next_line().await.unwrap().expect("child exited");
-            if let Some(addr) = line.strip_prefix("MCP_ADDR=") {
-                break addr.parse().unwrap();
+        let addr: SocketAddr = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let line = lines.next_line().await.unwrap().expect("child exited");
+                if let Some(addr) = line.strip_prefix("MCP_ADDR=") {
+                    break addr.parse().unwrap();
+                }
             }
-        };
+        })
+        .await
+        .expect("child never printed its address");
 
         let mut idle = Vec::new();
         for _ in 0..80 {
