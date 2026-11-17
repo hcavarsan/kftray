@@ -402,6 +402,7 @@ mod tests {
 
     fn expect_one_restart(id: i64) -> Arc<dyn PortOperations> {
         let mut mock = MockPortOperations::new();
+        mock.expect_stop_generation().returning(|_| 0);
         mock.expect_is_forward_registered()
             .with(mockall::predicate::eq(id))
             .times(1)
@@ -477,6 +478,7 @@ mod tests {
         let _db = kftray_commons::test_utils::test_db().await;
         let (_env, id) = running_forward_with_alias("ssl-restart-fails", false).await;
         let mut mock = MockPortOperations::new();
+        mock.expect_stop_generation().returning(|_| 0);
         mock.expect_is_forward_registered().returning(|_| false);
         mock.expect_dispatch_start()
             .times(3)
