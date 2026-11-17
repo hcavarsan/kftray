@@ -619,6 +619,7 @@ impl TcpForwarder {
                 buffer: Vec::new(),
                 is_chunked: false,
                 found_end_marker: false,
+                chunk_offset: 0,
                 total_chunks_received: 0,
                 current_response_id: None,
                 current_response_logged: false,
@@ -729,6 +730,7 @@ impl TcpForwarder {
                                         buffer: Vec::new(),
                                         is_chunked: false,
                                         found_end_marker: false,
+                                        chunk_offset: 0,
                                         total_chunks_received: 0,
                                         current_response_id: None,
                                         current_response_logged: false,
@@ -788,10 +790,8 @@ impl TcpForwarder {
             state.reset_for_new_response(current_req_id);
         }
 
-        let scanned_len = state.buffer.len();
         state.buffer.extend_from_slice(buffer);
         let dropped = state.drop_interim_responses();
-        let scanned_len = scanned_len.saturating_sub(dropped);
 
         if dropped > 0 {
             state.first_chunk_time = None;
@@ -806,7 +806,7 @@ impl TcpForwarder {
 
         kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::process_chunk(
             &state.buffer,
-            scanned_len,
+            &mut state.chunk_offset,
             state.is_chunked,
             &mut state.found_end_marker,
             &mut state.total_chunks_received,
@@ -896,6 +896,7 @@ struct ResponseState {
     buffer: Vec<u8>,
     is_chunked: bool,
     found_end_marker: bool,
+    chunk_offset: usize,
     total_chunks_received: usize,
     current_response_id: Option<String>,
     current_response_logged: bool,
@@ -908,6 +909,7 @@ impl ResponseState {
         self.buffer.clear();
         self.is_chunked = false;
         self.found_end_marker = false;
+        self.chunk_offset = 0;
         self.total_chunks_received = 0;
         self.current_response_logged = false;
         self.current_response_id = request_id;
@@ -927,6 +929,7 @@ impl ResponseState {
         self.buffer.clear();
         self.is_chunked = false;
         self.found_end_marker = false;
+        self.chunk_offset = 0;
         self.total_chunks_received = 0;
         self.first_chunk_time = None;
         self.force_log_time = None;
@@ -1077,6 +1080,7 @@ mod tests {
             buffer: Vec::new(),
             is_chunked: false,
             found_end_marker: false,
+            chunk_offset: 0,
             total_chunks_received: 0,
             current_response_id: None,
             current_response_logged: false,
@@ -1150,6 +1154,7 @@ mod tests {
             buffer: Vec::new(),
             is_chunked: false,
             found_end_marker: false,
+            chunk_offset: 0,
             total_chunks_received: 0,
             current_response_id: None,
             current_response_logged: false,
@@ -1316,6 +1321,79 @@ mod tests {
             forward.await.unwrap();
             http_logger.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn chunk_payload_end_marker_does_not_cut_off_the_logged_response() {
+        let (_temp_dir, log_path, http_logger) = temp_http_logger("payload-marker.log").await;
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /payload-marker HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut upstream_writer = TcpStream::connect(upstream_listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut upstream_reader, _) = upstream_listener.accept().await.unwrap();
+        let client_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client_reader = TcpStream::connect(client_listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut client_writer, _) = client_listener.accept().await.unwrap();
+        let (_events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                DatabaseMode::File,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        });
+        let payload = b"prefix0\r\n\r\npayload-tail";
+        let mut first = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n",
+            payload.len()
+        )
+        .into_bytes();
+        first.extend_from_slice(&payload[..11]);
+        upstream_writer.write_all(&first).await.unwrap();
+        let mut first_received = vec![0; first.len()];
+        client_reader.read_exact(&mut first_received).await.unwrap();
+        assert_eq!(first_received, first);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let early = tokio::fs::read_to_string(&log_path).await.unwrap();
+
+        let mut tail = payload[11..].to_vec();
+        tail.extend_from_slice(b"\r\n0\r\n\r\n");
+        upstream_writer.write_all(&tail).await.unwrap();
+        let mut tail_received = vec![0; tail.len()];
+        client_reader.read_exact(&mut tail_received).await.unwrap();
+        assert_eq!(tail_received, tail);
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        upstream_writer.shutdown().await.unwrap();
+        forward.await.unwrap();
+        http_logger.shutdown().await;
+
+        assert!(
+            contents.contains("payload-tail"),
+            "incomplete response: {contents}"
+        );
+        assert!(
+            !early.contains("# Response at"),
+            "response logged before its chunk completed"
+        );
+        assert_eq!(contents.matches("# Response at").count(), 1);
     }
 
     #[tokio::test]
