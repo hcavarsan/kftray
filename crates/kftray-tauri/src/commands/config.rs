@@ -108,6 +108,12 @@ async fn restart_ssl_proxies_if_running(
 
     info!("=== Starting SSL proxy restart process ===");
 
+    let all_configs = get_configs()
+        .await
+        .map_err(|e| format!("Failed to get configs: {}", e))?;
+
+    info!("Found {} total configs in database", all_configs.len());
+
     // On a retry, restart exactly the configs that failed last time: a
     // config that failed to restart typically no longer shows as running
     // in config_state, so re-deriving the candidate set from "currently
@@ -115,16 +121,25 @@ async fn restart_ssl_proxies_if_running(
     let running_config_ids: Vec<(i64, u64)> = if let Some(ids) = target_ids {
         ids.to_vec()
     } else {
+        let generations: Vec<(i64, u64)> = all_configs
+            .iter()
+            .filter_map(|config| config.id)
+            .map(|id| (id, port_ops.stop_generation(id)))
+            .collect();
+
         let config_states = get_configs_state()
             .await
             .map_err(|e| format!("Failed to get config states: {}", e))?;
 
         info!("Found {} total config states", config_states.len());
 
-        config_states
-            .iter()
-            .filter(|state| state.is_running)
-            .map(|state| (state.config_id, port_ops.stop_generation(state.config_id)))
+        generations
+            .into_iter()
+            .filter(|(id, _)| {
+                config_states
+                    .iter()
+                    .any(|state| state.config_id == *id && state.is_running)
+            })
             .collect()
     };
 
@@ -134,13 +149,6 @@ async fn restart_ssl_proxies_if_running(
         info!("No candidate configs found, no SSL proxies to restart");
         return Ok(None);
     }
-
-    // Get all configs to filter for SSL-enabled ones
-    let all_configs = get_configs()
-        .await
-        .map_err(|e| format!("Failed to get configs: {}", e))?;
-
-    info!("Found {} total configs in database", all_configs.len());
 
     let ssl_configs: Vec<(Config, u64)> = all_configs
         .into_iter()
@@ -199,12 +207,18 @@ async fn restart_ssl_proxies_if_running(
         // registered, and always attempt the start below so a down
         // candidate keeps getting retried instead of being skipped forever.
         if port_ops.is_forward_registered(id).await {
-            if let Err(e) = port_ops.stop_port_forward(id).await {
-                warn!("Failed to stop port forward for config {}: {}", id, e);
-                failed_ids.push((id, port_ops.stop_generation(id)));
+            let stopped = port_ops.stop_port_forward(id).await;
+            let after_stop = port_ops.stop_generation(id);
+            if after_stop > expected_generation + 1 {
+                info!("Config {} was stopped by the user, not restarting it", id);
                 continue;
             }
-            expected_generation = port_ops.stop_generation(id);
+            expected_generation = after_stop;
+            if let Err(e) = stopped {
+                warn!("Failed to stop port forward for config {}: {}", id, e);
+                failed_ids.push((id, expected_generation));
+                continue;
+            }
 
             // Small delay to ensure clean shutdown
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1221,5 +1235,54 @@ mod tests {
         let started = started.lock().unwrap().clone();
         assert!(started.contains(&restarted), "{started:?}");
         assert!(!started.contains(&user_stopped), "{started:?}");
+    }
+
+    #[tokio::test]
+    async fn ssl_restart_does_not_start_a_forward_the_user_stopped_during_its_own_stop() {
+        use std::sync::atomic::{
+            AtomicU64,
+            Ordering,
+        };
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _pool = setup_isolated_test_db().await;
+
+        insert_config_cmd(Config {
+            alias: Some("ssl-overlapping-stop".to_string()),
+            domain_enabled: Some(true),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        let id = get_configs_cmd()
+            .await
+            .unwrap()
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("ssl-overlapping-stop"))
+            .and_then(|c| c.id)
+            .unwrap();
+
+        let stops = Arc::new(AtomicU64::new(0));
+        let mut mock = crate::init_check::MockPortOperations::new();
+        let counter = stops.clone();
+        mock.expect_stop_generation()
+            .returning(move |_| counter.load(Ordering::SeqCst));
+        mock.expect_is_forward_registered().returning(|_| true);
+        let counter = stops.clone();
+        mock.expect_stop_port_forward()
+            .times(1)
+            .returning(move |_| {
+                counter.fetch_add(2, Ordering::SeqCst);
+                Ok(())
+            });
+        mock.expect_dispatch_start().times(0);
+
+        let port_ops: Arc<dyn PortOperations> = Arc::new(mock);
+        let failed_ids = restart_ssl_proxies_if_running(&port_ops, Some(&[(id, 0)]))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(failed_ids.is_empty(), "{failed_ids:?}");
     }
 }
