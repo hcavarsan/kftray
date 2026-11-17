@@ -243,10 +243,16 @@ pub(crate) async fn start_single_ssh_forward(
                 Ok(acceptor) => Some(acceptor),
                 Err(e) => {
                     phase.fail();
-                    warn!("Failed to create TLS acceptor: {}", e);
-                    None
+                    let reason = format!("Failed to create TLS acceptor: {e}");
+                    return Err(
+                        rollback_local_resources(&config, &local.address, reason, mode).await,
+                    );
                 }
             }
+        }
+        (None, true) => {
+            let reason = "Failed to load SSL settings".to_owned();
+            return Err(rollback_local_resources(&config, &local.address, reason, mode).await);
         }
         _ => None,
     };
