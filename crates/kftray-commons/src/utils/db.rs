@@ -14,6 +14,7 @@ use log::{
     warn,
 };
 use sqlx::SqlitePool;
+use sqlx::sqlite::SqliteConnectOptions;
 
 use crate::config_dir::{
     get_db_file_path,
@@ -103,9 +104,9 @@ async fn connect_file_pool() -> Result<Arc<SqlitePool>, String> {
         error!("Failed to get DB file path: {e}");
         e.to_string()
     })?;
-    let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
-    info!("Database file path: {db_dir_str}");
-    let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
+    info!("Database file path: {}", db_dir.display());
+    let options = SqliteConnectOptions::new().filename(&db_dir);
+    let pool = SqlitePool::connect_with(options).await.map_err(|e| {
         error!("Failed to connect to DB: {e}");
         e.to_string()
     })?;
@@ -619,5 +620,41 @@ mod tests {
         } else {
             panic!("get_pod_manifest_path() failed unexpectedly");
         }
+    }
+
+    #[tokio::test]
+    async fn init_keeps_the_database_in_a_config_dir_named_like_a_url() {
+        let _db = crate::test_utils::test_db().await;
+        let base = tempdir().unwrap();
+        let lookalike = base.path().join("aAb");
+        fs::create_dir_all(&lookalike).unwrap();
+        File::create(lookalike.join("configs.db")).unwrap();
+        let mut names = vec!["a%41b"];
+        if cfg!(unix) {
+            names.push("what?");
+        }
+        for name in names {
+            clear_db_pool();
+            let config_dir = base.path().join(name);
+            fs::create_dir_all(&config_dir).unwrap();
+            let _config =
+                crate::test_utils::EnvVarGuard::set("KFTRAY_CONFIG", config_dir.to_str().unwrap());
+
+            init().await.unwrap();
+            let pool = get_db_pool().await.unwrap();
+            sqlx::query("INSERT INTO configs (data) VALUES ('{}')")
+                .execute(pool.as_ref())
+                .await
+                .unwrap();
+
+            let real_file = SqliteConnectOptions::new().filename(config_dir.join("configs.db"));
+            let real_pool = SqlitePool::connect_with(real_file).await.unwrap();
+            let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM configs")
+                .fetch_one(&real_pool)
+                .await
+                .unwrap();
+            assert_eq!(rows, 1, "{name}");
+        }
+        assert_eq!(fs::metadata(lookalike.join("configs.db")).unwrap().len(), 0);
     }
 }
