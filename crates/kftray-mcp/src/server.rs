@@ -125,7 +125,14 @@ pub async fn serve(listener: TcpListener) -> anyhow::Result<()> {
     let mut connections = JoinSet::new();
 
     loop {
-        let (stream, remote_addr) = listener.accept().await?;
+        let (stream, remote_addr) = match listener.accept().await {
+            Ok(connection) => connection,
+            Err(err) => {
+                error!("Failed to accept MCP connection: {err}, retrying in 1s");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        };
         while connections.try_join_next().is_some() {}
         let io = TokioIo::new(stream);
         let state = Arc::clone(&state);
@@ -629,6 +636,69 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn serve_keeps_accepting_after_running_out_of_file_descriptors() {
+        use tokio::io::AsyncBufReadExt;
+
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(
+                "ulimit -n 64 && exec \"$0\" --exact --ignored --nocapture \
+                 server::tests::serve_with_few_file_descriptors_in_child",
+            )
+            .arg(std::env::current_exe().unwrap())
+            .env("KFTRAY_MCP_FD_LIMIT_CHILD", "1")
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let addr: SocketAddr = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let line = lines.next_line().await.unwrap().expect("child exited");
+                if let Some(addr) = line.strip_prefix("MCP_ADDR=") {
+                    break addr.parse().unwrap();
+                }
+            }
+        })
+        .await
+        .expect("child never printed its address");
+
+        let mut idle = Vec::new();
+        for _ in 0..80 {
+            idle.push(tokio::net::TcpStream::connect(addr).await.unwrap());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        drop(idle);
+
+        let health = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let mut stream = tokio::net::TcpStream::connect(addr).await?;
+            stream
+                .write_all(b"GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                .await?;
+            let mut raw = String::new();
+            stream.read_to_string(&mut raw).await?;
+            Ok::<_, std::io::Error>(raw)
+        })
+        .await
+        .expect("health request timed out")
+        .expect("health request failed");
+        assert!(health.starts_with("HTTP/1.1 200"), "{health}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "run by serve_keeps_accepting_after_running_out_of_file_descriptors"]
+    async fn serve_with_few_file_descriptors_in_child() {
+        if std::env::var_os("KFTRAY_MCP_FD_LIMIT_CHILD").is_none() {
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        println!("MCP_ADDR={}", listener.local_addr().unwrap());
+        serve(listener).await.unwrap();
     }
 
     #[tokio::test]
