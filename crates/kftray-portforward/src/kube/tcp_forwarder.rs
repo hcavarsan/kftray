@@ -804,6 +804,11 @@ impl TcpForwarder {
         state.buffer.extend_from_slice(buffer);
         let dropped = state.drop_interim_responses();
 
+        if state.buffer.len() > BUFFER_SIZE && !state.buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            Self::skip_rest_of_response(state, logger).await;
+            return false;
+        }
+
         if dropped > 0 {
             state.first_chunk_time = None;
         }
@@ -1259,6 +1264,36 @@ mod tests {
         assert!(
             !TcpForwarder::should_log_response_static(&mut state),
             "final response logged before its last chunk"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_without_http_headers_stops_buffering_past_the_header_bound() {
+        let mut state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            chunk_offset: 0,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+            skipped_body: None,
+        };
+        let logger = Arc::new(Mutex::new(None));
+        let request_id = Arc::new(Mutex::new(Some("grpc-stream".to_string())));
+        let read = vec![0xABu8; BUFFER_SIZE];
+
+        for _ in 0..16 {
+            TcpForwarder::handle_response_logging_static(&read, &mut state, &logger, &request_id)
+                .await;
+        }
+
+        assert!(
+            state.buffer.len() <= 2 * BUFFER_SIZE,
+            "buffered {} bytes of a stream with no HTTP headers",
+            state.buffer.len()
         );
     }
 
