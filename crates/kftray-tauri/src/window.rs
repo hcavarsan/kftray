@@ -434,30 +434,40 @@ pub async fn apply_saved_window_size(
     rx.await.ok().flatten()
 }
 
+fn position_on_monitor(
+    monitor_position: PhysicalPosition<i32>, monitor_size: PhysicalSize<u32>, x: i32, y: i32,
+) -> bool {
+    let min_x = monitor_position.x;
+    let min_y = monitor_position.y;
+    let max_x = min_x + monitor_size.width as i32;
+    let max_y = min_y + monitor_size.height as i32;
+
+    #[cfg(target_os = "linux")]
+    let tolerance = 100; // Allow 100px outside monitor bounds on Linux
+    #[cfg(not(target_os = "linux"))]
+    let tolerance = 0;
+
+    x >= (min_x - tolerance)
+        && x < (max_x + tolerance)
+        && y >= (min_y - tolerance)
+        && y < (max_y + tolerance)
+}
+
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
     if let Ok(monitors) = window.available_monitors() {
         for monitor in monitors {
             let monitor_position = monitor.position();
             let monitor_size = monitor.size();
 
-            let min_x = monitor_position.x;
-            let min_y = monitor_position.y;
-            let max_x = min_x + monitor_size.width as i32;
-            let max_y = min_y + monitor_size.height as i32;
-
-            #[cfg(target_os = "linux")]
-            let tolerance = 100; // Allow 100px outside monitor bounds on Linux
-            #[cfg(not(target_os = "linux"))]
-            let tolerance = 0;
-
-            if x >= (min_x - tolerance)
-                && x < (max_x + tolerance)
-                && y >= (min_y - tolerance)
-                && y < (max_y + tolerance)
-            {
+            if position_on_monitor(*monitor_position, *monitor_size, x, y) {
                 info!(
                     "Position ({}, {}) is valid for monitor bounds: {}x{} at ({}, {})",
-                    x, y, monitor_size.width, monitor_size.height, min_x, min_y
+                    x,
+                    y,
+                    monitor_size.width,
+                    monitor_size.height,
+                    monitor_position.x,
+                    monitor_position.y
                 );
                 return true;
             }
@@ -646,7 +656,13 @@ fn position_window(
         width: current_size.width as f64,
         height: current_size.height as f64,
     };
-    let position = calculate_position(monitor, tray_pos, tray_size, window_size);
+    let position = calculate_position(
+        *monitor.position(),
+        *monitor.size(),
+        tray_pos,
+        tray_size,
+        window_size,
+    );
 
     let tray_center_x = tray_pos.x as i32 + tray_size.width as i32 / 2;
     let tray_center_y = tray_pos.y as i32 + tray_size.height as i32;
@@ -688,12 +704,10 @@ fn position_window(
 }
 
 fn calculate_position(
-    monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>, tray_size: PhysicalSize<f64>,
+    monitor_pos: PhysicalPosition<i32>, monitor_size: PhysicalSize<u32>,
+    tray_pos: PhysicalPosition<f64>, tray_size: PhysicalSize<f64>,
     window_size: tauri::PhysicalSize<f64>,
 ) -> (i32, i32) {
-    let monitor_pos = monitor.position();
-    let monitor_size = monitor.size();
-
     let tray_center_x = (tray_pos.x as i32).saturating_add(tray_size.width as i32 / 2);
     let tray_bottom = (tray_pos.y as i32).saturating_add(tray_size.height as i32);
     let margin = 10;
@@ -968,29 +982,70 @@ mod tests {
         }
     }
 
+    fn position_for_tray(
+        monitor: (i32, i32, u32, u32), tray: (f64, f64, f64, f64), window: (f64, f64),
+    ) -> (i32, i32) {
+        calculate_position(
+            PhysicalPosition::new(monitor.0, monitor.1),
+            PhysicalSize::new(monitor.2, monitor.3),
+            PhysicalPosition::new(tray.0, tray.1),
+            PhysicalSize::new(tray.2, tray.3),
+            PhysicalSize::new(window.0, window.1),
+        )
+    }
+
     #[test]
-    fn test_is_valid_position() {
-        let screen_width = 1920;
-        let screen_height = 1080;
+    fn a_bottom_tray_opens_the_window_above_it() {
+        assert_eq!(
+            position_for_tray(
+                (0, 0, 1920, 1080),
+                (1800.0, 1050.0, 30.0, 30.0),
+                (450.0, 500.0)
+            ),
+            (1460, 540)
+        );
+    }
 
-        let valid_positions = [(100, 100), (0, 0), (screen_width - 1, screen_height - 1)];
+    #[test]
+    fn a_top_tray_opens_the_window_below_it_on_a_second_monitor() {
+        assert_eq!(
+            position_for_tray(
+                (1920, 0, 2560, 1440),
+                (2000.0, 0.0, 30.0, 24.0),
+                (450.0, 500.0)
+            ),
+            (1930, 34)
+        );
+    }
 
-        for (x, y) in valid_positions {
-            assert!(x >= 0 && x < screen_width, "X position should be valid");
-            assert!(y >= 0 && y < screen_height, "Y position should be valid");
-        }
+    #[test]
+    fn a_window_that_fits_neither_below_nor_above_the_tray_stays_on_the_monitor() {
+        assert_eq!(
+            position_for_tray((0, 0, 800, 600), (400.0, 300.0, 30.0, 30.0), (450.0, 500.0)),
+            (190, 90)
+        );
+    }
 
-        let invalid_positions = [
-            (-100, 100),
-            (100, -100),
-            (screen_width + 100, screen_height + 100),
-        ];
+    #[test]
+    fn a_saved_position_counts_only_on_a_monitor() {
+        let on_second_monitor = |x, y| {
+            position_on_monitor(
+                PhysicalPosition::new(1920, 0),
+                PhysicalSize::new(2560, 1440),
+                x,
+                y,
+            )
+        };
 
-        for (x, y) in invalid_positions {
-            assert!(
-                !(x >= 0 && x < screen_width && y >= 0 && y < screen_height),
-                "Position should be invalid"
-            );
-        }
+        assert!(on_second_monitor(2000, 100));
+        assert!(on_second_monitor(1920, 0));
+        assert!(!on_second_monitor(100, 100));
+        assert!(!on_second_monitor(5000, 100));
+        assert!(!on_second_monitor(2000, 2000));
+        assert_eq!(
+            on_second_monitor(4480, 100),
+            cfg!(target_os = "linux"),
+            "the right edge only counts with the linux slack"
+        );
     }
 }
