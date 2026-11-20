@@ -3,6 +3,8 @@
 //! These tools allow LLMs to discover Kubernetes resources like contexts,
 //! namespaces, services, pods, and ports.
 
+use std::collections::HashSet;
+
 use serde::{
     Deserialize,
     Serialize,
@@ -485,7 +487,8 @@ async fn list_forwardable_ports(
                 })
                 .collect();
             ports.sort_by_key(|a| a.port);
-            ports.dedup_by(|a, b| a.port == b.port && a.name == b.name);
+            let mut seen = HashSet::new();
+            ports.retain(|p| seen.insert((p.port, p.protocol.clone(), p.name.clone())));
 
             if ports.is_empty() {
                 Err(format!(
