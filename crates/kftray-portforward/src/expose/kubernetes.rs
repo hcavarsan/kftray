@@ -2536,6 +2536,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_expose_rollback_whose_delete_fails_keeps_its_cleanup_record() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let id = 9305;
+        let config = Config {
+            id: Some(id),
+            namespace: "default".to_owned(),
+            workload_type: Some("expose".to_owned()),
+            ..Config::default()
+        };
+        let location = ExposeLocation::resolve(&"http://127.0.0.1:1".parse().unwrap(), "default");
+        let resources = crate::expose::models::ExposeResources {
+            deployment_name: "relay".to_owned(),
+            service_name: "relay".to_owned(),
+            ingress_name: None,
+            pod_ip: String::new(),
+            pod_name: String::new(),
+            websocket_port: 9999,
+            owned: vec![CreatedResource {
+                kind: ResourceKind::Service,
+                name: "relay".to_owned(),
+                uid: Some("relay-uid".to_owned()),
+            }],
+        };
+        let mut guard =
+            crate::kube::stop::ClusterResourceGuard::arm(id, config.clone(), None, mode)
+                .await
+                .unwrap();
+        guard.confirm();
+
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (request, send) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::DELETE);
+            let status = serde_json::json!({
+                "apiVersion":"v1","kind":"Status","status":"Failure",
+                "reason":"InternalError","message":"etcd unavailable","code":500
+            });
+            send.send_response(
+                Response::builder()
+                    .status(500)
+                    .body(Body::from(serde_json::to_vec(&status).unwrap()))
+                    .unwrap(),
+            );
+        }));
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            crate::expose::roll_back_exposure::<()>(
+                &client,
+                &config,
+                &resources,
+                &location,
+                mode,
+                guard,
+                "relay never became ready".to_owned(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        server.await.unwrap();
+
+        assert!(error.contains("cleanup failed"), "{error}");
+        assert!(
+            !crate::kube::stop::recorded_configs(id, mode)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn a_409_on_ingress_create_keeps_its_history() {
         let _db = kftray_commons::test_utils::test_db().await;
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;

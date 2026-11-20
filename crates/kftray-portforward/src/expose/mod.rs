@@ -58,12 +58,22 @@ async fn roll_back_exposure<T>(
         reason,
     )
     .await;
-    // The guard stays armed unless cleanup fully completed, which is what
-    // keeps it retryable.
-    if cleaned {
-        guard.disarm().await;
-    }
+    settle_failed_attempt(guard, false, cleaned).await;
     Err(message)
+}
+
+// Disarmed only when the outcome was definitive and UID-scoped rollback
+// removed everything this attempt created: leaving the record would make a
+// later stop delete by label, which can reach another installation's
+// resources for the same config id.
+async fn settle_failed_attempt(
+    mut guard: crate::kube::stop::ClusterResourceGuard, ambiguous: bool, rolled_back: bool,
+) {
+    if !ambiguous && rolled_back {
+        guard.disarm().await;
+    } else if !ambiguous {
+        guard.confirm();
+    }
 }
 
 pub(crate) async fn start_single_expose(
@@ -137,15 +147,7 @@ pub(crate) async fn start_single_expose(
             resources
         }
         Err(error) => {
-            // Disarmed only when the outcome was definitive and UID-scoped
-            // rollback removed everything this attempt created: leaving the
-            // record would make a later stop delete by label, which can reach
-            // another installation's resources for the same config id.
-            if !error.ambiguous && error.rolled_back {
-                guard.disarm().await;
-            } else if !error.ambiguous {
-                guard.confirm();
-            }
+            settle_failed_attempt(guard, error.ambiguous, error.rolled_back).await;
             return Err(error.message);
         }
     };
@@ -333,4 +335,48 @@ pub(crate) async fn start_single_expose(
 
 pub async fn stop_expose(config_id: i64, mode: DatabaseMode) -> Result<CustomResponse, String> {
     crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kube::stop::{
+        ClusterResourceGuard,
+        recorded_configs,
+    };
+
+    async fn cleanup_record_left_after_failed_attempt(
+        id: i64, ambiguous: bool, rolled_back: bool,
+    ) -> bool {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mode = DatabaseMode::Memory;
+        let config = Config {
+            id: Some(id),
+            namespace: "default".to_string(),
+            workload_type: Some("expose".to_string()),
+            ..Config::default()
+        };
+        let guard = ClusterResourceGuard::arm(id, config, None, mode)
+            .await
+            .unwrap();
+        settle_failed_attempt(guard, ambiguous, rolled_back).await;
+        !recorded_configs(id, mode).await.unwrap().is_empty()
+    }
+
+    #[tokio::test]
+    async fn a_rolled_back_attempt_releases_its_cleanup_record() {
+        assert!(!cleanup_record_left_after_failed_attempt(9301, false, true).await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_rollback_keeps_its_cleanup_record() {
+        assert!(cleanup_record_left_after_failed_attempt(9302, false, false).await);
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_create_keeps_its_cleanup_record_even_when_rolled_back() {
+        assert!(cleanup_record_left_after_failed_attempt(9303, true, true).await);
+        assert!(cleanup_record_left_after_failed_attempt(9304, true, false).await);
+    }
 }
