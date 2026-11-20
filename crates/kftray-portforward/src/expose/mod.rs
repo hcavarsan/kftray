@@ -357,11 +357,13 @@ mod tests {
             workload_type: Some("expose".to_string()),
             ..Config::default()
         };
-        let guard = ClusterResourceGuard::arm(id, config, None, mode)
+        let guard = ClusterResourceGuard::arm(id, config.clone(), None, mode)
             .await
             .unwrap();
         settle_failed_attempt(guard, ambiguous, rolled_back).await;
-        !recorded_configs(id, mode).await.unwrap().is_empty()
+        let left = !recorded_configs(id, mode).await.unwrap().is_empty();
+        crate::kube::stop::forget_pending_cleanup(id, &config, None);
+        left
     }
 
     #[tokio::test]

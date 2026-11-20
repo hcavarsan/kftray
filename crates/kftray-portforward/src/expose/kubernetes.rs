@@ -2608,6 +2608,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        crate::kube::stop::forget_pending_cleanup(id, &config, None);
     }
 
     #[tokio::test]
