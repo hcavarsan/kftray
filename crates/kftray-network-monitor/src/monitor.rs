@@ -149,8 +149,10 @@ impl NetworkMonitor {
 
             if network_up && failure_count > 0 && last_fast.elapsed() > self.config.sleep_up {
                 if self.should_start_health_check().await {
-                    let failed_configs = self.check_health_fast_with_state().await;
-                    if failed_configs.is_empty() {
+                    let monitor = self.clone();
+                    let fast_check =
+                        tokio::spawn(async move { monitor.check_health_fast_with_state().await });
+                    if fast_check.await.is_ok_and(|failed| failed.is_empty()) {
                         failure_count = failure_count.saturating_sub(1);
                     }
                 }
@@ -796,5 +798,47 @@ mod tests {
             "the health check stopped an expose because its local app was down"
         );
         assert!(registered, "the expose must stay registered");
+    }
+
+    #[tokio::test]
+    async fn stopping_during_a_fast_check_releases_the_health_check_slot() {
+        let _db = test_db().await;
+        let _process = PROCESS_TEST_MUTEX.lock().await;
+        let (_env, _dir) = init_db().await;
+        let mut ids = Vec::new();
+        for _ in 0..150 {
+            let local = TcpListener::bind("127.0.0.1:0").unwrap();
+            ids.push(register_running_forward(&local, "tcp").await);
+        }
+        let probe = TcpListener::bind(PROBE_ADDR.as_str()).unwrap();
+        let monitor = probing_monitor(Duration::from_secs(3600));
+        let state = monitor.get_task_state().await;
+        *state.lock().await = TaskState::default();
+
+        let parent = tokio::spawn(monitor.clone().start());
+        let saw_network_up = wait_for_state(&state, |s| s.last_network_state).await;
+        drop(probe);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut fast_check_started = false;
+        while saw_network_up && !fast_check_started && Instant::now() < deadline {
+            fast_check_started = state.lock().await.health_check_in_progress;
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        parent.abort();
+        let _ = parent.await;
+        let release_deadline = Instant::now() + Duration::from_secs(30);
+        while state.lock().await.health_check_in_progress && Instant::now() < release_deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let slot_released = !state.lock().await.health_check_in_progress;
+        for id in ids {
+            CHILD_PROCESSES.remove(&id);
+        }
+
+        assert!(fast_check_started, "the fast check never started");
+        assert!(
+            slot_released,
+            "an aborted fast check kept the health check slot"
+        );
     }
 }
