@@ -24,7 +24,7 @@ dirs = "7.0"
 env_logger = "0.11"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 flate2 = "1.1"
-flexi_logger = "0.31"
+flexi_logger = "0.32"
 futures = "0.3"
 git2 = { version = "0.21", features = ["https", "ssh", "vendored-openssl"] }
 http = "1.5"
