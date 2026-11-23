@@ -1447,4 +1447,77 @@ mod tests {
             process_start_identity(std::process::id())
         );
     }
+
+    #[tokio::test]
+    async fn exit_cleanup_keeps_an_owed_config_marked_running() {
+        let _db = crate::test_utils::test_db().await;
+        let mode = DatabaseMode::Memory;
+        let _ = config::delete_all_configs_with_mode(mode).await;
+        for service in ["stopped-on-exit", "owed-on-exit"] {
+            let config_data = Config {
+                service: Some(service.to_string()),
+                ..Config::default()
+            };
+            config::insert_config_with_mode(config_data, mode)
+                .await
+                .unwrap();
+        }
+        let ids: Vec<i64> = config::read_configs_with_mode(mode)
+            .await
+            .unwrap()
+            .iter()
+            .map(|config| config.id.unwrap())
+            .collect();
+        let pool: SqlitePool = (*DatabaseManager::get_context(mode).await.unwrap().pool).clone();
+        for id in &ids {
+            update_config_state_with_mode(
+                &ConfigState {
+                    id: None,
+                    config_id: *id,
+                    is_running: true,
+                    process_id: Some(std::process::id()),
+                    ..Default::default()
+                },
+                mode,
+            )
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO settings (key, value) VALUES (?1, '{}')")
+                .bind(running_snapshot_key(*id, mode))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        cleanup_current_process_config_states_with_mode(mode, &[ids[1]])
+            .await
+            .unwrap();
+
+        let states = read_config_states_with_mode(mode).await.unwrap();
+        let running = |id: i64| {
+            states
+                .iter()
+                .find(|state| state.config_id == id)
+                .unwrap()
+                .is_running
+        };
+        let snapshot_kept = |id: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("SELECT 1 FROM settings WHERE key = ?1")
+                    .bind(running_snapshot_key(id, mode))
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap()
+                    .is_some()
+            }
+        };
+        assert!(!running(ids[0]));
+        assert!(!snapshot_kept(ids[0]).await);
+        assert!(running(ids[1]), "owed config was marked stopped");
+        assert!(
+            snapshot_kept(ids[1]).await,
+            "owed config lost its running snapshot"
+        );
+    }
 }

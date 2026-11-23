@@ -194,12 +194,15 @@ impl WebSocketTunnelServer {
 
         info!("WebSocket tunnel server listening on {}", addr);
 
+        let mut backoff_ms: u64 = 10;
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
                             info!("WebSocket connection from {}", addr);
+                            backoff_ms = 10;
                             let tunnel = self.tunnel.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_tunnel_connection(tunnel, stream).await {
@@ -207,7 +210,18 @@ impl WebSocketTunnelServer {
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept WebSocket connection: {}", e),
+                        Err(e) => {
+                            error!("Failed to accept WebSocket connection (retrying in {backoff_ms}ms): {e}");
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                    backoff_ms = (backoff_ms * 2).min(5000);
+                                }
+                                _ = shutdown.notified() => {
+                                    info!("WebSocket server shutting down");
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 _ = shutdown.notified() => {
