@@ -1,6 +1,6 @@
 [package]
 name = "kftray-mcp"
-version = "0.35.2"
+version = "0.36.0"
 authors = [
   "Filipe Andujar <filipeandujar@gmail.com>",
   "Henrique Cavarsan <hencavarsan@gmail.com>",
