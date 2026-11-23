@@ -43,6 +43,7 @@ use tui_logger::TuiWidgetEvent;
 use tui_logger::TuiWidgetState;
 pub use view::*;
 
+use crate::logging::LOG_BUFFER_DEPTH;
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
@@ -1785,6 +1786,10 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
         }
         KeyCode::PageUp => app.tui_logger_state.transition(TuiWidgetEvent::PrevPageKey),
         KeyCode::PageDown => app.tui_logger_state.transition(TuiWidgetEvent::NextPageKey),
+        KeyCode::Char('c') => {
+            tui_logger::move_events();
+            tui_logger::set_buffer_depth(LOG_BUFFER_DEPTH);
+        }
         _ => {}
     }
     Ok(())
