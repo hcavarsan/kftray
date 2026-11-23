@@ -80,9 +80,8 @@ export function useConfigTransfer() {
     },
     meta: {
       errorToast: {
-        title: 'Error',
-        description: 'Failed to import configurations.',
-        duration: 1000,
+        title: 'Failed to import configurations',
+        duration: 6000,
       },
     },
   })
