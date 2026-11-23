@@ -1199,6 +1199,42 @@ mod tests {
             .unwrap();
     }
 
+    fn rendered_logs(app: &App) -> String {
+        tui_logger::move_events();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 5)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    tui_logger::TuiLoggerWidget::default().state(&app.tui_logger_state),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn c_in_the_logs_pane_clears_the_output() {
+        let _ = tui_logger::init_logger(log::LevelFilter::Info);
+        let mut app = setup_app();
+        app.active_component = ActiveComponent::Logs;
+        log::info!("line-before-clear");
+        assert!(rendered_logs(&app).contains("line-before-clear"));
+
+        handle_logs_input(&mut app, KeyCode::Char('c'))
+            .await
+            .unwrap();
+
+        assert!(!rendered_logs(&app).contains("line-before-clear"));
+    }
+
     #[test]
     fn test_show_delete_confirmation() {
         let mut app = setup_app();

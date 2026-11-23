@@ -43,6 +43,7 @@ use tui_logger::TuiWidgetEvent;
 use tui_logger::TuiWidgetState;
 pub use view::*;
 
+use crate::logging::LOG_BUFFER_DEPTH;
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
@@ -925,22 +926,16 @@ impl App {
     }
 
     pub async fn load_http_logs_states(&mut self, configs: &[Config], mode: DatabaseMode) {
-        for config in configs {
-            if let Some(config_id) = config.id {
-                match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
-                    config_id, mode,
-                )
+        let enabled: std::collections::HashMap<i64, bool> =
+            kftray_commons::utils::http_logs_config::read_all_http_logs_configs_with_mode(mode)
                 .await
-                {
-                    Ok(http_logs_config) => {
-                        self.http_logs_enabled
-                            .insert(config_id, http_logs_config.enabled);
-                    }
-                    Err(_) => {
-                        self.http_logs_enabled.insert(config_id, false);
-                    }
-                }
-            }
+                .unwrap_or_default()
+                .into_iter()
+                .map(|http_logs_config| (http_logs_config.config_id, http_logs_config.enabled))
+                .collect();
+        for config_id in configs.iter().filter_map(|config| config.id) {
+            self.http_logs_enabled
+                .insert(config_id, enabled.get(&config_id).copied().unwrap_or(false));
         }
     }
 
@@ -1791,6 +1786,10 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
         }
         KeyCode::PageUp => app.tui_logger_state.transition(TuiWidgetEvent::PrevPageKey),
         KeyCode::PageDown => app.tui_logger_state.transition(TuiWidgetEvent::NextPageKey),
+        KeyCode::Char('c') => {
+            tui_logger::move_events();
+            tui_logger::set_buffer_depth(LOG_BUFFER_DEPTH);
+        }
         _ => {}
     }
     Ok(())

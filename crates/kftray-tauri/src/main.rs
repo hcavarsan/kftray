@@ -79,7 +79,7 @@ fn init_file_logger() -> anyhow::Result<()> {
     let log_dir = commands::logs::log_dir().map_err(|e| anyhow::anyhow!(e))?;
     let basename = format!(
         "kftray_{}",
-        jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
+        jiff::ZonedDateTime::now().strftime("%Y-%m-%d_%H-%M-%S")
     );
     // flexi_logger's own errors (file write/rotation failures) go here instead
     // of stderr, which is often broken when launched from a desktop entry. The

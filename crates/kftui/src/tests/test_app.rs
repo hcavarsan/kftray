@@ -780,4 +780,41 @@ mod tests {
         assert!(app.port_retries.is_empty());
         app.forwarding_tasks.join_next().await.unwrap().unwrap();
     }
+
+    #[tokio::test]
+    async fn http_logs_flags_load_on_off_and_missing_rows() {
+        use kftray_commons::utils::config::{
+            get_config_with_mode,
+            insert_config_with_mode,
+        };
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _db = kftray_commons::test_utils::test_db().await;
+        let mut saved = Vec::new();
+        for enabled in [true, false] {
+            let mut config = create_test_config(0);
+            config.id = None;
+            config.http_logs_enabled = Some(enabled);
+            let id = insert_config_with_mode(config, DatabaseMode::Memory)
+                .await
+                .unwrap();
+            saved.push(
+                get_config_with_mode(id, DatabaseMode::Memory)
+                    .await
+                    .unwrap(),
+            );
+        }
+        let without_row = create_test_config(9999);
+        saved.push(without_row);
+
+        let mut app = App::new(test_logger_state());
+        app.load_http_logs_states(&saved, DatabaseMode::Memory)
+            .await;
+
+        let flags: Vec<Option<bool>> = saved
+            .iter()
+            .map(|config| app.http_logs_enabled.get(&config.id.unwrap()).copied())
+            .collect();
+        assert_eq!(flags, vec![Some(true), Some(false), Some(false)]);
+    }
 }
