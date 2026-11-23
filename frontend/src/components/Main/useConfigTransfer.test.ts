@@ -5,12 +5,18 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 
 import { httpLogsEnabledQueryKey } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
+import { showErrorToast } from '@/components/ui/error-toast'
+import { toaster } from '@/components/ui/toaster'
 import { invoke } from '@/lib/tauri'
 
 import { useConfigTransfer } from './useConfigTransfer'
 
 const mutations = vi.hoisted(
-  () => [] as { mutationFn: () => Promise<unknown> }[],
+  () =>
+    [] as {
+      mutationFn: () => Promise<unknown>
+      meta?: Parameters<typeof showErrorToast>[1]
+    }[],
 )
 const client = vi.hoisted(() => ({ current: undefined as unknown }))
 
@@ -28,7 +34,9 @@ vi.mock('@/lib/tauri', () => ({ invoke: vi.fn() }))
 vi.mock('@/lib/nativeDialog', () => ({
   withNativeDialog: <T>(run: () => Promise<T>) => run(),
 }))
-vi.mock('@/components/ui/toaster', () => ({ toaster: { success: vi.fn() } }))
+vi.mock('@/components/ui/toaster', () => ({
+  toaster: { success: vi.fn(), error: vi.fn() },
+}))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }))
 vi.mock('@tauri-apps/plugin-fs', () => ({
   readTextFile: vi.fn(),
@@ -80,5 +88,19 @@ describe('useConfigTransfer import', () => {
       expect(queryClient.getQueryData(httpLogsEnabledQueryKey(7))).toBe(true),
     )
     unsubscribe()
+  })
+
+  it('tells the user why the import failed', () => {
+    useConfigTransfer()
+
+    showErrorToast(
+      'Error migrating configs: Invalid config: Namespace is required and cannot be empty',
+      mutations[1].meta,
+    )
+
+    const [toast] = vi.mocked(toaster.error).mock.calls[0]
+
+    expect(toast.description).toContain('Namespace is required')
+    expect(toast.duration).toBeGreaterThanOrEqual(5000)
   })
 })
