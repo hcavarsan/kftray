@@ -1127,3 +1127,78 @@ async fn list_ports_reports_a_missing_service_with_no_matching_pods() {
         result_text(&result)
     );
 }
+
+fn dns_pod(name: &str, port_names: [Option<&str>; 2]) -> serde_json::Value {
+    let port = |name: Option<&str>, protocol: &str| match name {
+        Some(name) => serde_json::json!({"name": name, "containerPort": 53, "protocol": protocol}),
+        None => serde_json::json!({"containerPort": 53, "protocol": protocol}),
+    };
+    serde_json::json!({
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {"containers": [{
+            "name": "dns",
+            "ports": [
+                port(port_names[0], "UDP"),
+                port(port_names[1], "TCP"),
+                {"name": "metrics", "containerPort": 9153, "protocol": "TCP"}
+            ]
+        }]}
+    })
+}
+
+#[tokio::test]
+async fn list_ports_by_label_lists_each_port_of_two_replicas_once() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/pods") {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "apiVersion": "v1", "kind": "PodList", "metadata": {},
+                    "items": [
+                        dns_pod("dns-1", [Some("dns"), Some("dns-tcp")]),
+                        dns_pod("dns-2", [Some("dns"), Some("dns-tcp")])
+                    ]
+                }),
+            )
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+    assert_eq!(result.is_error, None, "{} {seen:?}", result_text(&result));
+    assert_eq!(
+        result_json(&result)["ports"],
+        serde_json::json!([
+            {"name": "dns", "port": 53, "protocol": "UDP"},
+            {"name": "dns-tcp", "port": 53, "protocol": "TCP"},
+            {"name": "metrics", "port": 9153, "protocol": "TCP"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn list_ports_by_label_keeps_unnamed_udp_and_tcp_on_one_port() {
+    let (result, seen) = list_ports_of_web(|line| {
+        if line.contains("/pods") {
+            (
+                "200 OK",
+                serde_json::json!({
+                    "apiVersion": "v1", "kind": "PodList", "metadata": {},
+                    "items": [dns_pod("dns-1", [None, None])]
+                }),
+            )
+        } else {
+            kube_status("404 Not Found", 404, "NotFound")
+        }
+    })
+    .await;
+    assert_eq!(result.is_error, None, "{} {seen:?}", result_text(&result));
+    assert_eq!(
+        result_json(&result)["ports"],
+        serde_json::json!([
+            {"name": null, "port": 53, "protocol": "UDP"},
+            {"name": null, "port": 53, "protocol": "TCP"},
+            {"name": "metrics", "port": 9153, "protocol": "TCP"}
+        ])
+    );
+}

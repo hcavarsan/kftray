@@ -353,26 +353,61 @@ mod tests {
         echo_server.shutdown();
     }
 
+    fn echo_target_config(echo_server: &TestServer, resolved_ip: Option<&str>) -> ProxyConfig {
+        ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .resolved_ip(resolved_ip.map(str::to_string))
+            .target_port(echo_server.addr().port())
+            .proxy_port(1)
+            .proxy_type(ProxyType::Tcp)
+            .build()
+            .unwrap()
+    }
+
     #[tokio::test]
-    async fn test_target_connection_has_keepalive() {
-        // Arrange
-        let (echo_server, shutdown, proxy_addr) = setup_proxy().await;
+    async fn target_connections_have_keepalive_on() {
+        let echo_server = test_utils::setup_test_tcp_echo_server().await;
 
-        // Act - Connect through proxy to target
+        for resolved_ip in [Some("127.0.0.1"), None] {
+            let stream = TcpProxy::new()
+                .connect_to_target(&echo_target_config(&echo_server, resolved_ip))
+                .await
+                .unwrap();
+            assert!(
+                SockRef::from(&stream).keepalive().unwrap(),
+                "no keepalive with resolved ip {resolved_ip:?}"
+            );
+        }
+
+        echo_server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_stale_resolved_ip_falls_back_to_the_hostname() {
+        let echo_server = test_utils::setup_test_tcp_echo_server().await;
+        let free = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = free.local_addr().unwrap();
+        drop(free);
+        let config = ProxyConfig {
+            proxy_port: proxy_addr.port(),
+            ..echo_target_config(&echo_server, Some("127.0.0.2"))
+        };
+        let shutdown = Arc::new(Notify::new());
+        let proxy_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let _ = TcpProxy::new().start(config, proxy_shutdown).await;
+        });
+        assert!(test_utils::wait_for_port(proxy_addr).await);
+
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
-        stream.write_all(b"test").await.unwrap();
-        stream.flush().await.unwrap();
+        stream.write_all(b"ping").await.unwrap();
+        let mut buf = [0u8; 4];
+        timeout(Duration::from_secs(15), stream.read_exact(&mut buf))
+            .await
+            .expect("no reply within 15s")
+            .expect("relay closed the connection instead of falling back to the hostname");
+        assert_eq!(&buf, b"ping");
 
-        // Read response to ensure connection is established
-        let mut buf = [0; 4];
-        let _ = stream.read_exact(&mut buf).await;
-
-        // Assert - The test verifies that keepalive was applied without errors
-        // If keepalive failed, the error would have been logged but connection would
-        // still work This test passes if the proxy successfully connects and
-        // applies keepalive
-
-        // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
     }
