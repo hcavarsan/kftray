@@ -1,5 +1,13 @@
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{
+    Command,
+    Stdio,
+};
+use std::time::{
+    Duration,
+    Instant,
+};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -26,6 +34,8 @@ pub struct GitHubConfig {
 
 pub type GitHubResult<T> = Result<T, String>;
 
+const GIT_SYNC_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct GitHubRepository;
 
 impl GitHubRepository {
@@ -45,12 +55,13 @@ impl GitHubRepository {
             &config.config_paths,
             config.use_system_credentials,
             config.github_token.clone(),
+            GIT_SYNC_TIMEOUT,
         )
     }
 
     fn clone_and_read_config(
         repo_url: &str, config_paths: &[String], use_system_credentials: bool,
-        github_token: Option<String>,
+        github_token: Option<String>, timeout: Duration,
     ) -> GitHubResult<String> {
         use git2::{
             CertificateCheckStatus,
@@ -62,6 +73,13 @@ impl GitHubRepository {
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {e}"))?;
+        let deadline = Instant::now() + timeout;
+        let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+        unsafe {
+            git2::opts::set_server_connect_timeout_in_milliseconds(timeout_ms)
+                .and_then(|_| git2::opts::set_server_timeout_in_milliseconds(timeout_ms))
+                .map_err(|e| format!("Failed to set git timeout: {e}"))?;
+        }
 
         let mut callbacks = RemoteCallbacks::new();
 
@@ -130,9 +148,16 @@ impl GitHubRepository {
                     config_paths,
                     use_system_credentials,
                     token,
+                    deadline,
                 )
                 .map_err(|fallback| {
-                    clone_failure_message(&git2_message, is_git2_auth_error(&e), &fallback, token)
+                    clone_failure_message(
+                        &git2_message,
+                        is_git2_auth_error(&e),
+                        &fallback,
+                        token,
+                        timeout,
+                    )
                 })
             }
         }
@@ -160,7 +185,7 @@ impl GitHubRepository {
 
     fn try_clone_with_system_git(
         repo_url: &str, path: &Path, config_paths: &[String], use_system_credentials: bool,
-        token: Option<&str>,
+        token: Option<&str>, deadline: Instant,
     ) -> Result<String, SystemGitError> {
         let token = token.filter(|t| !t.is_empty());
         let existing_config_entries = std::env::var("GIT_CONFIG_COUNT")
@@ -168,14 +193,20 @@ impl GitHubRepository {
             .and_then(|count| count.trim().parse().ok())
             .unwrap_or(0);
 
-        let output = system_git_command(
+        if Instant::now() >= deadline {
+            return Err(SystemGitError::TimedOut);
+        }
+
+        let mut child = system_git_command(
             repo_url,
             path,
             use_system_credentials,
             token,
             existing_config_entries,
         )
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 SystemGitError::Unavailable(e.to_string())
@@ -184,11 +215,40 @@ impl GitHubRepository {
             }
         })?;
 
-        if output.status.success() {
+        let mut stderr_pipe = child.stderr.take();
+        let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut stderr = Vec::new();
+            if let Some(pipe) = stderr_pipe.as_mut() {
+                let _ = pipe.read_to_end(&mut stderr);
+            }
+            let _ = stderr_tx.send(stderr);
+        });
+
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    error!("System git clone timed out");
+                    return Err(SystemGitError::TimedOut);
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => {
+                    return Err(SystemGitError::Failed(format!(
+                        "Failed to wait for git command: {e}"
+                    )));
+                }
+            }
+        };
+
+        if status.success() {
             info!("Successfully cloned repository using system git");
             Self::read_config_files(path, config_paths).map_err(SystemGitError::Read)
         } else {
-            let error_msg = redact_token(&String::from_utf8_lossy(&output.stderr), token);
+            let stderr = stderr_rx.recv().unwrap_or_default();
+            let error_msg = redact_token(&String::from_utf8_lossy(&stderr), token);
             error!("System git clone failed: {error_msg}");
             Err(SystemGitError::Failed(error_msg))
         }
@@ -384,6 +444,7 @@ enum SystemGitError {
     Unavailable(String),
     Failed(String),
     Read(String),
+    TimedOut,
 }
 
 fn is_git2_auth_error(error: &git2::Error) -> bool {
@@ -408,12 +469,17 @@ fn is_stderr_auth_error(stderr: &str) -> bool {
 
 fn clone_failure_message(
     git2_message: &str, git2_auth: bool, fallback: &SystemGitError, token: Option<&str>,
+    timeout: Duration,
 ) -> String {
     const CREDENTIAL_ADVICE: &str = " Please check your credentials and repository URL.";
 
     let git2_message = redact_token(git2_message, token);
     match fallback {
         SystemGitError::Read(message) => message.clone(),
+        SystemGitError::TimedOut => format!(
+            "Failed to clone repository: timed out after {}s. Error: {git2_message}",
+            timeout.as_secs()
+        ),
         SystemGitError::Unavailable(reason) => {
             let advice = if git2_auth { CREDENTIAL_ADVICE } else { "" };
             format!(
@@ -958,6 +1024,7 @@ mod tests {
             &["config.json".to_string()],
             false,
             Some(TOKEN),
+            Instant::now() + GIT_SYNC_TIMEOUT,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -988,6 +1055,7 @@ mod tests {
             &["config.json".to_string()],
             true,
             None,
+            Instant::now() + GIT_SYNC_TIMEOUT,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -1155,6 +1223,7 @@ mod tests {
             &["config.json".to_string()],
             false,
             Some(TOKEN.to_string()),
+            GIT_SYNC_TIMEOUT,
         )
         .unwrap_err();
 
@@ -1180,12 +1249,68 @@ mod tests {
             &["config.json".to_string()],
             false,
             Some(TOKEN.to_string()),
+            GIT_SYNC_TIMEOUT,
         )
         .unwrap_err();
 
         stub.finish();
         assert!(err.contains("check your credentials"), "no advice: {err}");
         assert!(!err.contains(TOKEN), "token leaked into error: {err}");
+    }
+
+    fn silent_remote_url() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                held.push(stream);
+            }
+        });
+        format!("http://127.0.0.1:{port}/org/repo.git")
+    }
+
+    #[test]
+    fn clone_gives_up_when_the_remote_never_answers() {
+        let url = silent_remote_url();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let started = Instant::now();
+        std::thread::spawn(move || {
+            let _ = tx.send(GitHubRepository::clone_and_read_config(
+                &url,
+                &["config.json".to_string()],
+                false,
+                None,
+                Duration::from_secs(2),
+            ));
+        });
+
+        let err = rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|_| panic!("clone still running after {:?}", started.elapsed()))
+            .unwrap_err();
+
+        assert!(err.contains("timed out after 2s"), "{err}");
+    }
+
+    #[test]
+    fn fallback_clone_kills_git_when_the_remote_never_answers() {
+        let url = silent_remote_url();
+        let dest = tempfile::TempDir::new().unwrap();
+        let started = Instant::now();
+
+        let err = GitHubRepository::try_clone_with_system_git(
+            &url,
+            dest.path(),
+            &["config.json".to_string()],
+            false,
+            None,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, SystemGitError::TimedOut), "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]
@@ -1215,6 +1340,7 @@ mod tests {
             false,
             &SystemGitError::Failed("fatal: unable to access".to_string()),
             Some(TOKEN),
+            GIT_SYNC_TIMEOUT,
         );
 
         assert!(!message.contains(TOKEN), "{message}");
@@ -1228,6 +1354,7 @@ mod tests {
             false,
             &SystemGitError::Unavailable("No such file or directory".to_string()),
             None,
+            GIT_SYNC_TIMEOUT,
         );
 
         assert!(message.contains("failed to resolve address"), "{message}");

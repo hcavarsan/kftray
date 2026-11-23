@@ -935,4 +935,44 @@ mod tests {
         assert!(check_trigger_exists(&pool, "after_delete_config").await);
         assert!(check_trigger_exists(&pool, "after_insert_config_http_logs").await);
     }
+
+    async fn toggle_window_shortcut_after_upgrade(saved: Option<&str>) -> String {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to connect to in-memory database");
+        create_db_table(&pool)
+            .await
+            .expect("Failed to create tables");
+        if let Some(saved) = saved {
+            sqlx::query("INSERT INTO settings (key, value) VALUES ('global_shortcut', ?1)")
+                .bind(saved)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        migrate_configs(Some(&pool)).await.unwrap();
+
+        sqlx::query("SELECT shortcut_key FROM shortcuts WHERE action_type = 'toggle_window'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("shortcut_key")
+    }
+
+    #[tokio::test]
+    async fn upgrading_keeps_the_custom_global_shortcut() {
+        assert_eq!(
+            toggle_window_shortcut_after_upgrade(Some("Alt+Shift+K")).await,
+            "Alt+Shift+K"
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrading_without_a_global_shortcut_adds_the_default_one() {
+        assert_eq!(
+            toggle_window_shortcut_after_upgrade(None).await,
+            "Ctrl+Shift+F1"
+        );
+    }
 }

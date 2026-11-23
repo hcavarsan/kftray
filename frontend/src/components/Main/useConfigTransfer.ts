@@ -93,8 +93,9 @@ export function useConfigTransfer() {
           throw error
         }
 
-        const description =
-          hasMessage ? message + '…' : 'Failed to import configurations.'
+        const description = hasMessage
+          ? message + '…'
+          : 'Failed to import configurations.'
         throw attachProblemReportContext(
           new Error(description),
           getProblemReportContext(error),
@@ -111,7 +112,10 @@ export function useConfigTransfer() {
       }
     },
     meta: {
-      errorToast: { title: 'Error', duration: 8000 },
+      errorToast: {
+        title: 'Failed to import configurations',
+        duration: 8000,
+      },
     },
   })
 

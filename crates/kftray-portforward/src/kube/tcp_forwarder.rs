@@ -25,6 +25,7 @@ use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 const BUFFER_SIZE: usize = 65536;
 const MAX_LOGGED_REQUEST_SIZE: usize = 10 * 1024 * 1024;
+const MAX_LOGGED_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
 const MAX_CHUNK_LINE_SIZE: usize = 4096;
 
 #[derive(Default)]
@@ -625,6 +626,7 @@ impl TcpForwarder {
                 current_response_logged: false,
                 first_chunk_time: None,
                 force_log_time: None,
+                skipped_body: None,
             })
         } else {
             None
@@ -736,6 +738,7 @@ impl TcpForwarder {
                                         current_response_logged: false,
                                         first_chunk_time: None,
                                         force_log_time: None,
+                                        skipped_body: None,
                                     });
                                     debug!("Enabled HTTP logging for upstream-to-client");
                                 } else {
@@ -790,8 +793,21 @@ impl TcpForwarder {
             state.reset_for_new_response(current_req_id);
         }
 
+        if let Some(skipped) = state.skipped_body.as_mut() {
+            skipped.observe(buffer);
+            if matches!(skipped.body, RequestBody::Headers) {
+                state.reset_for_next_response();
+            }
+            return false;
+        }
+
         state.buffer.extend_from_slice(buffer);
         let dropped = state.drop_interim_responses();
+
+        if state.buffer.len() > BUFFER_SIZE && !state.buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            Self::skip_rest_of_response(state, logger).await;
+            return false;
+        }
 
         if dropped > 0 {
             state.first_chunk_time = None;
@@ -824,11 +840,52 @@ impl TcpForwarder {
             }
         }
 
-        Self::log_response_if_ready(state, logger).await;
+        if state.buffer.len() > MAX_LOGGED_RESPONSE_SIZE {
+            Self::skip_rest_of_response(state, logger).await;
+        } else {
+            Self::log_response_if_ready(state, logger).await;
+            if state.current_response_logged && !state.buffer.is_empty() {
+                Self::skip_rest_of_response(state, logger).await;
+            }
+        }
 
         // The caller switches to raw forwarding only after the handshake is
         // logged.
         is_websocket_upgrade
+    }
+
+    async fn skip_rest_of_response(
+        state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
+    ) {
+        let mut skipped = RequestLogBuffer {
+            buffer: Vec::new(),
+            body: state.unlogged_body(),
+            logged_at_head: true,
+        };
+        if state.is_chunked {
+            skipped.observe(&state.buffer[state.chunk_offset..]);
+        }
+        let mut logged = std::mem::take(&mut state.buffer);
+        if !state.current_response_logged
+            && let Some(response_id) = state.current_response_id.clone()
+        {
+            let maybe_logger = {
+                let guard = logger.lock().await;
+                guard.clone()
+            };
+            if let Some(log) = maybe_logger {
+                logged.truncate(MAX_LOGGED_RESPONSE_SIZE);
+                state.current_response_logged = true;
+                log.log_response(logged.into(), response_id).await;
+            }
+        }
+        let response_ended = matches!(skipped.body, RequestBody::Headers | RequestBody::Length(0))
+            || (state.is_chunked && state.found_end_marker);
+        if response_ended {
+            state.reset_for_next_response();
+        } else {
+            state.skipped_body = Some(skipped);
+        }
     }
 
     async fn log_response_if_ready(
@@ -902,6 +959,7 @@ struct ResponseState {
     current_response_logged: bool,
     first_chunk_time: Option<tokio::time::Instant>,
     force_log_time: Option<tokio::time::Instant>,
+    skipped_body: Option<RequestLogBuffer>,
 }
 
 impl ResponseState {
@@ -915,6 +973,7 @@ impl ResponseState {
         self.current_response_id = request_id;
         self.first_chunk_time = Some(tokio::time::Instant::now());
         self.force_log_time = None;
+        self.skipped_body = None;
     }
 
     fn pending_log_deadline(&self) -> Option<tokio::time::Instant> {
@@ -933,6 +992,26 @@ impl ResponseState {
         self.total_chunks_received = 0;
         self.first_chunk_time = None;
         self.force_log_time = None;
+        self.skipped_body = None;
+    }
+
+    fn unlogged_body(&self) -> RequestBody {
+        if self.is_chunked {
+            return RequestBody::ChunkSize(Vec::new());
+        }
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut response = httparse::Response::new(&mut headers);
+        let remaining = match response.parse(&self.buffer) {
+            Ok(httparse::Status::Complete(head_len)) => response
+                .headers
+                .iter()
+                .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+                .and_then(|h| std::str::from_utf8(h.value).ok())
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .map(|length| length.saturating_sub(self.buffer.len() - head_len)),
+            _ => None,
+        };
+        RequestBody::Length(remaining.unwrap_or(usize::MAX))
     }
 
     fn drop_interim_responses(&mut self) -> usize {
@@ -1086,6 +1165,7 @@ mod tests {
             current_response_logged: false,
             first_chunk_time: None,
             force_log_time: None,
+            skipped_body: None,
         };
         let logger = Arc::new(Mutex::new(None));
         let request_id = Arc::new(Mutex::new(Some("chunked-request".to_string())));
@@ -1160,6 +1240,7 @@ mod tests {
             current_response_logged: false,
             first_chunk_time: None,
             force_log_time: None,
+            skipped_body: None,
         };
         let logger = Arc::new(Mutex::new(None));
         let request_id = Arc::new(Mutex::new(Some("upload".to_string())));
@@ -1183,6 +1264,36 @@ mod tests {
         assert!(
             !TcpForwarder::should_log_response_static(&mut state),
             "final response logged before its last chunk"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_without_http_headers_stops_buffering_past_the_header_bound() {
+        let mut state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            chunk_offset: 0,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+            skipped_body: None,
+        };
+        let logger = Arc::new(Mutex::new(None));
+        let request_id = Arc::new(Mutex::new(Some("grpc-stream".to_string())));
+        let read = vec![0xABu8; BUFFER_SIZE];
+
+        for _ in 0..16 {
+            TcpForwarder::handle_response_logging_static(&read, &mut state, &logger, &request_id)
+                .await;
+        }
+
+        assert!(
+            state.buffer.len() <= 2 * BUFFER_SIZE,
+            "buffered {} bytes of a stream with no HTTP headers",
+            state.buffer.len()
         );
     }
 
@@ -1465,6 +1576,156 @@ mod tests {
             contents.contains("complete-TAIL"),
             "logged body lost its last bytes: {contents}"
         );
+        http_logger.shutdown().await;
+    }
+
+    async fn logged_response_state(
+        name: &str,
+    ) -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        Arc<Logger>,
+        Arc<Mutex<Option<Arc<Logger>>>>,
+        Arc<Mutex<Option<String>>>,
+        ResponseState,
+    ) {
+        let (temp_dir, log_path, http_logger) = temp_http_logger(name).await;
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /large HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(Some(http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let state = ResponseState {
+            buffer: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            chunk_offset: 0,
+            total_chunks_received: 0,
+            current_response_id: None,
+            current_response_logged: false,
+            first_chunk_time: None,
+            force_log_time: None,
+            skipped_body: None,
+        };
+        (temp_dir, log_path, http_logger, logger, request_id, state)
+    }
+
+    #[tokio::test]
+    async fn large_download_keeps_the_logged_response_bounded() {
+        let (_temp_dir, log_path, http_logger, logger, request_id, mut state) =
+            logged_response_state("download.log").await;
+        let reads = 2 * MAX_LOGGED_RESPONSE_SIZE / BUFFER_SIZE;
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            reads * BUFFER_SIZE
+        );
+        TcpForwarder::handle_response_logging_static(
+            head.as_bytes(),
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        let body = vec![b'a'; BUFFER_SIZE];
+        for _ in 0..reads {
+            TcpForwarder::handle_response_logging_static(&body, &mut state, &logger, &request_id)
+                .await;
+            assert!(
+                state.buffer.len() <= MAX_LOGGED_RESPONSE_SIZE,
+                "download buffered {} bytes",
+                state.buffer.len()
+            );
+        }
+        assert!(
+            state.skipped_body.is_none() && state.buffer.is_empty(),
+            "download must end at its content length"
+        );
+
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        assert_eq!(contents.matches("# Response at").count(), 1);
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn download_ending_past_the_limit_logs_a_bounded_response() {
+        let (_temp_dir, log_path, http_logger, logger, request_id, mut state) =
+            logged_response_state("download-edge.log").await;
+        let head_without_length = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ";
+        let body_len = MAX_LOGGED_RESPONSE_SIZE - head_without_length.len();
+        let head = format!("{head_without_length}{body_len}\r\n\r\n");
+        TcpForwarder::handle_response_logging_static(
+            head.as_bytes(),
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        let body = vec![b'z'; body_len];
+        for read in body.chunks(BUFFER_SIZE) {
+            TcpForwarder::handle_response_logging_static(read, &mut state, &logger, &request_id)
+                .await;
+        }
+        assert!(
+            state.skipped_body.is_none() && state.buffer.is_empty(),
+            "download must end at its content length"
+        );
+
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        assert_eq!(contents.matches("# Response at").count(), 1);
+        let logged_body = contents.matches('z').count();
+        assert!(
+            logged_body <= MAX_LOGGED_RESPONSE_SIZE - head.len(),
+            "logged {logged_body} body bytes"
+        );
+        http_logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn endless_event_stream_keeps_the_logged_response_bounded() {
+        let (_temp_dir, log_path, http_logger, logger, request_id, mut state) =
+            logged_response_state("events.log").await;
+        TcpForwarder::handle_response_logging_static(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        state.first_chunk_time = Some(tokio::time::Instant::now() - Duration::from_secs(6));
+        let event = "data: tick\n\n";
+        let chunk = format!("{:x}\r\n{event}\r\n", event.len());
+        let read = chunk.repeat(BUFFER_SIZE / chunk.len());
+        for _ in 0..512 {
+            TcpForwarder::handle_response_logging_static(
+                read.as_bytes(),
+                &mut state,
+                &logger,
+                &request_id,
+            )
+            .await;
+            assert!(
+                state.buffer.len() <= 2 * BUFFER_SIZE,
+                "event stream buffered {} bytes",
+                state.buffer.len()
+            );
+        }
+        TcpForwarder::handle_response_logging_static(
+            b"0\r\n\r\n",
+            &mut state,
+            &logger,
+            &request_id,
+        )
+        .await;
+        assert!(
+            state.skipped_body.is_none() && state.buffer.is_empty(),
+            "event stream must end at its last chunk"
+        );
+
+        let contents = read_log_until(&http_logger, &log_path, "# Response at").await;
+        assert_eq!(contents.matches("# Response at").count(), 1);
+        assert!(contents.contains("data: tick"), "{contents}");
         http_logger.shutdown().await;
     }
 

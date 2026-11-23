@@ -69,11 +69,14 @@ impl ReverseHttpProxy {
 
         info!("HTTP reverse proxy listening on {}", addr);
 
+        let mut backoff_ms: u64 = 10;
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, _)) => {
+                            backoff_ms = 10;
                             let tunnel = tunnel_server.clone();
                             tokio::spawn(async move {
                                 if tunnel.carries_tcp().await {
@@ -84,7 +87,16 @@ impl ReverseHttpProxy {
                             });
                         }
                         Err(e) => {
-                            error!("Failed to accept connection: {}", e);
+                            error!("Failed to accept connection (retrying in {backoff_ms}ms): {e}");
+                            tokio::select! {
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)) => {
+                                    backoff_ms = (backoff_ms * 2).min(5000);
+                                }
+                                _ = shutdown.notified() => {
+                                    info!("HTTP reverse proxy shutting down");
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
