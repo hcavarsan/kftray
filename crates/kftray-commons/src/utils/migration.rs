@@ -659,6 +659,29 @@ mod tests {
         assert_eq!(after.local_address.as_deref(), Some("127.0.0.1"));
     }
 
+    #[tokio::test]
+    async fn migration_keeps_a_real_kube_value_on_an_ssh_row() {
+        let pool = setup_test_db().await;
+        let ssh: Config = serde_json::from_value(json!({
+            "workload_type": "ssh-port-forward", "protocol": "tcp", "alias": "db",
+            "local_port": 15432, "remote_address": "10.0.0.5", "remote_port": 5432,
+            "context": "bastion-ctx", "namespace": "db-ns",
+            "ssh_provider": {
+                "type": "gcp-bastion", "project": "p", "zone": "us-central1-b",
+                "instance": "jumper", "interface": "nic0"
+            }
+        }))
+        .unwrap();
+        insert_config_with_pool(ssh, &pool).await.unwrap();
+
+        migrate_configs(Some(&pool)).await.unwrap();
+
+        let after = read_configs_with_pool(&pool).await.unwrap().remove(0);
+        assert_eq!(after.context.as_deref(), Some("bastion-ctx"));
+        assert_eq!(after.namespace, "db-ns");
+        assert_eq!(after.service, None);
+    }
+
     #[test]
     fn test_merge_json_values_simple() {
         let default = json!({ "a": 1, "b": 2 });
