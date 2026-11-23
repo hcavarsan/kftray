@@ -9,7 +9,7 @@ use std::path::{
 };
 use std::sync::OnceLock;
 
-use jiff::Zoned;
+use jiff::ZonedDateTime;
 use log::info;
 use serde::{
     Deserialize,
@@ -176,7 +176,7 @@ fn parse_log_file_timestamp(filename: &str) -> Option<String> {
 }
 
 fn calculate_age_days(timestamp: &str) -> u32 {
-    let now = Zoned::now();
+    let now = ZonedDateTime::now();
 
     if timestamp.len() >= 10 {
         let date_str = &timestamp[0..10];
@@ -511,7 +511,7 @@ pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String
     let version = app.package_info().version.to_string();
 
     let report = DiagnosticReport {
-        generated_at: Zoned::now().to_string(),
+        generated_at: ZonedDateTime::now().to_string(),
         app_version: version,
         platform: PlatformInfo {
             os: std::env::consts::OS.into(),
