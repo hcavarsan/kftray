@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as ReactQuery from '@tanstack/react-query'
 
+import { showErrorToast } from '@/components/ui/error-toast'
 import { invoke } from '@/lib/tauri'
 
 import type { SettingsDraft } from './types'
@@ -86,6 +87,7 @@ describe('useSettingsSave', () => {
     hooks.states = []
     hooks.mutation = undefined
     vi.mocked(invoke).mockReset()
+    vi.mocked(showErrorToast).mockClear()
   })
 
   it('sends the mcp switch again after the save that turned it on failed', async () => {
@@ -130,5 +132,41 @@ describe('useSettingsSave', () => {
     await submit()
 
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      draft: { ...initial, sslEnabled: true },
+      command: 'set_ssl_settings',
+      reason:
+        'SSL settings saved, but the CA certificate was not added to the system trust store: Permission denied (os error 13)',
+    },
+    {
+      draft: { ...initial, logRetentionCount: '20' },
+      command: 'set_log_settings',
+      reason: 'Failed to create log directory: Permission denied',
+    },
+    {
+      draft: { ...initial, networkMonitor: false },
+      command: 'update_network_monitor',
+      reason: 'Failed to stop network monitor: busy',
+    },
+  ])('shows why $command failed', async ({ draft, command, reason }) => {
+    vi.mocked(invoke).mockImplementation(async name => {
+      if (name === command) {
+        throw reason
+      }
+
+      return undefined
+    })
+
+    useSettingsSave(propsFor(draft, vi.fn()))
+    await submit()
+
+    const [, meta] = vi.mocked(showErrorToast).mock.calls[0]
+    const description = meta?.errorToast?.description
+
+    expect(description).toContain(reason)
+    expect(description).not.toContain('other settings were saved')
   })
 })
