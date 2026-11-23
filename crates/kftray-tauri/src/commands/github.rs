@@ -178,13 +178,16 @@ pub async fn import_configs_from_github(
         flush_existing: flush,
     };
 
-    measured(Operation::GitSync, async {
+    measured(Operation::GitSync, async move {
         let guard = phase(Phase::GitFetch);
-        let config_content = GitHubRepository::fetch_config_content(&config)?;
+        let config_content =
+            tokio::task::spawn_blocking(move || GitHubRepository::fetch_config_content(&config))
+                .await
+                .map_err(|e| e.to_string())??;
         drop(guard);
 
         let _guard = phase(Phase::GitImport);
-        import_config_content(&config_content, config.flush_existing).await
+        import_config_content(&config_content, flush).await
     })
     .await
 }
