@@ -34,19 +34,19 @@ interface ToastCopy {
 
 const SECTION_FAILURES: Record<SettingsSection, (error: unknown) => ToastCopy> =
   {
-    General: () => ({
+    General: error => ({
       title: 'Error',
-      description: 'Failed to save settings',
+      description: `Failed to save settings: ${errorMessage(error)}`,
       duration: 3000,
     }),
-    SSL: () => ({
+    SSL: error => ({
       title: 'SSL Settings Error',
-      description: 'Failed to save SSL settings, but other settings were saved',
+      description: errorMessage(error),
       duration: 4000,
     }),
-    Logs: () => ({
+    Logs: error => ({
       title: 'Log Settings Error',
-      description: 'Failed to save log settings, but other settings were saved',
+      description: `Failed to save log settings: ${errorMessage(error)}`,
       duration: 4000,
     }),
     Window: error => ({
