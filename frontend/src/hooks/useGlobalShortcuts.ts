@@ -49,8 +49,7 @@ export function useGlobalShortcuts() {
       }),
     meta: {
       errorToast: {
-        title: 'Error',
-        description: 'Failed to delete shortcut',
+        title: 'Failed to delete shortcut',
         duration: 3000,
       },
     },
@@ -68,8 +67,7 @@ export function useGlobalShortcuts() {
       }),
     meta: {
       errorToast: {
-        title: 'Permission Fix Failed',
-        description: 'Failed to fix input group permissions',
+        title: 'Failed to fix input group permissions',
         duration: 3000,
       },
     },
