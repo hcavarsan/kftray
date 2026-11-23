@@ -14,6 +14,18 @@ use sqlx::{
 
 use crate::db::get_db_pool;
 use crate::models::config_model::Config;
+use crate::models::ssh_provider::WORKLOAD_SSH_PORT_FORWARD;
+
+fn drop_kube_placeholders(config: &mut JsonValue, default: &JsonValue) {
+    let Some(fields) = config.as_object_mut() else {
+        return;
+    };
+    for key in ["context", "kubeconfig", "namespace", "service", "target"] {
+        if fields.get(key) == default.get(key) {
+            fields.remove(key);
+        }
+    }
+}
 
 async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
     info!("Starting configuration migration with provided pool.");
@@ -51,7 +63,10 @@ async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
             error!("Failed to serialize default config: {e}");
             e.to_string()
         })?;
-        let merged_config_json = merge_json_values(default_config_json, config_json);
+        let mut merged_config_json = merge_json_values(default_config_json.clone(), config_json);
+        if merged_config_json["workload_type"] == WORKLOAD_SSH_PORT_FORWARD {
+            drop_kube_placeholders(&mut merged_config_json, &default_config_json);
+        }
         let updated_data = serde_json::to_string(&merged_config_json).map_err(|e| {
             error!("Failed to serialize merged config: {e}");
             e.to_string()
@@ -616,6 +631,55 @@ mod tests {
             .await
             .unwrap()
             .is_some()
+    }
+
+    #[tokio::test]
+    async fn migration_leaves_ssh_rows_without_kube_placeholders() {
+        let pool = setup_test_db().await;
+        let ssh: Config = serde_json::from_value(json!({
+            "workload_type": "ssh-port-forward", "protocol": "tcp", "alias": "db",
+            "local_port": 15432, "remote_address": "10.0.0.5", "remote_port": 5432,
+            "ssh_provider": {
+                "type": "gcp-bastion", "project": "p", "zone": "us-central1-b",
+                "instance": "jumper", "interface": "nic0"
+            }
+        }))
+        .unwrap();
+        insert_config_with_pool(ssh, &pool).await.unwrap();
+
+        migrate_configs(Some(&pool)).await.unwrap();
+        migrate_configs(Some(&pool)).await.unwrap();
+
+        let after = read_configs_with_pool(&pool).await.unwrap().remove(0);
+        assert_eq!(after.context, None);
+        assert_eq!(after.namespace, "");
+        assert_eq!(after.service, None);
+        assert_eq!(after.target, None);
+        assert_eq!(after.kubeconfig, None);
+        assert_eq!(after.local_address.as_deref(), Some("127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn migration_keeps_a_real_kube_value_on_an_ssh_row() {
+        let pool = setup_test_db().await;
+        let ssh: Config = serde_json::from_value(json!({
+            "workload_type": "ssh-port-forward", "protocol": "tcp", "alias": "db",
+            "local_port": 15432, "remote_address": "10.0.0.5", "remote_port": 5432,
+            "context": "bastion-ctx", "namespace": "db-ns",
+            "ssh_provider": {
+                "type": "gcp-bastion", "project": "p", "zone": "us-central1-b",
+                "instance": "jumper", "interface": "nic0"
+            }
+        }))
+        .unwrap();
+        insert_config_with_pool(ssh, &pool).await.unwrap();
+
+        migrate_configs(Some(&pool)).await.unwrap();
+
+        let after = read_configs_with_pool(&pool).await.unwrap().remove(0);
+        assert_eq!(after.context.as_deref(), Some("bastion-ctx"));
+        assert_eq!(after.namespace, "db-ns");
+        assert_eq!(after.service, None);
     }
 
     #[test]
