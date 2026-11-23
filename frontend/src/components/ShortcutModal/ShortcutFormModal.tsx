@@ -135,8 +135,7 @@ export function ShortcutFormModal({
       }
       showErrorToast(error, {
         errorToast: {
-          title: 'Error',
-          description: 'Failed to save shortcut',
+          title: 'Failed to save shortcut',
           duration: 3000,
         },
       })
