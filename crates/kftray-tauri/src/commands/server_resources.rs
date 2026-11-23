@@ -105,9 +105,7 @@ pub async fn list_all_kftray_resources(
     let client = connection.client;
     let installation_id = kftray_commons::utils::config_dir::installation_id().await?;
 
-    let configs = kftray_commons::config::get_configs()
-        .await
-        .unwrap_or_default();
+    let configs = kftray_commons::config::get_configs().await?;
 
     let context_configs: Vec<_> = configs
         .iter()
@@ -145,15 +143,12 @@ pub async fn list_all_kftray_resources(
         let mut resources = Vec::new();
 
         resources.extend(
-            list_pods_in_namespace(&client, &namespace, &known_config_ids, installation_id)
-                .await
-                .unwrap_or_default(),
+            list_pods_in_namespace(&client, &namespace, &known_config_ids, installation_id).await?,
         );
 
         let user_deployments =
             list_deployments_in_namespace(&client, &namespace, &known_config_ids, installation_id)
-                .await
-                .unwrap_or_default();
+                .await?;
 
         let deployment_config_ids: Vec<String> = user_deployments
             .iter()
@@ -170,8 +165,7 @@ pub async fn list_all_kftray_resources(
                 &known_config_ids,
                 installation_id,
             )
-            .await
-            .unwrap_or_default(),
+            .await?,
         );
         resources.extend(
             list_ingresses_in_namespace(
@@ -181,8 +175,7 @@ pub async fn list_all_kftray_resources(
                 &known_config_ids,
                 installation_id,
             )
-            .await
-            .unwrap_or_default(),
+            .await?,
         );
 
         if !resources.is_empty() {
@@ -1425,5 +1418,74 @@ mod tests {
             *cluster.deletes.lock().await,
             vec!["/api/v1/namespaces/apps/pods/relay-of-deleted-config".to_string()]
         );
+    }
+
+    async fn serve_kube_api_that_forbids_lists() -> std::net::SocketAddr {
+        use tokio::io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let response = if request.starts_with("GET /version ") {
+                        kube_response(
+                            "200 OK",
+                            serde_json::json!({
+                                "major": "1", "minor": "30", "gitVersion": "v1.30.0",
+                                "gitCommit": "x", "gitTreeState": "clean",
+                                "buildDate": "2024-01-01T00:00:00Z", "goVersion": "go1",
+                                "compiler": "gc", "platform": "linux/amd64"
+                            }),
+                        )
+                    } else {
+                        kube_response(
+                            "403 Forbidden",
+                            serde_json::json!({
+                                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                                "status": "Failure", "reason": "Forbidden", "code": 403,
+                                "message": "pods is forbidden"
+                            }),
+                        )
+                    };
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn a_forbidden_list_fails_the_listing_and_the_cleanup() {
+        let cluster = relays_of_a_config_under_ctx_x_and_of_a_deleted_config().await;
+        let addr = serve_kube_api_that_forbids_lists().await;
+        let kubeconfig = std::fs::read_to_string(&cluster.kubeconfig).unwrap();
+        let rewritten = kubeconfig
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("server:") {
+                    format!("    server: http://{addr}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&cluster.kubeconfig, rewritten).unwrap();
+
+        let listed = list_all_kftray_resources("ctx-y", Some(cluster.kubeconfig.clone())).await;
+        let cleaned = cleanup_all_kftray_resources("ctx-y", Some(cluster.kubeconfig.clone())).await;
+
+        assert!(
+            listed.as_ref().is_err_and(|e| e.contains("forbidden")),
+            "{listed:?}"
+        );
+        assert!(cleaned.is_err(), "{cleaned:?}");
     }
 }
