@@ -22,7 +22,7 @@ async-trait = { workspace = true }
 dirs = { workspace = true }
 fix-path-env = { workspace = true }
 flexi_logger = { workspace = true }
-jiff = "0.2"
+jiff = "1.0"
 k8s-openapi = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }

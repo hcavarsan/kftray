@@ -559,7 +559,7 @@ async fn list_ingresses_in_namespace(
 }
 
 fn calculate_age(creation_timestamp: &Time) -> String {
-    let seconds = jiff::Timestamp::now()
+    let seconds = k8s_openapi::jiff::Timestamp::now()
         .duration_since(creation_timestamp.0)
         .as_secs()
         .max(0);
@@ -1171,8 +1171,8 @@ mod tests {
     fn age_uses_the_largest_whole_unit() {
         let created_ago = |secs: i64| {
             Time(
-                jiff::Timestamp::now()
-                    .checked_sub(jiff::SignedDuration::from_secs(secs))
+                k8s_openapi::jiff::Timestamp::now()
+                    .checked_sub(k8s_openapi::jiff::SignedDuration::from_secs(secs))
                     .unwrap(),
             )
         };
