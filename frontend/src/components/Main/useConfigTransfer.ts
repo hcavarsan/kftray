@@ -7,10 +7,17 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { allHttpLogsEnabledQueryKey } from '@/components/PortForwardTable/GroupAccordion/PortForwardRow/useHttpLogsEnabled'
 import { toaster } from '@/components/ui/toaster'
 import { configsQuery } from '@/hooks/useConfigs'
+import { errorMessage } from '@/lib/errors'
 import { withNativeDialog } from '@/lib/nativeDialog'
+import {
+  attachProblemReportContext,
+  getProblemReportContext,
+} from '@/lib/problemReports'
 import { invoke } from '@/lib/tauri'
 
 const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }]
+
+const MAX_IMPORT_ERROR_LENGTH = 512
 
 export function useConfigTransfer() {
   const queryClient = useQueryClient()
@@ -52,22 +59,48 @@ export function useConfigTransfer() {
 
   const importMutation = useMutation({
     mutationFn: async () => {
-      const selected = await withNativeDialog(() =>
-        open({ filters: JSON_FILTERS, multiple: false }),
-      )
+      try {
+        const selected = await withNativeDialog(() =>
+          open({ filters: JSON_FILTERS, multiple: false }),
+        )
 
-      if (!selected) {
-        return false
+        if (!selected) {
+          return false
+        }
+        const json = await readTextFile(selected)
+
+        await invoke('import_configs_cmd', { json })
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: configsQuery.queryKey }),
+          queryClient.invalidateQueries({
+            queryKey: allHttpLogsEnabledQueryKey,
+          }),
+        ])
+
+        return true
+      } catch (error) {
+        const rawMessage =
+          typeof error === 'string' || error instanceof Error
+            ? errorMessage(error)
+            : ''
+        const truncated = rawMessage.length > MAX_IMPORT_ERROR_LENGTH
+        const message = truncated
+          ? rawMessage.slice(0, MAX_IMPORT_ERROR_LENGTH - 1)
+          : rawMessage
+        const hasMessage = message.trim().length > 0
+
+        if (hasMessage && !truncated) {
+          throw error
+        }
+
+        const description = hasMessage
+          ? message + '…'
+          : 'Failed to import configurations.'
+        throw attachProblemReportContext(
+          new Error(description),
+          getProblemReportContext(error),
+        )
       }
-      const json = await readTextFile(selected)
-
-      await invoke('import_configs_cmd', { json })
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: configsQuery.queryKey }),
-        queryClient.invalidateQueries({ queryKey: allHttpLogsEnabledQueryKey }),
-      ])
-
-      return true
     },
     onSuccess: imported => {
       if (imported) {
@@ -81,7 +114,7 @@ export function useConfigTransfer() {
     meta: {
       errorToast: {
         title: 'Failed to import configurations',
-        duration: 6000,
+        duration: 8000,
       },
     },
   })
