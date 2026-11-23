@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SshProvider } from '@/types'
+import type { SshProvider, StoredConfig } from '@/types'
 
 import type { ConfigDraft } from './types'
-import { applyDraftChange, toConfig, validateDraft } from './utils'
+import { applyDraftChange, toConfig, toDraft, validateDraft } from './utils'
 
 const draft: ConfigDraft = {
   context: 'ctx',
@@ -121,6 +121,40 @@ describe('toConfig for expose', () => {
     )
 
     expect(config).toHaveProperty('exposure_protocol', undefined)
+  })
+})
+
+describe('toDraft', () => {
+  it('opens an imported expose config without exposure type as a valid cluster expose', () => {
+    const imported: StoredConfig = {
+      alias: 'internal-api',
+      context: 'ctx',
+      domain_enabled: true,
+      id: 7,
+      kubeconfig: 'default',
+      local_address: '127.0.0.1',
+      local_port: 8080,
+      namespace: 'dev',
+      protocol: 'tcp',
+      workload_type: 'expose',
+    }
+
+    const opened = toDraft(imported)
+
+    expect(opened.exposure_type).toBe('cluster')
+    expect(validateDraft(opened)).toEqual({})
+  })
+
+  it('keeps the exposure type a config already has', () => {
+    const imported: StoredConfig = {
+      alias: 'web',
+      exposure_type: 'public',
+      id: 8,
+      local_port: 8080,
+      workload_type: 'expose',
+    }
+
+    expect(toDraft(imported).exposure_type).toBe('public')
   })
 })
 
