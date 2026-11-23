@@ -925,22 +925,16 @@ impl App {
     }
 
     pub async fn load_http_logs_states(&mut self, configs: &[Config], mode: DatabaseMode) {
-        for config in configs {
-            if let Some(config_id) = config.id {
-                match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
-                    config_id, mode,
-                )
+        let enabled: std::collections::HashMap<i64, bool> =
+            kftray_commons::utils::http_logs_config::read_all_http_logs_configs_with_mode(mode)
                 .await
-                {
-                    Ok(http_logs_config) => {
-                        self.http_logs_enabled
-                            .insert(config_id, http_logs_config.enabled);
-                    }
-                    Err(_) => {
-                        self.http_logs_enabled.insert(config_id, false);
-                    }
-                }
-            }
+                .unwrap_or_default()
+                .into_iter()
+                .map(|http_logs_config| (http_logs_config.config_id, http_logs_config.enabled))
+                .collect();
+        for config_id in configs.iter().filter_map(|config| config.id) {
+            self.http_logs_enabled
+                .insert(config_id, enabled.get(&config_id).copied().unwrap_or(false));
         }
     }
 
