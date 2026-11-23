@@ -26,7 +26,7 @@ async fn importing_a_file_lists_every_config() -> Result<()> {
 
     assert_eq!(
         app.main().aliases().await?,
-        [ssh.alias(), pod.alias(), service.alias()]
+        [pod.alias(), service.alias(), ssh.alias()]
     );
     app.quit().await
 }
