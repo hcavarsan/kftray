@@ -127,76 +127,74 @@ pub async fn delete_all_configs() -> Result<(), String> {
 
 /// Insert a new config and return its assigned ID.
 pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Result<i64, String> {
-    let config = prepare_config(config)?;
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
     create_db_table(pool).await.map_err(|e| e.to_string())?;
-
-    // Validate that file mode won't conflict with memory mode ID range
-    let memory_id_start = std::env::var("KFTRAY_MEMORY_ID_START")
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(MEMORY_ID_START);
-
-    let next_id_row =
-        sqlx::query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM configs WHERE id < ?")
-            .bind(memory_id_start)
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(|e| e.to_string())?;
-
-    let next_id: i64 = next_id_row.try_get("next_id").map_err(|e| e.to_string())?;
-
-    if next_id >= memory_id_start {
-        return Err(format!(
-            "ID conflict detected: next file mode ID ({next_id}) would exceed memory mode start ({memory_id_start})"
-        ));
-    }
-
-    let data = json!(config).to_string();
-    let result = sqlx::query("INSERT INTO configs (data) VALUES (?1)")
-        .bind(data)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let inserted_id = result.last_insert_rowid();
-    sync_http_logs_config_from_config(&config, inserted_id, pool).await?;
-
-    Ok(inserted_id)
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    insert_config_on(config, &mut conn, DatabaseMode::File).await
 }
 
 pub(crate) async fn insert_config_with_pool_and_mode(
     config: Config, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<i64, String> {
-    match mode {
+    create_db_table(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    insert_config_on(config, &mut conn, mode).await
+}
+
+async fn insert_config_on(
+    config: Config, conn: &mut SqliteConnection, mode: DatabaseMode,
+) -> Result<i64, String> {
+    let config = prepare_config(config)?;
+    let data = json!(config).to_string();
+
+    let inserted_id = match mode {
         DatabaseMode::Memory => {
-            let config = prepare_config(config)?;
-            let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-            create_db_table(pool).await.map_err(|e| e.to_string())?;
-
-            let next_id = get_next_memory_id(pool).await?;
-            let data = json!(config).to_string();
-
+            let next_id = get_next_memory_id(conn).await?;
             sqlx::query("INSERT INTO configs (id, data) VALUES (?1, ?2)")
                 .bind(next_id)
                 .bind(data)
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| e.to_string())?;
-
-            sync_http_logs_config_from_config(&config, next_id, pool).await?;
-            Ok(next_id)
+            next_id
         }
-        DatabaseMode::File => insert_config_with_pool(config, pool).await,
-    }
+        DatabaseMode::File => {
+            // Validate that file mode won't conflict with memory mode ID range
+            let memory_id_start = std::env::var("KFTRAY_MEMORY_ID_START")
+                .ok()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(MEMORY_ID_START);
+
+            let next_id_row =
+                sqlx::query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM configs WHERE id < ?")
+                    .bind(memory_id_start)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            let next_id: i64 = next_id_row.try_get("next_id").map_err(|e| e.to_string())?;
+
+            if next_id >= memory_id_start {
+                return Err(format!(
+                    "ID conflict detected: next file mode ID ({next_id}) would exceed memory mode start ({memory_id_start})"
+                ));
+            }
+
+            sqlx::query("INSERT INTO configs (data) VALUES (?1)")
+                .bind(data)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?
+                .last_insert_rowid()
+        }
+    };
+
+    sync_http_logs_config_from_config(&config, inserted_id, conn).await?;
+    Ok(inserted_id)
 }
 
 const MEMORY_ID_START: i64 = 100000;
 
-async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
+async fn get_next_memory_id(conn: &mut SqliteConnection) -> Result<i64, String> {
     let memory_id_start = std::env::var("KFTRAY_MEMORY_ID_START")
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
@@ -343,8 +341,12 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
 pub(crate) async fn update_config_with_pool(
     config: Config, pool: &SqlitePool,
 ) -> Result<(), String> {
-    let config = prepare_config(config)?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    update_config_on(config, &mut conn).await
+}
+
+async fn update_config_on(config: Config, conn: &mut SqliteConnection) -> Result<(), String> {
+    let config = prepare_config(config)?;
     let data = json!(config).to_string();
     sqlx::query("UPDATE configs SET data = ?1 WHERE id = ?2")
         .bind(data)
@@ -354,7 +356,7 @@ pub(crate) async fn update_config_with_pool(
         .map_err(|e| e.to_string())?;
 
     if let Some(config_id) = config.id {
-        sync_http_logs_config_from_config(&config, config_id, pool).await?;
+        sync_http_logs_config_from_config(&config, config_id, conn).await?;
     }
 
     Ok(())
@@ -661,58 +663,10 @@ fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
     existing_clone == incoming_clone
 }
 
-async fn merge_config_with_existing(
-    config: Config, existing: Option<&Config>, pool: &SqlitePool,
-) -> Result<(), String> {
-    if let Some(existing) = existing {
-        info!(
-            "Found matching config ID={}, checking if update needed",
-            existing.id.unwrap_or(-1)
-        );
-        if configs_are_identical(existing, &config) {
-            info!("Config is identical, skipping");
-            return Ok(());
-        }
-
-        info!("Config has changes, updating");
-        let mut updated_config = config;
-        updated_config.id = existing.id;
-
-        if updated_config.alias.is_none() || updated_config.alias.as_deref() == Some("") {
-            updated_config.alias = existing.alias.clone();
-        }
-
-        if updated_config.local_port.is_none() || updated_config.local_port == Some(0) {
-            updated_config.local_port = existing.local_port;
-        }
-
-        update_config_with_pool(updated_config, pool).await?;
-    } else {
-        info!("No matching config found, inserting new config");
-        insert_config_with_pool(config, pool).await?;
-    }
-
-    Ok(())
-}
-
 pub(crate) async fn import_configs_with_pool(
     json: String, pool: &SqlitePool,
 ) -> Result<(), String> {
-    let configs = parse_import_configs(&json)?;
-
-    let existing_configs = read_configs_with_pool(pool).await?;
-
-    for (config, existing) in assign_identity_matches(&existing_configs, configs, true) {
-        merge_config_with_existing(config, existing, pool)
-            .await
-            .map_err(|e| format!("Failed to merge config: {e}"))?;
-    }
-
-    if let Err(e) = migrate_configs(Some(pool)).await {
-        return Err(format!("Error migrating configs: {e}"));
-    }
-
-    Ok(())
+    import_configs_with_pool_and_mode(json, pool, DatabaseMode::File).await
 }
 
 pub fn parse_import_configs(json: &str) -> Result<Vec<Config>, String> {
@@ -756,7 +710,7 @@ fn dedup_configs(configs: Vec<Config>) -> Vec<Config> {
 }
 
 async fn merge_config_with_existing_and_mode(
-    config: Config, existing: Option<&Config>, pool: &SqlitePool, mode: DatabaseMode,
+    config: Config, existing: Option<&Config>, conn: &mut SqliteConnection, mode: DatabaseMode,
 ) -> Result<i64, String> {
     if let Some(existing) = existing {
         let id = existing
@@ -780,11 +734,11 @@ async fn merge_config_with_existing_and_mode(
             updated_config.local_port = existing.local_port;
         }
 
-        update_config_with_pool(updated_config, pool).await?;
+        update_config_on(updated_config, conn).await?;
         Ok(id)
     } else {
         info!("No matching config found, inserting new config");
-        insert_config_with_pool_and_mode(config, pool, mode).await
+        insert_config_on(config, conn, mode).await
     }
 }
 
@@ -792,19 +746,7 @@ pub(crate) async fn import_configs_with_pool_and_mode(
     json: String, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
     let configs = parse_import_configs(&json)?;
-
-    let existing_configs = read_configs_with_pool(pool).await?;
-
-    for (config, existing) in assign_identity_matches(&existing_configs, configs, true) {
-        merge_config_with_existing_and_mode(config, existing, pool, mode)
-            .await
-            .map_err(|e| format!("Failed to merge config: {e}"))?;
-    }
-
-    if let Err(e) = migrate_configs(Some(pool)).await {
-        return Err(format!("Error migrating configs: {e}"));
-    }
-
+    save_imported_configs(configs, pool, mode, false).await?;
     Ok(())
 }
 
@@ -865,13 +807,16 @@ async fn save_imported_configs(
     let configs = dedup_configs(configs);
     let matches = assign_identity_matches(&existing_configs, configs, !replace);
 
+    create_db_table(pool).await.map_err(|e| e.to_string())?;
+    let mut transaction = pool.begin().await.map_err(|e| e.to_string())?;
     let mut ids = Vec::with_capacity(matches.len());
     for (config, existing) in matches {
-        let id = merge_config_with_existing_and_mode(config, existing, pool, mode)
+        let id = merge_config_with_existing_and_mode(config, existing, &mut transaction, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
         ids.push(id);
     }
+    transaction.commit().await.map_err(|e| e.to_string())?;
 
     if let Err(e) = migrate_configs(Some(pool)).await {
         return Err(format!("Error migrating configs: {e}"));
@@ -1096,10 +1041,10 @@ fn prepare_config(mut config: Config) -> Result<Config, String> {
 }
 
 async fn sync_http_logs_config_from_config(
-    config: &Config, config_id: i64, pool: &SqlitePool,
+    config: &Config, config_id: i64, conn: &mut SqliteConnection,
 ) -> Result<(), String> {
     use crate::models::http_logs_config_model::HttpLogsConfig;
-    use crate::utils::http_logs_config::update_http_logs_config_with_pool;
+    use crate::utils::http_logs_config::update_http_logs_config_on;
 
     let http_config = HttpLogsConfig {
         config_id,
@@ -1109,7 +1054,7 @@ async fn sync_http_logs_config_from_config(
         auto_cleanup: config.http_logs_auto_cleanup.unwrap_or(true),
     };
 
-    update_http_logs_config_with_pool(&http_config, pool).await
+    update_http_logs_config_on(&http_config, conn).await
 }
 
 #[cfg(test)]
@@ -1773,6 +1718,46 @@ mod tests {
                 .iter()
                 .any(|c| c.service == Some("imported-service2".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn test_import_of_hundreds_of_configs_saves_every_row_and_http_logs_entry() {
+        let pool = setup_test_db().await;
+        let configs_json = serde_json::Value::Array(
+            (0..300)
+                .map(|i| {
+                    json!({
+                        "service": format!("svc-{i}"),
+                        "workload_type": "service",
+                        "protocol": "tcp",
+                        "context": "kind-test",
+                        "namespace": "ns",
+                        "local_port": 20000 + i,
+                        "remote_port": 80,
+                        "http_logs_enabled": i % 2 == 0
+                    })
+                })
+                .collect(),
+        )
+        .to_string();
+
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let http_logs = crate::utils::http_logs_config::read_all_http_logs_configs_with_pool(&pool)
+            .await
+            .unwrap();
+        assert_eq!(configs.len(), 300);
+        assert_eq!(http_logs.len(), 300);
+        for config in &configs {
+            let port = config.local_port.unwrap();
+            let entry = http_logs
+                .iter()
+                .find(|entry| Some(entry.config_id) == config.id)
+                .unwrap();
+            assert_eq!(entry.enabled, port % 2 == 0, "{port}");
+            assert_eq!(config.http_logs_enabled, Some(port % 2 == 0), "{port}");
+        }
     }
 
     #[tokio::test]
