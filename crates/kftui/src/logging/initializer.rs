@@ -36,6 +36,8 @@ impl LoggerInitializer for FileLoggerInitializer {
     }
 }
 
+pub const LOG_BUFFER_DEPTH: usize = 20000;
+
 pub struct TuiLoggerInitializer;
 
 impl LoggerInitializer for TuiLoggerInitializer {
@@ -48,7 +50,7 @@ impl LoggerInitializer for TuiLoggerInitializer {
             .map_err(|e| format!("Failed to initialize TUI logger: {e}"))?;
 
         tui_logger::set_hot_buffer_depth(2000);
-        tui_logger::set_buffer_depth(20000);
+        tui_logger::set_buffer_depth(LOG_BUFFER_DEPTH);
 
         Ok(())
     }
