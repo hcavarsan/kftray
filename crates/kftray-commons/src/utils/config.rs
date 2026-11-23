@@ -1761,6 +1761,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_import_that_fails_on_one_config_keeps_the_saved_ones_as_they_were() {
+        let pool = setup_test_db().await;
+        let service = |name: &str, alias: &str| Config {
+            service: Some(name.to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            context: Some("kind-test".to_string()),
+            namespace: "ns".to_string(),
+            local_port: Some(5000),
+            remote_port: Some(80),
+            alias: Some(alias.to_string()),
+            ..Config::default()
+        };
+        let saved_id = insert_config_with_pool(service("saved", "before"), &pool)
+            .await
+            .unwrap();
+        let mut broken = service("broken", "broken");
+        broken.tags = BTreeMap::from([
+            ("Team".to_string(), "core".to_string()),
+            ("team".to_string(), "payments".to_string()),
+        ]);
+
+        let result = upsert_configs_with_pool_and_mode(
+            vec![service("saved", "after"), service("new", "new"), broken],
+            &pool,
+            DatabaseMode::File,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        let aliases: Vec<_> = configs.iter().map(|c| (c.id, c.alias.clone())).collect();
+        assert_eq!(aliases, vec![(Some(saved_id), Some("before".to_string()))]);
+    }
+
+    #[tokio::test]
     async fn test_import_configs_invalid_json() {
         let pool = setup_test_db().await;
         let invalid_json = "{\"service\": \"bad json\",";
