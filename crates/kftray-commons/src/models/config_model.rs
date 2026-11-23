@@ -71,6 +71,14 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
+fn deserialize_blank_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.filter(|v| !v.trim().is_empty()))
+}
+
 fn is_empty_string(value: &str) -> bool {
     value.is_empty()
 }
@@ -103,6 +111,7 @@ pub struct Config {
     pub remote_address: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh_provider: Option<SshProvider>,
+    #[serde(default, deserialize_with = "deserialize_blank_as_none")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_address: Option<String>,
     #[serde(default)]
@@ -399,6 +408,22 @@ mod tests {
                 panic!("Failed to deserialize config array: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn blank_local_address_deserializes_as_unset() {
+        for raw in [r#""""#, r#""   ""#, "null"] {
+            let json = format!(r#"{{"namespace": "ns", "local_address": {raw}}}"#);
+            let config: Config = serde_json::from_str(&json).unwrap();
+            assert_eq!(config.local_address, None, "{raw}");
+        }
+
+        let missing: Config = serde_json::from_str(r#"{"namespace": "ns"}"#).unwrap();
+        assert_eq!(missing.local_address, None);
+
+        let set: Config =
+            serde_json::from_str(r#"{"namespace": "ns", "local_address": "127.0.0.5"}"#).unwrap();
+        assert_eq!(set.local_address.as_deref(), Some("127.0.0.5"));
     }
 
     fn ssh_config() -> Config {
