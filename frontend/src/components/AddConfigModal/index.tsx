@@ -19,7 +19,7 @@ import {
 } from '@/hooks/useKube'
 import { DEFAULT_KUBECONFIG } from '@/hooks/useKubeconfigPicker'
 import { invoke } from '@/lib/tauri'
-import type { ConfigViewResult, StoredConfig } from '@/types'
+import type { ConfigViewResult } from '@/types'
 
 import { CommonFields } from './CommonFields'
 import { ExposeFields } from './ExposeFields'
@@ -33,37 +33,12 @@ import {
   applyDraftChange,
   tagSuggestions,
   toConfig,
+  toDraft,
   trimConfigValues,
   validateDraft,
 } from './utils'
 
 const FORM_ID = 'add-config-form'
-
-const emptyDraft: ConfigDraft = {
-  alias: '',
-  auto_loopback_address: false,
-  context: '',
-  domain_enabled: false,
-  kubeconfig: DEFAULT_KUBECONFIG,
-  local_address: '127.0.0.1',
-  local_port: '',
-  namespace: '',
-  remote_address: '',
-  remote_port: '',
-  service: '',
-  target: '',
-}
-
-const toDraft = (config: StoredConfig | null): ConfigDraft => {
-  if (!config) {
-    return { ...emptyDraft }
-  }
-  return {
-    ...config,
-    local_port: config.local_port ? String(config.local_port) : '',
-    remote_port: config.remote_port ? String(config.remote_port) : '',
-  }
-}
 
 export function AddConfigModal({
   initialConfig,
