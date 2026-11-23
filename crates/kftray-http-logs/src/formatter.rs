@@ -101,32 +101,27 @@ impl MessageFormatter {
                 let headers_bytes = &buffer[..headers_end];
                 let body_bytes = &buffer[headers_end..];
 
-                if let Ok(headers_str) = std::str::from_utf8(headers_bytes) {
-                    log_entry.push_str(headers_str);
-                    log_entry.push('\n');
-                } else {
-                    log_entry.push_str("HTTP/1.1 200 OK\n<unparseable headers>\n\n");
-                }
+                let headers_str = String::from_utf8_lossy(headers_bytes);
+                log_entry.push_str(&headers_str);
+                log_entry.push('\n');
 
                 if !body_bytes.is_empty() {
                     let mut content_type = None;
                     let mut content_encodings = Vec::new();
                     let mut is_chunked = false;
 
-                    if let Ok(headers_str) = std::str::from_utf8(headers_bytes) {
-                        for line in headers_str.lines() {
-                            let line_lower = line.to_lowercase();
-                            if line_lower.starts_with("content-type:") {
-                                content_type = line.split(':').nth(1).map(|s| s.trim());
-                            }
-                            if let Some(value) = line_lower.strip_prefix("content-encoding:") {
-                                content_encodings.push(value.trim().to_string());
-                            }
-                            if line_lower.starts_with("transfer-encoding:")
-                                && line_lower.contains("chunked")
-                            {
-                                is_chunked = true;
-                            }
+                    for line in headers_str.lines() {
+                        let line_lower = line.to_lowercase();
+                        if line_lower.starts_with("content-type:") {
+                            content_type = line.split(':').nth(1).map(|s| s.trim());
+                        }
+                        if let Some(value) = line_lower.strip_prefix("content-encoding:") {
+                            content_encodings.push(value.trim().to_string());
+                        }
+                        if line_lower.starts_with("transfer-encoding:")
+                            && line_lower.contains("chunked")
+                        {
+                            is_chunked = true;
                         }
                     }
 
@@ -1234,6 +1229,33 @@ mod formatter_tests {
         assert!(formatted.contains("HTTP/1.1 200 OK"));
         assert!(formatted.contains("Content-Type: text/plain"));
         assert!(formatted.contains("Hello"));
+    }
+
+    #[test]
+    fn a_non_utf8_response_header_keeps_the_status_and_headers() {
+        let mut response =
+            b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=\"caf"
+                .to_vec();
+        response.push(0xe9);
+        response.extend_from_slice(b".txt\"\r\nContent-Length: 9\r\n\r\nnot found");
+
+        let formatted = MessageFormatter::format_preformatted_response(
+            "latin1",
+            Utc::now(),
+            1,
+            &Bytes::from(response),
+        );
+
+        assert!(formatted.contains("HTTP/1.1 404 Not Found"), "{formatted}");
+        assert!(
+            formatted.contains("Content-Type: text/plain"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("filename=\"caf\u{fffd}.txt\""),
+            "{formatted}"
+        );
+        assert!(formatted.contains("not found"), "{formatted}");
     }
 
     #[test]
