@@ -88,18 +88,22 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
 
 pub async fn delete_configs_with_pool(ids: Vec<i64>, pool: &SqlitePool) -> Result<(), DbError> {
     let mut transaction = pool.begin().await?;
-    for id in &ids {
+    delete_configs_on(&mut transaction, &ids).await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn delete_configs_on(conn: &mut SqliteConnection, ids: &[i64]) -> Result<(), DbError> {
+    for id in ids {
         sqlx::query("DELETE FROM configs WHERE id = ?1")
             .bind(id)
-            .execute(&mut *transaction)
+            .execute(&mut *conn)
             .await
             .map_err(|e| {
                 DbError::QueryFailed(format!("Failed to delete config with id {id}: {e}"))
             })?;
     }
-    remove_configs_from_shortcuts(&mut transaction, &ids).await?;
-    transaction.commit().await?;
-    Ok(())
+    remove_configs_from_shortcuts(conn, ids).await
 }
 
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
@@ -816,12 +820,6 @@ async fn save_imported_configs(
             .map_err(|e| format!("Failed to merge config: {e}"))?;
         ids.push(id);
     }
-    transaction.commit().await.map_err(|e| e.to_string())?;
-
-    if let Err(e) = migrate_configs(Some(pool)).await {
-        return Err(format!("Error migrating configs: {e}"));
-    }
-
     if replace {
         let removed_ids = existing_configs
             .into_iter()
@@ -829,10 +827,15 @@ async fn save_imported_configs(
             .filter(|id| !ids.contains(id))
             .collect::<Vec<_>>();
         if !removed_ids.is_empty() {
-            delete_configs_with_pool(removed_ids, pool)
+            delete_configs_on(&mut transaction, &removed_ids)
                 .await
                 .map_err(|e| e.to_string())?;
         }
+    }
+    transaction.commit().await.map_err(|e| e.to_string())?;
+
+    if let Err(e) = migrate_configs(Some(pool)).await {
+        return Err(format!("Error migrating configs: {e}"));
     }
 
     Ok(ids)
@@ -3348,5 +3351,46 @@ mod tests {
         .unwrap();
         assert!(third.is_empty());
         assert_eq!(read_configs_with_pool(&pool).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_replace_keeps_only_the_old_configs() {
+        let pool = setup_test_db().await;
+        insert_config_with_pool(
+            Config {
+                service: Some("old-a".into()),
+                namespace: "ns".into(),
+                ..Config::default()
+            },
+            &pool,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER block_delete BEFORE DELETE ON configs BEGIN SELECT RAISE(ABORT, \
+             'blocked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let replaced = replace_configs_with_pool(
+            vec![Config {
+                service: Some("new-b".into()),
+                namespace: "ns2".into(),
+                ..Config::default()
+            }],
+            &pool,
+        )
+        .await;
+
+        assert!(replaced.is_err());
+        let services: Vec<_> = read_configs_with_pool(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|config| config.service)
+            .collect();
+        assert_eq!(services, vec![Some("old-a".to_string())]);
     }
 }
