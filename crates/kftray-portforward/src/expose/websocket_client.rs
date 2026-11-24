@@ -27,6 +27,7 @@ use hyper_util::rt::{
 use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use kftray_commons::models::tunnel_protocol::{
     HALF_CLOSE_HEADER,
+    MAX_MESSAGE_SIZE,
     STREAM_WINDOW,
     TCP_MODE_PATH,
     TUNNEL_MODE_HEADER,
@@ -57,12 +58,13 @@ use tokio::sync::{
 };
 use tokio::task::JoinSet;
 use tokio_tungstenite::{
-    connect_async,
+    connect_async_with_config,
     tungstenite::{
         Error as WsError,
         Message,
         client::IntoClientRequest,
         http::HeaderValue,
+        protocol::WebSocketConfig,
     },
 };
 
@@ -287,7 +289,11 @@ impl WebSocketTunnelClient {
         request
             .headers_mut()
             .insert(HALF_CLOSE_HEADER, HeaderValue::from_static("1"));
-        let (ws_stream, response) = match connect_async(request).await {
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(MAX_MESSAGE_SIZE))
+            .max_frame_size(Some(MAX_MESSAGE_SIZE));
+        let connection = connect_async_with_config(request, Some(config), false).await;
+        let (ws_stream, response) = match connection {
             Ok(connection) => connection,
             Err(error) => {
                 let message = format!("Failed to connect to WebSocket: {error}");
@@ -380,7 +386,7 @@ impl WebSocketTunnelClient {
                     if let TunnelMessage::StreamClose { id } = &outgoing {
                         streams.remove(id);
                     }
-                    match outgoing.serialize() {
+                    match outgoing.serialize().and_then(|data| fit_message(&outgoing, data)) {
                         Ok(data) => {
                             if let Err(e) = ws_write.send(Message::Binary(data.into())).await {
                                 error!("Failed to send response through WebSocket: {}", e);
@@ -678,6 +684,23 @@ impl WebSocketTunnelClient {
                 )
             }
         }
+    }
+}
+
+fn fit_message(message: &TunnelMessage, data: Vec<u8>) -> Result<Vec<u8>, serde_json::Error> {
+    match message {
+        TunnelMessage::HttpResponse { id, .. } if data.len() > MAX_MESSAGE_SIZE => {
+            warn!(
+                "Response {id} is {} bytes on the tunnel, over the {MAX_MESSAGE_SIZE} byte limit",
+                data.len()
+            );
+            TunnelMessage::Error {
+                id: Some(id.clone()),
+                message: "response body too large for the tunnel".to_owned(),
+            }
+            .serialize()
+        }
+        _ => Ok(data),
     }
 }
 
@@ -1414,7 +1437,12 @@ mod tests {
             client.start(ready_tx).await
         }));
         let (socket, _) = ws_listener.accept().await.unwrap();
-        let ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let config = super::WebSocketConfig::default()
+            .max_message_size(Some(super::MAX_MESSAGE_SIZE))
+            .max_frame_size(Some(super::MAX_MESSAGE_SIZE));
+        let ws = tokio_tungstenite::accept_async_with_config(socket, Some(config))
+            .await
+            .unwrap();
         ready_rx.await.unwrap().unwrap();
         (ws, task)
     }
@@ -1554,6 +1582,154 @@ mod tests {
             other => panic!("expected a plain response, got {other:?}"),
         }
         assert_quiet(&mut relay).await;
+    }
+
+    async fn sized_body_app() -> u16 {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = app.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(socket.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap();
+                    let size: usize = head.split(' ').nth(1).unwrap()[1..].parse().unwrap();
+                    let mut reply =
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n").into_bytes();
+                    reply.resize(reply.len() + size, b'a');
+                    socket.write_all(&reply).await.unwrap();
+                });
+            }
+        });
+        port
+    }
+
+    fn get_request(id: &str, path: String) -> super::TunnelMessage {
+        super::TunnelMessage::HttpRequest {
+            id: id.to_owned(),
+            method: "GET".to_owned(),
+            path,
+            headers: Vec::new(),
+            body: Vec::new(),
+            upgrade: false,
+            flow_control: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn response_over_the_default_frame_limit_reaches_the_relay() {
+        let (mut relay, _task) = connect_relay(sized_body_app().await).await;
+        let size = 6 << 20;
+
+        send(&mut relay, get_request("big", format!("/{size}"))).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse {
+                id, status, body, ..
+            } => {
+                assert_eq!(id, "big");
+                assert_eq!(status, 200);
+                assert_eq!(body.len(), size);
+            }
+            other => panic!("expected the big response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn response_over_the_message_limit_fails_alone() {
+        let (mut relay, _task) = connect_relay(sized_body_app().await).await;
+
+        let size = super::MAX_MESSAGE_SIZE / 3 + 1;
+        send(&mut relay, get_request("huge", format!("/{size}"))).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::Error { id, message } => {
+                assert_eq!(id.as_deref(), Some("huge"));
+                assert!(message.contains("too large"), "{message}");
+            }
+            other => panic!("expected a too large error, got {other:?}"),
+        }
+
+        send(&mut relay, get_request("small", "/2".to_owned())).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse { id, body, .. } => {
+                assert_eq!(id, "small");
+                assert_eq!(body, b"aa");
+            }
+            other => panic!("expected the small response, got {other:?}"),
+        }
+    }
+
+    async fn body_length_app() -> u16 {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = app.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(socket.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap().to_ascii_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .map_or(0, |value| value.trim().parse().unwrap());
+                    let mut body = vec![0u8; length];
+                    socket.read_exact(&mut body).await.unwrap();
+                    let received = body
+                        .iter()
+                        .filter(|byte| **byte == b'a')
+                        .count()
+                        .to_string();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{received}",
+                        received.len()
+                    );
+                    socket.write_all(reply.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn upload_over_the_default_frame_limit_reaches_the_local_app() {
+        let (mut relay, _task) = connect_relay(body_length_app().await).await;
+        let size = 6 << 20;
+        let upload = |id: &str, body: Vec<u8>| super::TunnelMessage::HttpRequest {
+            id: id.to_owned(),
+            method: "POST".to_owned(),
+            path: "/upload".to_owned(),
+            headers: Vec::new(),
+            body,
+            upgrade: false,
+            flow_control: false,
+        };
+
+        send(&mut relay, upload("big", vec![b'a'; size])).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse { id, body, .. } => {
+                assert_eq!(id, "big");
+                assert_eq!(body, size.to_string().into_bytes());
+            }
+            other => panic!("expected the upload to reach the app, got {other:?}"),
+        }
+
+        send(&mut relay, upload("small", b"aa".to_vec())).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse { id, body, .. } => {
+                assert_eq!(id, "small");
+                assert_eq!(body, b"2");
+            }
+            other => panic!("expected the small upload to reach the app, got {other:?}"),
+        }
     }
 
     #[tokio::test]
