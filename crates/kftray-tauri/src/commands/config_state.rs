@@ -38,7 +38,6 @@ impl Deref for ConfigStateView {
 pub async fn get_config_states() -> Result<Vec<ConfigStateView>, String> {
     log::info!("get_configs state called");
     let configs = get_configs_state().await?;
-    log::info!("{configs:?}");
     Ok(configs.into_iter().map(ConfigStateView::from).collect())
 }
 
@@ -191,5 +190,53 @@ mod tests {
         assert_eq!(stopped["owned_elsewhere"], false);
         assert_eq!(ours["owned_elsewhere"], false);
         assert_eq!(unowned["owned_elsewhere"], false);
+    }
+
+    static CONFIG_DUMPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    struct ConfigDumpSpy;
+
+    impl log::Log for ConfigDumpSpy {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if record.args().to_string().contains("ConfigState {") {
+                CONFIG_DUMPED.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    #[tokio::test]
+    async fn a_config_states_refresh_does_not_write_every_config_to_the_log() {
+        let _db = kftray_commons::test_utils::test_db().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _config = kftray_commons::test_utils::EnvVarGuard::set(
+            "KFTRAY_CONFIG",
+            dir.path().to_str().unwrap(),
+        );
+        kftray_commons::utils::db::init().await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(None)
+            .await
+            .unwrap();
+        kftray_commons::utils::config::insert_config(Config {
+            service: Some("refresh-log-test".to_string()),
+            ..Config::default()
+        })
+        .await
+        .unwrap();
+        log::set_logger(&ConfigDumpSpy).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+
+        let states = super::get_config_states().await.unwrap();
+
+        assert_eq!(states.len(), 1);
+        assert!(
+            !CONFIG_DUMPED.load(std::sync::atomic::Ordering::SeqCst),
+            "a refresh wrote the config states to the log"
+        );
     }
 }
