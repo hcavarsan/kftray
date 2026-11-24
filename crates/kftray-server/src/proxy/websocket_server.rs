@@ -28,7 +28,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio_tungstenite::{
-    accept_hdr_async,
+    accept_hdr_async_with_config,
     tungstenite::{
         Message,
         handshake::server::{
@@ -38,11 +38,13 @@ use tokio_tungstenite::{
             Response,
         },
         http::HeaderValue,
+        protocol::WebSocketConfig,
     },
 };
 
 use crate::models::tunnel_protocol::{
     HALF_CLOSE_HEADER,
+    MAX_MESSAGE_SIZE,
     STREAM_WINDOW,
     TCP_MODE_PATH,
     TUNNEL_MODE_HEADER,
@@ -252,12 +254,17 @@ impl WebSocketTunnelServer {
     ) -> Result<(), String> {
         let mut carries_tcp = false;
         let mut half_close = false;
-        let ws_stream = accept_hdr_async(
+        let ws_stream = accept_hdr_async_with_config(
             stream,
             TunnelModeHandshake {
                 carries_tcp: &mut carries_tcp,
                 half_close: &mut half_close,
             },
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(MAX_MESSAGE_SIZE))
+                    .max_frame_size(Some(MAX_MESSAGE_SIZE)),
+            ),
         )
         .await
         .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
@@ -411,6 +418,9 @@ impl WebSocketTunnelServer {
                 }
                 Some(msg) = request_rx.recv() => {
                     match msg.serialize() {
+                        Ok(data) if data.len() > MAX_MESSAGE_SIZE => {
+                            reject_oversized(&msg, data.len(), &pending_responses).await;
+                        }
                         Ok(data) => {
                             if let Err(e) =
                                 ws_write.send(Message::Binary(data.into())).await
@@ -648,6 +658,23 @@ fn deliver_stream_data(streams: &StreamSenders, id: &str, data: Vec<u8>) -> bool
         open.remove(id);
     }
     delivered
+}
+
+async fn reject_oversized(
+    msg: &TunnelMessage, size: usize,
+    pending_responses: &RwLock<HashMap<String, oneshot::Sender<TunnelMessage>>>,
+) {
+    let TunnelMessage::HttpRequest { id, .. } = msg else {
+        error!("Dropped a {size} byte tunnel message over the {MAX_MESSAGE_SIZE} byte limit");
+        return;
+    };
+    warn!("Request {id} is {size} bytes on the tunnel, over the {MAX_MESSAGE_SIZE} byte limit");
+    if let Some(sender) = pending_responses.write().await.remove(id) {
+        let _ = sender.send(TunnelMessage::Error {
+            id: Some(id.clone()),
+            message: "request body too large for the tunnel".to_string(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1006,5 +1033,118 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(current_pending().await.is_none());
+    }
+
+    async fn connect_fake_app() -> (
+        Arc<WebSocketTunnelServer>,
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = Arc::new(WebSocketTunnelServer::new(0));
+        let tunnel = server.tunnel.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel,
+                stream,
+                Duration::from_secs(300),
+                Duration::from_secs(300),
+            )
+            .await
+        });
+        let (app, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        while !server.is_connected().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        (server, app)
+    }
+
+    fn plain_request(
+        server: &Arc<WebSocketTunnelServer>, id: &str, body: Vec<u8>,
+    ) -> tokio::task::JoinHandle<Result<(TunnelMessage, bool), String>> {
+        let server = server.clone();
+        let id = id.to_owned();
+        tokio::spawn(async move {
+            server
+                .send_request(id, "POST".into(), "/".into(), Vec::new(), body, false)
+                .await
+                .map(|(response, stream)| (response, stream.is_some()))
+        })
+    }
+
+    #[tokio::test]
+    async fn response_over_the_default_frame_limit_reaches_the_caller() {
+        let (server, mut app) = connect_fake_app().await;
+        let request = plain_request(&server, "big-1", Vec::new());
+
+        let forwarded = tokio::time::timeout(Duration::from_secs(5), app.next())
+            .await
+            .expect("Timed out waiting for the forwarded request")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(forwarded, Message::Binary(_)));
+
+        let body_len = 6 << 20;
+        let reply = TunnelMessage::HttpResponse {
+            id: "big-1".to_string(),
+            status: 200,
+            headers: Vec::new(),
+            body: vec![b'a'; body_len],
+            upgraded: false,
+            flow_control: false,
+        }
+        .serialize()
+        .unwrap();
+        assert!(reply.len() > 16 << 20);
+        let _ = app.send(Message::Binary(reply.into())).await;
+
+        let result = tokio::time::timeout(Duration::from_secs(10), request)
+            .await
+            .expect("send_request still waiting for the big response")
+            .unwrap();
+        match result {
+            Ok((TunnelMessage::HttpResponse { status, body, .. }, false)) => {
+                assert_eq!(status, 200);
+                assert_eq!(body.len(), body_len);
+            }
+            other => panic!("Expected the big response, got: {other:?}"),
+        }
+        assert!(server.is_connected().await);
+    }
+
+    #[tokio::test]
+    async fn request_over_the_message_limit_fails_alone() {
+        let (server, mut app) = connect_fake_app().await;
+
+        let huge = plain_request(&server, "huge-1", vec![b'a'; MAX_MESSAGE_SIZE / 3 + 1]);
+        let result = tokio::time::timeout(Duration::from_secs(10), huge)
+            .await
+            .expect("send_request still waiting for the oversized request")
+            .unwrap();
+        match result {
+            Ok((TunnelMessage::Error { id, message }, false)) => {
+                assert_eq!(id.as_deref(), Some("huge-1"));
+                assert!(message.contains("too large"), "{message}");
+            }
+            other => panic!("Expected a too large error, got: {other:?}"),
+        }
+        assert!(server.is_connected().await);
+
+        let _small = plain_request(&server, "small-1", b"hi".to_vec());
+        let forwarded = tokio::time::timeout(Duration::from_secs(5), app.next())
+            .await
+            .expect("Timed out waiting for the next request")
+            .unwrap()
+            .unwrap();
+        match TunnelMessage::deserialize(&forwarded.into_data()) {
+            Ok(TunnelMessage::HttpRequest { id, body, .. }) => {
+                assert_eq!(id, "small-1");
+                assert_eq!(body, b"hi");
+            }
+            other => panic!("Expected the small request, got: {other:?}"),
+        }
     }
 }

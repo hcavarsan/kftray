@@ -20,6 +20,8 @@ pub const TUNNEL_MODE_HEADER: &str = "x-kftray-tunnel-mode";
 /// end closes the whole stream.
 pub const HALF_CLOSE_HEADER: &str = "x-kftray-half-close";
 
+pub const MAX_MESSAGE_SIZE: usize = 64 << 20;
+
 /// Messages sent over WebSocket tunnel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
