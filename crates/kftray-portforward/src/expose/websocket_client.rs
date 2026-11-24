@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ use hyper::{
     StatusCode,
     Uri,
 };
+use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::Client as LegacyClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{
@@ -40,6 +42,10 @@ use log::{
     error,
     info,
     warn,
+};
+use openssl::ssl::{
+    SslConnector,
+    SslMethod,
 };
 use tokio::io::{
     AsyncRead,
@@ -142,6 +148,8 @@ pub struct WebSocketTunnelClient {
     local_service_address: String,
     local_service_port: u16,
     carries_tcp: bool,
+    local_https: bool,
+    local_ca_cert: Option<String>,
     http_logs: Option<Arc<ExposeHttpLogs>>,
 }
 
@@ -154,6 +162,8 @@ impl WebSocketTunnelClient {
             local_service_address,
             local_service_port,
             carries_tcp: false,
+            local_https: false,
+            local_ca_cert: None,
             http_logs: None,
         }
     }
@@ -162,6 +172,33 @@ impl WebSocketTunnelClient {
     pub fn carrying_tcp(mut self, carries_tcp: bool) -> Self {
         self.carries_tcp = carries_tcp;
         self
+    }
+
+    pub fn local_https(mut self, https: bool, ca_cert: Option<String>) -> Self {
+        self.local_https = https;
+        self.local_ca_cert = ca_cert;
+        self
+    }
+
+    fn local_client(
+        &self,
+    ) -> Result<LegacyClient<HttpsConnector<HttpConnector>, Full<Bytes>>, String> {
+        let mut http_connector = HttpConnector::new();
+        http_connector.enforce_http(false);
+        http_connector.set_nodelay(true);
+        http_connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
+        let mut tls = SslConnector::builder(SslMethod::tls())
+            .map_err(|e| format!("Failed to set up TLS for the local app: {e}"))?;
+        if self.local_https
+            && let Some(ca_cert) = &self.local_ca_cert
+        {
+            tls.set_ca_file(ca_cert).map_err(|e| {
+                format!("Failed to load the local app CA certificate {ca_cert}: {e}")
+            })?;
+        }
+        let connector = HttpsConnector::with_connector(http_connector, tls)
+            .map_err(|e| format!("Failed to set up TLS for the local app: {e}"))?;
+        Ok(LegacyClient::builder(TokioExecutor::new()).build(connector))
     }
 
     pub fn with_http_logs(mut self, config_id: i64, mode: DatabaseMode) -> Self {
@@ -281,6 +318,15 @@ impl WebSocketTunnelClient {
         &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
         connected: &mut bool,
     ) -> Result<(), String> {
+        let http_client = match self.local_client() {
+            Ok(client) => client,
+            Err(message) => {
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(Err(message.clone()));
+                }
+                return Err(message);
+            }
+        };
         let mut request = ws_url
             .into_client_request()
             .map_err(|e| format!("Invalid tunnel URL {ws_url}: {e}"))?;
@@ -335,11 +381,6 @@ impl WebSocketTunnelClient {
         info!("WebSocket tunnel connected");
 
         let (mut ws_write, mut ws_read) = ws_stream.split();
-
-        let mut http_connector = HttpConnector::new();
-        http_connector.set_nodelay(true);
-        http_connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
-        let http_client = LegacyClient::builder(TokioExecutor::new()).build(http_connector);
 
         let target = Arc::new(self.clone());
         let mut requests = JoinSet::new();
@@ -510,12 +551,16 @@ impl WebSocketTunnelClient {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_to_local_service(
-        &self, http_client: &LegacyClient<HttpConnector, Full<Bytes>>, request_id: String,
-        method: String, path: String, headers: Vec<(String, String)>, body: Vec<u8>, upgrade: bool,
+        &self, http_client: &LegacyClient<HttpsConnector<HttpConnector>, Full<Bytes>>,
+        request_id: String, method: String, path: String, headers: Vec<(String, String)>,
+        body: Vec<u8>, upgrade: bool,
     ) -> (TunnelMessage, Option<Upgraded>) {
         let uri_str = format!(
-            "http://{}:{}{}",
-            self.local_service_address, self.local_service_port, path
+            "{}://{}:{}{}",
+            if self.local_https { "https" } else { "http" },
+            self.local_service_address,
+            self.local_service_port,
+            path
         );
         debug!(
             "Forwarding {} {} to local service at {}",
@@ -666,8 +711,12 @@ impl WebSocketTunnelClient {
                     self.local_service_port, uri_str, e
                 );
                 let message = format!(
-                    "Failed to connect to local service at localhost:{}: {}",
-                    self.local_service_port, e
+                    "Failed to connect to local service at localhost:{}: {}{}",
+                    self.local_service_port,
+                    e,
+                    e.source()
+                        .map(|cause| format!(": {cause}"))
+                        .unwrap_or_default()
                 );
                 (
                     TunnelMessage::Error {
@@ -923,10 +972,6 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_the_request_without_a_disposable_tcp_probe() {
-        use http_body_util::Full;
-        use hyper::body::Bytes;
-        use hyper_util::client::legacy::Client;
-        use hyper_util::rt::TokioExecutor;
         use tokio::io::AsyncReadExt;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -935,7 +980,7 @@ mod tests {
             "127.0.0.1".to_owned(),
             listener.local_addr().unwrap().port(),
         );
-        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let http_client = client.local_client().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -977,10 +1022,6 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_a_webdav_method_to_the_local_app() {
-        use http_body_util::Full;
-        use hyper::body::Bytes;
-        use hyper_util::client::legacy::Client;
-        use hyper_util::rt::TokioExecutor;
         use tokio::io::AsyncReadExt;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -989,7 +1030,7 @@ mod tests {
             "127.0.0.1".to_owned(),
             listener.local_addr().unwrap().port(),
         );
-        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let http_client = client.local_client().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -1026,10 +1067,6 @@ mod tests {
 
     #[tokio::test]
     async fn repeated_headers_keep_every_value() {
-        use http_body_util::Full;
-        use hyper::body::Bytes;
-        use hyper_util::client::legacy::Client;
-        use hyper_util::rt::TokioExecutor;
         use tokio::io::AsyncReadExt;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1038,7 +1075,7 @@ mod tests {
             "127.0.0.1".to_owned(),
             listener.local_addr().unwrap().port(),
         );
-        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let http_client = client.local_client().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -1093,10 +1130,6 @@ mod tests {
 
     #[tokio::test]
     async fn non_ascii_response_header_crosses_the_tunnel() {
-        use http_body_util::Full;
-        use hyper::body::Bytes;
-        use hyper_util::client::legacy::Client;
-        use hyper_util::rt::TokioExecutor;
         use tokio::io::AsyncReadExt;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1105,7 +1138,7 @@ mod tests {
             "127.0.0.1".to_owned(),
             listener.local_addr().unwrap().port(),
         );
-        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let http_client = client.local_client().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -1403,12 +1436,20 @@ mod tests {
         Relay,
         tokio_util::task::AbortOnDropHandle<Result<(), String>>,
     ) {
+        connect_relay_with(|ws_port| {
+            WebSocketTunnelClient::new(ws_port, "127.0.0.1".to_owned(), app_port)
+        })
+        .await
+    }
+
+    async fn connect_relay_with(
+        client_for: impl FnOnce(u16) -> WebSocketTunnelClient,
+    ) -> (
+        Relay,
+        tokio_util::task::AbortOnDropHandle<Result<(), String>>,
+    ) {
         let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = WebSocketTunnelClient::new(
-            ws_listener.local_addr().unwrap().port(),
-            "127.0.0.1".to_owned(),
-            app_port,
-        );
+        let client = client_for(ws_listener.local_addr().unwrap().port());
         let (ready_tx, ready_rx) = oneshot::channel();
         let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             client.start(ready_tx).await
@@ -1554,6 +1595,127 @@ mod tests {
             other => panic!("expected a plain response, got {other:?}"),
         }
         assert_quiet(&mut relay).await;
+    }
+
+    async fn https_app(names: Vec<String>) -> (u16, tempfile::NamedTempFile) {
+        use std::sync::Arc;
+
+        use tokio::io::AsyncReadExt;
+
+        crate::ssl::ensure_crypto_provider_installed();
+        let issued = rcgen::generate_simple_self_signed(names).unwrap();
+        let ca = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(ca.path(), issued.cert.pem()).unwrap();
+        let server = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![issued.cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(issued.signing_key.serialize_der())
+                    .into(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (socket, _) = app.accept().await.unwrap();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let Ok(mut tls) = acceptor.accept(socket).await else {
+                        return;
+                    };
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let read = tls.read(&mut chunk).await.unwrap();
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    tls.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 6\r\n\r\nsecure")
+                        .await
+                        .unwrap();
+                    tls.shutdown().await.unwrap();
+                });
+            }
+        });
+        (port, ca)
+    }
+
+    async fn https_reply(
+        address: &str, port: u16, ca: Option<&tempfile::NamedTempFile>,
+    ) -> super::TunnelMessage {
+        let ca = ca.map(|ca| ca.path().to_string_lossy().into_owned());
+        let (mut relay, _task) = connect_relay_with(|ws_port| {
+            WebSocketTunnelClient::new(ws_port, address.to_owned(), port).local_https(true, ca)
+        })
+        .await;
+        send(
+            &mut relay,
+            super::TunnelMessage::HttpRequest {
+                id: "tls".to_owned(),
+                method: "GET".to_owned(),
+                path: "/".to_owned(),
+                headers: Vec::new(),
+                body: Vec::new(),
+                upgrade: false,
+                flow_control: false,
+            },
+        )
+        .await;
+        recv(&mut relay).await
+    }
+
+    #[tokio::test]
+    async fn https_local_app_trusted_through_the_supplied_ca_answers() {
+        let (port, ca) = https_app(vec!["127.0.0.1".to_owned()]).await;
+
+        match https_reply("127.0.0.1", port, Some(&ca)).await {
+            super::TunnelMessage::HttpResponse { status, body, .. } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, b"secure");
+            }
+            other => panic!("expected the local app's response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn https_local_app_with_an_untrusted_certificate_is_refused() {
+        let (port, _ca) = https_app(vec!["127.0.0.1".to_owned()]).await;
+
+        match https_reply("127.0.0.1", port, None).await {
+            super::TunnelMessage::Error { message, .. } => {
+                assert!(message.contains("certificate verify failed"), "{message}");
+            }
+            other => panic!("expected a certificate error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn https_local_app_whose_certificate_names_another_host_is_refused() {
+        let (port, ca) = https_app(vec!["app.internal".to_owned()]).await;
+
+        match https_reply("localhost", port, Some(&ca)).await {
+            super::TunnelMessage::Error { message, .. } => {
+                assert!(message.contains("hostname mismatch"), "{message}");
+            }
+            other => panic!("expected a hostname error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_ca_file_fails_startup_naming_the_file() {
+        let client = WebSocketTunnelClient::new(9, "127.0.0.1".to_owned(), 8443)
+            .local_https(true, Some("/missing/ca.pem".to_owned()));
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let _task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+
+        let error = ready_rx.await.unwrap().unwrap_err();
+        assert!(error.contains("/missing/ca.pem"), "{error}");
     }
 
     #[tokio::test]
@@ -2249,9 +2411,7 @@ mod tests {
             .with_http_logs(config_id, mode);
         let logs = client.http_logs.as_ref().unwrap();
         logs.sync().await;
-        let http =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build_http::<http_body_util::Full<bytes::Bytes>>();
+        let http = client.local_client().unwrap();
         let path = dir
             .path()
             .join("http_logs")

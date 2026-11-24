@@ -1,10 +1,13 @@
 import { Info } from 'lucide-react'
 
-import { Flex, Stack, Text } from '@chakra-ui/react'
+import { Box, Flex, Stack, Text } from '@chakra-ui/react'
+import { useMutation } from '@tanstack/react-query'
 
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { selectStyles } from '@/components/ui/select-styles'
 import { Tooltip } from '@/components/ui/tooltip'
+import { selectPath } from '@/lib/nativeDialog'
 
 import { Field, FieldSelect, TextField } from './Field'
 import type { ConfigDraft, StringOption } from './types'
@@ -16,6 +19,10 @@ const exposureOptions: StringOption[] = [
 const exposureProtocolOptions: StringOption[] = [
   { value: 'http', label: 'HTTP' },
   { value: 'tcp', label: 'TCP' },
+]
+const localSchemeOptions: StringOption[] = [
+  { value: 'http', label: 'HTTP' },
+  { value: 'https', label: 'HTTPS' },
 ]
 const issuerOptions: StringOption[] = [
   { value: 'ClusterIssuer', label: 'ClusterIssuer' },
@@ -38,6 +45,16 @@ const Hint = ({ content }: { content: string }) => (
 
 export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
   const isPublic = draft.exposure_type === 'public'
+  const carriesHttp = isPublic || draft.exposure_protocol !== 'tcp'
+  const { mutate: browseCaCert } = useMutation({
+    mutationFn: () => selectPath(false),
+    onSuccess: path => {
+      if (path) {
+        onUpdate({ exposure_local_ca_cert: path })
+      }
+    },
+    meta: { errorToast: { title: 'Error selecting CA certificate' } },
+  })
   return (
     <Stack gap={3}>
       <Field
@@ -116,6 +133,57 @@ export function ExposeFields({ draft, errors, onUpdate }: ExposeFieldsProps) {
         placeholder='127.0.0.1'
         value={draft.local_address ?? '127.0.0.1'}
       />
+      {carriesHttp && (
+        <Field
+          hint={
+            <Hint content='HTTPS sends requests to your local app over TLS and checks its certificate and hostname.' />
+          }
+          label='Local App Scheme'
+        >
+          <FieldSelect<StringOption>
+            onChange={option =>
+              onUpdate({
+                exposure_local_scheme:
+                  option?.value === 'https' ? 'https' : 'http',
+              })
+            }
+            options={localSchemeOptions}
+            styles={selectStyles<StringOption>()}
+            value={
+              localSchemeOptions.find(
+                option =>
+                  option.value === (draft.exposure_local_scheme ?? 'http'),
+              ) ?? null
+            }
+          />
+        </Field>
+      )}
+      {carriesHttp && draft.exposure_local_scheme === 'https' && (
+        <Flex align='end' gap={2}>
+          <Box flex={1}>
+            <TextField
+              hint={
+                <Hint content='PEM file of the CA that signed your local app certificate. Leave empty to trust system CAs only.' />
+              }
+              label='Local App CA Certificate (Optional)'
+              name='exposure_local_ca_cert'
+              onChange={exposure_local_ca_cert =>
+                onUpdate({ exposure_local_ca_cert })
+              }
+              placeholder='/path/to/ca.pem'
+              value={draft.exposure_local_ca_cert ?? ''}
+            />
+          </Box>
+          <Button
+            height='28px'
+            onClick={() => browseCaCert()}
+            size='xs'
+            variant='ghost'
+          >
+            Browse
+          </Button>
+        </Flex>
+      )}
       {isPublic && (
         <>
           <Flex align='center' gap={1}>

@@ -150,6 +150,12 @@ pub struct Config {
     pub exposure_protocol: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_local_scheme: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_blank_as_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_local_ca_cert: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub cert_manager_enabled: Option<bool>,
     #[serde(default)]
@@ -194,6 +200,8 @@ impl Default for Config {
             http_logs_auto_cleanup: Some(true),
             exposure_type: None,
             exposure_protocol: None,
+            exposure_local_scheme: None,
+            exposure_local_ca_cert: None,
             cert_manager_enabled: None,
             cert_issuer: None,
             cert_issuer_kind: None,
@@ -213,6 +221,10 @@ impl Config {
     pub fn exposes_tcp(&self) -> bool {
         self.exposure_type.as_deref() != Some("public")
             && self.exposure_protocol.as_deref() == Some("tcp")
+    }
+
+    pub fn serves_local_https(&self) -> bool {
+        !self.exposes_tcp() && self.exposure_local_scheme.as_deref() == Some("https")
     }
 
     /// An ssh-port-forward config needs no Service, so the alias is enough
@@ -303,6 +315,10 @@ impl Config {
                 self.remote_port = None;
                 if !self.exposes_tcp() {
                     self.exposure_protocol = None;
+                }
+                if !self.serves_local_https() {
+                    self.exposure_local_scheme = None;
+                    self.exposure_local_ca_cert = None;
                 }
                 if self.exposure_type.as_deref() == Some("cluster") {
                     self.cert_manager_enabled = None;
@@ -537,5 +553,31 @@ mod tests {
         }
         assert!(value["ssh_provider"].get("interface").is_none());
         assert_eq!(value["remote_address"], "proxy.internal");
+    }
+
+    #[test]
+    fn prepare_for_export_should_keep_local_https_only_for_http_exposes() {
+        let expose = |protocol: &str, scheme: &str| {
+            Config {
+                workload_type: Some("expose".to_string()),
+                exposure_type: Some("cluster".to_string()),
+                exposure_protocol: Some(protocol.to_string()),
+                exposure_local_scheme: Some(scheme.to_string()),
+                exposure_local_ca_cert: Some("/certs/ca.pem".to_string()),
+                ..Config::default()
+            }
+            .prepare_for_export()
+        };
+
+        let https = expose("http", "https");
+        assert_eq!(https.exposure_local_scheme.as_deref(), Some("https"));
+        assert_eq!(
+            https.exposure_local_ca_cert.as_deref(),
+            Some("/certs/ca.pem")
+        );
+        for stripped in [expose("http", "http"), expose("tcp", "https")] {
+            assert_eq!(stripped.exposure_local_scheme, None);
+            assert_eq!(stripped.exposure_local_ca_cert, None);
+        }
     }
 }

@@ -74,6 +74,7 @@ export const trimConfigValues = (draft: ConfigDraft): ConfigDraft => ({
   alias: draft.alias?.trim(),
   cert_issuer: draft.cert_issuer?.trim(),
   context: draft.context?.trim(),
+  exposure_local_ca_cert: draft.exposure_local_ca_cert?.trim(),
   ingress_annotations: draft.ingress_annotations?.trim(),
   ingress_class: draft.ingress_class?.trim(),
   kubeconfig: draft.kubeconfig?.trim(),
@@ -126,6 +127,9 @@ export function toConfig(
       }
     case 'expose': {
       const isPublic = draft.exposure_type === 'public'
+      const localHttps =
+        draft.exposure_local_scheme === 'https' &&
+        (isPublic || draft.exposure_protocol !== 'tcp')
       return {
         ...base,
         ...(isPublic && {
@@ -136,6 +140,10 @@ export function toConfig(
           ingress_class: draft.ingress_class,
         }),
         domain_enabled: isPublic && base.domain_enabled,
+        exposure_local_ca_cert: localHttps
+          ? draft.exposure_local_ca_cert || undefined
+          : undefined,
+        exposure_local_scheme: localHttps ? 'https' : undefined,
         exposure_protocol:
           draft.exposure_protocol === 'tcp' && !isPublic ? 'tcp' : undefined,
         exposure_type: draft.exposure_type,
