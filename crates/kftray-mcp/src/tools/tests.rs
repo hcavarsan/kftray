@@ -44,6 +44,7 @@ fn test_get_all_tools_returns_expected_tools() {
         "list_services",
         "list_pods",
         "list_ports",
+        "get_http_logs",
     ];
 
     for expected in expected_tools {
@@ -720,6 +721,157 @@ async fn invalid_tags_are_rejected_without_saving() {
         ["billing"]
     );
     assert_eq!(list_services(serde_json::json!([])).await, ["billing"]);
+}
+
+#[test]
+fn http_log_headers_mask_auth_and_cookie_values_in_any_case() {
+    let headers = [
+        "authorization: Bearer secret-token",
+        "Proxy-Authorization: Basic c2VjcmV0",
+        "COOKIE: session=abc",
+        "Set-Cookie: id=1; HttpOnly",
+        "Content-Type: application/json",
+        "X-Authorization-Hint: visible",
+    ]
+    .map(String::from);
+
+    assert_eq!(
+        http_logs::mask_secret_headers(&headers),
+        [
+            "authorization: ***",
+            "Proxy-Authorization: ***",
+            "COOKIE: ***",
+            "Set-Cookie: ***",
+            "Content-Type: application/json",
+            "X-Authorization-Hint: visible",
+        ]
+    );
+}
+
+#[test]
+fn http_log_bodies_over_the_budget_are_cut_on_a_char_boundary_and_marked() {
+    assert_eq!(http_logs::capped_body("small"), "small");
+
+    let body = format!("{}é{}", "a".repeat(16 * 1024 - 1), "b".repeat(100));
+    let capped = http_logs::capped_body(&body);
+
+    assert!(capped.starts_with(&"a".repeat(16 * 1024 - 1)));
+    assert!(!capped.contains('é'));
+    assert!(capped.ends_with(&format!(
+        "[truncated, showing {} of {} bytes]",
+        16 * 1024 - 1,
+        body.len()
+    )));
+}
+
+async fn create_forward_on_port(local_port: u16) -> i64 {
+    let result = execute_tool(
+        "create_config",
+        Some(serde_json::json!({
+            "context": "kind",
+            "namespace": "api",
+            "service": "web",
+            "local_port": local_port,
+            "remote_port": 80,
+        })),
+    )
+    .await;
+    result_json(&result)["config_id"].as_i64().unwrap()
+}
+
+fn logged_exchange(trace_id: &str, path: &str, status: u16, took_ms: u32) -> String {
+    format!(
+        "\n# ----------------------------------------\n# Trace ID: {trace_id}\n# Request at: \
+         2026-11-24T10:00:00+00:00\nPOST {path} HTTP/1.1\nHost: localhost:18080\nAuthorization: \
+         Bearer secret-token\nCookie: session=abc\n\n{{\"q\":\"{path}\"}}\n\n###\n\n# \
+         ----------------------------------------\n# Trace ID: {trace_id}\n# Response at: \
+         2026-11-24T10:00:01+00:00\n# Took: {took_ms} ms\nHTTP/1.1 {status} OK\nContent-Type: \
+         application/json\nSet-Cookie: id=1; HttpOnly\n\n{{\"ok\":true}}\n\n###\n"
+    )
+}
+
+#[tokio::test]
+async fn get_http_logs_returns_the_last_requests_with_secrets_masked() {
+    let _db = temp_config_db().await;
+    let id = create_forward_on_port(18080).await;
+    let log_dir = kftray_commons::utils::config_dir::get_log_folder_path().unwrap();
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(
+        log_dir.join(format!("{id}_18080.http")),
+        [
+            logged_exchange("t1", "/first", 200, 5),
+            logged_exchange("t2", "/second", 201, 12),
+            logged_exchange("t3", "/third", 404, 7),
+        ]
+        .concat(),
+    )
+    .unwrap();
+
+    let result = execute_tool(
+        "get_http_logs",
+        Some(serde_json::json!({"config_id": id, "limit": 2})),
+    )
+    .await;
+    let logs = result_json(&result);
+
+    assert_eq!(logs["total_captured"], 3);
+    let requests = logs["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0],
+        serde_json::json!({
+            "trace_id": "t2",
+            "method": "POST",
+            "path": "/second",
+            "status": 201,
+            "duration_ms": 12,
+            "request_at": "2026-11-24T10:00:00+00:00",
+            "response_at": "2026-11-24T10:00:01+00:00",
+            "request_headers": ["Host: localhost:18080", "Authorization: ***", "Cookie: ***"],
+            "request_body": "{\"q\":\"/second\"}\n",
+            "response_headers": ["Content-Type: application/json", "Set-Cookie: ***"],
+            "response_body": "{\"ok\":true}\n",
+        })
+    );
+    assert_eq!(requests[1]["path"], "/third");
+    assert_eq!(requests[1]["status"], 404);
+    assert!(!result_text(&result).contains("secret-token"));
+    assert!(!result_text(&result).contains("session=abc"));
+}
+
+#[tokio::test]
+async fn get_http_logs_without_a_log_file_points_to_http_logs_enabled() {
+    let _db = temp_config_db().await;
+    let id = create_forward_on_port(18081).await;
+
+    let result = execute_tool("get_http_logs", Some(serde_json::json!({"config_id": id}))).await;
+
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result_text(&result).contains("http_logs_enabled"),
+        "{}",
+        result_text(&result)
+    );
+}
+
+#[tokio::test]
+async fn update_config_turns_http_log_capture_on_and_off() {
+    let _db = temp_config_db().await;
+    let id = create_forward_on_port(18082).await;
+
+    for enabled in [true, false] {
+        let result = execute_tool(
+            "update_config",
+            Some(serde_json::json!({"config_id": id, "http_logs_enabled": enabled})),
+        )
+        .await;
+        result_json(&result);
+
+        let saved = kftray_commons::utils::http_logs_config::get_http_logs_config(id)
+            .await
+            .unwrap();
+        assert_eq!(saved.enabled, enabled);
+    }
 }
 
 #[cfg(unix)]

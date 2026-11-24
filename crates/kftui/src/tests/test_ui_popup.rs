@@ -5,6 +5,7 @@ use crate::tui::input::{
     App,
     DeleteButton,
     HttpLogEntry,
+    HttpLogReplay,
 };
 use crate::tui::ui::popup::{
     render_about_popup,

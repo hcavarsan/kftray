@@ -20,6 +20,7 @@ use crate::tui::input::{
     Consent,
     DeleteButton,
     HttpLogEntry,
+    HttpLogReplay,
     TelemetryButton,
     clear_selection,
     handle_about_input,

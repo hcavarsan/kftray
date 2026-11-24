@@ -1,4 +1,5 @@
 pub mod config;
+pub mod entries;
 pub mod formatter;
 pub mod http_request_handler;
 pub mod http_response_analyzer;
