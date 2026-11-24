@@ -36,7 +36,6 @@ const STATUS_LABEL: Record<Exclude<UpdateStatus, 'idle'>, string> = {
 
 const CHECK_FAILED_TOAST = {
   title: 'Update Check Failed',
-  description: 'Failed to check for updates. Please try again later.',
   duration: 4000,
 }
 
@@ -80,7 +79,10 @@ export function UpdateSettings({
         })
       } else {
         setCheckResult('error')
-        toaster.error(CHECK_FAILED_TOAST)
+        toaster.error({
+          ...CHECK_FAILED_TOAST,
+          description: versionInfo.error ?? 'Failed to check for updates.',
+        })
       }
     },
     onError: () => setCheckResult('error'),
@@ -103,7 +105,6 @@ export function UpdateSettings({
     meta: {
       errorToast: {
         title: 'Update Failed',
-        description: 'Failed to install the update. Please try again later.',
         duration: 4000,
       },
     },
