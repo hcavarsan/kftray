@@ -265,6 +265,7 @@ pub async fn get_version_info(
             error!("Failed to get updater: {}", e);
             info.insert("update_available".to_string(), "unknown".to_string());
             info.insert("latest_version".to_string(), "unknown".to_string());
+            info.insert("error".to_string(), format!("Failed to get updater: {e}"));
             return Ok(info);
         }
     };
@@ -290,6 +291,10 @@ pub async fn get_version_info(
             error!("Failed to check for updates: {}", e);
             info.insert("update_available".to_string(), "error".to_string());
             info.insert("latest_version".to_string(), "unknown".to_string());
+            info.insert(
+                "error".to_string(),
+                format!("Failed to check for updates: {e}"),
+            );
         }
     }
 
