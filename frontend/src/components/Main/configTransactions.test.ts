@@ -130,6 +130,24 @@ describe('deleteConfigsTransaction', () => {
 
     expect(update([makeConfig(1), makeConfig(2)])).toEqual([makeConfig(2)])
   })
+
+  it('shows why the backend refused the delete', async () => {
+    const { deps } = setup()
+
+    vi.mocked(fetchConfigsWithState).mockResolvedValue([makeConfig(7)])
+    vi.mocked(invoke).mockRejectedValue(
+      'Stop these configurations before deleting them: 7',
+    )
+
+    await expect(deleteConfigsTransaction(deps, [7])).resolves.toBe(false)
+
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description:
+          'Failed to delete configurations. Stop these configurations before deleting them: 7',
+      }),
+    )
+  })
 })
 
 const mockConfigStore = (overrides: Partial<StoredConfig> = {}) => {
@@ -148,6 +166,22 @@ describe('saveConfigTransaction', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockConfigStore()
+  })
+
+  it('shows why the backend refused the update', async () => {
+    const { deps } = setup([makeConfig(7)])
+
+    vi.mocked(invoke).mockRejectedValue('database is locked')
+
+    await expect(
+      saveConfigTransaction(deps, makeConfig(7), true),
+    ).resolves.toBe(false)
+
+    expect(toaster.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: 'Failed to update configuration. database is locked',
+      }),
+    )
   })
 
   it('reserves an edited config for the whole save even when no restart is needed', async () => {

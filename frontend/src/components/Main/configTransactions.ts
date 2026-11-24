@@ -91,8 +91,8 @@ export async function deleteConfigsTransaction(
     showErrorToast(error, {
       errorToast: {
         title: 'Error',
-        description: 'Failed to delete configurations.',
-        duration: 1000,
+        description: `Failed to delete configurations. ${errorMessage(error)}`,
+        duration: 3000,
       },
     })
 
@@ -202,8 +202,8 @@ export async function saveConfigTransaction(
       showErrorToast(error, {
         errorToast: {
           title: 'Error',
-          description: `Failed to ${verb} configuration.`,
-          duration: 1000,
+          description: `Failed to ${verb} configuration. ${message}`,
+          duration: 2000,
         },
       })
 
