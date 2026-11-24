@@ -31,6 +31,8 @@ export type ExposureType = 'cluster' | 'public'
 
 export type ExposureProtocol = 'http' | 'tcp'
 
+export type ExposureLocalScheme = 'http' | 'https'
+
 export type CertIssuerKind = 'ClusterIssuer' | 'Issuer'
 
 interface ConfigBase {
@@ -76,6 +78,8 @@ interface ExposeConfig extends ConfigBase {
   local_port: number
   exposure_type?: ExposureType
   exposure_protocol?: ExposureProtocol
+  exposure_local_scheme?: ExposureLocalScheme
+  exposure_local_ca_cert?: string
   cert_manager_enabled?: boolean
   cert_issuer?: string
   cert_issuer_kind?: CertIssuerKind

@@ -453,6 +453,21 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
                     ));
                 }
             }
+            match config.exposure_local_scheme.as_deref() {
+                None | Some("http") => {}
+                Some("https") if !config.exposes_tcp() => {}
+                Some("https") => {
+                    return Err(
+                        "Local scheme 'https' needs an HTTP exposure. TCP exposes carry raw bytes"
+                            .to_string(),
+                    );
+                }
+                Some(other) => {
+                    return Err(format!(
+                        "Local scheme must be 'http' or 'https', got '{other}'"
+                    ));
+                }
+            }
         }
         Some(WORKLOAD_SSH_PORT_FORWARD) => {
             if config.protocol != "tcp" {
@@ -2274,6 +2289,7 @@ mod tests {
             "namespace": "default", "alias": "db", "local_port": 5432});
         let http = json!({"workload_type": "expose", "exposure_type": "cluster",
             "exposure_protocol": "http", "protocol": "tcp", "context": "ctx",
+            "exposure_local_scheme": "https", "exposure_local_ca_cert": "/certs/ca.pem",
             "namespace": "default", "alias": "web", "local_port": 3000});
         import_configs_with_pool(json!([tcp, http]).to_string(), &source)
             .await
@@ -2284,16 +2300,23 @@ mod tests {
         import_configs_with_pool(exported, &target).await.unwrap();
 
         let configs = read_configs_with_pool(&target).await.unwrap();
-        let protocol_of = |alias: &str| {
+        let config_of = |alias: &str| {
             configs
                 .iter()
                 .find(|c| c.alias.as_deref() == Some(alias))
                 .unwrap()
-                .exposure_protocol
-                .clone()
         };
-        assert_eq!(protocol_of("db").as_deref(), Some("tcp"));
-        assert_eq!(protocol_of("web"), None);
+        assert_eq!(config_of("db").exposure_protocol.as_deref(), Some("tcp"));
+        assert_eq!(config_of("db").exposure_local_scheme, None);
+        assert_eq!(config_of("web").exposure_protocol, None);
+        assert_eq!(
+            config_of("web").exposure_local_scheme.as_deref(),
+            Some("https")
+        );
+        assert_eq!(
+            config_of("web").exposure_local_ca_cert.as_deref(),
+            Some("/certs/ca.pem")
+        );
     }
 
     #[test]
@@ -2314,6 +2337,27 @@ mod tests {
         );
         let unknown = validate_imported_config(&expose("cluster", "udp")).unwrap_err();
         assert!(unknown.contains("got 'udp'"), "{unknown}");
+    }
+
+    #[test]
+    fn test_import_rejects_https_on_a_tcp_expose_and_unknown_local_schemes() {
+        let expose = |exposure_protocol: &str, scheme: &str| -> Config {
+            serde_json::from_value(json!({"workload_type": "expose",
+                "exposure_type": "cluster", "exposure_protocol": exposure_protocol,
+                "exposure_local_scheme": scheme, "protocol": "tcp", "namespace": "default",
+                "alias": "web", "local_port": 8443}))
+            .unwrap()
+        };
+
+        assert!(validate_imported_config(&expose("http", "https")).is_ok());
+        assert!(validate_imported_config(&expose("tcp", "http")).is_ok());
+        let tcp_https = validate_imported_config(&expose("tcp", "https")).unwrap_err();
+        assert!(
+            tcp_https.contains("TCP exposes carry raw bytes"),
+            "{tcp_https}"
+        );
+        let unknown = validate_imported_config(&expose("http", "ftp")).unwrap_err();
+        assert!(unknown.contains("got 'ftp'"), "{unknown}");
     }
 
     fn ssh_import(overrides: serde_json::Value) -> String {

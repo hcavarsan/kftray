@@ -122,6 +122,43 @@ describe('toConfig for expose', () => {
 
     expect(config).toHaveProperty('exposure_protocol', undefined)
   })
+
+  it('saves https and the CA file for the local app', () => {
+    const config = toConfig(
+      {
+        ...exposeDraft,
+        exposure_local_ca_cert: '/certs/ca.pem',
+        exposure_local_scheme: 'https',
+      },
+      null,
+    )
+
+    expect(config).toMatchObject({
+      exposure_local_ca_cert: '/certs/ca.pem',
+      exposure_local_scheme: 'https',
+    })
+  })
+
+  it('drops local https and the CA file for http and tcp', () => {
+    const http = toConfig(
+      { ...exposeDraft, exposure_local_ca_cert: '/certs/ca.pem' },
+      null,
+    )
+    const tcp = toConfig(
+      {
+        ...exposeDraft,
+        exposure_local_ca_cert: '/certs/ca.pem',
+        exposure_local_scheme: 'https',
+        exposure_protocol: 'tcp',
+      },
+      null,
+    )
+
+    for (const config of [http, tcp]) {
+      expect(config).toHaveProperty('exposure_local_scheme', undefined)
+      expect(config).toHaveProperty('exposure_local_ca_cert', undefined)
+    }
+  })
 })
 
 describe('toDraft', () => {

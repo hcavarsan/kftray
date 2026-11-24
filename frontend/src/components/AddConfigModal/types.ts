@@ -1,5 +1,6 @@
 import type {
   CertIssuerKind,
+  ExposureLocalScheme,
   ExposureProtocol,
   ExposureType,
   Protocol,
@@ -24,6 +25,8 @@ export interface ConfigDraft {
   cert_manager_enabled?: boolean
   context?: string
   domain_enabled?: boolean
+  exposure_local_ca_cert?: string
+  exposure_local_scheme?: ExposureLocalScheme
   exposure_protocol?: ExposureProtocol
   exposure_type?: ExposureType
   ingress_annotations?: string

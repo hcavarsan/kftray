@@ -231,6 +231,10 @@ pub(crate) async fn start_single_expose(
         local_service_port,
     )
     .carrying_tcp(config.exposes_tcp())
+    .local_https(
+        config.serves_local_https(),
+        config.exposure_local_ca_cert.clone(),
+    )
     .with_http_logs(config_id, mode);
 
     info!(
