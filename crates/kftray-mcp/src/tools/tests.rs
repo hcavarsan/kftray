@@ -748,6 +748,22 @@ fn http_log_headers_mask_auth_and_cookie_values_in_any_case() {
     );
 }
 
+#[test]
+fn http_log_bodies_over_the_budget_are_cut_on_a_char_boundary_and_marked() {
+    assert_eq!(http_logs::capped_body("small"), "small");
+
+    let body = format!("{}é{}", "a".repeat(16 * 1024 - 1), "b".repeat(100));
+    let capped = http_logs::capped_body(&body);
+
+    assert!(capped.starts_with(&"a".repeat(16 * 1024 - 1)));
+    assert!(!capped.contains('é'));
+    assert!(capped.ends_with(&format!(
+        "[truncated, showing {} of {} bytes]",
+        16 * 1024 - 1,
+        body.len()
+    )));
+}
+
 async fn create_forward_on_port(local_port: u16) -> i64 {
     let result = execute_tool(
         "create_config",

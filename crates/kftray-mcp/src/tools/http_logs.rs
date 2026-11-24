@@ -17,6 +17,7 @@ use crate::tools::McpTool;
 
 const DEFAULT_LIMIT: usize = 20;
 const MAX_LIMIT: usize = 200;
+const MAX_BODY_BYTES: usize = 16 * 1024;
 const MASKED_HEADERS: [&str; 4] = [
     "authorization",
     "proxy-authorization",
@@ -46,6 +47,21 @@ pub(crate) fn mask_secret_headers(headers: &[String]) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn capped_body(body: &str) -> String {
+    if body.len() <= MAX_BODY_BYTES {
+        return body.to_owned();
+    }
+    let mut end = MAX_BODY_BYTES;
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[truncated, showing {end} of {} bytes]",
+        &body[..end],
+        body.len()
+    )
+}
+
 fn entry_json(entry: &HttpLogEntry) -> Value {
     json!({
         "trace_id": entry.trace_id,
@@ -59,9 +75,9 @@ fn entry_json(entry: &HttpLogEntry) -> Value {
         "request_at": entry.request_timestamp,
         "response_at": entry.response_timestamp,
         "request_headers": mask_secret_headers(&entry.request_headers),
-        "request_body": entry.request_body,
+        "request_body": capped_body(&entry.request_body),
         "response_headers": mask_secret_headers(&entry.response_headers),
-        "response_body": entry.response_body,
+        "response_body": capped_body(&entry.response_body),
     })
 }
 
