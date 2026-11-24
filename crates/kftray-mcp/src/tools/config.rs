@@ -482,6 +482,7 @@ struct UpdateConfigArgs {
     remote_address: Option<String>,
     local_address: Option<String>,
     domain_enabled: Option<bool>,
+    http_logs_enabled: Option<bool>,
     tags: Option<BTreeMap<String, String>>,
     ssh_provider: Option<SshProvider>,
 }
@@ -560,6 +561,10 @@ impl McpTool for UpdateConfigTool {
                 "domain_enabled": {
                     "type": "boolean",
                     "description": "Whether to enable domain name resolution"
+                },
+                "http_logs_enabled": {
+                    "type": "boolean",
+                    "description": "Whether to capture the HTTP requests and responses of this forward, readable with get_http_logs"
                 },
                 "tags": {
                     "type": "object",
@@ -644,6 +649,9 @@ impl McpTool for UpdateConfigTool {
         }
         if args.domain_enabled.is_some() {
             config.domain_enabled = args.domain_enabled;
+        }
+        if args.http_logs_enabled.is_some() {
+            config.http_logs_enabled = args.http_logs_enabled;
         }
         if let Some(tags) = args.tags {
             config.tags = tags;

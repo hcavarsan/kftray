@@ -4,6 +4,7 @@
 //! protocol.
 
 pub mod config;
+pub mod http_logs;
 pub mod kubernetes;
 pub mod portforward;
 
@@ -49,6 +50,7 @@ pub fn get_all_tools() -> Vec<Tool> {
         config::DeleteConfigTool.definition(),
         config::ExportConfigsTool.definition(),
         config::ImportConfigsTool.definition(),
+        http_logs::GetHttpLogsTool.definition(),
     ]
 }
 
@@ -84,6 +86,7 @@ pub async fn execute_tool(name: &str, arguments: Option<Value>) -> CallToolResul
         "delete_config" => config::DeleteConfigTool.execute(arguments).await,
         "export_configs" => config::ExportConfigsTool.execute(arguments).await,
         "import_configs" => config::ImportConfigsTool.execute(arguments).await,
+        "get_http_logs" => http_logs::GetHttpLogsTool.execute(arguments).await,
 
         _ => CallToolResult::error(format!("Unknown tool: {name}")),
     }
