@@ -1663,6 +1663,75 @@ mod tests {
         }
     }
 
+    async fn body_length_app() -> u16 {
+        use tokio::io::AsyncReadExt;
+
+        let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = app.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = app.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(socket.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap().to_ascii_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .map_or(0, |value| value.trim().parse().unwrap());
+                    let mut body = vec![0u8; length];
+                    socket.read_exact(&mut body).await.unwrap();
+                    let received = body
+                        .iter()
+                        .filter(|byte| **byte == b'a')
+                        .count()
+                        .to_string();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{received}",
+                        received.len()
+                    );
+                    socket.write_all(reply.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn upload_over_the_default_frame_limit_reaches_the_local_app() {
+        let (mut relay, _task) = connect_relay(body_length_app().await).await;
+        let size = 6 << 20;
+        let upload = |id: &str, body: Vec<u8>| super::TunnelMessage::HttpRequest {
+            id: id.to_owned(),
+            method: "POST".to_owned(),
+            path: "/upload".to_owned(),
+            headers: Vec::new(),
+            body,
+            upgrade: false,
+            flow_control: false,
+        };
+
+        send(&mut relay, upload("big", vec![b'a'; size])).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse { id, body, .. } => {
+                assert_eq!(id, "big");
+                assert_eq!(body, size.to_string().into_bytes());
+            }
+            other => panic!("expected the upload to reach the app, got {other:?}"),
+        }
+
+        send(&mut relay, upload("small", b"aa".to_vec())).await;
+        match recv(&mut relay).await {
+            super::TunnelMessage::HttpResponse { id, body, .. } => {
+                assert_eq!(id, "small");
+                assert_eq!(body, b"2");
+            }
+            other => panic!("expected the small upload to reach the app, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn stalled_stream_stops_at_the_window_and_other_traffic_keeps_moving() {
         let (app_port, mut closed) = flooding_app().await;
