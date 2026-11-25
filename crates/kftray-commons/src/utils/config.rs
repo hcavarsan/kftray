@@ -681,14 +681,10 @@ pub fn parse_import_configs(json: &str) -> Result<Vec<Config>, String> {
 }
 
 fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
-    let parsed: Vec<Config> = match serde_json::from_str(json) {
-        Ok(configs) => configs,
-        Err(e) => {
-            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
-            let config = serde_json::from_str::<Config>(json)
-                .map_err(|e| format!("Failed to parse config: {e}"))?;
-            vec![config]
-        }
+    let parsed: Vec<Config> = if json.trim_start().starts_with('[') {
+        serde_json::from_str(json).map_err(|e| format!("Failed to parse config: {e}"))?
+    } else {
+        vec![serde_json::from_str(json).map_err(|e| format!("Failed to parse config: {e}"))?]
     };
 
     Ok(dedup_configs(parsed))
@@ -2380,6 +2376,32 @@ mod tests {
                 "instance": "j"}}]);
         let error = parse_import_configs(&on_service.to_string()).unwrap_err();
         assert!(error.contains("only valid for ssh-port-forward"), "{error}");
+    }
+
+    #[test]
+    fn test_import_of_a_config_list_should_report_the_bad_field() {
+        let valid = json!({"service": "s", "namespace": "n", "remote_port": 80,
+            "local_port": 80, "context": "k", "workload_type": "service", "protocol": "tcp"});
+        for (field, value, expected) in [
+            (
+                "local_port",
+                json!(70000),
+                "invalid value: integer `70000`, expected u16",
+            ),
+            (
+                "remote_port",
+                json!("80"),
+                "invalid type: string \"80\", expected u16",
+            ),
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = value;
+            let error = parse_import_configs(&json!([valid, bad]).to_string()).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let single = parse_import_configs(&valid.to_string()).unwrap();
+        assert_eq!(single.len(), 1);
     }
 
     #[test]
