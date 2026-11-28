@@ -29,7 +29,7 @@ thirtyfour = { version = "0.38.1", default-features = false, features = ["reqwes
 tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
 
 [dev-dependencies]
-rstest = "0.28.0"
+rstest = "0.29.0"
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }

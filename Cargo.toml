@@ -8,7 +8,7 @@ apple-native-keyring-store = { version = "1.0", features = ["keychain"] }
 async-trait = "0.1.92"
 base64 = "0.23"
 brotli = "9.1.1"
-built = "0.8"
+built = "0.9"
 bytes = "1.12"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.7", features = ["derive"] }
@@ -24,7 +24,7 @@ dirs = "7.0"
 env_logger = "0.11"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 flate2 = "1.1"
-flexi_logger = "0.31"
+flexi_logger = "0.32"
 futures = "0.3"
 git2 = { version = "0.21", features = ["https", "ssh", "vendored-openssl"] }
 http = "1.5"
